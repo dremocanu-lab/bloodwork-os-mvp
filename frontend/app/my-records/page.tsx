@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
@@ -122,6 +122,12 @@ export default function MyRecordsPage() {
   const [activeSection, setActiveSection] =
     useState<keyof MyProfileResponse["sections"]>("bloodwork");
 
+  const [uploadSection, setUploadSection] =
+    useState<keyof MyProfileResponse["sections"]>("bloodwork");
+  const [uploadFile, setUploadFile] = useState<File | null>(null);
+  const [uploading, setUploading] = useState(false);
+  const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -166,8 +172,41 @@ export default function MyRecordsPage() {
     }
   };
 
+  const uploadDocument = async () => {
+    if (!uploadFile) {
+      setError("Choose a file first.");
+      return;
+    }
+
+    try {
+      setUploading(true);
+      setError("");
+
+      const formData = new FormData();
+      formData.append("file", uploadFile);
+      formData.append("section", uploadSection);
+
+      await api.post("/upload", formData, {
+        headers: { "Content-Type": "multipart/form-data" },
+      });
+
+      setUploadFile(null);
+      if (hiddenFileInputRef.current) hiddenFileInputRef.current.value = "";
+      await Promise.all([fetchProfile(), fetchRequests()]);
+    } catch (err) {
+      setError(getErrorMessage(err, "Failed to upload document."));
+    } finally {
+      setUploading(false);
+    }
+  };
+
   const openOriginal = (documentId: number) => {
     window.open(`${API_URL}/documents/${documentId}/file`, "_blank");
+  };
+
+  const logout = () => {
+    localStorage.removeItem("access_token");
+    router.push("/login");
   };
 
   useEffect(() => {
@@ -226,6 +265,11 @@ export default function MyRecordsPage() {
       subtitle={`DOB ${valueOrDash(profile.patient.date_of_birth)} · Age ${valueOrDash(
         profile.patient.age
       )} · Sex ${valueOrDash(profile.patient.sex)}`}
+      rightContent={
+        <button className="secondary-btn" onClick={logout}>
+          Log out
+        </button>
+      }
     >
       {error && (
         <div
@@ -241,6 +285,76 @@ export default function MyRecordsPage() {
           {error}
         </div>
       )}
+
+      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+        <div className="section-title" style={{ marginBottom: 16 }}>
+          Upload My Document
+        </div>
+
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "220px 1fr auto",
+            gap: 12,
+            alignItems: "center",
+          }}
+        >
+          <select
+            className="text-input"
+            value={uploadSection}
+            onChange={(e) =>
+              setUploadSection(e.target.value as keyof MyProfileResponse["sections"])
+            }
+          >
+            {SECTION_ORDER.map((section) => (
+              <option key={section} value={section}>
+                {SECTION_LABELS[section]}
+              </option>
+            ))}
+          </select>
+
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 12,
+              border: "1px solid var(--border)",
+              borderRadius: 18,
+              padding: "12px 14px",
+              background: "white",
+              minHeight: 58,
+            }}
+          >
+            <input
+              ref={hiddenFileInputRef}
+              type="file"
+              style={{ display: "none" }}
+              onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+            />
+            <button
+              type="button"
+              className="secondary-btn"
+              onClick={() => hiddenFileInputRef.current?.click()}
+            >
+              Choose File
+            </button>
+            <div
+              className="muted-text"
+              style={{
+                overflow: "hidden",
+                textOverflow: "ellipsis",
+                whiteSpace: "nowrap",
+              }}
+            >
+              {uploadFile ? uploadFile.name : "No file selected"}
+            </div>
+          </div>
+
+          <button className="primary-btn" onClick={uploadDocument} disabled={uploading}>
+            {uploading ? "Uploading..." : "Upload"}
+          </button>
+        </div>
+      </div>
 
       <div
         style={{
