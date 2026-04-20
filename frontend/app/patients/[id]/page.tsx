@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
@@ -35,6 +35,7 @@ type UploadedBy = {
 type DocumentCard = {
   id: number;
   filename: string;
+  content_type?: string | null;
   report_name?: string | null;
   report_type?: string | null;
   lab_name?: string | null;
@@ -98,6 +99,8 @@ const SECTION_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
+
 export default function PatientChartPage() {
   const params = useParams();
   const router = useRouter();
@@ -116,6 +119,8 @@ export default function PatientChartPage() {
     useState<keyof PatientProfileResponse["sections"]>("bloodwork");
   const [uploadFile, setUploadFile] = useState<File | null>(null);
   const [uploading, setUploading] = useState(false);
+
+  const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -206,12 +211,17 @@ export default function PatientChartPage() {
       });
 
       setUploadFile(null);
+      if (hiddenFileInputRef.current) hiddenFileInputRef.current.value = "";
       await fetchProfile();
     } catch (err) {
       setError(getErrorMessage(err, "Failed to upload document."));
     } finally {
       setUploading(false);
     }
+  };
+
+  const openOriginal = (documentId: number) => {
+    window.open(`${API_URL}/documents/${documentId}/file`, "_blank");
   };
 
   const doctorDocumentGroups = useMemo(() => {
@@ -222,9 +232,7 @@ export default function PatientChartPage() {
 
     allDocs.forEach((doc) => {
       const uploader = doc.uploaded_by;
-      const key = uploader?.id
-        ? `user-${uploader.id}`
-        : "unknown";
+      const key = uploader?.id ? `user-${uploader.id}` : "unknown";
 
       const label = uploader
         ? `${uploader.full_name}${uploader.department ? ` · ${uploader.department}` : ""}${
@@ -232,10 +240,7 @@ export default function PatientChartPage() {
           }`
         : "Unknown uploader";
 
-      if (!groups.has(key)) {
-        groups.set(key, { label, docs: [] });
-      }
-
+      if (!groups.has(key)) groups.set(key, { label, docs: [] });
       groups.get(key)!.docs.push(doc);
     });
 
@@ -336,10 +341,8 @@ export default function PatientChartPage() {
                       {valueOrDash(event.department)} · {valueOrDash(event.hospital_name)}
                     </div>
                     <div className="muted-text" style={{ marginTop: 4 }}>
-                      {event.status === "active" ? "Admitted" : "Discharged"} ·{" "}
-                      {new Date(
-                        event.status === "active" ? event.admitted_at : event.discharged_at || event.admitted_at
-                      ).toLocaleString()}
+                      {event.status === "active" ? "Admitted" : "Discharged"} · Doctor{" "}
+                      {valueOrDash(event.doctor_name)}
                     </div>
                     {event.description && <div style={{ marginTop: 8 }}>{event.description}</div>}
                   </div>
@@ -420,11 +423,42 @@ export default function PatientChartPage() {
               ))}
             </select>
 
-            <input
-              className="text-input"
-              type="file"
-              onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-            />
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 12,
+                border: "1px solid var(--border)",
+                borderRadius: 18,
+                padding: "12px 14px",
+                background: "white",
+                minHeight: 58,
+              }}
+            >
+              <input
+                ref={hiddenFileInputRef}
+                type="file"
+                style={{ display: "none" }}
+                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
+              />
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => hiddenFileInputRef.current?.click()}
+              >
+                Choose File
+              </button>
+              <div
+                className="muted-text"
+                style={{
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {uploadFile ? uploadFile.name : "No file selected"}
+              </div>
+            </div>
 
             <button className="primary-btn" onClick={uploadDocument} disabled={uploading}>
               {uploading ? "Uploading..." : "Upload"}
@@ -458,20 +492,37 @@ export default function PatientChartPage() {
 
         <div style={{ display: "grid", gap: 14 }}>
           {docsForSection.map((doc) => (
-            <div key={doc.id} className="soft-card-tight" style={{ padding: 16 }}>
+            <div key={doc.id} className="soft-card-tight" style={{ padding: 18 }}>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1.3fr 1fr auto",
-                  gap: 16,
+                  gridTemplateColumns: "1.25fr 1fr auto",
+                  gap: 18,
                   alignItems: "start",
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 800 }}>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>
                     {valueOrDash(doc.report_name || doc.filename)}
                   </div>
-                  <div className="muted-text" style={{ marginTop: 6 }}>
+
+                  <div style={{ marginTop: 8 }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        background: doc.is_verified ? "#ecfdf5" : "#fff7ed",
+                        color: doc.is_verified ? "#047857" : "#c2410c",
+                        fontSize: 12,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {doc.is_verified ? "Verified" : "Unverified"}
+                    </span>
+                  </div>
+
+                  <div className="muted-text" style={{ marginTop: 10 }}>
                     {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
                   </div>
                   <div className="muted-text" style={{ marginTop: 6 }}>
@@ -492,20 +543,16 @@ export default function PatientChartPage() {
                   </div>
                 </div>
 
-                <div>
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      background: doc.is_verified ? "#ecfdf5" : "#fff7ed",
-                      color: doc.is_verified ? "#047857" : "#c2410c",
-                      fontSize: 12,
-                      fontWeight: 800,
-                    }}
+                <div style={{ display: "grid", gap: 8, minWidth: 150 }}>
+                  <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
+                    Open File
+                  </button>
+                  <button
+                    className="primary-btn"
+                    onClick={() => router.push(`/documents/${doc.id}`)}
                   >
-                    {doc.is_verified ? "Verified" : "Unverified"}
-                  </div>
+                    Structured View
+                  </button>
                 </div>
               </div>
             </div>
@@ -549,7 +596,9 @@ export default function PatientChartPage() {
                         {SECTION_LABELS[doc.section] || doc.section} · {valueOrDash(doc.test_date)}
                       </div>
                     </div>
-                    <div className="muted-text">{valueOrDash(doc.lab_name)}</div>
+                    <button className="secondary-btn" onClick={() => router.push(`/documents/${doc.id}`)}>
+                      View Structured Data
+                    </button>
                   </div>
                 ))}
               </div>

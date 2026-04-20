@@ -26,6 +26,7 @@ type UploadedBy = {
 type DocumentCard = {
   id: number;
   filename: string;
+  content_type?: string | null;
   report_name?: string | null;
   report_type?: string | null;
   lab_name?: string | null;
@@ -110,6 +111,8 @@ const SECTION_LABELS: Record<string, string> = {
   other: "Other",
 };
 
+const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
+
 export default function MyRecordsPage() {
   const router = useRouter();
 
@@ -161,6 +164,10 @@ export default function MyRecordsPage() {
     } catch (err) {
       setError(getErrorMessage(err, "Failed to respond to request."));
     }
+  };
+
+  const openOriginal = (documentId: number) => {
+    window.open(`${API_URL}/documents/${documentId}/file`, "_blank");
   };
 
   useEffect(() => {
@@ -364,20 +371,37 @@ export default function MyRecordsPage() {
 
         <div style={{ display: "grid", gap: 14 }}>
           {docsForSection.map((doc) => (
-            <div key={doc.id} className="soft-card-tight" style={{ padding: 16 }}>
+            <div key={doc.id} className="soft-card-tight" style={{ padding: 18 }}>
               <div
                 style={{
                   display: "grid",
-                  gridTemplateColumns: "1.3fr 1fr auto",
-                  gap: 16,
+                  gridTemplateColumns: "1.25fr 1fr auto",
+                  gap: 18,
                   alignItems: "start",
                 }}
               >
                 <div>
-                  <div style={{ fontWeight: 800 }}>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>
                     {valueOrDash(doc.report_name || doc.filename)}
                   </div>
-                  <div className="muted-text" style={{ marginTop: 6 }}>
+
+                  <div style={{ marginTop: 8 }}>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        padding: "5px 10px",
+                        borderRadius: 999,
+                        background: doc.is_verified ? "#ecfdf5" : "#fff7ed",
+                        color: doc.is_verified ? "#047857" : "#c2410c",
+                        fontSize: 12,
+                        fontWeight: 800,
+                      }}
+                    >
+                      {doc.is_verified ? "Verified" : "Unverified"}
+                    </span>
+                  </div>
+
+                  <div className="muted-text" style={{ marginTop: 10 }}>
                     {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
                   </div>
                   <div className="muted-text" style={{ marginTop: 6 }}>
@@ -398,20 +422,16 @@ export default function MyRecordsPage() {
                   </div>
                 </div>
 
-                <div>
-                  <div
-                    style={{
-                      display: "inline-flex",
-                      padding: "6px 10px",
-                      borderRadius: 999,
-                      background: doc.is_verified ? "#ecfdf5" : "#fff7ed",
-                      color: doc.is_verified ? "#047857" : "#c2410c",
-                      fontSize: 12,
-                      fontWeight: 800,
-                    }}
+                <div style={{ display: "grid", gap: 8, minWidth: 150 }}>
+                  <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
+                    Open File
+                  </button>
+                  <button
+                    className="primary-btn"
+                    onClick={() => router.push(`/documents/${doc.id}`)}
                   >
-                    {doc.is_verified ? "Verified" : "Unverified"}
-                  </div>
+                    Structured View
+                  </button>
                 </div>
               </div>
             </div>
@@ -455,7 +475,9 @@ export default function MyRecordsPage() {
                         {SECTION_LABELS[doc.section] || doc.section} · {valueOrDash(doc.test_date)}
                       </div>
                     </div>
-                    <div className="muted-text">{valueOrDash(doc.lab_name)}</div>
+                    <button className="secondary-btn" onClick={() => router.push(`/documents/${doc.id}`)}>
+                      View Structured Data
+                    </button>
                   </div>
                 ))}
               </div>

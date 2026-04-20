@@ -8,6 +8,7 @@ import fitz
 import pytesseract
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
+from fastapi.responses import FileResponse
 from PIL import Image
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
@@ -442,7 +443,11 @@ def get_user_summary(user):
 
 
 def get_event_payload(event):
-    doctor = event.created_by_user if event.created_by_user else None
+    doctor_user = (
+        event.patient.doctor_access_links[0].doctor_user
+        if event.patient and event.patient.doctor_access_links
+        else None
+    )
     return {
         "id": event.id,
         "patient_id": event.patient_id,
@@ -455,7 +460,7 @@ def get_event_payload(event):
         "department": event.department,
         "admitted_at": event.admitted_at,
         "discharged_at": event.discharged_at,
-        "doctor_name": doctor.full_name if doctor else None,
+        "doctor_name": doctor_user.full_name if doctor_user and doctor_user.id == event.doctor_user_id else None,
     }
 
 
@@ -496,6 +501,7 @@ def get_document_payload(document, labs, audit_logs):
             "last_edited_at": document.last_edited_at,
             "labs": [
                 {
+                    "id": lab.id,
                     "raw_test_name": lab.raw_test_name,
                     "canonical_name": lab.canonical_name,
                     "display_name": lab.display_name,
@@ -525,6 +531,7 @@ def get_document_card(document):
     return {
         "id": document.id,
         "filename": document.filename,
+        "content_type": document.content_type,
         "report_name": document.report_name,
         "report_type": document.report_type,
         "lab_name": document.lab_name,
@@ -628,7 +635,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     user = models.User(
         email=payload.email,
         full_name=payload.full_name.strip(),
-        password_hash=hash_password(payload.password),
+        password_hash=hash_password(payload.password[:72]),
         role=payload.role,
         department=department if payload.role == "doctor" else None,
         hospital_name=hospital_name if payload.role == "doctor" else None,
@@ -666,7 +673,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 @app.post("/auth/login")
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == payload.email).first()
-    if not user or not verify_password(payload.password, user.password_hash):
+    if not user or not verify_password(payload.password[:72], user.password_hash):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
@@ -995,6 +1002,44 @@ def get_document(
     return get_document_payload(document, labs, logs)
 
 
+@app.get("/documents/{document_id}/file")
+def open_document_file(
+    document_id: int,
+    download: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    file_path = Path(document.saved_to)
+
+    if not file_path.exists() or not file_path.is_file():
+        raise HTTPException(status_code=404, detail="Original file not found on server")
+
+    media_type = document.content_type or "application/octet-stream"
+    filename = document.filename or file_path.name
+
+    if download:
+        return FileResponse(
+            path=file_path,
+            media_type=media_type,
+            filename=filename,
+        )
+
+    return FileResponse(
+        path=file_path,
+        media_type=media_type,
+        filename=filename,
+        content_disposition_type="inline",
+    )
+
+
 @app.get("/patients")
 def get_patients(
     db: Session = Depends(get_db),
@@ -1200,6 +1245,13 @@ def get_patient_profile(
         .all()
     )
 
+    event_payloads = []
+    for event in events:
+        event_payload = get_event_payload(event)
+        doctor = db.query(models.User).filter(models.User.id == event.doctor_user_id).first()
+        event_payload["doctor_name"] = doctor.full_name if doctor else None
+        event_payloads.append(event_payload)
+
     return {
         "patient": {
             "id": patient.id,
@@ -1212,7 +1264,7 @@ def get_patient_profile(
         },
         "sections": grouped_documents,
         "doctor_access": doctor_access,
-        "events": [get_event_payload(event) for event in events],
+        "events": event_payloads,
     }
 
 
@@ -1308,7 +1360,9 @@ def create_patient_event(
     db.commit()
     db.refresh(event)
 
-    return get_event_payload(event)
+    payload = get_event_payload(event)
+    payload["doctor_name"] = current_user.full_name
+    return payload
 
 
 @app.post("/patient-events/{event_id}/discharge")
@@ -1333,7 +1387,9 @@ def discharge_patient_event(
     db.commit()
     db.refresh(event)
 
-    return get_event_payload(event)
+    payload = get_event_payload(event)
+    payload["doctor_name"] = current_user.full_name
+    return payload
 
 
 @app.post("/documents/{document_id}/verify")
