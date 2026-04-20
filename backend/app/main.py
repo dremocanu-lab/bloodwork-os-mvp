@@ -1,7 +1,7 @@
 import os
 import re
 import shutil
-from datetime import UTC, datetime
+from datetime import UTC, date, datetime
 from pathlib import Path
 
 import fitz
@@ -44,10 +44,24 @@ if tesseract_cmd:
     pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
 ALLOWED_SECTIONS = {"bloodwork", "medications", "scans", "hospitalizations", "other"}
+ALLOWED_ROLES = {"patient", "doctor", "admin"}
+ALLOWED_EVENT_TYPES = {"hospitalization"}
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
+
+
+def compute_age_from_dob(dob_string: str | None) -> str | None:
+    if not dob_string:
+        return None
+    try:
+        dob = date.fromisoformat(dob_string)
+        today = date.today()
+        age = today.year - dob.year - ((today.month, today.day) < (dob.month, dob.day))
+        return str(age)
+    except Exception:
+        return None
 
 
 def add_audit_log(
@@ -138,6 +152,13 @@ def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
     return False
 
 
+def value_or_none(value: str | None) -> str | None:
+    if value is None:
+        return None
+    cleaned = value.strip()
+    return cleaned if cleaned else None
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
     full_name: str
@@ -148,6 +169,8 @@ class SignupRequest(BaseModel):
     sex: str | None = None
     cnp: str | None = None
     patient_identifier: str | None = None
+    department: str | None = None
+    hospital_name: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -207,6 +230,12 @@ class AccessRequestCreateRequest(BaseModel):
 
 class AccessRequestRespondRequest(BaseModel):
     status: str
+
+
+class PatientEventCreateRequest(BaseModel):
+    event_type: str = "hospitalization"
+    title: str
+    description: str | None = None
 
 
 def extract_text_from_pdf(file_path: Path) -> str:
@@ -399,7 +428,40 @@ def parse_bloodwork_text(text: str) -> dict:
     }
 
 
+def get_user_summary(user):
+    if not user:
+        return None
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "department": user.department,
+        "hospital_name": user.hospital_name,
+    }
+
+
+def get_event_payload(event):
+    doctor = event.created_by_user if event.created_by_user else None
+    return {
+        "id": event.id,
+        "patient_id": event.patient_id,
+        "doctor_user_id": event.doctor_user_id,
+        "event_type": event.event_type,
+        "status": event.status,
+        "title": event.title,
+        "description": event.description,
+        "hospital_name": event.hospital_name,
+        "department": event.department,
+        "admitted_at": event.admitted_at,
+        "discharged_at": event.discharged_at,
+        "doctor_name": doctor.full_name if doctor else None,
+    }
+
+
 def get_document_payload(document, labs, audit_logs):
+    uploader = document.uploaded_by_user
+
     return {
         "document_id": document.id,
         "patient_id": document.patient_id,
@@ -408,6 +470,7 @@ def get_document_payload(document, labs, audit_logs):
         "saved_to": document.saved_to,
         "section": document.section,
         "uploaded_by_user_id": document.uploaded_by_user_id,
+        "uploaded_by": get_user_summary(uploader),
         "extracted_text": document.extracted_text,
         "parsed_data": {
             "patient_name": document.patient_name,
@@ -457,11 +520,28 @@ def get_document_payload(document, labs, audit_logs):
     }
 
 
+def get_document_card(document):
+    uploader = document.uploaded_by_user
+    return {
+        "id": document.id,
+        "filename": document.filename,
+        "report_name": document.report_name,
+        "report_type": document.report_type,
+        "lab_name": document.lab_name,
+        "sample_type": document.sample_type,
+        "referring_doctor": document.referring_doctor,
+        "test_date": document.test_date,
+        "section": document.section,
+        "is_verified": document.is_verified,
+        "uploaded_by": get_user_summary(uploader),
+    }
+
+
 def resolve_or_create_patient(db: Session, parsed_data: dict):
     patient = None
     patient_name = parsed_data.get("patient_name")
     patient_dob = parsed_data.get("date_of_birth")
-    patient_age = parsed_data.get("age")
+    patient_age = parsed_data.get("age") or compute_age_from_dob(patient_dob)
     patient_sex = parsed_data.get("sex")
     patient_cnp = parsed_data.get("cnp")
     patient_identifier = parsed_data.get("patient_identifier")
@@ -511,24 +591,47 @@ def resolve_or_create_patient(db: Session, parsed_data: dict):
         db.add(patient)
         db.commit()
         db.refresh(patient)
+    elif patient:
+        patient.date_of_birth = patient.date_of_birth or patient_dob
+        patient.age = patient.age or patient_age
+        patient.sex = patient.sex or patient_sex
+        patient.cnp = patient.cnp or patient_cnp
+        patient.patient_identifier = patient.patient_identifier or patient_identifier
+        db.commit()
 
     return patient
 
 
+@app.get("/")
+def root():
+    return {"message": "API is running"}
+
+
 @app.post("/auth/signup")
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
-    if payload.role not in {"patient", "doctor", "admin"}:
+    if payload.role not in ALLOWED_ROLES:
         raise HTTPException(status_code=400, detail="Invalid role")
 
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
 
+    computed_age = compute_age_from_dob(payload.date_of_birth) or payload.age
+
+    department = value_or_none(payload.department)
+    hospital_name = value_or_none(payload.hospital_name)
+
+    if payload.role == "doctor":
+        if not department or not hospital_name:
+            raise HTTPException(status_code=400, detail="Doctors must choose a department and hospital")
+
     user = models.User(
         email=payload.email,
-        full_name=payload.full_name,
+        full_name=payload.full_name.strip(),
         password_hash=hash_password(payload.password),
         role=payload.role,
+        department=department if payload.role == "doctor" else None,
+        hospital_name=hospital_name if payload.role == "doctor" else None,
     )
     db.add(user)
     db.commit()
@@ -540,7 +643,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             {
                 "patient_name": payload.full_name,
                 "date_of_birth": payload.date_of_birth,
-                "age": payload.age,
+                "age": computed_age,
                 "sex": payload.sex,
                 "cnp": payload.cnp,
                 "patient_identifier": payload.patient_identifier,
@@ -548,6 +651,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         )
         if patient:
             patient.linked_user_id = user.id
+            patient.age = computed_age or patient.age
             db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
@@ -555,12 +659,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-        },
+        "user": get_user_summary(user),
     }
 
 
@@ -575,23 +674,13 @@ def login(payload: LoginRequest, db: Session = Depends(get_db)):
     return {
         "access_token": token,
         "token_type": "bearer",
-        "user": {
-            "id": user.id,
-            "email": user.email,
-            "full_name": user.full_name,
-            "role": user.role,
-        },
+        "user": get_user_summary(user),
     }
 
 
 @app.get("/auth/me")
 def me(current_user=Depends(get_current_user)):
-    return {
-        "id": current_user.id,
-        "email": current_user.email,
-        "full_name": current_user.full_name,
-        "role": current_user.role,
-    }
+    return get_user_summary(current_user)
 
 
 @app.get("/users/doctors")
@@ -599,16 +688,40 @@ def get_doctors(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("admin")),
 ):
+    doctors = (
+        db.query(models.User)
+        .filter(models.User.role == "doctor")
+        .order_by(models.User.full_name.asc())
+        .all()
+    )
+    return [get_user_summary(doctor) for doctor in doctors]
+
+
+@app.get("/users/doctors/search")
+def search_doctors(
+    q: str = Query(""),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    term = q.strip().lower()
     doctors = db.query(models.User).filter(models.User.role == "doctor").all()
-    return [
-        {
-            "id": doctor.id,
-            "email": doctor.email,
-            "full_name": doctor.full_name,
-            "role": doctor.role,
-        }
-        for doctor in doctors
-    ]
+
+    if not term:
+        return [get_user_summary(doctor) for doctor in doctors]
+
+    results = []
+    for doctor in doctors:
+        haystack = " ".join(
+            [
+                (doctor.full_name or "").lower(),
+                (doctor.email or "").lower(),
+                (doctor.department or "").lower(),
+                (doctor.hospital_name or "").lower(),
+            ]
+        )
+        if term in haystack:
+            results.append(get_user_summary(doctor))
+    return results
 
 
 @app.get("/assignments")
@@ -616,7 +729,7 @@ def get_assignments(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("admin")),
 ):
-    assignments = db.query(models.DoctorPatientAccess).all()
+    assignments = db.query(models.DoctorPatientAccess).order_by(models.DoctorPatientAccess.id.desc()).all()
     results = []
 
     for assignment in assignments:
@@ -632,6 +745,8 @@ def get_assignments(
                 "doctor_user_id": assignment.doctor_user_id,
                 "doctor_name": doctor.full_name if doctor else None,
                 "doctor_email": doctor.email if doctor else None,
+                "doctor_department": doctor.department if doctor else None,
+                "doctor_hospital_name": doctor.hospital_name if doctor else None,
                 "patient_id": assignment.patient_id,
                 "patient_name": patient.full_name if patient else None,
                 "granted_by_user_id": assignment.granted_by_user_id,
@@ -757,6 +872,8 @@ def get_my_access_requests(
                 "doctor_user_id": req.doctor_user_id,
                 "doctor_name": doctor.full_name if doctor else None,
                 "doctor_email": doctor.email if doctor else None,
+                "doctor_department": doctor.department if doctor else None,
+                "doctor_hospital_name": doctor.hospital_name if doctor else None,
                 "status": req.status,
                 "requested_at": req.requested_at,
                 "responded_at": req.responded_at,
@@ -826,11 +943,6 @@ def respond_to_access_request(
     }
 
 
-@app.get("/")
-def root():
-    return {"message": "API is running"}
-
-
 @app.get("/documents")
 def get_documents(
     db: Session = Depends(get_db),
@@ -856,20 +968,7 @@ def get_documents(
         query = query.filter(models.Document.patient_id.in_(assigned_patient_ids))
 
     documents = query.order_by(models.Document.id.desc()).all()
-
-    return [
-        {
-            "id": doc.id,
-            "patient_id": doc.patient_id,
-            "filename": doc.filename,
-            "patient_name": doc.patient_name,
-            "report_name": doc.report_name,
-            "test_date": doc.test_date,
-            "section": doc.section,
-            "is_verified": doc.is_verified,
-        }
-        for doc in documents
-    ]
+    return [get_document_card(doc) for doc in documents]
 
 
 @app.get("/documents/{document_id}")
@@ -902,7 +1001,7 @@ def get_patients(
     current_user=Depends(require_role("doctor", "admin")),
 ):
     if current_user.role == "admin":
-        patients = db.query(models.Patient).all()
+        patients = db.query(models.Patient).order_by(models.Patient.full_name.asc()).all()
     else:
         assigned_patient_ids = [
             link.patient_id
@@ -912,7 +1011,12 @@ def get_patients(
         ]
         if not assigned_patient_ids:
             return []
-        patients = db.query(models.Patient).filter(models.Patient.id.in_(assigned_patient_ids)).all()
+        patients = (
+            db.query(models.Patient)
+            .filter(models.Patient.id.in_(assigned_patient_ids))
+            .order_by(models.Patient.full_name.asc())
+            .all()
+        )
 
     return [
         {
@@ -930,12 +1034,11 @@ def get_patients(
 
 @app.get("/patients/search")
 def search_patients(
-    q: str = Query(...),
+    q: str = Query(""),
     db: Session = Depends(get_db),
     current_user=Depends(require_role("doctor", "admin")),
 ):
     term = q.strip().lower()
-
     patients = db.query(models.Patient).all()
     results = []
 
@@ -947,7 +1050,7 @@ def search_patients(
                 (patient.patient_identifier or "").lower(),
             ]
         )
-        if term not in haystack:
+        if term and term not in haystack:
             continue
 
         has_access = True
@@ -977,6 +1080,66 @@ def search_patients(
                 "patient_identifier": patient.patient_identifier,
                 "has_access": has_access,
                 "pending_request": pending_request,
+            }
+        )
+
+    return results
+
+
+@app.get("/my-patients")
+def get_my_patients(
+    admitted_only: bool = Query(False),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("doctor")),
+):
+    links = (
+        db.query(models.DoctorPatientAccess)
+        .filter(models.DoctorPatientAccess.doctor_user_id == current_user.id)
+        .all()
+    )
+
+    results = []
+    for link in links:
+        patient = db.query(models.Patient).filter(models.Patient.id == link.patient_id).first()
+        if not patient:
+            continue
+
+        active_event = (
+            db.query(models.PatientEvent)
+            .filter(
+                models.PatientEvent.patient_id == patient.id,
+                models.PatientEvent.doctor_user_id == current_user.id,
+                models.PatientEvent.status == "active",
+            )
+            .order_by(models.PatientEvent.id.desc())
+            .first()
+        )
+
+        if admitted_only and not active_event:
+            continue
+
+        docs = (
+            db.query(models.Document)
+            .filter(models.Document.patient_id == patient.id)
+            .order_by(models.Document.id.desc())
+            .all()
+        )
+
+        results.append(
+            {
+                "patient": {
+                    "id": patient.id,
+                    "full_name": patient.full_name,
+                    "date_of_birth": patient.date_of_birth,
+                    "age": patient.age,
+                    "sex": patient.sex,
+                    "cnp": patient.cnp,
+                    "patient_identifier": patient.patient_identifier,
+                },
+                "document_count": len(docs),
+                "bloodwork_count": len([doc for doc in docs if doc.section == "bloodwork"]),
+                "active_event": get_event_payload(active_event) if active_event else None,
+                "latest_document": get_document_card(docs[0]) if docs else None,
             }
         )
 
@@ -1013,16 +1176,7 @@ def get_patient_profile(
 
     for doc in documents:
         section = doc.section if doc.section in grouped_documents else "other"
-        grouped_documents[section].append(
-            {
-                "id": doc.id,
-                "filename": doc.filename,
-                "report_name": doc.report_name,
-                "test_date": doc.test_date,
-                "section": doc.section,
-                "is_verified": doc.is_verified,
-            }
-        )
+        grouped_documents[section].append(get_document_card(doc))
 
     doctor_access = []
     for link in patient.doctor_access_links:
@@ -1033,9 +1187,18 @@ def get_patient_profile(
                     "doctor_user_id": doctor.id,
                     "doctor_name": doctor.full_name,
                     "doctor_email": doctor.email,
+                    "department": doctor.department,
+                    "hospital_name": doctor.hospital_name,
                     "granted_at": link.granted_at,
                 }
             )
+
+    events = (
+        db.query(models.PatientEvent)
+        .filter(models.PatientEvent.patient_id == patient_id)
+        .order_by(models.PatientEvent.id.desc())
+        .all()
+    )
 
     return {
         "patient": {
@@ -1049,6 +1212,7 @@ def get_patient_profile(
         },
         "sections": grouped_documents,
         "doctor_access": doctor_access,
+        "events": [get_event_payload(event) for event in events],
     }
 
 
@@ -1078,7 +1242,12 @@ def get_patient_documents(
     if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    documents = db.query(models.Document).filter(models.Document.patient_id == patient_id).all()
+    documents = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient_id)
+        .order_by(models.Document.id.desc())
+        .all()
+    )
 
     return {
         "patient": {
@@ -1090,19 +1259,81 @@ def get_patient_documents(
             "cnp": patient.cnp,
             "patient_identifier": patient.patient_identifier,
         },
-        "documents": [
-            {
-                "id": doc.id,
-                "patient_id": doc.patient_id,
-                "filename": doc.filename,
-                "report_name": doc.report_name,
-                "test_date": doc.test_date,
-                "section": doc.section,
-                "is_verified": doc.is_verified,
-            }
-            for doc in documents
-        ],
+        "documents": [get_document_card(doc) for doc in documents],
     }
+
+
+@app.post("/patients/{patient_id}/events")
+def create_patient_event(
+    patient_id: int,
+    payload: PatientEventCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("doctor")),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if not doctor_has_patient_access(db, current_user.id, patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if payload.event_type not in ALLOWED_EVENT_TYPES:
+        raise HTTPException(status_code=400, detail="Unsupported event type")
+
+    existing_active = (
+        db.query(models.PatientEvent)
+        .filter(
+            models.PatientEvent.patient_id == patient_id,
+            models.PatientEvent.doctor_user_id == current_user.id,
+            models.PatientEvent.status == "active",
+        )
+        .first()
+    )
+    if existing_active:
+        raise HTTPException(status_code=400, detail="This patient already has an active event under your care")
+
+    event = models.PatientEvent(
+        patient_id=patient_id,
+        doctor_user_id=current_user.id,
+        event_type=payload.event_type,
+        status="active",
+        title=payload.title.strip(),
+        description=value_or_none(payload.description),
+        hospital_name=current_user.hospital_name,
+        department=current_user.department,
+        admitted_at=now_iso(),
+        created_by_user_id=current_user.id,
+    )
+    db.add(event)
+    db.commit()
+    db.refresh(event)
+
+    return get_event_payload(event)
+
+
+@app.post("/patient-events/{event_id}/discharge")
+def discharge_patient_event(
+    event_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("doctor")),
+):
+    event = db.query(models.PatientEvent).filter(models.PatientEvent.id == event_id).first()
+    if not event:
+        raise HTTPException(status_code=404, detail="Event not found")
+
+    if event.doctor_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="You can only discharge your own patients")
+
+    if event.status != "active":
+        raise HTTPException(status_code=400, detail="Event is already discharged")
+
+    event.status = "discharged"
+    event.discharged_at = now_iso()
+    event.discharged_by_user_id = current_user.id
+    db.commit()
+    db.refresh(event)
+
+    return get_event_payload(event)
 
 
 @app.post("/documents/{document_id}/verify")
@@ -1161,10 +1392,11 @@ def update_document(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     parsed = payload.parsed_data
+    parsed_age = parsed.age or compute_age_from_dob(parsed.date_of_birth)
 
     document.patient_name = parsed.patient_name
     document.date_of_birth = parsed.date_of_birth
-    document.age = parsed.age
+    document.age = parsed_age
     document.sex = parsed.sex
     document.cnp = parsed.cnp
     document.patient_identifier = parsed.patient_identifier
@@ -1189,7 +1421,7 @@ def update_document(
         {
             "patient_name": parsed.patient_name,
             "date_of_birth": parsed.date_of_birth,
-            "age": parsed.age,
+            "age": parsed_age,
             "sex": parsed.sex,
             "cnp": parsed.cnp,
             "patient_identifier": parsed.patient_identifier,
@@ -1279,7 +1511,7 @@ async def upload_file(
     if target_patient:
         parsed_data["patient_name"] = target_patient.full_name
         parsed_data["date_of_birth"] = target_patient.date_of_birth
-        parsed_data["age"] = target_patient.age
+        parsed_data["age"] = target_patient.age or compute_age_from_dob(target_patient.date_of_birth)
         parsed_data["sex"] = target_patient.sex
         parsed_data["cnp"] = target_patient.cnp
         parsed_data["patient_identifier"] = target_patient.patient_identifier

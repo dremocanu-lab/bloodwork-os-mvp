@@ -19,7 +19,7 @@ type NavItem = {
 
 const navItems: NavItem[] = [
   { label: "Dashboard", href: "/", roles: ["doctor", "admin"] },
-  { label: "Unverified Queue", href: "/unverified", roles: ["doctor", "admin"] },
+  { label: "My Patients", href: "/my-patients", roles: ["doctor"] },
   { label: "My Records", href: "/my-records", roles: ["patient"] },
 ];
 
@@ -109,45 +109,36 @@ export default function Sidebar({ user }: { user: SidebarUser }) {
         })}
       </nav>
 
-      <div
-        style={{
-          marginTop: 28,
-          padding: 18,
-          borderRadius: 22,
-          background: "linear-gradient(135deg, #6d5dfc 0%, #4f46e5 100%)",
-          color: "white",
-        }}
-      >
-        <div style={{ fontSize: 13, opacity: 0.9 }}>Signed in as</div>
-        <div style={{ marginTop: 6, fontSize: 20, fontWeight: 800, textTransform: "capitalize" }}>
-          {user.role}
-        </div>
-        <div style={{ marginTop: 8, fontSize: 13, opacity: 0.9 }}>
-          Menus and actions change depending on profile type.
-        </div>
-      </div>
-
-      <div style={{ flex: 1 }} />
-
-      <div
-        style={{
-          border: "1px solid var(--border)",
-          background: "#f8fafc",
-          borderRadius: 20,
-          padding: 16,
-        }}
-      >
-        <div style={{ fontWeight: 700 }}>{user.full_name}</div>
+      <div style={{ marginTop: "auto" }}>
         <div
+          className="soft-card-tight"
           style={{
-            fontSize: 13,
-            color: "#6b7280",
-            marginTop: 4,
-            overflow: "hidden",
-            textOverflow: "ellipsis",
+            padding: 16,
+            display: "grid",
+            gap: 4,
+            borderRadius: 18,
           }}
         >
-          {user.email}
+          <div style={{ fontWeight: 700 }}>{user.full_name}</div>
+          <div className="muted-text" style={{ fontSize: 13 }}>
+            {user.email}
+          </div>
+          <div
+            style={{
+              marginTop: 10,
+              display: "inline-flex",
+              width: "fit-content",
+              padding: "6px 10px",
+              borderRadius: 999,
+              background: "#eef2ff",
+              color: "#4f46e5",
+              fontSize: 12,
+              fontWeight: 700,
+              textTransform: "capitalize",
+            }}
+          >
+            {user.role}
+          </div>
         </div>
       </div>
     </aside>

@@ -2,42 +2,75 @@
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
-import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import AppShell from "@/components/app-shell";
-import PageTabs from "@/components/page-tabs";
-import StatCard from "@/components/stat-card";
+import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 
 type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
   role: "patient" | "doctor" | "admin";
+  department?: string | null;
+  hospital_name?: string | null;
 };
 
-type AccessRequest = {
+type UploadedBy = {
   id: number;
-  doctor_user_id: number;
-  doctor_name: string | null;
-  doctor_email: string | null;
-  status: string;
-  requested_at: string;
-  responded_at?: string | null;
+  email: string;
+  full_name: string;
+  role: "patient" | "doctor" | "admin";
+  department?: string | null;
+  hospital_name?: string | null;
 };
 
-type SectionDocument = {
+type DocumentCard = {
   id: number;
   filename: string;
-  report_name: string | null;
-  test_date: string | null;
+  report_name?: string | null;
+  report_type?: string | null;
+  lab_name?: string | null;
+  sample_type?: string | null;
+  referring_doctor?: string | null;
+  test_date?: string | null;
   section: string;
-  is_verified?: boolean;
+  is_verified: boolean;
+  uploaded_by?: UploadedBy | null;
 };
 
 type DoctorAccess = {
   doctor_user_id: number;
   doctor_name: string;
   doctor_email: string;
+  department?: string | null;
+  hospital_name?: string | null;
   granted_at: string;
+};
+
+type PatientEvent = {
+  id: number;
+  patient_id: number;
+  doctor_user_id: number;
+  event_type: string;
+  status: string;
+  title: string;
+  description?: string | null;
+  hospital_name?: string | null;
+  department?: string | null;
+  admitted_at: string;
+  discharged_at?: string | null;
+  doctor_name?: string | null;
+};
+
+type AccessRequest = {
+  id: number;
+  doctor_user_id: number;
+  doctor_name?: string | null;
+  doctor_email?: string | null;
+  doctor_department?: string | null;
+  doctor_hospital_name?: string | null;
+  status: string;
+  requested_at: string;
+  responded_at?: string | null;
 };
 
 type MyProfileResponse = {
@@ -45,79 +78,49 @@ type MyProfileResponse = {
     id: number;
     full_name: string;
     date_of_birth?: string | null;
-    age: string | null;
-    sex: string | null;
+    age?: string | null;
+    sex?: string | null;
     cnp?: string | null;
     patient_identifier?: string | null;
   };
   sections: {
-    bloodwork: SectionDocument[];
-    medications: SectionDocument[];
-    scans: SectionDocument[];
-    hospitalizations: SectionDocument[];
-    other: SectionDocument[];
+    bloodwork: DocumentCard[];
+    medications: DocumentCard[];
+    scans: DocumentCard[];
+    hospitalizations: DocumentCard[];
+    other: DocumentCard[];
   };
   doctor_access: DoctorAccess[];
+  events: PatientEvent[];
 };
 
-const sectionOptions = [
-  { key: "bloodwork", label: "Bloodwork" },
-  { key: "medications", label: "Medications" },
-  { key: "scans", label: "Scans" },
-  { key: "hospitalizations", label: "Hospitalizations" },
-  { key: "other", label: "Other" },
-] as const;
+const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
+  "bloodwork",
+  "medications",
+  "scans",
+  "hospitalizations",
+  "other",
+];
+
+const SECTION_LABELS: Record<string, string> = {
+  bloodwork: "Bloodwork",
+  medications: "Medications",
+  scans: "Scans",
+  hospitalizations: "Hospitalizations",
+  other: "Other",
+};
 
 export default function MyRecordsPage() {
   const router = useRouter();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
-  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
-  const [activeTab, setActiveTab] = useState<string>("overview");
+  const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [activeSection, setActiveSection] =
+    useState<keyof MyProfileResponse["sections"]>("bloodwork");
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploadSection, setUploadSection] = useState("bloodwork");
-  const [uploading, setUploading] = useState(false);
-  const [respondingRequestId, setRespondingRequestId] = useState<number | null>(null);
-
-  const currentSectionDocs = useMemo(() => {
-    if (!profile) return [];
-    if (activeTab === "bloodwork") return profile.sections.bloodwork;
-    if (activeTab === "medications") return profile.sections.medications;
-    if (activeTab === "scans") return profile.sections.scans;
-    if (activeTab === "hospitalizations") return profile.sections.hospitalizations;
-    if (activeTab === "other") return profile.sections.other;
-    return [];
-  }, [profile, activeTab]);
-
-  const totalDocuments = useMemo(() => {
-    if (!profile) return 0;
-    return (
-      profile.sections.bloodwork.length +
-      profile.sections.medications.length +
-      profile.sections.scans.length +
-      profile.sections.hospitalizations.length +
-      profile.sections.other.length
-    );
-  }, [profile]);
-
-  const pendingRequests = useMemo(
-    () => accessRequests.filter((request) => request.status === "pending").length,
-    [accessRequests]
-  );
-
-  const tabs = [
-    { key: "overview", label: "Overview" },
-    { key: "bloodwork", label: "Bloodwork" },
-    { key: "medications", label: "Medications" },
-    { key: "scans", label: "Scans" },
-    { key: "hospitalizations", label: "Hospitalizations" },
-    { key: "other", label: "Other" },
-    { key: "access-requests", label: "Doctor Requests" },
-  ];
 
   const fetchMe = async () => {
     try {
@@ -133,93 +136,73 @@ export default function MyRecordsPage() {
 
   const fetchProfile = async () => {
     try {
+      setError("");
       const response = await api.get<MyProfileResponse>("/my/profile");
       setProfile(response.data);
     } catch (err) {
-      setError(getErrorMessage(err, "Failed to load your profile."));
+      setError(getErrorMessage(err, "Failed to load your records."));
     }
   };
 
-  const fetchAccessRequests = async () => {
+  const fetchRequests = async () => {
     try {
       const response = await api.get<AccessRequest[]>("/my/access-requests");
-      setAccessRequests(response.data);
+      setRequests(response.data);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to load access requests."));
     }
   };
 
-  const handleUpload = async () => {
-    if (!uploadFile) {
-      setError("Choose a file first.");
-      return;
-    }
-
-    try {
-      setUploading(true);
-      setError("");
-
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      formData.append("section", uploadSection);
-
-      await api.post("/upload", formData, {
-        headers: {
-          "Content-Type": "multipart/form-data",
-        },
-        timeout: 300000,
-      });
-
-      setUploadFile(null);
-      await fetchProfile();
-    } catch (err) {
-      setError(getErrorMessage(err, "Failed to upload file."));
-    } finally {
-      setUploading(false);
-    }
-  };
-
   const respondToRequest = async (requestId: number, status: "approved" | "denied") => {
     try {
-      setRespondingRequestId(requestId);
       setError("");
-
-      await api.post(`/access-requests/${requestId}/respond`, {
-        status,
-      });
-
-      await fetchAccessRequests();
-      await fetchProfile();
+      await api.post(`/access-requests/${requestId}/respond`, { status });
+      await Promise.all([fetchProfile(), fetchRequests()]);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to respond to request."));
-    } finally {
-      setRespondingRequestId(null);
     }
-  };
-
-  const logout = () => {
-    localStorage.removeItem("access_token");
-    router.push("/login");
   };
 
   useEffect(() => {
     const init = async () => {
       const me = await fetchMe();
       if (!me) return;
-
       if (me.role !== "patient") {
         router.push("/");
         return;
       }
-
-      await Promise.all([fetchProfile(), fetchAccessRequests()]);
+      await Promise.all([fetchProfile(), fetchRequests()]);
       setLoading(false);
     };
-
     init();
   }, []);
 
-  if (loading || !currentUser) {
+  const recordsByDoctor = useMemo(() => {
+    if (!profile) return [];
+
+    const docs = SECTION_ORDER.flatMap((section) => profile.sections[section]);
+    const groups = new Map<string, { label: string; docs: DocumentCard[] }>();
+
+    docs.forEach((doc) => {
+      const uploader = doc.uploaded_by;
+      const key = uploader?.id ? `user-${uploader.id}` : "unknown";
+      const label = uploader
+        ? `${uploader.full_name}${uploader.department ? ` · ${uploader.department}` : ""}${
+            uploader.hospital_name ? ` · ${uploader.hospital_name}` : ""
+          }`
+        : "Unknown uploader";
+
+      if (!groups.has(key)) {
+        groups.set(key, { label, docs: [] });
+      }
+
+      groups.get(key)!.docs.push(doc);
+    });
+
+    return Array.from(groups.values()).sort((a, b) => b.docs.length - a.docs.length);
+  }, [profile]);
+
+  if (loading || !currentUser || !profile) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
         <p className="muted-text">Loading your records...</p>
@@ -227,33 +210,15 @@ export default function MyRecordsPage() {
     );
   }
 
-  if (!profile) {
-    return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <div className="soft-card" style={{ padding: 24, maxWidth: 640 }}>
-          <p style={{ color: "#b91c1c", marginBottom: 16 }}>
-            {error || "Could not load your records."}
-          </p>
-          <button className="secondary-btn" onClick={() => router.push("/login")}>
-            Back
-          </button>
-        </div>
-      </main>
-    );
-  }
+  const docsForSection = profile.sections[activeSection];
 
   return (
     <AppShell
       user={currentUser}
       title="My Records"
-      subtitle={`${profile.patient.full_name} · DOB ${valueOrDash(
-        profile.patient.date_of_birth
-      )}`}
-      rightContent={
-        <button className="secondary-btn" onClick={logout}>
-          Log out
-        </button>
-      }
+      subtitle={`DOB ${valueOrDash(profile.patient.date_of_birth)} · Age ${valueOrDash(
+        profile.patient.age
+      )} · Sex ${valueOrDash(profile.patient.sex)}`}
     >
       {error && (
         <div
@@ -273,257 +238,235 @@ export default function MyRecordsPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(4, minmax(0, 1fr))",
-          gap: 16,
+          gridTemplateColumns: "1.1fr 1fr",
+          gap: 20,
           marginBottom: 24,
         }}
       >
-        <StatCard label="Total Documents" value={totalDocuments} accent="violet" />
-        <StatCard
-          label="Doctors With Access"
-          value={profile.doctor_access.length}
-          accent="blue"
-        />
-        <StatCard label="Pending Requests" value={pendingRequests} accent="orange" />
-        <StatCard
-          label="Patient ID"
-          value={valueOrDash(profile.patient.patient_identifier)}
-          accent="green"
-        />
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.3fr 1fr", gap: 24, marginBottom: 24 }}>
         <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>
-            Upload to My Record
+          <div className="section-title" style={{ marginBottom: 16 }}>
+            My Doctors
           </div>
 
-          <div style={{ display: "grid", gap: 14 }}>
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-                Section
+          <div style={{ display: "grid", gap: 12 }}>
+            {profile.doctor_access.map((doctor) => (
+              <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 16 }}>
+                <div style={{ fontWeight: 800 }}>{doctor.doctor_name}</div>
+                <div className="muted-text" style={{ marginTop: 4 }}>
+                  {doctor.doctor_email}
+                </div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                </div>
               </div>
-              <select
-                className="select-input"
-                value={uploadSection}
-                onChange={(e) => setUploadSection(e.target.value)}
-              >
-                {sectionOptions.map((section) => (
-                  <option key={section.key} value={section.key}>
-                    {section.label}
-                  </option>
-                ))}
-              </select>
-            </div>
+            ))}
 
-            <div>
-              <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-                File
-              </div>
-              <input
-                className="text-input"
-                type="file"
-                accept=".pdf,.png,.jpg,.jpeg"
-                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-              />
-            </div>
-
-            <button
-              className="primary-btn"
-              onClick={handleUpload}
-              disabled={uploading || !uploadFile}
-            >
-              {uploading ? "Uploading..." : "Upload"}
-            </button>
-          </div>
-        </div>
-
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>
-            Profile Snapshot
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            <div className="soft-card-tight" style={{ padding: 14 }}>
-              Full name: {profile.patient.full_name}
-            </div>
-            <div className="soft-card-tight" style={{ padding: 14 }}>
-              DOB: {valueOrDash(profile.patient.date_of_birth)}
-            </div>
-            <div className="soft-card-tight" style={{ padding: 14 }}>
-              Age: {valueOrDash(profile.patient.age)}
-            </div>
-            <div className="soft-card-tight" style={{ padding: 14 }}>
-              Sex: {valueOrDash(profile.patient.sex)}
-            </div>
-            <div className="soft-card-tight" style={{ padding: 14 }}>
-              CNP: {valueOrDash(profile.patient.cnp)}
-            </div>
-          </div>
-        </div>
-      </div>
-
-      <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
-
-      {activeTab === "overview" && (
-        <div style={{ display: "grid", gridTemplateColumns: "1.2fr 1fr", gap: 24 }}>
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 18 }}>
-              My Sections
-            </div>
-
-            <div
-              style={{
-                display: "grid",
-                gridTemplateColumns: "repeat(2, minmax(0, 1fr))",
-                gap: 16,
-              }}
-            >
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Bloodwork: {profile.sections.bloodwork.length}
-              </div>
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Medications: {profile.sections.medications.length}
-              </div>
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Scans: {profile.sections.scans.length}
-              </div>
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Hospitalizations: {profile.sections.hospitalizations.length}
-              </div>
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Other: {profile.sections.other.length}
-              </div>
-              <div className="soft-card-tight" style={{ padding: 18 }}>
-                Doctors: {profile.doctor_access.length}
-              </div>
-            </div>
-          </div>
-
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 18 }}>
-              Doctors With Access
-            </div>
-
-            {profile.doctor_access.length === 0 ? (
-              <p className="muted-text">No doctors currently have access.</p>
-            ) : (
-              <div style={{ display: "grid", gap: 14 }}>
-                {profile.doctor_access.map((doctor) => (
-                  <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 18 }}>
-                    <div style={{ fontWeight: 700 }}>{doctor.doctor_name}</div>
-                    <div className="muted-text" style={{ marginTop: 4, fontSize: 14 }}>
-                      {doctor.doctor_email}
-                    </div>
-                    <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
-                      Granted: {valueOrDash(doctor.granted_at)}
-                    </div>
-                  </div>
-                ))}
-              </div>
+            {!profile.doctor_access.length && (
+              <div className="muted-text">No doctors currently assigned.</div>
             )}
           </div>
         </div>
-      )}
 
-      {["bloodwork", "medications", "scans", "hospitalizations", "other"].includes(
-        activeTab
-      ) && (
         <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>
-            {activeTab.charAt(0).toUpperCase() + activeTab.slice(1)} Documents
-          </div>
-
-          {currentSectionDocs.length === 0 ? (
-            <p className="muted-text">No documents in this section yet.</p>
-          ) : (
-            <div style={{ overflowX: "auto" }}>
-              <table className="data-table">
-                <thead>
-                  <tr>
-                    <th>ID</th>
-                    <th>Filename</th>
-                    <th>Report</th>
-                    <th>Date</th>
-                    <th>Verified</th>
-                  </tr>
-                </thead>
-                <tbody>
-                  {currentSectionDocs.map((doc) => (
-                    <tr key={doc.id}>
-                      <td>{doc.id}</td>
-                      <td>{doc.filename}</td>
-                      <td>{valueOrDash(doc.report_name)}</td>
-                      <td>{valueOrDash(doc.test_date)}</td>
-                      <td>{doc.is_verified ? "Yes" : "No"}</td>
-                    </tr>
-                  ))}
-                </tbody>
-              </table>
-            </div>
-          )}
-        </div>
-      )}
-
-      {activeTab === "access-requests" && (
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>
+          <div className="section-title" style={{ marginBottom: 16 }}>
             Doctor Access Requests
           </div>
 
-          {accessRequests.length === 0 ? (
-            <p className="muted-text">No access requests.</p>
-          ) : (
-            <div style={{ display: "grid", gap: 14 }}>
-              {accessRequests.map((request) => (
-                <div key={request.id} className="soft-card-tight" style={{ padding: 18 }}>
+          <div style={{ display: "grid", gap: 12 }}>
+            {requests.map((request) => (
+              <div key={request.id} className="soft-card-tight" style={{ padding: 16 }}>
+                <div style={{ fontWeight: 800 }}>{valueOrDash(request.doctor_name)}</div>
+                <div className="muted-text" style={{ marginTop: 4 }}>
+                  {valueOrDash(request.doctor_email)}
+                </div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  {valueOrDash(request.doctor_department)} ·{" "}
+                  {valueOrDash(request.doctor_hospital_name)}
+                </div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  Status: {request.status}
+                </div>
+
+                {request.status === "pending" && (
+                  <div style={{ display: "flex", gap: 10, marginTop: 12 }}>
+                    <button
+                      className="primary-btn"
+                      onClick={() => respondToRequest(request.id, "approved")}
+                    >
+                      Approve
+                    </button>
+                    <button
+                      className="secondary-btn"
+                      onClick={() => respondToRequest(request.id, "denied")}
+                    >
+                      Deny
+                    </button>
+                  </div>
+                )}
+              </div>
+            ))}
+
+            {!requests.length && (
+              <div className="muted-text">No doctor access requests yet.</div>
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+        <div className="section-title" style={{ marginBottom: 16 }}>
+          Hospitalization Timeline
+        </div>
+
+        <div style={{ display: "grid", gap: 12 }}>
+          {profile.events.map((event) => (
+            <div key={event.id} className="soft-card-tight" style={{ padding: 16 }}>
+              <div style={{ fontWeight: 800 }}>{event.title}</div>
+              <div className="muted-text" style={{ marginTop: 4 }}>
+                {valueOrDash(event.department)} · {valueOrDash(event.hospital_name)}
+              </div>
+              <div className="muted-text" style={{ marginTop: 4 }}>
+                {event.status === "active" ? "Active" : "Discharged"} · Doctor{" "}
+                {valueOrDash(event.doctor_name)}
+              </div>
+              {event.description && <div style={{ marginTop: 8 }}>{event.description}</div>}
+            </div>
+          ))}
+
+          {!profile.events.length && (
+            <div className="muted-text">No hospitalization events recorded.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+        <div
+          style={{
+            display: "flex",
+            gap: 10,
+            flexWrap: "wrap",
+            marginBottom: 18,
+          }}
+        >
+          {SECTION_ORDER.map((section) => {
+            const active = activeSection === section;
+            return (
+              <button
+                key={section}
+                className={active ? "primary-btn" : "secondary-btn"}
+                onClick={() => setActiveSection(section)}
+              >
+                {SECTION_LABELS[section]} ({profile.sections[section].length})
+              </button>
+            );
+          })}
+        </div>
+
+        <div style={{ display: "grid", gap: 14 }}>
+          {docsForSection.map((doc) => (
+            <div key={doc.id} className="soft-card-tight" style={{ padding: 16 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1.3fr 1fr auto",
+                  gap: 16,
+                  alignItems: "start",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 800 }}>
+                    {valueOrDash(doc.report_name || doc.filename)}
+                  </div>
+                  <div className="muted-text" style={{ marginTop: 6 }}>
+                    {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
+                  </div>
+                  <div className="muted-text" style={{ marginTop: 6 }}>
+                    {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)}
+                  </div>
+                </div>
+
+                <div>
+                  <div className="muted-text" style={{ fontSize: 13 }}>
+                    Uploaded by
+                  </div>
+                  <div style={{ marginTop: 6, fontWeight: 700 }}>
+                    {valueOrDash(doc.uploaded_by?.full_name)}
+                  </div>
+                  <div className="muted-text" style={{ marginTop: 4 }}>
+                    {valueOrDash(doc.uploaded_by?.department)} ·{" "}
+                    {valueOrDash(doc.uploaded_by?.hospital_name)}
+                  </div>
+                </div>
+
+                <div>
                   <div
+                    style={{
+                      display: "inline-flex",
+                      padding: "6px 10px",
+                      borderRadius: 999,
+                      background: doc.is_verified ? "#ecfdf5" : "#fff7ed",
+                      color: doc.is_verified ? "#047857" : "#c2410c",
+                      fontSize: 12,
+                      fontWeight: 800,
+                    }}
+                  >
+                    {doc.is_verified ? "Verified" : "Unverified"}
+                  </div>
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {!docsForSection.length && (
+            <div className="muted-text">No records in this section yet.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="soft-card" style={{ padding: 24 }}>
+        <div className="section-title" style={{ marginBottom: 16 }}>
+          Records Grouped By Doctor / Uploader
+        </div>
+
+        <div style={{ display: "grid", gap: 16 }}>
+          {recordsByDoctor.map((group) => (
+            <div key={group.label} className="soft-card-tight" style={{ padding: 18 }}>
+              <div style={{ fontWeight: 800, marginBottom: 10 }}>
+                {group.label} ({group.docs.length})
+              </div>
+
+              <div style={{ display: "grid", gap: 10 }}>
+                {group.docs.map((doc) => (
+                  <div
+                    key={doc.id}
                     style={{
                       display: "flex",
                       justifyContent: "space-between",
                       gap: 16,
-                      alignItems: "flex-start",
-                      flexWrap: "wrap",
+                      padding: "10px 0",
+                      borderTop: "1px solid var(--border)",
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 700 }}>{valueOrDash(request.doctor_name)}</div>
-                      <div className="muted-text" style={{ marginTop: 4, fontSize: 14 }}>
-                        {valueOrDash(request.doctor_email)}
+                      <div style={{ fontWeight: 700 }}>
+                        {valueOrDash(doc.report_name || doc.filename)}
                       </div>
-                      <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
-                        Requested: {valueOrDash(request.requested_at)}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                        Status: {valueOrDash(request.status)}
+                      <div className="muted-text" style={{ marginTop: 4 }}>
+                        {SECTION_LABELS[doc.section] || doc.section} · {valueOrDash(doc.test_date)}
                       </div>
                     </div>
-
-                    {request.status === "pending" && (
-                      <div style={{ display: "flex", gap: 10 }}>
-                        <button
-                          className="primary-btn"
-                          onClick={() => respondToRequest(request.id, "approved")}
-                          disabled={respondingRequestId === request.id}
-                        >
-                          Approve
-                        </button>
-                        <button
-                          className="secondary-btn"
-                          onClick={() => respondToRequest(request.id, "denied")}
-                          disabled={respondingRequestId === request.id}
-                        >
-                          Deny
-                        </button>
-                      </div>
-                    )}
+                    <div className="muted-text">{valueOrDash(doc.lab_name)}</div>
                   </div>
-                </div>
-              ))}
+                ))}
+              </div>
             </div>
+          ))}
+
+          {!recordsByDoctor.length && (
+            <div className="muted-text">No uploaded records yet.</div>
           )}
         </div>
-      )}
+      </div>
     </AppShell>
   );
 }

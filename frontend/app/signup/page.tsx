@@ -1,6 +1,6 @@
 "use client";
 
-import { useState } from "react";
+import { useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getErrorMessage } from "@/lib/api";
 
@@ -12,8 +12,41 @@ type SignupResponse = {
     email: string;
     full_name: string;
     role: "patient" | "doctor" | "admin";
+    department?: string | null;
+    hospital_name?: string | null;
   };
 };
+
+const DEPARTMENTS = [
+  "Endocrinology",
+  "General Surgery",
+  "Internal Medicine",
+  "Family Medicine",
+  "Cardiology",
+  "Orthopedics",
+  "Emergency Medicine",
+  "Neurology",
+  "Pediatrics",
+  "Obstetrics and Gynecology",
+  "Oncology",
+  "Radiology",
+  "ICU",
+];
+
+const SEX_OPTIONS = ["Male", "Female"];
+
+function computeAge(dateOfBirth: string) {
+  if (!dateOfBirth) return "";
+  const dob = new Date(dateOfBirth);
+  if (Number.isNaN(dob.getTime())) return "";
+  const today = new Date();
+  let age = today.getFullYear() - dob.getFullYear();
+  const m = today.getMonth() - dob.getMonth();
+  if (m < 0 || (m === 0 && today.getDate() < dob.getDate())) {
+    age -= 1;
+  }
+  return age >= 0 ? String(age) : "";
+}
 
 export default function SignupPage() {
   const router = useRouter();
@@ -24,13 +57,19 @@ export default function SignupPage() {
   const [role, setRole] = useState<"patient" | "doctor" | "admin">("doctor");
 
   const [dateOfBirth, setDateOfBirth] = useState("");
-  const [age, setAge] = useState("");
   const [sex, setSex] = useState("");
   const [cnp, setCnp] = useState("");
   const [patientIdentifier, setPatientIdentifier] = useState("");
 
+  const [department, setDepartment] = useState("");
+  const [hospitalName, setHospitalName] = useState("");
+
   const [loading, setLoading] = useState(false);
   const [error, setError] = useState("");
+
+  const age = useMemo(() => computeAge(dateOfBirth), [dateOfBirth]);
+  const isDoctor = role === "doctor";
+  const isPatient = role === "patient";
 
   const handleSignup = async () => {
     setError("");
@@ -45,8 +84,10 @@ export default function SignupPage() {
         date_of_birth: dateOfBirth || null,
         age: age || null,
         sex: sex || null,
-        cnp: cnp || null,
-        patient_identifier: patientIdentifier || null,
+        cnp: isPatient ? cnp || null : null,
+        patient_identifier: isPatient ? patientIdentifier || null : null,
+        department: isDoctor ? department || null : null,
+        hospital_name: isDoctor ? hospitalName || null : null,
       });
 
       localStorage.setItem("access_token", response.data.access_token);
@@ -60,17 +101,17 @@ export default function SignupPage() {
 
   return (
     <main className="min-h-screen bg-white p-8 text-black">
-      <div className="mx-auto max-w-2xl rounded-xl border border-gray-300 bg-white p-6 shadow-sm">
-        <h1 className="mb-2 text-3xl font-bold">Signup</h1>
+      <div className="mx-auto max-w-3xl rounded-2xl border border-gray-200 bg-white p-8 shadow-sm">
+        <h1 className="mb-2 text-3xl font-bold">Create account</h1>
         <p className="mb-6 text-sm text-gray-600">
-          Create a new Bloodwork MVP account.
+          Build a user for your Bloodwork OS MVP.
         </p>
 
         <div className="grid grid-cols-1 gap-4 md:grid-cols-2">
           <div>
-            <label className="mb-2 block text-sm font-medium">Full Name</label>
+            <label className="mb-2 block text-sm font-medium">Full name</label>
             <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={fullName}
               onChange={(e) => setFullName(e.target.value)}
               placeholder="Full name"
@@ -80,7 +121,7 @@ export default function SignupPage() {
           <div>
             <label className="mb-2 block text-sm font-medium">Email</label>
             <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={email}
               onChange={(e) => setEmail(e.target.value)}
               placeholder="name@example.com"
@@ -91,7 +132,7 @@ export default function SignupPage() {
           <div>
             <label className="mb-2 block text-sm font-medium">Password</label>
             <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={password}
               onChange={(e) => setPassword(e.target.value)}
               placeholder="Password"
@@ -102,74 +143,121 @@ export default function SignupPage() {
           <div>
             <label className="mb-2 block text-sm font-medium">Role</label>
             <select
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={role}
               onChange={(e) =>
                 setRole(e.target.value as "patient" | "doctor" | "admin")
               }
             >
-              <option value="doctor">doctor</option>
-              <option value="admin">admin</option>
-              <option value="patient">patient</option>
+              <option value="doctor">Doctor</option>
+              <option value="admin">Admin</option>
+              <option value="patient">Patient</option>
             </select>
           </div>
 
           <div>
-            <label className="mb-2 block text-sm font-medium">Date of Birth</label>
+            <label className="mb-2 block text-sm font-medium">Date of birth</label>
             <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={dateOfBirth}
               onChange={(e) => setDateOfBirth(e.target.value)}
-              placeholder="YYYY-MM-DD"
+              type="date"
             />
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium">Age</label>
             <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+              className="w-full rounded-xl border border-gray-200 bg-gray-50 p-3 text-sm"
               value={age}
-              onChange={(e) => setAge(e.target.value)}
-              placeholder="Age"
+              readOnly
+              placeholder="Auto-calculated"
             />
           </div>
 
           <div>
             <label className="mb-2 block text-sm font-medium">Sex</label>
-            <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
+            <select
+              className="w-full rounded-xl border border-gray-300 p-3 text-sm"
               value={sex}
               onChange={(e) => setSex(e.target.value)}
-              placeholder="Sex"
-            />
+            >
+              <option value="">Select sex</option>
+              {SEX_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
           </div>
 
-          <div>
-            <label className="mb-2 block text-sm font-medium">CNP</label>
-            <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
-              value={cnp}
-              onChange={(e) => setCnp(e.target.value)}
-              placeholder="CNP"
-            />
-          </div>
+          {isDoctor && (
+            <>
+              <div>
+                <label className="mb-2 block text-sm font-medium">Department</label>
+                <select
+                  className="w-full rounded-xl border border-gray-300 p-3 text-sm"
+                  value={department}
+                  onChange={(e) => setDepartment(e.target.value)}
+                >
+                  <option value="">Select department</option>
+                  {DEPARTMENTS.map((dept) => (
+                    <option key={dept} value={dept}>
+                      {dept}
+                    </option>
+                  ))}
+                </select>
+              </div>
 
-          <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-medium">Patient Identifier</label>
-            <input
-              className="w-full rounded border border-gray-300 p-3 text-sm"
-              value={patientIdentifier}
-              onChange={(e) => setPatientIdentifier(e.target.value)}
-              placeholder="Hospital ID / patient ID"
-            />
-          </div>
+              <div className="md:col-span-2">
+                <label className="mb-2 block text-sm font-medium">Hospital</label>
+                <input
+                  className="w-full rounded-xl border border-gray-300 p-3 text-sm"
+                  value={hospitalName}
+                  onChange={(e) => setHospitalName(e.target.value)}
+                  placeholder="Hospital / clinic name"
+                />
+              </div>
+            </>
+          )}
+
+          {isPatient && (
+            <>
+              <div>
+                <label className="mb-2 block text-sm font-medium">CNP</label>
+                <input
+                  className="w-full rounded-xl border border-gray-300 p-3 text-sm"
+                  value={cnp}
+                  onChange={(e) => setCnp(e.target.value)}
+                  placeholder="CNP"
+                />
+              </div>
+
+              <div>
+                <label className="mb-2 block text-sm font-medium">Patient Identifier</label>
+                <input
+                  className="w-full rounded-xl border border-gray-300 p-3 text-sm"
+                  value={patientIdentifier}
+                  onChange={(e) => setPatientIdentifier(e.target.value)}
+                  placeholder="Hospital ID / patient ID"
+                />
+              </div>
+            </>
+          )}
         </div>
 
         <div className="mt-6 space-y-4">
           <button
             onClick={handleSignup}
-            disabled={loading || !fullName || !email || !password || !role}
-            className="w-full rounded-lg bg-black px-4 py-3 text-white disabled:opacity-50"
+            disabled={
+              loading ||
+              !fullName ||
+              !email ||
+              !password ||
+              !role ||
+              (isDoctor && (!department || !hospitalName))
+            }
+            className="w-full rounded-xl bg-black px-4 py-3 text-white disabled:opacity-50"
           >
             {loading ? "Creating account..." : "Signup"}
           </button>
@@ -178,7 +266,7 @@ export default function SignupPage() {
 
           <button
             onClick={() => router.push("/login")}
-            className="w-full rounded-lg border border-gray-300 px-4 py-3 text-sm"
+            className="w-full rounded-xl border border-gray-300 px-4 py-3 text-sm"
           >
             Go to Login
           </button>

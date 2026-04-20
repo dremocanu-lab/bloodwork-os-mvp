@@ -5,7 +5,7 @@ from sqlalchemy.orm import declarative_base, sessionmaker
 
 raw_database_url = os.getenv(
     "DATABASE_URL",
-    "postgresql+psycopg://postgres:dreams@localhost:5432/mvp1_db",
+    "postgresql+psycopg://postgres:dreams@localhost:5432/mvp1_phase1",
 )
 
 if raw_database_url.startswith("postgresql://"):
