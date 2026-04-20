@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { api, getErrorMessage } from "@/lib/api";
 
 type LoginResponse = {
   access_token: string;
@@ -30,7 +28,7 @@ export default function LoginPage() {
     setLoading(true);
 
     try {
-      const response = await axios.post<LoginResponse>(`${API_URL}/auth/login`, {
+      const response = await api.post<LoginResponse>("/auth/login", {
         email,
         password,
       });
@@ -38,11 +36,7 @@ export default function LoginPage() {
       localStorage.setItem("access_token", response.data.access_token);
       router.push("/");
     } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          "Login failed."
-      );
+      setError(getErrorMessage(err, "Login failed."));
     } finally {
       setLoading(false);
     }

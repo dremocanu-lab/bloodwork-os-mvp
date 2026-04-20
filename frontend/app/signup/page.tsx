@@ -2,9 +2,7 @@
 
 import { useState } from "react";
 import { useRouter } from "next/navigation";
-import axios from "axios";
-
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8000";
+import { api, getErrorMessage } from "@/lib/api";
 
 type SignupResponse = {
   access_token: string;
@@ -39,7 +37,7 @@ export default function SignupPage() {
     setLoading(true);
 
     try {
-      const response = await axios.post<SignupResponse>(`${API_URL}/auth/signup`, {
+      const response = await api.post<SignupResponse>("/auth/signup", {
         full_name: fullName,
         email,
         password,
@@ -54,11 +52,7 @@ export default function SignupPage() {
       localStorage.setItem("access_token", response.data.access_token);
       router.push("/");
     } catch (err: any) {
-      setError(
-        err?.response?.data?.detail ||
-          err?.response?.data?.error ||
-          "Signup failed."
-      );
+      setError(getErrorMessage(err, "Signup failed."));
     } finally {
       setLoading(false);
     }
@@ -126,7 +120,7 @@ export default function SignupPage() {
               className="w-full rounded border border-gray-300 p-3 text-sm"
               value={dateOfBirth}
               onChange={(e) => setDateOfBirth(e.target.value)}
-              placeholder="1999-01-31 or 31.01.1999"
+              placeholder="YYYY-MM-DD"
             />
           </div>
 
@@ -136,7 +130,7 @@ export default function SignupPage() {
               className="w-full rounded border border-gray-300 p-3 text-sm"
               value={age}
               onChange={(e) => setAge(e.target.value)}
-              placeholder="25"
+              placeholder="Age"
             />
           </div>
 
@@ -146,7 +140,7 @@ export default function SignupPage() {
               className="w-full rounded border border-gray-300 p-3 text-sm"
               value={sex}
               onChange={(e) => setSex(e.target.value)}
-              placeholder="Male / Female"
+              placeholder="Sex"
             />
           </div>
 
@@ -156,30 +150,28 @@ export default function SignupPage() {
               className="w-full rounded border border-gray-300 p-3 text-sm"
               value={cnp}
               onChange={(e) => setCnp(e.target.value)}
-              placeholder="Optional"
+              placeholder="CNP"
             />
           </div>
 
           <div className="md:col-span-2">
-            <label className="mb-2 block text-sm font-medium">
-              Patient Identifier
-            </label>
+            <label className="mb-2 block text-sm font-medium">Patient Identifier</label>
             <input
               className="w-full rounded border border-gray-300 p-3 text-sm"
               value={patientIdentifier}
               onChange={(e) => setPatientIdentifier(e.target.value)}
-              placeholder="Optional patient ID / PID"
+              placeholder="Hospital ID / patient ID"
             />
           </div>
         </div>
 
-        <div className="mt-6 space-y-3">
+        <div className="mt-6 space-y-4">
           <button
             onClick={handleSignup}
             disabled={loading || !fullName || !email || !password || !role}
             className="w-full rounded-lg bg-black px-4 py-3 text-white disabled:opacity-50"
           >
-            {loading ? "Creating account..." : "Create Account"}
+            {loading ? "Creating account..." : "Signup"}
           </button>
 
           {error && <p className="text-sm text-red-600">{error}</p>}
