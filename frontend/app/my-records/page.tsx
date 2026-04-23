@@ -95,6 +95,28 @@ type MyProfileResponse = {
   events: PatientEvent[];
 };
 
+type TrendPoint = {
+  document_id: number;
+  date: string;
+  value: number;
+  value_display: string;
+  flag?: string | null;
+  report_name?: string | null;
+  reference_range?: string | null;
+};
+
+type BloodworkTrend = {
+  test_key: string;
+  display_name: string;
+  canonical_name?: string | null;
+  category?: string | null;
+  unit?: string | null;
+  latest: TrendPoint;
+  previous?: TrendPoint | null;
+  delta?: number | null;
+  points: TrendPoint[];
+};
+
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
   "bloodwork",
   "medications",
@@ -113,12 +135,49 @@ const SECTION_LABELS: Record<string, string> = {
 
 const API_URL = process.env.NEXT_PUBLIC_API_URL || "http://127.0.0.1:8001";
 
+function TrendSparkline({ points }: { points: TrendPoint[] }) {
+  if (!points.length) return null;
+
+  const width = 180;
+  const height = 52;
+  const padding = 6;
+
+  const values = points.map((p) => p.value);
+  const min = Math.min(...values);
+  const max = Math.max(...values);
+  const range = max - min || 1;
+
+  const coords = points.map((point, index) => {
+    const x =
+      padding + (index * (width - padding * 2)) / Math.max(points.length - 1, 1);
+    const y =
+      height - padding - ((point.value - min) / range) * (height - padding * 2);
+    return `${x},${y}`;
+  });
+
+  return (
+    <svg width={width} height={height} viewBox={`0 0 ${width} ${height}`}>
+      <polyline
+        fill="none"
+        stroke="#6d5dfc"
+        strokeWidth="2.5"
+        points={coords.join(" ")}
+      />
+      {coords.map((coord, idx) => {
+        const [x, y] = coord.split(",");
+        return <circle key={idx} cx={x} cy={y} r="2.8" fill="#6d5dfc" />;
+      })}
+    </svg>
+  );
+}
+
 export default function MyRecordsPage() {
   const router = useRouter();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [trends, setTrends] = useState<BloodworkTrend[]>([]);
   const [activeSection, setActiveSection] =
     useState<keyof MyProfileResponse["sections"]>("bloodwork");
 
@@ -144,29 +203,27 @@ export default function MyRecordsPage() {
   };
 
   const fetchProfile = async () => {
-    try {
-      setError("");
-      const response = await api.get<MyProfileResponse>("/my/profile");
-      setProfile(response.data);
-    } catch (err) {
-      setError(getErrorMessage(err, "Failed to load your records."));
-    }
+    const response = await api.get<MyProfileResponse>("/my/profile");
+    setProfile(response.data);
+    return response.data;
   };
 
   const fetchRequests = async () => {
-    try {
-      const response = await api.get<AccessRequest[]>("/my/access-requests");
-      setRequests(response.data);
-    } catch (err) {
-      setError(getErrorMessage(err, "Failed to load access requests."));
-    }
+    const response = await api.get<AccessRequest[]>("/my/access-requests");
+    setRequests(response.data);
+  };
+
+  const fetchTrends = async (patientId: number) => {
+    const response = await api.get<BloodworkTrend[]>(`/patients/${patientId}/bloodwork-trends`);
+    setTrends(response.data);
   };
 
   const respondToRequest = async (requestId: number, status: "approved" | "denied") => {
     try {
       setError("");
       await api.post(`/access-requests/${requestId}/respond`, { status });
-      await Promise.all([fetchProfile(), fetchRequests()]);
+      const updatedProfile = await fetchProfile();
+      await Promise.all([fetchRequests(), fetchTrends(updatedProfile.patient.id)]);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to respond to request."));
     }
@@ -192,7 +249,8 @@ export default function MyRecordsPage() {
 
       setUploadFile(null);
       if (hiddenFileInputRef.current) hiddenFileInputRef.current.value = "";
-      await Promise.all([fetchProfile(), fetchRequests()]);
+      const updatedProfile = await fetchProfile();
+      await Promise.all([fetchRequests(), fetchTrends(updatedProfile.patient.id)]);
     } catch (err) {
       setError(getErrorMessage(err, "Failed to upload document."));
     } finally {
@@ -217,8 +275,16 @@ export default function MyRecordsPage() {
         router.push("/");
         return;
       }
-      await Promise.all([fetchProfile(), fetchRequests()]);
-      setLoading(false);
+
+      try {
+        setError("");
+        const profileResponse = await fetchProfile();
+        await Promise.all([fetchRequests(), fetchTrends(profileResponse.patient.id)]);
+      } catch (err) {
+        setError(getErrorMessage(err, "Failed to load your records."));
+      } finally {
+        setLoading(false);
+      }
     };
     init();
   }, []);
@@ -238,10 +304,7 @@ export default function MyRecordsPage() {
           }`
         : "Unknown uploader";
 
-      if (!groups.has(key)) {
-        groups.set(key, { label, docs: [] });
-      }
-
+      if (!groups.has(key)) groups.set(key, { label, docs: [] });
       groups.get(key)!.docs.push(doc);
     });
 
@@ -469,18 +532,15 @@ export default function MyRecordsPage() {
             marginBottom: 18,
           }}
         >
-          {SECTION_ORDER.map((section) => {
-            const active = activeSection === section;
-            return (
-              <button
-                key={section}
-                className={active ? "primary-btn" : "secondary-btn"}
-                onClick={() => setActiveSection(section)}
-              >
-                {SECTION_LABELS[section]} ({profile.sections[section].length})
-              </button>
-            );
-          })}
+          {SECTION_ORDER.map((section) => (
+            <button
+              key={section}
+              className={activeSection === section ? "primary-btn" : "secondary-btn"}
+              onClick={() => setActiveSection(section)}
+            >
+              {SECTION_LABELS[section]} ({profile.sections[section].length})
+            </button>
+          ))}
         </div>
 
         <div style={{ display: "grid", gap: 14 }}>
@@ -557,7 +617,7 @@ export default function MyRecordsPage() {
         </div>
       </div>
 
-      <div className="soft-card" style={{ padding: 24 }}>
+      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
         <div className="section-title" style={{ marginBottom: 16 }}>
           Records Grouped By Doctor / Uploader
         </div>
@@ -600,6 +660,80 @@ export default function MyRecordsPage() {
 
           {!recordsByDoctor.length && (
             <div className="muted-text">No uploaded records yet.</div>
+          )}
+        </div>
+      </div>
+
+      <div className="soft-card" style={{ padding: 24 }}>
+        <div className="section-title" style={{ marginBottom: 16 }}>
+          Bloodwork Trends
+        </div>
+
+        <div style={{ display: "grid", gap: 16 }}>
+          {trends.map((trend) => (
+            <div key={trend.test_key} className="soft-card-tight" style={{ padding: 18 }}>
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1.1fr 220px",
+                  gap: 18,
+                  alignItems: "center",
+                }}
+              >
+                <div>
+                  <div style={{ fontWeight: 800, fontSize: 18 }}>{trend.display_name}</div>
+                  <div className="muted-text" style={{ marginTop: 4 }}>
+                    {valueOrDash(trend.category)} · Unit {valueOrDash(trend.unit)}
+                  </div>
+
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
+                      gap: 12,
+                      marginTop: 14,
+                    }}
+                  >
+                    <div>
+                      <div className="muted-text" style={{ fontSize: 12 }}>Latest</div>
+                      <div style={{ fontWeight: 800, fontSize: 24 }}>
+                        {valueOrDash(trend.latest.value_display)}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="muted-text" style={{ fontSize: 12 }}>Previous</div>
+                      <div style={{ fontWeight: 800, fontSize: 24 }}>
+                        {trend.previous ? valueOrDash(trend.previous.value_display) : "—"}
+                      </div>
+                    </div>
+
+                    <div>
+                      <div className="muted-text" style={{ fontSize: 12 }}>Delta</div>
+                      <div style={{ fontWeight: 800, fontSize: 24 }}>
+                        {trend.delta === null || trend.delta === undefined
+                          ? "—"
+                          : trend.delta > 0
+                          ? `+${trend.delta}`
+                          : `${trend.delta}`}
+                      </div>
+                    </div>
+                  </div>
+
+                  <div className="muted-text" style={{ marginTop: 10 }}>
+                    Latest sample: {valueOrDash(trend.latest.date)} · Ref {valueOrDash(trend.latest.reference_range)}
+                  </div>
+                </div>
+
+                <div style={{ justifySelf: "end" }}>
+                  <TrendSparkline points={trend.points} />
+                </div>
+              </div>
+            </div>
+          ))}
+
+          {!trends.length && (
+            <div className="muted-text">No numeric bloodwork trends available yet.</div>
           )}
         </div>
       </div>

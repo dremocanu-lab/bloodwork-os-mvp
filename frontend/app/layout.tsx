@@ -1,9 +1,6 @@
-import "./globals.css";
+"use client";
 
-export const metadata = {
-  title: "Bloodwork OS",
-  description: "Clinical record workspace",
-};
+import "./globals.css";
 
 export default function RootLayout({
   children,
