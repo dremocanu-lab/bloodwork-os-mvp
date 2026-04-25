@@ -57,9 +57,39 @@ type AdminAssignmentRow = {
   is_unassigned: boolean;
 };
 
+function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <>
+      <style jsx>{`
+        @keyframes bloodworkSpin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .bloodwork-spinner {
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 999px;
+          border: 2px solid var(--border);
+          border-top-color: var(--primary);
+          animation: bloodworkSpin 0.8s linear infinite;
+        }
+      `}</style>
+      <span className="bloodwork-spinner" />
+    </>
+  );
+}
+
+function getInitials(name: string) {
+  const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
+  if (!parts.length) return "P";
+  return parts.map((part) => part[0]?.toUpperCase()).join("");
+}
+
 export default function SearchPatientsPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [query, setQuery] = useState("");
@@ -71,6 +101,86 @@ export default function SearchPatientsPage() {
   const [searching, setSearching] = useState(false);
   const [requestingId, setRequestingId] = useState<number | null>(null);
   const [error, setError] = useState("");
+
+  const labels = useMemo(() => {
+    if (language === "ro") {
+      return {
+        search: "Caută",
+        searching: "Se caută...",
+        findPatient: "Caută pacient",
+        findPatientDesc: "Caută după nume, CNP sau ID pacient. Rezultatele apar ca listă pentru scanare rapidă.",
+        searchPlaceholder: "Nume, CNP sau ID pacient...",
+        results: "Rezultate",
+        startWithSearch: "Începe cu o căutare",
+        noPatientsShownUntilSearch: "Introdu un nume, CNP sau ID pacient pentru a vedea rezultatele.",
+        noMatchingPatients: "Nu am găsit pacienți",
+        tryAnotherPatientSearch: "Încearcă alt nume, CNP sau ID.",
+        onePatientFound: "1 pacient găsit",
+        patientsFound: "pacienți găsiți",
+        searchByNameCnpId: "Caută după nume, CNP sau ID",
+        openChart: "Deschide fișa",
+        requestAccess: "Cere acces",
+        requesting: "Se trimite...",
+        pending: "În așteptare",
+        assign: "Alocă",
+        reassign: "Realocă",
+        patient: "Pacient",
+        identifiers: "Identificatori",
+        demographics: "Date pacient",
+        access: "Acces",
+        actions: "Acțiuni",
+        cnp: "CNP",
+        patientId: "ID pacient",
+        accessApproved: "Acces aprobat",
+        requestPending: "Cerere în așteptare",
+        noAccessYet: "Fără acces",
+        assignedTo: "Alocat către",
+        noDoctorAssignedDepartment: "Fără medic alocat în departamentul tău",
+        activeAdmissionColon: "Internare activă:",
+        adminSubtitle: "Caută pacienți și gestionează alocările din spitalul și departamentul tău.",
+        doctorSubtitle: "Caută pacienți, deschide fișele la care ai acces sau cere acces.",
+        backToMyPatients: "Înapoi la pacienții mei",
+      };
+    }
+
+    return {
+      search: "Search",
+      searching: "Searching...",
+      findPatient: "Find patient",
+      findPatientDesc: "Search by name, CNP, or patient ID. Results are shown as a compact list for fast scanning.",
+      searchPlaceholder: "Name, CNP, or patient ID...",
+      results: "Results",
+      startWithSearch: "Start with a search",
+      noPatientsShownUntilSearch: "Enter a name, CNP, or patient ID to show matching patients.",
+      noMatchingPatients: "No matching patients",
+      tryAnotherPatientSearch: "Try another name, CNP, or patient ID.",
+      onePatientFound: "1 patient found",
+      patientsFound: "patients found",
+      searchByNameCnpId: "Search by name, CNP, or ID",
+      openChart: "Open chart",
+      requestAccess: "Request access",
+      requesting: "Requesting...",
+      pending: "Pending",
+      assign: "Assign",
+      reassign: "Reassign",
+      patient: "Patient",
+      identifiers: "Identifiers",
+      demographics: "Demographics",
+      access: "Access",
+      actions: "Actions",
+      cnp: "CNP",
+      patientId: "Patient ID",
+      accessApproved: "Access approved",
+      requestPending: "Request pending",
+      noAccessYet: "No access yet",
+      assignedTo: "Assigned to",
+      noDoctorAssignedDepartment: "No doctor assigned in your department",
+      activeAdmissionColon: "Active admission:",
+      adminSubtitle: "Search patients and manage assignments within your hospital and department.",
+      doctorSubtitle: "Search patients, open charts you can access, or request access.",
+      backToMyPatients: "Back to my patients",
+    };
+  }, [language]);
 
   async function fetchMe() {
     const response = await api.get<CurrentUser>("/auth/me");
@@ -138,9 +248,7 @@ export default function SearchPatientsPage() {
       await api.post("/access-requests", { patient_id: patientId });
 
       setPatients((prev) =>
-        prev.map((patient) =>
-          patient.id === patientId ? { ...patient, pending_request: true } : patient
-        )
+        prev.map((patient) => (patient.id === patientId ? { ...patient, pending_request: true } : patient))
       );
     } catch (err) {
       setError(getErrorMessage(err, t("failedRequestPatientAccess")));
@@ -160,26 +268,53 @@ export default function SearchPatientsPage() {
   }, [adminAssignments]);
 
   const resultLabel = useMemo(() => {
-    if (!searchedQuery) return t("searchByNameCnpId");
-    if (patients.length === 1) return t("onePatientFound");
-    return `${patients.length} ${t("patientsFound")}`;
-  }, [searchedQuery, patients.length, t]);
+    if (!searchedQuery) return labels.searchByNameCnpId;
+    if (patients.length === 1) return labels.onePatientFound;
+    return `${patients.length} ${labels.patientsFound}`;
+  }, [searchedQuery, patients.length, labels]);
 
-  const subtitle =
-    currentUser?.role === "admin"
-      ? t("searchPatientsAdminSubtitle")
-      : t("searchPatientsDoctorSubtitle");
+  const subtitle = currentUser?.role === "admin" ? labels.adminSubtitle : labels.doctorSubtitle;
 
   if (loading || !currentUser) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingSearch")}</p>
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div
+          className="soft-card-tight"
+          style={{
+            padding: 22,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <Spinner size={20} />
+          <span className="muted-text">{t("loadingSearch")}</span>
+        </div>
       </main>
     );
   }
 
   return (
-    <AppShell user={currentUser} title={t("searchPatients")} subtitle={subtitle}>
+    <AppShell
+      user={currentUser}
+      title={t("searchPatients")}
+      subtitle={subtitle}
+      rightContent={
+        currentUser.role === "doctor" ? (
+          <button className="secondary-btn" onClick={() => router.push("/my-patients")}>
+            {labels.backToMyPatients}
+          </button>
+        ) : null
+      }
+    >
       {error && (
         <div
           className="soft-card-tight"
@@ -196,11 +331,11 @@ export default function SearchPatientsPage() {
       )}
 
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <form onSubmit={onSubmit} style={{ display: "grid", gap: 14 }}>
+        <form onSubmit={onSubmit} style={{ display: "grid", gap: 16 }}>
           <div>
-            <div className="section-title">{t("findPatient")}</div>
-            <div className="muted-text" style={{ marginTop: 8 }}>
-              {t("findPatientDesc")}
+            <div className="section-title">{labels.findPatient}</div>
+            <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
+              {labels.findPatientDesc}
             </div>
           </div>
 
@@ -216,80 +351,215 @@ export default function SearchPatientsPage() {
               className="text-input"
               value={query}
               onChange={(e) => setQuery(e.target.value)}
-              placeholder={t("searchPatientsPlaceholder")}
+              placeholder={labels.searchPlaceholder}
             />
 
-            <button type="submit" className="primary-btn" disabled={searching}>
-              {searching ? t("searching") : t("search")}
+            <button
+              type="submit"
+              className="primary-btn"
+              disabled={searching}
+              style={{
+                minWidth: 130,
+                display: "inline-flex",
+                alignItems: "center",
+                justifyContent: "center",
+                gap: 9,
+              }}
+            >
+              {searching && <Spinner size={16} />}
+              {searching ? labels.searching : labels.search}
             </button>
           </div>
         </form>
       </div>
 
       <div className="soft-card" style={{ padding: 24 }}>
-        <div style={{ marginBottom: 18 }}>
-          <div className="section-title">{t("results")}</div>
-          <div className="muted-text" style={{ marginTop: 6 }}>
-            {resultLabel}
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 16,
+            alignItems: "flex-end",
+            flexWrap: "wrap",
+            marginBottom: 18,
+          }}
+        >
+          <div>
+            <div className="section-title">{labels.results}</div>
+            <div className="muted-text" style={{ marginTop: 6 }}>
+              {resultLabel}
+            </div>
           </div>
         </div>
 
         {!searchedQuery && (
           <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 800 }}>{t("startWithSearch")}</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("noPatientsShownUntilSearch")}
+            <div style={{ fontWeight: 900 }}>{labels.startWithSearch}</div>
+            <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
+              {labels.noPatientsShownUntilSearch}
             </div>
           </div>
         )}
 
         {searchedQuery && patients.length === 0 && (
           <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 800 }}>{t("noMatchingPatients")}</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("tryAnotherPatientSearch")}
+            <div style={{ fontWeight: 900 }}>{labels.noMatchingPatients}</div>
+            <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
+              {labels.tryAnotherPatientSearch}
             </div>
           </div>
         )}
 
-        <div style={{ display: "grid", gap: 14 }}>
-          {patients.map((patient) => {
-            const adminAssignment = adminAssignmentByPatientId.get(patient.id);
-            const assignedDoctors = adminAssignment?.doctors ?? [];
-            const hasScopedAssignment = assignedDoctors.length > 0;
-            const activeEvent = adminAssignment?.active_event;
+        {searchedQuery && patients.length > 0 && (
+          <div
+            style={{
+              border: "1px solid var(--border)",
+              borderRadius: 24,
+              overflow: "hidden",
+              background: "var(--panel)",
+            }}
+          >
+            <div
+              className="muted-text"
+              style={{
+                display: "grid",
+                gridTemplateColumns:
+                  currentUser.role === "admin"
+                    ? "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(240px, 1fr) auto"
+                    : "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(160px, 0.7fr) auto",
+                gap: 14,
+                padding: "13px 16px",
+                borderBottom: "1px solid var(--border)",
+                background: "var(--panel-2)",
+                fontSize: 12,
+                fontWeight: 950,
+                textTransform: "uppercase",
+                letterSpacing: "0.04em",
+              }}
+            >
+              <div>{labels.patient}</div>
+              <div>{labels.identifiers}</div>
+              <div>{labels.demographics}</div>
+              <div>{currentUser.role === "admin" ? labels.access : labels.access}</div>
+              <div style={{ textAlign: "right" }}>{labels.actions}</div>
+            </div>
 
-            return (
-              <div key={patient.id} className="soft-card-tight" style={{ padding: 18 }}>
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0, 1fr) auto",
-                    gap: 16,
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 900, fontSize: 20 }}>{patient.full_name}</div>
+            <div style={{ display: "grid" }}>
+              {patients.map((patient, index) => {
+                const adminAssignment = adminAssignmentByPatientId.get(patient.id);
+                const assignedDoctors = adminAssignment?.doctors ?? [];
+                const hasScopedAssignment = assignedDoctors.length > 0;
+                const activeEvent = adminAssignment?.active_event;
 
-                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
-                      {t("dob")} {valueOrDash(patient.date_of_birth)} · {t("age")}{" "}
-                      {valueOrDash(patient.age)} · {t("sex")} {valueOrDash(patient.sex)}
+                return (
+                  <div
+                    key={patient.id}
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns:
+                        currentUser.role === "admin"
+                          ? "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(240px, 1fr) auto"
+                          : "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(160px, 0.7fr) auto",
+                      gap: 14,
+                      alignItems: "center",
+                      padding: 16,
+                      borderBottom: index === patients.length - 1 ? "none" : "1px solid var(--border)",
+                    }}
+                  >
+                    <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
+                      <div
+                        style={{
+                          width: 46,
+                          height: 46,
+                          borderRadius: 16,
+                          display: "grid",
+                          placeItems: "center",
+                          background: "color-mix(in srgb, var(--primary) 18%, var(--panel-2))",
+                          color: "var(--primary)",
+                          border: "1px solid color-mix(in srgb, var(--primary) 34%, var(--border))",
+                          fontWeight: 950,
+                          letterSpacing: "-0.06em",
+                          flex: "0 0 auto",
+                        }}
+                      >
+                        {getInitials(patient.full_name)}
+                      </div>
+
+                      <div style={{ minWidth: 0 }}>
+                        <div
+                          style={{
+                            fontWeight: 950,
+                            fontSize: 16,
+                            whiteSpace: "nowrap",
+                            overflow: "hidden",
+                            textOverflow: "ellipsis",
+                          }}
+                        >
+                          {patient.full_name}
+                        </div>
+                        <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
+                          {labels.patientId} {valueOrDash(patient.patient_identifier)}
+                        </div>
+                      </div>
                     </div>
 
-                    <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.7 }}>
-                      {t("patientId")} {valueOrDash(patient.patient_identifier)}
+                    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+                      <span style={{ fontWeight: 850, color: "var(--text)" }}>{labels.cnp}</span>{" "}
                       {currentUser.role === "admin" || patient.has_access
-                        ? ` · ${t("cnp")} ${valueOrDash(patient.cnp)}`
-                        : ""}
+                        ? valueOrDash(patient.cnp)
+                        : "Hidden until access"}
+                      <br />
+                      <span style={{ fontWeight: 850, color: "var(--text)" }}>ID</span>{" "}
+                      {valueOrDash(patient.patient_identifier)}
                     </div>
 
-                    {currentUser.role === "admin" && (
-                      <div style={{ marginTop: 12, display: "grid", gap: 8 }}>
-                        {hasScopedAssignment ? (
-                          assignedDoctors.map((doctor) => (
-                            <div
-                              key={doctor.id}
+                    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+                      {t("dob")} {valueOrDash(patient.date_of_birth)}
+                      <br />
+                      {t("age")} {valueOrDash(patient.age)} · {t("sex")} {valueOrDash(patient.sex)}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 7, flexWrap: "wrap" }}>
+                      {currentUser.role === "admin" ? (
+                        <>
+                          {hasScopedAssignment ? (
+                            assignedDoctors.slice(0, 2).map((doctor) => (
+                              <span
+                                key={doctor.id}
+                                style={{
+                                  display: "inline-flex",
+                                  width: "fit-content",
+                                  padding: "6px 10px",
+                                  borderRadius: 999,
+                                  background: "var(--success-bg)",
+                                  color: "var(--success-text)",
+                                  border: "1px solid var(--success-border)",
+                                  fontWeight: 850,
+                                  fontSize: 12,
+                                }}
+                              >
+                                {labels.assignedTo} {doctor.full_name}
+                              </span>
+                            ))
+                          ) : (
+                            <span
+                              style={{
+                                display: "inline-flex",
+                                width: "fit-content",
+                                padding: "6px 10px",
+                                borderRadius: 999,
+                                background: "var(--warn-bg)",
+                                color: "var(--warn-text)",
+                                fontWeight: 850,
+                                fontSize: 12,
+                              }}
+                            >
+                              {labels.noDoctorAssignedDepartment}
+                            </span>
+                          )}
+
+                          {activeEvent && (
+                            <span
                               style={{
                                 display: "inline-flex",
                                 width: "fit-content",
@@ -297,51 +567,16 @@ export default function SearchPatientsPage() {
                                 borderRadius: 999,
                                 background: "var(--success-bg)",
                                 color: "var(--success-text)",
-                                fontWeight: 800,
+                                border: "1px solid var(--success-border)",
+                                fontWeight: 850,
                                 fontSize: 12,
                               }}
                             >
-                              {t("assignedTo")} {doctor.full_name}
-                            </div>
-                          ))
-                        ) : (
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              width: "fit-content",
-                              padding: "6px 10px",
-                              borderRadius: 999,
-                              background: "var(--warn-bg)",
-                              color: "var(--warn-text)",
-                              fontWeight: 800,
-                              fontSize: 12,
-                            }}
-                          >
-                            {t("noDoctorAssignedDepartment")}
-                          </div>
-                        )}
-
-                        {activeEvent && (
-                          <div
-                            style={{
-                              display: "inline-flex",
-                              width: "fit-content",
-                              padding: "6px 10px",
-                              borderRadius: 999,
-                              background: "var(--success-bg)",
-                              color: "var(--success-text)",
-                              fontWeight: 800,
-                              fontSize: 12,
-                            }}
-                          >
-                            {t("activeAdmissionColon")} {activeEvent.title}
-                          </div>
-                        )}
-                      </div>
-                    )}
-
-                    {currentUser.role === "doctor" && (
-                      <div style={{ marginTop: 12 }}>
+                              {labels.activeAdmissionColon} {activeEvent.title}
+                            </span>
+                          )}
+                        </>
+                      ) : (
                         <span
                           style={{
                             display: "inline-flex",
@@ -357,64 +592,76 @@ export default function SearchPatientsPage() {
                               : patient.pending_request
                               ? "var(--warn-text)"
                               : "var(--muted)",
-                            fontWeight: 800,
+                            border: patient.has_access
+                              ? "1px solid var(--success-border)"
+                              : patient.pending_request
+                              ? "1px solid var(--warn-border)"
+                              : "1px solid var(--border)",
+                            fontWeight: 850,
                             fontSize: 12,
                           }}
                         >
                           {patient.has_access
-                            ? t("accessApproved")
+                            ? labels.accessApproved
                             : patient.pending_request
-                            ? t("requestPending")
-                            : t("noAccessYet")}
+                            ? labels.requestPending
+                            : labels.noAccessYet}
                         </span>
-                      </div>
-                    )}
+                      )}
+                    </div>
+
+                    <div style={{ display: "flex", gap: 10, justifyContent: "flex-end", flexWrap: "wrap" }}>
+                      {currentUser.role === "admin" && (
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => router.push(`/patients/${patient.id}/assign`)}
+                        >
+                          {hasScopedAssignment ? labels.reassign : labels.assign}
+                        </button>
+                      )}
+
+                      {currentUser.role === "doctor" && patient.has_access && (
+                        <button
+                          type="button"
+                          className="primary-btn"
+                          onClick={() => router.push(`/patients/${patient.id}`)}
+                        >
+                          {labels.openChart}
+                        </button>
+                      )}
+
+                      {currentUser.role === "doctor" && !patient.has_access && !patient.pending_request && (
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => requestAccess(patient.id)}
+                          disabled={requestingId === patient.id}
+                          style={{
+                            display: "inline-flex",
+                            alignItems: "center",
+                            gap: 8,
+                          }}
+                        >
+                          {requestingId === patient.id && <Spinner size={14} />}
+                          {requestingId === patient.id ? labels.requesting : labels.requestAccess}
+                        </button>
+                      )}
+
+                      {currentUser.role === "doctor" && !patient.has_access && patient.pending_request && (
+                        <button type="button" className="secondary-btn" disabled>
+                          {labels.pending}
+                        </button>
+                      )}
+                    </div>
                   </div>
-
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    {currentUser.role === "admin" && (
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        onClick={() => router.push(`/patients/${patient.id}/assign`)}
-                      >
-                        {hasScopedAssignment ? t("reassign") : t("assign")}
-                      </button>
-                    )}
-
-                    {currentUser.role === "doctor" && patient.has_access && (
-                      <button
-                        type="button"
-                        className="primary-btn"
-                        onClick={() => router.push(`/patients/${patient.id}`)}
-                      >
-                        {t("openChart")}
-                      </button>
-                    )}
-
-                    {currentUser.role === "doctor" && !patient.has_access && !patient.pending_request && (
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => requestAccess(patient.id)}
-                        disabled={requestingId === patient.id}
-                      >
-                        {requestingId === patient.id ? t("requesting") : t("requestAccess")}
-                      </button>
-                    )}
-
-                    {currentUser.role === "doctor" && !patient.has_access && patient.pending_request && (
-                      <button type="button" className="secondary-btn" disabled>
-                        {t("pending")}
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-        </div>
+                );
+              })}
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );
+
 }
