@@ -10,7 +10,12 @@ const LANGUAGE_EVENT = "bloodwork-os-language-change";
 const en = {
   brand: "Bloodwork OS",
 
-  // Shell / navigation
+  // Common
+  all: "All",
+  active: "Active",
+  inactive: "Inactive",
+  abnormal: "Abnormal",
+  activeAdmissions: "Active Admissions",
   clinicalWorkspace: "Clinical Workspace",
   doctorWorkspace: "Doctor Workspace",
   adminWorkspace: "Admin Workspace",
@@ -46,9 +51,8 @@ const en = {
   remove: "Remove",
   removing: "Removing...",
   creating: "Creating...",
-  loadingYourRecords: "Loading your records...",
 
-  // Common patient/document labels
+  // Common medical labels
   patient: "Patient",
   doctor: "Doctor",
   name: "Name",
@@ -62,6 +66,7 @@ const en = {
   timestamp: "Timestamp",
   records: "Records",
   record: "Record",
+  documents: "Documents",
   documentsLabel: "Documents",
   totalRecords: "Total Records",
   bloodwork: "Bloodwork",
@@ -69,6 +74,7 @@ const en = {
   notes: "Notes",
   note: "Note",
   medication: "Medication",
+  medications: "Medications",
   hospitalizations: "Hospitalizations",
   hospitalization: "Hospitalization",
   timeline: "Timeline",
@@ -81,9 +87,11 @@ const en = {
   structuredView: "Structured View",
   viewStructuredData: "View Structured Data",
   allRecords: "All Records",
+  allDocuments: "All Documents",
   scan: "Scan",
 
-  // Patient records page
+  // My Records
+  loadingYourRecords: "Loading your records...",
   failedLoadRecords: "Failed to load your records.",
   failedRespondRequest: "Failed to respond to request.",
   failedOpenOriginal: "Failed to open original file.",
@@ -109,13 +117,36 @@ const en = {
   bloodworkTrends: "Bloodwork Trends",
   latest: "Latest",
   previous: "Previous",
+  previousLabel: "Previous",
   delta: "Delta",
   unit: "Unit",
   latestSample: "Latest sample",
   ref: "Ref",
   noNumericTrends: "No numeric bloodwork trends available yet.",
 
-  // Patient chart page
+  // Doctor patients page
+  loadingPatients: "Loading patients...",
+  myCurrentPatientsSubtitle:
+    "Your active care list with abnormal flags, latest records, and trend previews.",
+  totalUnderCare: "Total Under Care",
+  patientsWithAbnormalLabs: "Patients With Abnormal Labs",
+  recordsAvailable: "Records Available",
+  patientList: "Patient List",
+  patientListDesc: "Active admissions and abnormal results are prioritized.",
+  searchAllPatients: "Search All Patients",
+  searchCurrentPatients: "Search current patients...",
+  noActiveStay: "No active stay",
+  abnormalCountLabel: "abnormal",
+  latestAbnormalLabs: "Latest Abnormal Labs",
+  latestRecord: "Latest Record",
+  activeAdmission: "Active admission",
+  abnormalLatestBloodwork: "Abnormal latest bloodwork",
+  openChart: "Open Chart",
+  noPatientsMatch: "No patients match this view",
+  noPatientsMatchDesc: "Try changing the filter or searching all patients.",
+  searchPatientsButton: "Search Patients",
+
+  // Patient Chart
   failedLoadPatientChart: "Failed to load patient chart.",
   failedCreateEvent: "Failed to create event.",
   failedDischargeEvent: "Failed to discharge event.",
@@ -155,7 +186,7 @@ const en = {
   discharge: "Discharge",
   noHospitalizationsRecorded: "No hospitalizations recorded yet.",
 
-  // Document detail
+  // Document Detail
   failedLoadRecord: "Failed to load record.",
   failedSaveNote: "Failed to save note.",
   failedLinkDocument: "Failed to link document.",
@@ -189,7 +220,7 @@ const en = {
   flag: "Flag",
   noStructuredLabs: "No structured lab values found.",
 
-  // Search patients
+  // Search Patients
   failedSearchPatients: "Failed to search patients.",
   failedRequestPatientAccess: "Failed to request patient access.",
   loadingSearch: "Loading search...",
@@ -242,7 +273,7 @@ const en = {
   noAssignmentsMatchDesc:
     "Try changing the filter or searching for a patient to assign.",
 
-  // Assign doctor
+  // Assign Doctor
   failedLoadAssignmentPage: "Failed to load assignment page.",
   failedAssignDoctor: "Failed to assign doctor.",
   loadingAssignmentPage: "Loading assignment page...",
@@ -283,7 +314,7 @@ const en = {
   noActiveHospitalizations: "No active hospitalizations.",
   noPastHospitalizations: "No past hospitalizations.",
 
-  // Admin logs
+  // Admin Logs
   failedLoadActivityLog: "Failed to load activity log.",
   loadingActivityLog: "Loading activity log...",
   activityLogSubtitle: "All admin actions are tracked here.",
@@ -295,7 +326,7 @@ const en = {
   patientLabel: "Patient",
   doctorLabel: "Doctor",
 
-  // Public chooser pages
+  // Public Login Chooser
   chooseYourPortal: "Choose your portal",
   signInByRoleLine1: "Sign in by role.",
   signInByRoleLine2: "Keep records structured.",
@@ -316,7 +347,7 @@ const en = {
   login: "Login",
   signUp: "Sign Up",
 
-  // Role login
+  // Role Login
   portalNotFound: "Portal not found",
   loginRouteNotFound: "The login route you opened does not exist.",
   backToLoginChooser: "Back to login chooser",
@@ -394,7 +425,7 @@ const en = {
   goToLoginPrefix: "Go to",
   goToLoginSuffix: "login",
 
-  // Landing / about
+  // Landing / About
   clinicalRecordWorkspace: "Clinical record workspace",
   landingHeroLine1: "Clear records.",
   landingHeroLine2: "Faster care.",
@@ -404,7 +435,6 @@ const en = {
   doctorPortal: "Doctor Portal",
   doctorPortalDesc:
     "Review structured bloodwork, patient charts, notes, scans, and uploaded records.",
-  patientPortal: "Patient Portal",
   patientPortalDesc:
     "Access records, uploads, doctor notes, approvals, and shared updates securely.",
   adminPortal: "Admin Portal",
@@ -429,7 +459,12 @@ const en = {
 const ro: Record<keyof typeof en, string> = {
   brand: "Bloodwork OS",
 
-  // Shell / navigation
+  // Common
+  all: "Toate",
+  active: "Active",
+  inactive: "Inactive",
+  abnormal: "Anormale",
+  activeAdmissions: "Internări active",
   clinicalWorkspace: "Spațiu clinic",
   doctorWorkspace: "Spațiul medicului",
   adminWorkspace: "Spațiul administratorului",
@@ -465,9 +500,8 @@ const ro: Record<keyof typeof en, string> = {
   remove: "Elimină",
   removing: "Se elimină...",
   creating: "Se creează...",
-  loadingYourRecords: "Se încarcă documentele tale...",
 
-  // Common patient/document labels
+  // Common medical labels
   patient: "Pacient",
   doctor: "Medic",
   name: "Nume",
@@ -481,6 +515,7 @@ const ro: Record<keyof typeof en, string> = {
   timestamp: "Dată și oră",
   records: "Documente",
   record: "Document",
+  documents: "Documente",
   documentsLabel: "Documente",
   totalRecords: "Total documente",
   bloodwork: "Analize de sânge",
@@ -488,6 +523,7 @@ const ro: Record<keyof typeof en, string> = {
   notes: "Note",
   note: "Notă",
   medication: "Medicație",
+  medications: "Medicație",
   hospitalizations: "Internări",
   hospitalization: "Internare",
   timeline: "Cronologie",
@@ -500,9 +536,11 @@ const ro: Record<keyof typeof en, string> = {
   structuredView: "Vizualizare structurată",
   viewStructuredData: "Vezi datele structurate",
   allRecords: "Toate documentele",
+  allDocuments: "Toate documentele",
   scan: "Investigație",
 
-  // Patient records page
+  // My Records
+  loadingYourRecords: "Se încarcă documentele tale...",
   failedLoadRecords: "Nu am putut încărca documentele tale.",
   failedRespondRequest: "Nu am putut trimite răspunsul.",
   failedOpenOriginal: "Nu am putut deschide fișierul original.",
@@ -528,13 +566,36 @@ const ro: Record<keyof typeof en, string> = {
   bloodworkTrends: "Evoluția analizelor",
   latest: "Cel mai recent",
   previous: "Anterior",
+  previousLabel: "Anterior",
   delta: "Diferență",
   unit: "Unitate",
   latestSample: "Cea mai recentă probă",
   ref: "Ref.",
   noNumericTrends: "Nu există încă tendințe numerice pentru analize.",
 
-  // Patient chart page
+  // Doctor patients page
+  loadingPatients: "Se încarcă pacienții...",
+  myCurrentPatientsSubtitle:
+    "Lista pacienților aflați în îngrijirea ta, cu rezultate anormale, ultimele documente și tendințe.",
+  totalUnderCare: "Total în îngrijire",
+  patientsWithAbnormalLabs: "Pacienți cu analize anormale",
+  recordsAvailable: "Documente disponibile",
+  patientList: "Lista pacienților",
+  patientListDesc: "Internările active și rezultatele anormale sunt prioritizate.",
+  searchAllPatients: "Caută toți pacienții",
+  searchCurrentPatients: "Caută în pacienții actuali...",
+  noActiveStay: "Fără internare activă",
+  abnormalCountLabel: "anormale",
+  latestAbnormalLabs: "Ultimele analize anormale",
+  latestRecord: "Ultimul document",
+  activeAdmission: "Internare activă",
+  abnormalLatestBloodwork: "Ultimele analize au valori anormale",
+  openChart: "Deschide fișa",
+  noPatientsMatch: "Niciun pacient nu corespunde acestei vizualizări",
+  noPatientsMatchDesc: "Schimbă filtrul sau caută în toți pacienții.",
+  searchPatientsButton: "Caută pacienți",
+
+  // Patient Chart
   failedLoadPatientChart: "Nu am putut încărca fișa pacientului.",
   failedCreateEvent: "Nu am putut crea evenimentul.",
   failedDischargeEvent: "Nu am putut marca externarea.",
@@ -574,7 +635,7 @@ const ro: Record<keyof typeof en, string> = {
   discharge: "Externează",
   noHospitalizationsRecorded: "Nu există internări înregistrate.",
 
-  // Document detail
+  // Document Detail
   failedLoadRecord: "Nu am putut încărca documentul.",
   failedSaveNote: "Nu am putut salva nota.",
   failedLinkDocument: "Nu am putut atașa documentul.",
@@ -608,7 +669,7 @@ const ro: Record<keyof typeof en, string> = {
   flag: "Marcaj",
   noStructuredLabs: "Nu au fost găsite valori de laborator structurate.",
 
-  // Search patients
+  // Search Patients
   failedSearchPatients: "Nu am putut căuta pacienții.",
   failedRequestPatientAccess: "Nu am putut trimite cererea de acces.",
   loadingSearch: "Se încarcă pagina de căutare...",
@@ -658,10 +719,9 @@ const ro: Record<keyof typeof en, string> = {
   unassigning: "Se elimină alocarea...",
   discharging: "Se externează...",
   noAssignmentsMatch: "Nicio alocare nu corespunde acestei vizualizări",
-  noAssignmentsMatchDesc:
-    "Schimbă filtrul sau caută un pacient pentru alocare.",
+  noAssignmentsMatchDesc: "Schimbă filtrul sau caută un pacient pentru alocare.",
 
-  // Assign doctor
+  // Assign Doctor
   failedLoadAssignmentPage: "Nu am putut încărca pagina de alocare.",
   failedAssignDoctor: "Nu am putut aloca medicul.",
   loadingAssignmentPage: "Se încarcă pagina de alocare...",
@@ -702,7 +762,7 @@ const ro: Record<keyof typeof en, string> = {
   noActiveHospitalizations: "Nu există internări active.",
   noPastHospitalizations: "Nu există internări anterioare.",
 
-  // Admin logs
+  // Admin Logs
   failedLoadActivityLog: "Nu am putut încărca jurnalul de activitate.",
   loadingActivityLog: "Se încarcă jurnalul de activitate...",
   activityLogSubtitle: "Toate acțiunile administratorilor sunt înregistrate aici.",
@@ -715,7 +775,7 @@ const ro: Record<keyof typeof en, string> = {
   patientLabel: "Pacient",
   doctorLabel: "Medic",
 
-  // Public chooser pages
+  // Public Login Chooser
   chooseYourPortal: "Alege portalul",
   signInByRoleLine1: "Autentificare după rol.",
   signInByRoleLine2: "Documente structurate.",
@@ -736,7 +796,7 @@ const ro: Record<keyof typeof en, string> = {
   login: "Autentificare",
   signUp: "Înregistrare",
 
-  // Role login
+  // Role Login
   portalNotFound: "Portalul nu a fost găsit",
   loginRouteNotFound: "Ruta de autentificare nu există.",
   backToLoginChooser: "Înapoi la alegerea portalului",
@@ -814,7 +874,7 @@ const ro: Record<keyof typeof en, string> = {
   goToLoginPrefix: "Mergi la autentificare",
   goToLoginSuffix: "",
 
-  // Landing / about
+  // Landing / About
   clinicalRecordWorkspace: "Platformă pentru documente medicale",
   landingHeroLine1: "Documente clare.",
   landingHeroLine2: "Îngrijire mai rapidă.",
@@ -824,7 +884,6 @@ const ro: Record<keyof typeof en, string> = {
   doctorPortal: "Portal medic",
   doctorPortalDesc:
     "Revizuiește analize structurate, fișe de pacient, note, investigații și documente încărcate.",
-  patientPortal: "Portal pacient",
   patientPortalDesc:
     "Accesează în siguranță documente, încărcări, note de la medici, aprobări și actualizări partajate.",
   adminPortal: "Portal administrator",
@@ -852,6 +911,13 @@ const dictionaries = {
 } as const;
 
 export type TranslationKey = keyof typeof en;
+
+function prettifyMissingKey(key: string) {
+  return key
+    .replace(/([a-z])([A-Z])/g, "$1 $2")
+    .replace(/[_-]+/g, " ")
+    .replace(/^./, (char) => char.toUpperCase());
+}
 
 export function getStoredLanguage(): AppLanguage {
   if (typeof window === "undefined") return "en";
@@ -885,8 +951,11 @@ export function useLanguage() {
     setLanguageState(nextLanguage);
   }
 
-  function t(key: TranslationKey) {
-    return dictionaries[language][key] || dictionaries.en[key] || key;
+  function t(key: TranslationKey | string) {
+    const dictionary = dictionaries[language] as Record<string, string>;
+    const fallbackDictionary = dictionaries.en as Record<string, string>;
+
+    return dictionary[key] || fallbackDictionary[key] || prettifyMissingKey(key);
   }
 
   return {

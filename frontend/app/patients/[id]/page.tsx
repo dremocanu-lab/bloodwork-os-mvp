@@ -326,7 +326,10 @@ export default function PatientChartPage() {
         responseType: "blob",
       });
 
-      const contentType = response.headers["content-type"] || "application/octet-stream";
+      const rawContentType = response.headers["content-type"];
+      const contentType =
+        typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
+
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
 
