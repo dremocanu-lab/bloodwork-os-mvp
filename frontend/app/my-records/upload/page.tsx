@@ -15,14 +15,40 @@ type CurrentUser = {
   hospital_name?: string | null;
 };
 
-type UploadStatus = "queued" | "uploading" | "done" | "error";
+type UploadStatus = "queued" | "uploading" | "processing" | "done" | "error";
 
 type UploadItem = {
   id: string;
   file: File;
   status: UploadStatus;
+  phase?: string;
+  progress?: number;
   error?: string;
 };
+
+function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <>
+      <style jsx>{`
+        @keyframes bloodworkSpin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .bloodwork-spinner {
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 999px;
+          border: 2px solid var(--border);
+          border-top-color: var(--primary);
+          animation: bloodworkSpin 0.8s linear infinite;
+        }
+      `}</style>
+      <span className="bloodwork-spinner" />
+    </>
+  );
+}
 
 function formatFileSize(bytes: number) {
   if (bytes < 1024) return `${bytes} B`;
@@ -39,6 +65,40 @@ function getFileBadge(file: File) {
   if (name.endsWith(".webp")) return "WEBP";
   if (name.endsWith(".doc") || name.endsWith(".docx")) return "DOC";
   return "FILE";
+}
+
+function isImageFile(file: File) {
+  const name = file.name.toLowerCase();
+  return (
+    name.endsWith(".png") ||
+    name.endsWith(".jpg") ||
+    name.endsWith(".jpeg") ||
+    name.endsWith(".webp") ||
+    name.endsWith(".tif") ||
+    name.endsWith(".tiff")
+  );
+}
+
+function isPdfFile(file: File) {
+  return file.name.toLowerCase().endsWith(".pdf");
+}
+
+function getQueuedPhase(file: File) {
+  if (isImageFile(file)) return "Queued · images need OCR before AI extraction";
+  if (isPdfFile(file)) return "Queued · PDFs usually process faster";
+  return "Queued";
+}
+
+function getProcessingPhase(file: File) {
+  if (isImageFile(file)) {
+    return "Reading image with OCR, then using AI to structure results...";
+  }
+
+  if (isPdfFile(file)) {
+    return "Reading PDF text and using AI to structure results...";
+  }
+
+  return "Reading document and saving structured record...";
 }
 
 export default function MyRecordsUploadPage() {
@@ -95,11 +155,14 @@ export default function MyRecordsUploadPage() {
   const selectedCount = items.length;
   const uploadedCount = items.filter((item) => item.status === "done").length;
   const failedCount = items.filter((item) => item.status === "error").length;
+  const processingCount = items.filter((item) => item.status === "uploading" || item.status === "processing").length;
 
   const canUpload = selectedCount > 0 && !uploading;
 
+  const activeItem = items.find((item) => item.status === "uploading" || item.status === "processing");
+
   const uploadLabel = useMemo(() => {
-    if (uploading) return `${t("uploading")} ${uploadedCount}/${selectedCount}...`;
+    if (uploading) return `Processing ${uploadedCount}/${selectedCount}...`;
     if (!selectedCount) return t("upload");
     return `${t("upload")} ${selectedCount}`;
   }, [uploading, uploadedCount, selectedCount, t]);
@@ -108,8 +171,16 @@ export default function MyRecordsUploadPage() {
     if (!selectedCount) return t("noFilesSelectedYet");
 
     const failedText = failedCount ? ` · ${failedCount} ${t("failed")}` : "";
-    return `${selectedCount} ${t("selected")} · ${uploadedCount} ${t("uploaded")}${failedText}`;
-  }, [selectedCount, uploadedCount, failedCount, t]);
+    const processingText = processingCount ? ` · ${processingCount} processing` : "";
+
+    return `${selectedCount} ${t("selected")} · ${uploadedCount} ${t("uploaded")}${processingText}${failedText}`;
+  }, [selectedCount, uploadedCount, failedCount, processingCount, t]);
+
+  function updateItem(id: string, patch: Partial<UploadItem>) {
+    setItems((prev) =>
+      prev.map((current) => (current.id === id ? { ...current, ...patch } : current))
+    );
+  }
 
   function appendFiles(fileList: FileList | File[]) {
     const nextFiles = Array.from(fileList);
@@ -123,6 +194,8 @@ export default function MyRecordsUploadPage() {
         id: `${file.name}-${file.size}-${file.lastModified}-${crypto.randomUUID()}`,
         file,
         status: "queued" as UploadStatus,
+        phase: getQueuedPhase(file),
+        progress: 0,
       })),
     ]);
 
@@ -181,11 +254,14 @@ export default function MyRecordsUploadPage() {
       let hadError = false;
 
       for (const item of items) {
-        setItems((prev) =>
-          prev.map((current) =>
-            current.id === item.id ? { ...current, status: "uploading", error: undefined } : current
-          )
-        );
+        if (item.status === "done") continue;
+
+        updateItem(item.id, {
+          status: "uploading",
+          phase: "Preparing secure upload...",
+          progress: 3,
+          error: undefined,
+        });
 
         try {
           const formData = new FormData();
@@ -194,34 +270,49 @@ export default function MyRecordsUploadPage() {
 
           await api.post("/upload", formData, {
             headers: { "Content-Type": "multipart/form-data" },
+            onUploadProgress: (progressEvent) => {
+              if (!progressEvent.total) {
+                updateItem(item.id, {
+                  status: "uploading",
+                  phase: "Uploading file...",
+                  progress: 20,
+                });
+                return;
+              }
+
+              const percent = Math.round((progressEvent.loaded * 100) / progressEvent.total);
+              const cappedPercent = Math.min(Math.max(percent, 5), 70);
+
+              updateItem(item.id, {
+                status: percent >= 100 ? "processing" : "uploading",
+                phase: percent >= 100 ? getProcessingPhase(item.file) : `Uploading file... ${percent}%`,
+                progress: cappedPercent,
+              });
+            },
           });
 
-          setItems((prev) =>
-            prev.map((current) =>
-              current.id === item.id ? { ...current, status: "done", error: undefined } : current
-            )
-          );
+          updateItem(item.id, {
+            status: "done",
+            phase: "Done · structured record saved",
+            progress: 100,
+            error: undefined,
+          });
         } catch (err) {
           hadError = true;
 
-          setItems((prev) =>
-            prev.map((current) =>
-              current.id === item.id
-                ? {
-                    ...current,
-                    status: "error",
-                    error: getErrorMessage(err, t("uploadFailed")),
-                  }
-                : current
-            )
-          );
+          updateItem(item.id, {
+            status: "error",
+            phase: "Upload failed",
+            progress: 0,
+            error: getErrorMessage(err, t("uploadFailed")),
+          });
         }
       }
 
       if (!hadError) {
         setTimeout(() => {
           router.push("/my-records");
-        }, 650);
+        }, 750);
       } else {
         setError(t("someFilesFailed"));
       }
@@ -231,16 +322,36 @@ export default function MyRecordsUploadPage() {
   }
 
   function getStatusText(item: UploadItem) {
-    if (item.status === "uploading") return ` · ${t("fileUploading")}`;
-    if (item.status === "done") return ` · ${t("fileUploaded")}`;
+    if (item.status === "uploading") return ` · ${item.phase || "Uploading file..."}`;
+    if (item.status === "processing") return ` · ${item.phase || getProcessingPhase(item.file)}`;
+    if (item.status === "done") return ` · ${item.phase || t("fileUploaded")}`;
     if (item.status === "error") return ` · ${item.error || t("fileFailed")}`;
-    return "";
+    return ` · ${item.phase || getQueuedPhase(item.file)}`;
   }
 
   if (loading || !currentUser) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingUploadPage")}</p>
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div
+          className="soft-card-tight"
+          style={{
+            padding: 22,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+          }}
+        >
+          <Spinner size={20} />
+          <span className="muted-text">{t("loadingUploadPage")}</span>
+        </div>
       </main>
     );
   }
@@ -251,7 +362,7 @@ export default function MyRecordsUploadPage() {
       title={t("uploadDocumentsTitle")}
       subtitle={t("uploadDocumentsSubtitle")}
       rightContent={
-        <button className="secondary-btn" onClick={() => router.push("/my-records")}>
+        <button className="secondary-btn" onClick={() => router.push("/my-records")} disabled={uploading}>
           {t("backToMyRecords")}
         </button>
       }
@@ -268,6 +379,31 @@ export default function MyRecordsUploadPage() {
           }}
         >
           {error}
+        </div>
+      )}
+
+      {uploading && (
+        <div
+          className="soft-card-tight"
+          style={{
+            marginBottom: 20,
+            padding: 16,
+            display: "flex",
+            alignItems: "center",
+            gap: 12,
+            borderColor: "var(--border)",
+            background: "var(--panel-2)",
+          }}
+        >
+          <Spinner size={20} />
+          <div>
+            <div style={{ fontWeight: 900 }}>
+              {activeItem?.phase || "Processing document..."}
+            </div>
+            <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.5 }}>
+              Keep this page open. PDFs usually finish quickly; images can take longer because they need OCR before AI extraction.
+            </div>
+          </div>
         </div>
       )}
 
@@ -330,6 +466,7 @@ export default function MyRecordsUploadPage() {
               borderRight: "1px solid var(--border)",
               background: dragActive ? "var(--panel-2)" : "var(--panel)",
               transition: "background 160ms ease",
+              opacity: uploading ? 0.78 : 1,
             }}
           >
             <input
@@ -338,9 +475,10 @@ export default function MyRecordsUploadPage() {
               multiple
               style={{ display: "none" }}
               onChange={(e) => appendFiles(e.target.files || [])}
+              disabled={uploading}
             />
 
-            <div style={{ textAlign: "center", maxWidth: 420 }}>
+            <div style={{ textAlign: "center", maxWidth: 440 }}>
               <div
                 style={{
                   width: 92,
@@ -353,50 +491,72 @@ export default function MyRecordsUploadPage() {
                   margin: "0 auto 22px",
                 }}
               >
-                <div
-                  style={{
-                    width: 44,
-                    height: 44,
-                    borderRadius: 16,
-                    display: "grid",
-                    placeItems: "center",
-                    fontSize: 38,
-                    lineHeight: 1,
-                    color: "var(--primary)",
-                    fontWeight: 900,
-                  }}
-                >
-                  ↑
-                </div>
+                {uploading ? (
+                  <Spinner size={36} />
+                ) : (
+                  <div
+                    style={{
+                      width: 44,
+                      height: 44,
+                      borderRadius: 16,
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: 38,
+                      lineHeight: 1,
+                      color: "var(--primary)",
+                      fontWeight: 900,
+                    }}
+                  >
+                    ↑
+                  </div>
+                )}
               </div>
 
               <div style={{ fontWeight: 950, fontSize: 32, letterSpacing: "-0.06em" }}>
-                {t("dragAndDropFiles")}
+                {uploading ? "Processing documents" : t("dragAndDropFiles")}
               </div>
 
-              <div className="muted-text" style={{ marginTop: 10, fontSize: 16 }}>
-                {t("or")}
+              <div className="muted-text" style={{ marginTop: 10, fontSize: 16, lineHeight: 1.6 }}>
+                {uploading
+                  ? "The backend is reading the file, running OCR if needed, and using AI to structure the results."
+                  : t("or")}
               </div>
 
-              <button
-                type="button"
-                className="primary-btn"
-                style={{
-                  marginTop: 16,
-                  minWidth: 210,
-                  padding: "15px 22px",
-                  borderRadius: 16,
-                  fontSize: 16,
-                  fontWeight: 950,
-                }}
-                onClick={() => hiddenFileInputRef.current?.click()}
-                disabled={uploading}
-              >
-                {t("browse")}
-              </button>
+              {!uploading && (
+                <button
+                  type="button"
+                  className="primary-btn"
+                  style={{
+                    marginTop: 16,
+                    minWidth: 210,
+                    padding: "15px 22px",
+                    borderRadius: 16,
+                    fontSize: 16,
+                    fontWeight: 950,
+                  }}
+                  onClick={() => hiddenFileInputRef.current?.click()}
+                >
+                  {t("browse")}
+                </button>
+              )}
 
               <div className="muted-text" style={{ marginTop: 18, lineHeight: 1.6 }}>
                 {t("uploadSupportText")}
+              </div>
+
+              <div
+                className="soft-card-tight"
+                style={{
+                  marginTop: 18,
+                  padding: 14,
+                  background: "var(--panel-2)",
+                  textAlign: "left",
+                }}
+              >
+                <div style={{ fontWeight: 900, marginBottom: 6 }}>AI extraction note</div>
+                <div className="muted-text" style={{ lineHeight: 1.55 }}>
+                  Bloodwork uploads are read and structured automatically. Images and scanned PDFs can take longer because they require OCR before AI extraction. If a field is unclear, the system should leave it blank instead of guessing.
+                </div>
               </div>
             </div>
           </div>
@@ -475,10 +635,34 @@ export default function MyRecordsUploadPage() {
                     >
                       {item.file.name}
                     </div>
-                    <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
+
+                    <div className="muted-text" style={{ marginTop: 4, fontSize: 12, lineHeight: 1.45 }}>
                       {formatFileSize(item.file.size)}
                       {getStatusText(item)}
                     </div>
+
+                    {(item.status === "uploading" || item.status === "processing") && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          height: 7,
+                          borderRadius: 999,
+                          background: "var(--panel-2)",
+                          overflow: "hidden",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${item.status === "processing" ? Math.max(item.progress || 74, 74) : item.progress || 8}%`,
+                            borderRadius: 999,
+                            background: "var(--primary)",
+                            transition: "width 180ms ease",
+                          }}
+                        />
+                      </div>
+                    )}
                   </div>
 
                   <div>
@@ -497,7 +681,7 @@ export default function MyRecordsUploadPage() {
                       >
                         ✓
                       </span>
-                    ) : item.status === "uploading" ? (
+                    ) : item.status === "uploading" || item.status === "processing" ? (
                       <span
                         style={{
                           width: 34,
@@ -505,12 +689,25 @@ export default function MyRecordsUploadPage() {
                           borderRadius: 999,
                           display: "grid",
                           placeItems: "center",
-                          color: "var(--muted)",
                           background: "var(--panel-2)",
+                        }}
+                      >
+                        <Spinner size={18} />
+                      </span>
+                    ) : item.status === "error" ? (
+                      <span
+                        style={{
+                          width: 34,
+                          height: 34,
+                          borderRadius: 999,
+                          display: "grid",
+                          placeItems: "center",
+                          color: "var(--danger-text)",
+                          background: "var(--danger-bg)",
                           fontWeight: 950,
                         }}
                       >
-                        …
+                        !
                       </span>
                     ) : (
                       <button
@@ -553,7 +750,12 @@ export default function MyRecordsUploadPage() {
                 paddingTop: 18,
               }}
             >
-              <button type="button" className="secondary-btn" onClick={clearFiles} disabled={uploading || !items.length}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={clearFiles}
+                disabled={uploading || !items.length}
+              >
                 {t("clear")}
               </button>
 
@@ -566,8 +768,12 @@ export default function MyRecordsUploadPage() {
                   padding: "13px 18px",
                   borderRadius: 16,
                   fontWeight: 950,
+                  display: "inline-flex",
+                  alignItems: "center",
+                  gap: 10,
                 }}
               >
+                {uploading && <Spinner size={16} />}
                 {uploadLabel}
               </button>
             </div>
