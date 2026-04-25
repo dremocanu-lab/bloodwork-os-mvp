@@ -202,3 +202,29 @@ class AuditLog(Base):
     details = Column(Text, nullable=True)
 
     document = relationship("Document", back_populates="audit_logs")
+
+class AdminActionLog(Base):
+    __tablename__ = "admin_action_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    admin_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    action = Column(String, nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    doctor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    timestamp = Column(String, nullable=False)
+    details = Column(Text, nullable=True)
+
+    admin_user = relationship("User", foreign_keys=[admin_user_id])
+    doctor_user = relationship("User", foreign_keys=[doctor_user_id])
+    patient = relationship("Patient")
+
+class DoctorDocumentReview(Base):
+    __tablename__ = "doctor_document_reviews"
+
+    id = Column(Integer, primary_key=True, index=True)
+    doctor_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    reviewed_at = Column(String, nullable=False)
+
+    doctor_user = relationship("User", foreign_keys=[doctor_user_id])
+    document = relationship("Document")

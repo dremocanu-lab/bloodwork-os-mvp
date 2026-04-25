@@ -1,8 +1,8 @@
 "use client";
 
-import { ReactNode } from "react";
-import { useRouter } from "next/navigation";
+import { ReactNode, useEffect, useState } from "react";
 import Sidebar from "@/components/sidebar";
+import { useLanguage } from "@/lib/i18n";
 
 type ShellUser = {
   id: number;
@@ -21,98 +21,108 @@ type AppShellProps = {
   rightContent?: ReactNode;
 };
 
-export default function AppShell({
-  user,
-  title,
-  subtitle,
-  children,
-  rightContent,
-}: AppShellProps) {
-  const router = useRouter();
+function useViewportFlags() {
+  const [width, setWidth] = useState<number>(1440);
 
-  const logout = () => {
-    localStorage.removeItem("access_token");
-    router.push("/login");
+  useEffect(() => {
+    const onResize = () => setWidth(window.innerWidth);
+    onResize();
+
+    window.addEventListener("resize", onResize);
+    return () => window.removeEventListener("resize", onResize);
+  }, []);
+
+  return {
+    isMobile: width < 900,
+    isTablet: width >= 900 && width < 1200,
+    isDesktop: width >= 1200,
   };
+}
+
+export default function AppShell({ user, title, subtitle, children, rightContent }: AppShellProps) {
+  const { isMobile } = useViewportFlags();
+  const { t } = useLanguage();
+  const [mobileOpen, setMobileOpen] = useState(false);
+
+  function getWorkspaceLabel() {
+    if (user.role === "doctor") return t("doctorWorkspace");
+    if (user.role === "admin") return t("adminWorkspace");
+    return t("patientPortal");
+  }
+
+  useEffect(() => {
+    if (!isMobile) {
+      setMobileOpen(false);
+    }
+  }, [isMobile]);
 
   return (
-    <div
-      style={{
-        minHeight: "100vh",
-        background: "var(--app-bg)",
-        color: "var(--text)",
-        display: "grid",
-        gridTemplateColumns: "280px minmax(0, 1fr)",
-      }}
-    >
-      <Sidebar user={user} />
+    <div className="app-shell-root">
+      <Sidebar user={user} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
 
-      <main
-        style={{
-          minWidth: 0,
-          padding: 28,
-        }}
-      >
-        <div
-          className="soft-card"
-          style={{
-            padding: 24,
-            marginBottom: 24,
-          }}
-        >
+      <main className="app-shell-main">
+        {isMobile && (
           <div
+            className="soft-card app-mobile-topbar"
             style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "start",
-              gap: 16,
-              flexWrap: "wrap",
+              position: "sticky",
+              top: 12,
+              zIndex: 20,
+              marginBottom: 14,
             }}
           >
+            <button type="button" className="secondary-btn" onClick={() => setMobileOpen(true)}>
+              {t("menu")}
+            </button>
+
             <div style={{ minWidth: 0 }}>
               <div
                 style={{
-                  fontSize: 34,
-                  fontWeight: 900,
+                  fontWeight: 950,
                   letterSpacing: "-0.04em",
-                  lineHeight: 1.02,
+                  lineHeight: 1,
                 }}
               >
-                {title}
+                Bloodwork OS
               </div>
+              <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+                {getWorkspaceLabel()}
+              </div>
+            </div>
+          </div>
+        )}
 
-              {subtitle ? (
-                <div
-                  className="muted-text"
-                  style={{
-                    marginTop: 10,
-                    fontSize: 15,
-                    lineHeight: 1.6,
-                  }}
-                >
-                  {subtitle}
-                </div>
-              ) : null}
+        <div className="soft-card app-shell-header">
+          <div
+            className="app-shell-header-row"
+            style={{
+              alignItems: "flex-start",
+              gap: 16,
+            }}
+          >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="app-shell-title">{title}</div>
+              {subtitle ? <div className="muted-text app-shell-subtitle">{subtitle}</div> : null}
             </div>
 
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                flexWrap: "wrap",
-                marginLeft: "auto",
-              }}
-            >
-              {rightContent}
-              <button className="secondary-btn" onClick={logout}>
-                Log out
-              </button>
-            </div>
+            {rightContent && (
+              <div
+                className="app-shell-header-actions"
+                style={{
+                  display: "flex",
+                  gap: 10,
+                  flexWrap: "wrap",
+                  justifyContent: "flex-end",
+                  alignItems: "center",
+                }}
+              >
+                {rightContent}
+              </div>
+            )}
           </div>
         </div>
 
-        {children}
+        <div style={{ minWidth: 0 }}>{children}</div>
       </main>
     </div>
   );

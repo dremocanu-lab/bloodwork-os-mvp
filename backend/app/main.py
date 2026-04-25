@@ -661,10 +661,29 @@ def get_document_payload(document, labs, audit_logs, db: Session | None = None, 
     }
 
 
-def get_document_card(document):
+def get_document_card(document, db: Session = None, current_user=None):
     uploader = document.uploaded_by_user
-    note_preview = None
 
+    has_abnormal = False
+
+    if document.section == "bloodwork" and db:
+        labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+        has_abnormal = any(is_abnormal_flag(lab.flag) for lab in labs)
+
+    reviewed = False
+
+    if current_user and current_user.role == "doctor" and db:
+        reviewed = (
+            db.query(models.DoctorDocumentReview)
+            .filter(
+                models.DoctorDocumentReview.document_id == document.id,
+                models.DoctorDocumentReview.doctor_user_id == current_user.id,
+            )
+            .first()
+            is not None
+        )
+
+    note_preview = None
     if document.section == "notes" and document.note_body:
         preview = " ".join(document.note_body.strip().split())
         note_preview = preview[:180] + ("..." if len(preview) > 180 else "")
@@ -681,10 +700,11 @@ def get_document_card(document):
         "test_date": document.test_date,
         "section": document.section,
         "is_verified": bool(document.is_verified),
+        "has_abnormal_labs": has_abnormal,
+        "reviewed_by_current_doctor": reviewed,
         "uploaded_by": get_user_summary(uploader),
         "note_preview": note_preview,
     }
-
 
 def resolve_or_create_patient(db: Session, parsed_data: dict):
     patient = None
@@ -765,21 +785,26 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Email already exists")
 
     computed_age = compute_age_from_dob(payload.date_of_birth) or payload.age
+
     department = value_or_none(payload.department)
     hospital_name = value_or_none(payload.hospital_name)
 
-    if payload.role == "doctor":
+    if payload.role in {"doctor", "admin"}:
         if not department or not hospital_name:
-            raise HTTPException(status_code=400, detail="Doctors must choose a department and hospital")
+            raise HTTPException(
+                status_code=400,
+                detail="Doctors and admins must choose a department and hospital",
+            )
 
     user = models.User(
         email=payload.email,
         full_name=payload.full_name.strip(),
         password_hash=hash_password(payload.password[:72]),
         role=payload.role,
-        department=department if payload.role == "doctor" else None,
-        hospital_name=hospital_name if payload.role == "doctor" else None,
+        department=department if payload.role in {"doctor", "admin"} else None,
+        hospital_name=hospital_name if payload.role in {"doctor", "admin"} else None,
     )
+
     db.add(user)
     db.commit()
     db.refresh(user)
@@ -796,6 +821,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
                 "patient_identifier": payload.patient_identifier,
             },
         )
+
         if patient:
             patient.linked_user_id = user.id
             patient.age = computed_age or patient.age
@@ -1115,7 +1141,7 @@ def get_documents(
         query = query.filter(models.Document.patient_id.in_(assigned_patient_ids))
 
     documents = query.order_by(models.Document.id.desc()).all()
-    return [get_document_card(doc) for doc in documents]
+    return [get_document_card(doc, db=db, current_user=current_user) for doc in documents]
 
 
 @app.get("/documents/{document_id}")
@@ -1139,6 +1165,25 @@ def get_document(
         .order_by(models.AuditLog.id.desc())
         .all()
     )
+    # mark as reviewed if doctor
+    if current_user.role == "doctor":
+        existing_review = (
+        db.query(models.DoctorDocumentReview)
+        .filter(
+            models.DoctorDocumentReview.document_id == document.id,
+            models.DoctorDocumentReview.doctor_user_id == current_user.id,
+        )
+        .first()
+    )
+
+    if not existing_review:
+        review = models.DoctorDocumentReview(
+            doctor_user_id=current_user.id,
+            document_id=document.id,
+            reviewed_at=now_iso(),
+        )
+        db.add(review)
+        db.commit()
     return get_document_payload(document, labs, logs, db=db, current_user=current_user)
 
 
@@ -1425,8 +1470,10 @@ def get_my_patients(
     )
 
     results = []
+
     for link in links:
         patient = db.query(models.Patient).filter(models.Patient.id == link.patient_id).first()
+
         if not patient:
             continue
 
@@ -1451,6 +1498,39 @@ def get_my_patients(
             .all()
         )
 
+        insights = get_patient_lab_insights(db, patient.id)
+        unreviewed_abnormal = 0
+
+        bloodwork_docs = (
+            db.query(models.Document)
+            .filter(
+                models.Document.patient_id == patient.id,
+                models.Document.section == "bloodwork",
+            )
+            .order_by(models.Document.id.desc())
+            .all()
+        )
+
+        for doc in bloodwork_docs:
+            labs = db.query(models.LabResult).filter(models.LabResult.document_id == doc.id).all()
+            has_abnormal = any(is_abnormal_flag(lab.flag) for lab in labs)
+
+            if not has_abnormal:
+                continue
+
+            reviewed = (
+                db.query(models.DoctorDocumentReview)
+                .filter(
+                    models.DoctorDocumentReview.document_id == doc.id,
+                    models.DoctorDocumentReview.doctor_user_id == current_user.id,
+                )
+                .first()
+            )
+
+            if not reviewed:
+                unreviewed_abnormal = 1
+                break
+
         results.append(
             {
                 "patient": {
@@ -1465,12 +1545,14 @@ def get_my_patients(
                 "document_count": len(docs),
                 "bloodwork_count": len([doc for doc in docs if doc.section == "bloodwork"]),
                 "active_event": get_event_payload(active_event) if active_event else None,
-                "latest_document": get_document_card(docs[0]) if docs else None,
+                "latest_document": get_document_card(docs[0], db=db, current_user=current_user) if docs else None,
+                "abnormal_count": unreviewed_abnormal,
+                "latest_abnormal_labs": insights["latest_abnormal_labs"] if unreviewed_abnormal else [],
+                "trend_preview": [],
             }
         )
 
     return results
-
 
 @app.get("/patients/{patient_id}/events")
 def get_patient_events(
@@ -1597,7 +1679,6 @@ def get_patient_bloodwork_trends(
     trends.sort(key=lambda item: (item["category"] or "", item["display_name"] or ""))
     return trends
 
-
 @app.get("/patients/{patient_id}/profile")
 def get_patient_profile(
     patient_id: int,
@@ -1629,7 +1710,7 @@ def get_patient_profile(
 
     for doc in documents:
         section = doc.section if doc.section in grouped_documents else "other"
-        grouped_documents[section].append(get_document_card(doc))
+        grouped_documents[section].append(get_document_card(doc, db=db, current_user=current_user))
 
     doctor_access = []
     for link in patient.doctor_access_links:
@@ -1712,7 +1793,7 @@ def get_patient_documents(
             "cnp": patient.cnp,
             "patient_identifier": patient.patient_identifier,
         },
-        "documents": [get_document_card(doc) for doc in documents],
+        "documents": [get_document_card(doc, db=db, current_user=current_user) for doc in documents],
     }
 
 
@@ -2105,3 +2186,697 @@ async def upload_file(
         .all()
     )
     return get_document_payload(document, created_labs, logs, db=db, current_user=current_user)
+
+@app.get("/admin/patient-assignments")
+def get_patient_assignments(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    patients = db.query(models.Patient).order_by(models.Patient.full_name.asc()).all()
+
+    results = []
+
+    for patient in patients:
+        links = (
+            db.query(models.DoctorPatientAccess)
+            .filter(models.DoctorPatientAccess.patient_id == patient.id)
+            .all()
+        )
+
+        doctors = []
+        for link in links:
+            doctor = db.query(models.User).filter(models.User.id == link.doctor_user_id).first()
+            if doctor:
+                doctors.append(get_user_summary(doctor))
+
+        active_event = (
+            db.query(models.PatientEvent)
+            .filter(
+                models.PatientEvent.patient_id == patient.id,
+                models.PatientEvent.status == "active",
+            )
+            .first()
+        )
+
+        results.append(
+            {
+                "patient": {
+                    "id": patient.id,
+                    "full_name": patient.full_name,
+                    "age": patient.age,
+                    "sex": patient.sex,
+                },
+                "doctors": doctors,
+                "active_event": get_event_payload(active_event) if active_event else None,
+            }
+        )
+
+    return results
+
+@app.post("/admin/assign-doctor")
+def admin_assign_doctor(
+    payload: AssignmentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == payload.doctor_user_id).first()
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+
+    if not doctor or doctor.role != "doctor":
+        raise HTTPException(status_code=400, detail="Invalid doctor")
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    existing = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor.id,
+            models.DoctorPatientAccess.patient_id == patient.id,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(status_code=400, detail="Already assigned")
+
+    link = models.DoctorPatientAccess(
+        doctor_user_id=doctor.id,
+        patient_id=patient.id,
+        granted_by_user_id=current_user.id,
+        granted_at=now_iso(),
+    )
+
+    db.add(link)
+    db.commit()
+
+    return {"success": True}
+
+@app.post("/admin/unassign-doctor")
+def admin_unassign_doctor(
+    payload: AssignmentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    link = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == payload.doctor_user_id,
+            models.DoctorPatientAccess.patient_id == payload.patient_id,
+        )
+        .first()
+    )
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    db.delete(link)
+    db.commit()
+
+    return {"success": True}
+
+@app.post("/admin/discharge/{patient_id}")
+def admin_discharge_patient(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    event = (
+        db.query(models.PatientEvent)
+        .filter(
+            models.PatientEvent.patient_id == patient_id,
+            models.PatientEvent.status == "active",
+        )
+        .first()
+    )
+
+    if not event:
+        raise HTTPException(status_code=404, detail="No active hospitalization")
+
+    event.status = "discharged"
+    event.discharged_at = now_iso()
+    event.discharged_by_user_id = current_user.id
+
+    db.commit()
+
+    return {"success": True}
+
+class AdminAssignmentRequest(BaseModel):
+    doctor_user_id: int
+    patient_id: int
+    replace_existing: bool = True
+
+
+def same_admin_scope(admin_user, doctor_user) -> bool:
+    return (
+        admin_user
+        and doctor_user
+        and admin_user.role == "admin"
+        and doctor_user.role == "doctor"
+        and (admin_user.department or "").strip().lower() == (doctor_user.department or "").strip().lower()
+        and (admin_user.hospital_name or "").strip().lower() == (doctor_user.hospital_name or "").strip().lower()
+    )
+
+
+def doctor_in_admin_scope_query(db: Session, admin_user):
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.role == "doctor",
+            models.User.department == admin_user.department,
+            models.User.hospital_name == admin_user.hospital_name,
+        )
+    )
+
+
+def patient_has_scope_activity(db: Session, patient_id: int, admin_user) -> bool:
+    scoped_doctor_ids = [
+        doctor.id for doctor in doctor_in_admin_scope_query(db, admin_user).all()
+    ]
+
+    if not scoped_doctor_ids:
+        return False
+
+    existing_access = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.patient_id == patient_id,
+            models.DoctorPatientAccess.doctor_user_id.in_(scoped_doctor_ids),
+        )
+        .first()
+    )
+
+    if existing_access:
+        return True
+
+    existing_event = (
+        db.query(models.PatientEvent)
+        .filter(
+            models.PatientEvent.patient_id == patient_id,
+            models.PatientEvent.doctor_user_id.in_(scoped_doctor_ids),
+        )
+        .first()
+    )
+
+    return existing_event is not None
+
+
+@app.get("/admin/scoped-doctors/search")
+def admin_search_scoped_doctors(
+    q: str = Query(""),
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    term = q.strip().lower()
+
+    doctors = doctor_in_admin_scope_query(db, current_user).order_by(models.User.full_name.asc()).all()
+
+    results = []
+
+    for doctor in doctors:
+        haystack = " ".join(
+            [
+                (doctor.full_name or "").lower(),
+                (doctor.email or "").lower(),
+                (doctor.department or "").lower(),
+                (doctor.hospital_name or "").lower(),
+            ]
+        )
+
+        if term and term not in haystack:
+            continue
+
+        results.append(get_user_summary(doctor))
+
+    return results
+
+
+def is_abnormal_flag(flag: str | None) -> bool:
+    return (flag or "").strip().lower() in {"high", "low", "abnormal", "critical", "borderline"}
+
+
+def get_patient_lab_insights(db: Session, patient_id: int) -> dict:
+    bloodwork_documents = (
+        db.query(models.Document)
+        .filter(
+            models.Document.patient_id == patient_id,
+            models.Document.section == "bloodwork",
+        )
+        .order_by(models.Document.id.desc())
+        .all()
+    )
+
+    latest_abnormal_labs = []
+    abnormal_count = 0
+    trend_preview = []
+
+    latest_bloodwork = bloodwork_documents[0] if bloodwork_documents else None
+
+    if latest_bloodwork:
+        latest_labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.document_id == latest_bloodwork.id)
+            .order_by(models.LabResult.id.asc())
+            .all()
+        )
+
+        for lab in latest_labs:
+            if is_abnormal_flag(lab.flag):
+                abnormal_count += 1
+                latest_abnormal_labs.append(
+                    {
+                        "id": lab.id,
+                        "display_name": lab.display_name or lab.raw_test_name,
+                        "value": lab.value,
+                        "unit": lab.unit,
+                        "flag": lab.flag,
+                        "reference_range": lab.reference_range,
+                    }
+                )
+
+    grouped = {}
+
+    for document in reversed(bloodwork_documents):
+        labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.document_id == document.id)
+            .order_by(models.LabResult.id.asc())
+            .all()
+        )
+
+        for lab in labs:
+            numeric_value = parse_numeric_value(lab.value)
+            if numeric_value is None:
+                continue
+
+            key = lab.canonical_name or lab.display_name or lab.raw_test_name
+            if not key:
+                continue
+
+            if key not in grouped:
+                grouped[key] = {
+                    "display_name": lab.display_name or lab.raw_test_name or key,
+                    "unit": lab.unit,
+                    "points": [],
+                }
+
+            grouped[key]["points"].append(
+                {
+                    "value": numeric_value,
+                    "value_display": lab.value,
+                    "flag": lab.flag,
+                    "document_id": document.id,
+                    "date": document.test_date
+                    or document.reported_on
+                    or document.collected_on
+                    or document.created_at,
+                }
+            )
+
+    priority_names = ["hemoglobin", "haemoglobin", "wbc", "leukocyte", "leucocyte", "rbc", "glucose", "creatinine"]
+
+    sorted_trends = sorted(
+        grouped.values(),
+        key=lambda item: (
+            0
+            if any(name in (item["display_name"] or "").lower() for name in priority_names)
+            else 1,
+            item["display_name"] or "",
+        ),
+    )
+
+    for item in sorted_trends:
+        points = item["points"]
+        if len(points) < 2:
+            continue
+
+        previous = points[-2]
+        latest = points[-1]
+        delta = latest["value"] - previous["value"]
+
+        if delta > 0:
+            direction = "up"
+        elif delta < 0:
+            direction = "down"
+        else:
+            direction = "stable"
+
+        trend_preview.append(
+            {
+                "display_name": item["display_name"],
+                "unit": item["unit"],
+                "latest_value": latest["value_display"],
+                "previous_value": previous["value_display"],
+                "delta": round(delta, 3),
+                "direction": direction,
+                "flag": latest["flag"],
+            }
+        )
+
+        if len(trend_preview) >= 3:
+            break
+
+    return {
+        "abnormal_count": abnormal_count,
+        "latest_abnormal_labs": latest_abnormal_labs[:4],
+        "trend_preview": trend_preview,
+    }
+
+
+@app.get("/admin/scoped-patient-assignments")
+def admin_get_scoped_patient_assignments(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    scoped_doctors = doctor_in_admin_scope_query(db, current_user).all()
+    scoped_doctor_ids = [doctor.id for doctor in scoped_doctors]
+
+    patients = db.query(models.Patient).order_by(models.Patient.full_name.asc()).all()
+    results = []
+
+    for patient in patients:
+        scoped_links = []
+        scoped_events = []
+
+        if scoped_doctor_ids:
+            scoped_links = (
+                db.query(models.DoctorPatientAccess)
+                .filter(
+                    models.DoctorPatientAccess.patient_id == patient.id,
+                    models.DoctorPatientAccess.doctor_user_id.in_(scoped_doctor_ids),
+                )
+                .all()
+            )
+
+            scoped_events = (
+                db.query(models.PatientEvent)
+                .filter(
+                    models.PatientEvent.patient_id == patient.id,
+                    models.PatientEvent.doctor_user_id.in_(scoped_doctor_ids),
+                )
+                .order_by(models.PatientEvent.id.desc())
+                .all()
+            )
+
+        if not scoped_links and not scoped_events:
+            continue
+
+        doctors = []
+        for link in scoped_links:
+            doctor = db.query(models.User).filter(models.User.id == link.doctor_user_id).first()
+            if doctor:
+                doctors.append(get_user_summary(doctor))
+
+        active_event = None
+        for event in scoped_events:
+            if event.status == "active":
+                active_event = event
+                break
+
+        insights = get_patient_lab_insights(db, patient.id)
+
+        results.append(
+            {
+                "patient": {
+                    "id": patient.id,
+                    "full_name": patient.full_name,
+                    "date_of_birth": patient.date_of_birth,
+                    "age": patient.age,
+                    "sex": patient.sex,
+                    "cnp": patient.cnp,
+                    "patient_identifier": patient.patient_identifier,
+                },
+                "doctors": doctors,
+                "active_event": get_event_payload(active_event) if active_event else None,
+                "is_unassigned": len(doctors) == 0,
+                "abnormal_count": insights["abnormal_count"],
+                "latest_abnormal_labs": insights["latest_abnormal_labs"],
+                "trend_preview": insights["trend_preview"],
+            }
+        )
+
+    return results
+
+
+@app.post("/admin/scoped-assign-doctor")
+def admin_scoped_assign_doctor(
+    payload: AdminAssignmentRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == payload.doctor_user_id).first()
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if not doctor or doctor.role != "doctor":
+        raise HTTPException(status_code=400, detail="Doctor user not found")
+
+    if not same_admin_scope(current_user, doctor):
+        raise HTTPException(status_code=403, detail="This doctor is outside your hospital and department scope")
+
+    scoped_doctor_ids = [
+        scoped_doctor.id for scoped_doctor in doctor_in_admin_scope_query(db, current_user).all()
+    ]
+
+    removed_doctor_names = []
+
+    if payload.replace_existing and scoped_doctor_ids:
+        existing_scoped_links = (
+            db.query(models.DoctorPatientAccess)
+            .filter(
+                models.DoctorPatientAccess.patient_id == patient.id,
+                models.DoctorPatientAccess.doctor_user_id.in_(scoped_doctor_ids),
+            )
+            .all()
+        )
+
+        for link in existing_scoped_links:
+            old_doctor = db.query(models.User).filter(models.User.id == link.doctor_user_id).first()
+            if old_doctor and old_doctor.id != doctor.id:
+                removed_doctor_names.append(old_doctor.full_name)
+            db.delete(link)
+
+        db.commit()
+
+    existing = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor.id,
+            models.DoctorPatientAccess.patient_id == patient.id,
+        )
+        .first()
+    )
+
+    if existing:
+        add_admin_action_log(
+            db,
+            current_user,
+            action="assignment_confirmed",
+            patient_id=patient.id,
+            doctor_user_id=doctor.id,
+            details=f"Confirmed existing assignment: {doctor.full_name} to {patient.full_name}",
+        )
+        db.commit()
+
+        return {
+            "id": existing.id,
+            "doctor_user_id": existing.doctor_user_id,
+            "patient_id": existing.patient_id,
+            "granted_by_user_id": existing.granted_by_user_id,
+            "granted_at": existing.granted_at,
+            "already_existed": True,
+        }
+
+    assignment = models.DoctorPatientAccess(
+        doctor_user_id=doctor.id,
+        patient_id=patient.id,
+        granted_by_user_id=current_user.id,
+        granted_at=now_iso(),
+    )
+
+    db.add(assignment)
+
+    action = "doctor_reassigned" if removed_doctor_names else "doctor_assigned"
+    details = f"Assigned {doctor.full_name} to {patient.full_name}"
+
+    if removed_doctor_names:
+        details += f"; replaced {', '.join(removed_doctor_names)}"
+
+    add_admin_action_log(
+        db,
+        current_user,
+        action=action,
+        patient_id=patient.id,
+        doctor_user_id=doctor.id,
+        details=details,
+    )
+
+    db.commit()
+    db.refresh(assignment)
+
+    return {
+        "id": assignment.id,
+        "doctor_user_id": assignment.doctor_user_id,
+        "patient_id": assignment.patient_id,
+        "granted_by_user_id": assignment.granted_by_user_id,
+        "granted_at": assignment.granted_at,
+        "already_existed": False,
+    }
+
+
+@app.post("/admin/scoped-unassign-doctor")
+def admin_scoped_unassign_doctor(
+    payload: AssignmentCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == payload.doctor_user_id).first()
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if not doctor or doctor.role != "doctor":
+        raise HTTPException(status_code=400, detail="Doctor user not found")
+
+    if not same_admin_scope(current_user, doctor):
+        raise HTTPException(status_code=403, detail="This doctor is outside your hospital and department scope")
+
+    link = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == payload.doctor_user_id,
+            models.DoctorPatientAccess.patient_id == payload.patient_id,
+        )
+        .first()
+    )
+
+    if not link:
+        raise HTTPException(status_code=404, detail="Assignment not found")
+
+    db.delete(link)
+
+    add_admin_action_log(
+        db,
+        current_user,
+        action="doctor_unassigned",
+        patient_id=patient.id,
+        doctor_user_id=doctor.id,
+        details=f"Unassigned {doctor.full_name} from {patient.full_name}",
+    )
+
+    db.commit()
+
+    return {"success": True}
+
+
+@app.post("/admin/scoped-discharge/{patient_id}")
+def admin_scoped_discharge_patient(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    scoped_doctor_ids = [
+        doctor.id for doctor in doctor_in_admin_scope_query(db, current_user).all()
+    ]
+
+    if not scoped_doctor_ids:
+        raise HTTPException(status_code=404, detail="No scoped doctors found")
+
+    event = (
+        db.query(models.PatientEvent)
+        .filter(
+            models.PatientEvent.patient_id == patient_id,
+            models.PatientEvent.status == "active",
+            models.PatientEvent.doctor_user_id.in_(scoped_doctor_ids),
+        )
+        .first()
+    )
+
+    if not event:
+        raise HTTPException(status_code=404, detail="No active hospitalization in your department and hospital scope")
+
+    event.status = "discharged"
+    event.discharged_at = now_iso()
+    event.discharged_by_user_id = current_user.id
+
+    add_admin_action_log(
+        db,
+        current_user,
+        action="patient_discharged",
+        patient_id=patient.id,
+        doctor_user_id=event.doctor_user_id,
+        details=f"Discharged {patient.full_name} from active admission: {event.title}",
+    )
+
+    db.commit()
+    db.refresh(event)
+
+    return get_event_payload(event)
+class AdminAssignmentRequest(BaseModel):
+    doctor_user_id: int
+    patient_id: int
+    replace_existing: bool = True
+
+
+def same_admin_scope(admin_user, doctor_user) -> bool:
+    return (
+        admin_user
+        and doctor_user
+        and admin_user.role == "admin"
+        and doctor_user.role == "doctor"
+        and (admin_user.department or "").strip().lower() == (doctor_user.department or "").strip().lower()
+        and (admin_user.hospital_name or "").strip().lower() == (doctor_user.hospital_name or "").strip().lower()
+    )
+
+
+def doctor_in_admin_scope_query(db: Session, admin_user):
+    return (
+        db.query(models.User)
+        .filter(
+            models.User.role == "doctor",
+            models.User.department == admin_user.department,
+            models.User.hospital_name == admin_user.hospital_name,
+        )
+    )
+
+
+def add_admin_action_log(
+    db: Session,
+    admin_user,
+    action: str,
+    patient_id: int | None = None,
+    doctor_user_id: int | None = None,
+    details: str | None = None,
+):
+    log = models.AdminActionLog(
+        admin_user_id=admin_user.id,
+        action=action,
+        patient_id=patient_id,
+        doctor_user_id=doctor_user_id,
+        timestamp=now_iso(),
+        details=details,
+    )
+    db.add(log)
+
+
+def get_admin_log_payload(log):
+    return {
+        "id": log.id,
+        "admin_user_id": log.admin_user_id,
+        "admin_name": log.admin_user.full_name if log.admin_user else None,
+        "action": log.action,
+        "patient_id": log.patient_id,
+        "patient_name": log.patient.full_name if log.patient else None,
+        "doctor_user_id": log.doctor_user_id,
+        "doctor_name": log.doctor_user.full_name if log.doctor_user else None,
+        "timestamp": log.timestamp,
+        "details": log.details,
+    }

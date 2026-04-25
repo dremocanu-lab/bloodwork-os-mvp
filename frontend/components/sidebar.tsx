@@ -1,9 +1,9 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
-
-const THEME_KEY = "bloodwork-theme";
+import ThemeToggle from "@/components/theme-toggle";
+import { useLanguage } from "@/lib/i18n";
 
 type SidebarUser = {
   id: number;
@@ -14,229 +14,220 @@ type SidebarUser = {
   hospital_name?: string | null;
 };
 
-type NavItem = {
-  label: string;
-  href: string;
+type SidebarProps = {
+  user: SidebarUser;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
 };
 
-function getStoredTheme() {
-  if (typeof window === "undefined") return "light";
-  return localStorage.getItem(THEME_KEY) || "light";
+function getHomeHref(user: SidebarUser) {
+  if (user.role === "patient") return "/my-records";
+  if (user.role === "doctor") return "/my-patients";
+  return "/assignments";
 }
 
-export default function Sidebar({ user }: { user: SidebarUser }) {
-  const router = useRouter();
+export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: SidebarProps) {
   const pathname = usePathname();
+  const router = useRouter();
+  const { language, setLanguage, t } = useLanguage();
 
-  const [mounted, setMounted] = useState(false);
-  const [theme, setTheme] = useState<"light" | "dark">("light");
+  const navByRole: Record<SidebarUser["role"], { label: string; href: string }[]> = {
+    doctor: [
+      { label: t("myCurrentPatients"), href: "/my-patients" },
+      { label: t("searchPatients"), href: "/patients/search" },
+    ],
+    patient: [{ label: t("myRecords"), href: "/my-records" }],
+    admin: [
+      { label: t("assignments"), href: "/assignments" },
+      { label: t("searchPatients"), href: "/patients/search" },
+      { label: t("activityLog"), href: "/admin/logs" },
+    ],
+  };
 
-  useEffect(() => {
-    const saved = getStoredTheme();
-    const nextTheme = saved === "dark" ? "dark" : "light";
-    setTheme(nextTheme);
-    setMounted(true);
-  }, []);
+  const navItems = navByRole[user.role];
 
-  useEffect(() => {
-    if (!mounted) return;
+  function logout() {
+    localStorage.removeItem("access_token");
+    localStorage.removeItem("user");
+    router.push("/login");
+  }
 
-    const isDark = theme === "dark";
-    document.documentElement.classList.toggle("dark", isDark);
-    document.body.classList.toggle("dark", isDark);
-    localStorage.setItem(THEME_KEY, theme);
-  }, [theme, mounted]);
-
-  const navItems = useMemo<NavItem[]>(() => {
+  function getWorkspaceLabel() {
     if (user.role === "doctor") {
-      return [
-        { label: "Dashboard", href: "/" },
-        { label: "My Patients", href: "/my-patients" },
-      ];
+      return `${user.department || t("department")} · ${user.hospital_name || t("hospital")}`;
     }
 
-    if (user.role === "patient") {
-      return [
-        { label: "My Records", href: "/my-records" },
-        { label: "Dashboard", href: "/" },
-      ];
+    if (user.role === "admin") {
+      return `${user.department || t("department")} ${t("admin")} · ${user.hospital_name || t("hospital")}`;
     }
 
-    return [
-      { label: "Dashboard", href: "/" },
-    ];
-  }, [user.role]);
+    return t("patientPortal");
+  }
+
+  function getRoleLabel() {
+    if (user.role === "doctor") return t("doctorWorkspace");
+    if (user.role === "admin") return t("adminWorkspace");
+    return t("patientPortal");
+  }
 
   return (
-    <aside
-      style={{
-        minHeight: "100vh",
-        borderRight: "1px solid var(--border)",
-        background: "var(--sidebar-bg)",
-        padding: 20,
-        display: "flex",
-        flexDirection: "column",
-        gap: 18,
-        position: "sticky",
-        top: 0,
-      }}
-    >
-      <div
-        className="soft-card-tight"
+    <>
+      <aside
+        className={`app-sidebar ${mobileOpen ? "mobile-open" : ""}`}
         style={{
-          padding: 18,
           display: "flex",
-          alignItems: "center",
-          justifyContent: "center",
-          minHeight: 74,
+          flexDirection: "column",
+          height: "100dvh",
+          overflow: "hidden",
         }}
       >
         <div
           style={{
-            fontWeight: 900,
-            fontSize: 24,
-            letterSpacing: "-0.04em",
-            textAlign: "center",
-            lineHeight: 1.05,
+            display: "grid",
+            gap: 16,
+            overflowY: "auto",
+            paddingBottom: 16,
           }}
         >
-          Bloodwork OS
-        </div>
-      </div>
-
-      <div className="soft-card-tight" style={{ padding: 18 }}>
-        <div
-          style={{
-            fontSize: 12,
-            fontWeight: 800,
-            textTransform: "uppercase",
-            letterSpacing: "0.08em",
-            color: "var(--muted)",
-            marginBottom: 10,
-          }}
-        >
-          Profile
-        </div>
-
-        <div style={{ fontSize: 20, fontWeight: 800, lineHeight: 1.15 }}>
-          {user.full_name}
-        </div>
-
-        <div className="muted-text" style={{ marginTop: 8 }}>
-          {user.email}
-        </div>
-
-        <div style={{ marginTop: 12 }}>
-          <span
-            style={{
-              display: "inline-flex",
-              padding: "6px 10px",
-              borderRadius: 999,
-              background: "var(--primary-soft)",
-              color: "var(--primary)",
-              fontWeight: 800,
-              fontSize: 12,
-              textTransform: "capitalize",
-            }}
-          >
-            {user.role}
-          </span>
-        </div>
-
-        {user.role === "doctor" && (
-          <div className="muted-text" style={{ marginTop: 12, lineHeight: 1.6 }}>
-            {user.department || "—"} <br />
-            {user.hospital_name || "—"}
-          </div>
-        )}
-      </div>
-
-      <nav
-        className="soft-card-tight"
-        style={{
-          padding: 12,
-          display: "grid",
-          gap: 8,
-        }}
-      >
-        {navItems.map((item) => {
-          const active =
-            pathname === item.href ||
-            (item.href !== "/" && pathname?.startsWith(item.href));
-
-          return (
-            <button
-              key={item.href}
-              type="button"
-              onClick={() => router.push(item.href)}
+          <div className="app-sidebar-brand">
+            <Link
+              href={getHomeHref(user)}
+              onClick={onCloseMobile}
               style={{
-                width: "100%",
-                border: active ? "1px solid var(--primary)" : "1px solid var(--border)",
-                background: active ? "var(--primary-soft)" : "var(--panel)",
-                color: active ? "var(--primary)" : "var(--text)",
-                borderRadius: 16,
-                padding: "14px 16px",
-                textAlign: "left",
-                fontWeight: 800,
-                cursor: "pointer",
+                display: "inline-flex",
+                textDecoration: "none",
+                color: "inherit",
               }}
             >
-              {item.label}
-            </button>
-          );
-        })}
-      </nav>
+              <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.06em", lineHeight: 1 }}>
+                {t("brand")}
+              </div>
+            </Link>
 
-      <div style={{ flex: 1 }} />
-
-      <div
-        className="soft-card-tight"
-        style={{
-          padding: 16,
-          display: "flex",
-          alignItems: "center",
-          justifyContent: "space-between",
-          gap: 12,
-        }}
-      >
-        <div>
-          <div style={{ fontWeight: 800 }}>Appearance</div>
-          <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-            {theme === "dark" ? "Dark mode" : "Light mode"}
+            <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
+              {t("clinicalWorkspace")}
+            </div>
           </div>
-        </div>
 
-        <button
-          type="button"
-          onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-          style={{
-            position: "relative",
-            width: 64,
-            height: 36,
-            borderRadius: 999,
-            border: "1px solid var(--border)",
-            background: theme === "dark" ? "var(--primary)" : "var(--panel-2)",
-            cursor: "pointer",
-            transition: "all 180ms ease",
-            padding: 0,
-          }}
-          aria-label="Toggle dark mode"
-        >
-          <span
+          <div className="soft-card-tight" style={{ padding: 16 }}>
+            <div
+              style={{
+                display: "inline-flex",
+                width: "fit-content",
+                padding: "5px 9px",
+                borderRadius: 999,
+                background: "var(--panel-2)",
+                color: "var(--muted)",
+                fontSize: 12,
+                fontWeight: 900,
+                marginBottom: 10,
+              }}
+            >
+              {getRoleLabel()}
+            </div>
+
+            <div style={{ fontWeight: 900, lineHeight: 1.25 }}>{user.full_name}</div>
+
+            <div
+              className="muted-text"
+              style={{
+                marginTop: 5,
+                fontSize: 13,
+                overflowWrap: "anywhere",
+                lineHeight: 1.35,
+              }}
+            >
+              {user.email}
+            </div>
+
+            <div className="muted-text" style={{ marginTop: 9, fontSize: 13, lineHeight: 1.45 }}>
+              {getWorkspaceLabel()}
+            </div>
+          </div>
+
+          <div
+            className="soft-card-tight"
             style={{
-              position: "absolute",
-              top: 4,
-              left: theme === "dark" ? 32 : 4,
-              width: 26,
-              height: 26,
-              borderRadius: "50%",
-              background: "#ffffff",
-              transition: "all 180ms ease",
-              boxShadow: "0 4px 10px rgba(0,0,0,0.18)",
+              padding: 14,
+              display: "grid",
+              gap: 12,
             }}
-          />
-        </button>
-      </div>
-    </aside>
+          >
+            <div>
+              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
+                {t("language")}
+              </div>
+
+              <div
+                style={{
+                  display: "grid",
+                  gridTemplateColumns: "1fr 1fr",
+                  gap: 8,
+                }}
+              >
+                <button
+                  type="button"
+                  className={language === "en" ? "primary-btn" : "secondary-btn"}
+                  onClick={() => setLanguage("en")}
+                  style={{ justifyContent: "center" }}
+                >
+                  EN
+                </button>
+
+                <button
+                  type="button"
+                  className={language === "ro" ? "primary-btn" : "secondary-btn"}
+                  onClick={() => setLanguage("ro")}
+                  style={{ justifyContent: "center" }}
+                >
+                  RO
+                </button>
+              </div>
+            </div>
+
+            <div>
+              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
+                {t("theme")}
+              </div>
+
+              <ThemeToggle compact />
+            </div>
+
+            <button type="button" className="secondary-btn" onClick={logout}>
+              {t("logout")}
+            </button>
+          </div>
+
+          <nav style={{ display: "grid", gap: 10 }}>
+            {navItems.map((item) => {
+              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+
+              return (
+                <Link
+                  key={item.href}
+                  href={item.href}
+                  onClick={onCloseMobile}
+                  className={active ? "primary-btn" : "secondary-btn"}
+                  style={{
+                    justifyContent: "flex-start",
+                    textDecoration: "none",
+                    width: "100%",
+                  }}
+                >
+                  {item.label}
+                </Link>
+              );
+            })}
+          </nav>
+        </div>
+      </aside>
+
+      <button
+        type="button"
+        className={`sidebar-overlay ${mobileOpen ? "open" : ""}`}
+        onClick={onCloseMobile}
+        aria-label="Close sidebar"
+      />
+    </>
   );
 }

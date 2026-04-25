@@ -3,7 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { api, valueOrDash } from "@/lib/api";
+import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
@@ -15,26 +15,31 @@ type CurrentUser = {
   hospital_name?: string | null;
 };
 
+type Doctor = {
+  id: number;
+  email: string;
+  full_name: string;
+  role: "doctor";
+  department?: string | null;
+  hospital_name?: string | null;
+};
+
 type LabInsight = {
-  id?: number;
   display_name?: string | null;
   value?: string | null;
   unit?: string | null;
   flag?: string | null;
-  reference_range?: string | null;
 };
 
 type TrendPreview = {
   display_name?: string | null;
-  unit?: string | null;
   latest_value?: string | null;
   previous_value?: string | null;
-  delta?: number | null;
+  unit?: string | null;
   direction?: "up" | "down" | "stable";
-  flag?: string | null;
 };
 
-type PatientCard = {
+type AssignmentRow = {
   patient: {
     id: number;
     full_name: string;
@@ -44,30 +49,19 @@ type PatientCard = {
     cnp?: string | null;
     patient_identifier?: string | null;
   };
-  document_count: number;
-  bloodwork_count: number;
-  abnormal_count?: number;
-  latest_abnormal_labs?: LabInsight[];
-  trend_preview?: TrendPreview[];
+  doctors: Doctor[];
   active_event?: {
     id: number;
     title: string;
     status: string;
-    department?: string | null;
-    hospital_name?: string | null;
-    admitted_at?: string | null;
   } | null;
-  latest_document?: {
-    id: number;
-    filename: string;
-    report_name?: string | null;
-    report_type?: string | null;
-    test_date?: string | null;
-    is_verified: boolean;
-  } | null;
+  is_unassigned: boolean;
+  abnormal_count?: number;
+  latest_abnormal_labs?: LabInsight[];
+  trend_preview?: TrendPreview[];
 };
 
-type FilterMode = "all" | "active" | "inactive" | "abnormal";
+type FilterMode = "all" | "active" | "abnormal";
 
 function TrendArrow({ direction }: { direction?: "up" | "down" | "stable" }) {
   if (direction === "up") return <span>↑</span>;
@@ -75,41 +69,39 @@ function TrendArrow({ direction }: { direction?: "up" | "down" | "stable" }) {
   return <span>→</span>;
 }
 
-export default function MyPatientsPage() {
+export default function AssignmentsPage() {
   const router = useRouter();
   const { t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [patients, setPatients] = useState<PatientCard[]>([]);
+  const [rows, setRows] = useState<AssignmentRow[]>([]);
   const [query, setQuery] = useState("");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
-
   const [loading, setLoading] = useState(true);
+  const [actionLoading, setActionLoading] = useState<string | null>(null);
   const [error, setError] = useState("");
 
-  async function fetchData() {
-    const [meResponse, patientsResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<PatientCard[]>("/my-patients"),
-    ]);
+  async function loadData() {
+    const meResponse = await api.get<CurrentUser>("/auth/me");
 
-    if (meResponse.data.role !== "doctor") {
-      router.push(meResponse.data.role === "patient" ? "/my-records" : "/assignments");
+    if (meResponse.data.role !== "admin") {
+      router.push(meResponse.data.role === "doctor" ? "/my-patients" : "/my-records");
       return;
     }
 
     setCurrentUser(meResponse.data);
-    setPatients(patientsResponse.data);
+
+    const assignmentsResponse = await api.get<AssignmentRow[]>("/admin/scoped-patient-assignments");
+    setRows(assignmentsResponse.data);
   }
 
   useEffect(() => {
     async function init() {
       try {
         setError("");
-        await fetchData();
-      } catch {
-        localStorage.removeItem("access_token");
-        router.push("/login");
+        await loadData();
+      } catch (err) {
+        setError(getErrorMessage(err, t("failedLoadAssignments")));
       } finally {
         setLoading(false);
       }
@@ -118,60 +110,73 @@ export default function MyPatientsPage() {
     init();
   }, []);
 
+  async function unassign(patientId: number, doctorId: number) {
+    try {
+      setActionLoading(`unassign-${patientId}-${doctorId}`);
+      setError("");
+
+      await api.post("/admin/scoped-unassign-doctor", {
+        patient_id: patientId,
+        doctor_user_id: doctorId,
+      });
+
+      await loadData();
+    } catch (err) {
+      setError(getErrorMessage(err, t("failedUnassignDoctor")));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
+  async function discharge(patientId: number) {
+    try {
+      setActionLoading(`discharge-${patientId}`);
+      setError("");
+
+      await api.post(`/admin/scoped-discharge/${patientId}`);
+      await loadData();
+    } catch (err) {
+      setError(getErrorMessage(err, t("failedDischargePatient")));
+    } finally {
+      setActionLoading(null);
+    }
+  }
+
   const stats = useMemo(() => {
-    const active = patients.filter((item) => item.active_event).length;
-    const inactive = patients.length - active;
-    const docs = patients.reduce((sum, item) => sum + item.document_count, 0);
-    const abnormalPatients = patients.filter((item) => (item.abnormal_count ?? 0) > 0).length;
-
     return {
-      total: patients.length,
-      active,
-      inactive,
-      docs,
-      abnormalPatients,
+      total: rows.length,
+      assigned: rows.filter((row) => row.doctors.length > 0).length,
+      active: rows.filter((row) => row.active_event).length,
+      abnormal: rows.filter((row) => (row.abnormal_count ?? 0) > 0).length,
     };
-  }, [patients]);
+  }, [rows]);
 
-  const filteredPatients = useMemo(() => {
+  const filteredRows = useMemo(() => {
     const term = query.trim().toLowerCase();
 
-    return patients
-      .filter((item) => {
-        if (filterMode === "active" && !item.active_event) return false;
-        if (filterMode === "inactive" && item.active_event) return false;
-        if (filterMode === "abnormal" && !(item.abnormal_count && item.abnormal_count > 0)) return false;
+    return rows
+      .filter((row) => {
+        if (filterMode === "active" && !row.active_event) return false;
+        if (filterMode === "abnormal" && !(row.abnormal_count && row.abnormal_count > 0)) return false;
 
         if (!term) return true;
 
-        const abnormalNames = (item.latest_abnormal_labs ?? [])
-          .map((lab) => lab.display_name)
-          .filter(Boolean)
-          .join(" ");
+        const doctors = row.doctors.map((doctor) => doctor.full_name).join(" ");
+        const abnormal = (row.latest_abnormal_labs ?? []).map((lab) => lab.display_name).join(" ");
 
-        const trendNames = (item.trend_preview ?? [])
-          .map((trend) => trend.display_name)
-          .filter(Boolean)
-          .join(" ");
-
-        const haystack = [
-          item.patient.full_name,
-          item.patient.date_of_birth,
-          item.patient.age,
-          item.patient.sex,
-          item.patient.cnp,
-          item.patient.patient_identifier,
-          item.latest_document?.report_name,
-          item.latest_document?.filename,
-          item.active_event?.title,
-          abnormalNames,
-          trendNames,
+        return [
+          row.patient.full_name,
+          row.patient.cnp,
+          row.patient.patient_identifier,
+          row.patient.date_of_birth,
+          doctors,
+          abnormal,
+          row.active_event?.title,
         ]
           .filter(Boolean)
           .join(" ")
-          .toLowerCase();
-
-        return haystack.includes(term);
+          .toLowerCase()
+          .includes(term);
       })
       .sort((a, b) => {
         if (a.active_event && !b.active_event) return -1;
@@ -185,19 +190,28 @@ export default function MyPatientsPage() {
 
         return a.patient.full_name.localeCompare(b.patient.full_name);
       });
-  }, [patients, query, filterMode]);
+  }, [rows, query, filterMode]);
 
   function getFilterLabel(mode: FilterMode) {
     if (mode === "all") return t("all");
     if (mode === "active") return t("active");
-    if (mode === "abnormal") return t("abnormal");
-    return t("noActiveStay");
+    return t("abnormal");
   }
 
-  if (loading || !currentUser) {
+  if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingPatients")}</p>
+        <p className="muted-text">{t("loadingAssignments")}</p>
+      </main>
+    );
+  }
+
+  if (!currentUser) {
+    return (
+      <main className="app-page-bg" style={{ padding: 24 }}>
+        <div className="soft-card-tight" style={{ padding: 16 }}>
+          {t("couldNotLoadAdminUser")}
+        </div>
       </main>
     );
   }
@@ -205,11 +219,13 @@ export default function MyPatientsPage() {
   return (
     <AppShell
       user={currentUser}
-      title={t("myCurrentPatients")}
-      subtitle={t("myCurrentPatientsSubtitle")}
+      title={t("assignments")}
+      subtitle={`${t("assignmentsSubtitlePrefix")} ${valueOrDash(currentUser.department)} ${t(
+        "assignmentsSubtitleMiddle"
+      )} ${valueOrDash(currentUser.hospital_name)}.`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.push("/patients/search")}>
-          {t("searchAllPatients")}
+          {t("searchPatients")}
         </button>
       }
     >
@@ -237,23 +253,23 @@ export default function MyPatientsPage() {
         }}
       >
         <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">{t("totalUnderCare")}</div>
+          <div className="stat-card-label">{t("scopedPatients")}</div>
           <div className="stat-card-value">{stats.total}</div>
         </div>
 
         <div className="stat-card stat-card-accent-green">
+          <div className="stat-card-label">{t("assigned")}</div>
+          <div className="stat-card-value">{stats.assigned}</div>
+        </div>
+
+        <div className="stat-card stat-card-accent-blue">
           <div className="stat-card-label">{t("activeAdmissions")}</div>
           <div className="stat-card-value">{stats.active}</div>
         </div>
 
         <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">{t("patientsWithAbnormalLabs")}</div>
-          <div className="stat-card-value">{stats.abnormalPatients}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">{t("recordsAvailable")}</div>
-          <div className="stat-card-value">{stats.docs}</div>
+          <div className="stat-card-label">{t("withAbnormalLabs")}</div>
+          <div className="stat-card-value">{stats.abnormal}</div>
         </div>
       </div>
 
@@ -269,14 +285,14 @@ export default function MyPatientsPage() {
           }}
         >
           <div>
-            <div className="section-title">{t("patientList")}</div>
+            <div className="section-title">{t("currentAssignments")}</div>
             <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("patientListDesc")}
+              {t("currentAssignmentsDesc")}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {(["all", "active", "abnormal", "inactive"] as FilterMode[]).map((mode) => (
+            {(["all", "active", "abnormal"] as FilterMode[]).map((mode) => (
               <button
                 key={mode}
                 type="button"
@@ -294,19 +310,19 @@ export default function MyPatientsPage() {
             className="text-input"
             value={query}
             onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("searchCurrentPatients")}
+            placeholder={t("searchAssignmentsPlaceholder")}
           />
         </div>
 
         <div style={{ display: "grid", gap: 14 }}>
-          {filteredPatients.map((item) => {
-            const abnormalCount = item.abnormal_count ?? 0;
-            const latestAbnormalLabs = item.latest_abnormal_labs ?? [];
-            const trends = item.trend_preview ?? [];
+          {filteredRows.map((row) => {
+            const abnormalCount = row.abnormal_count ?? 0;
+            const abnormalLabs = row.latest_abnormal_labs ?? [];
+            const trends = row.trend_preview ?? [];
 
             return (
               <div
-                key={item.patient.id}
+                key={row.patient.id}
                 className="soft-card-tight"
                 style={{
                   padding: 18,
@@ -325,20 +341,18 @@ export default function MyPatientsPage() {
                     <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
                       {abnormalCount > 0 && (
                         <span
-                          title={t("abnormalLatestBloodwork")}
                           style={{
                             width: 12,
                             height: 12,
                             borderRadius: 999,
                             background: "var(--danger-text)",
-                            display: "inline-flex",
                           }}
                         />
                       )}
 
-                      <div style={{ fontWeight: 900, fontSize: 21 }}>{item.patient.full_name}</div>
+                      <div style={{ fontWeight: 900, fontSize: 20 }}>{row.patient.full_name}</div>
 
-                      {item.active_event ? (
+                      {row.active_event && (
                         <span
                           style={{
                             display: "inline-flex",
@@ -352,20 +366,6 @@ export default function MyPatientsPage() {
                         >
                           {t("activeAdmission")}
                         </span>
-                      ) : (
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            padding: "6px 10px",
-                            borderRadius: 999,
-                            background: "var(--panel-2)",
-                            color: "var(--muted)",
-                            fontWeight: 800,
-                            fontSize: 12,
-                          }}
-                        >
-                          {t("noActiveStay")}
-                        </span>
                       )}
 
                       {abnormalCount > 0 && (
@@ -376,9 +376,9 @@ export default function MyPatientsPage() {
                             borderRadius: 999,
                             background: "var(--danger-bg)",
                             color: "var(--danger-text)",
+                            border: "1px solid var(--danger-border)",
                             fontWeight: 900,
                             fontSize: 12,
-                            border: "1px solid var(--danger-border)",
                           }}
                         >
                           {abnormalCount} {t("abnormalCountLabel")}
@@ -387,88 +387,54 @@ export default function MyPatientsPage() {
                     </div>
 
                     <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
-                      {t("dob")} {valueOrDash(item.patient.date_of_birth)} · {t("age")}{" "}
-                      {valueOrDash(item.patient.age)} · {t("sex")} {valueOrDash(item.patient.sex)}
+                      {t("dob")} {valueOrDash(row.patient.date_of_birth)} · {t("age")}{" "}
+                      {valueOrDash(row.patient.age)} · {t("sex")} {valueOrDash(row.patient.sex)}
                     </div>
 
-                    <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.7 }}>
-                      {t("patientId")} {valueOrDash(item.patient.patient_identifier)} · {t("cnp")}{" "}
-                      {valueOrDash(item.patient.cnp)}
+                    <div className="muted-text" style={{ marginTop: 4 }}>
+                      {t("patientId")} {valueOrDash(row.patient.patient_identifier)} · {t("cnp")}{" "}
+                      {valueOrDash(row.patient.cnp)}
                     </div>
 
-                    <div
-                      style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-                        gap: 10,
-                        marginTop: 14,
-                      }}
-                    >
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 16,
-                          background: "var(--panel-2)",
-                          border: "1px solid var(--border)",
-                        }}
-                      >
-                        <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                          {t("documents")}
-                        </div>
-                        <div style={{ marginTop: 4, fontWeight: 900 }}>{item.document_count}</div>
-                      </div>
-
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 16,
-                          background: abnormalCount > 0 ? "var(--danger-bg)" : "var(--panel-2)",
-                          border: `1px solid ${abnormalCount > 0 ? "var(--danger-border)" : "var(--border)"}`,
-                        }}
-                      >
+                    <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
+                      {row.doctors.map((doctor) => (
                         <div
+                          key={doctor.id}
                           style={{
-                            fontSize: 12,
-                            fontWeight: 800,
-                            color: abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "space-between",
+                            gap: 12,
+                            padding: 12,
+                            borderRadius: 16,
+                            background: "var(--panel-2)",
+                            border: "1px solid var(--border)",
+                            flexWrap: "wrap",
                           }}
                         >
-                          {t("latestAbnormalLabs")}
-                        </div>
-                        <div
-                          style={{
-                            marginTop: 4,
-                            fontWeight: 900,
-                            color: abnormalCount > 0 ? "var(--danger-text)" : "var(--text)",
-                          }}
-                        >
-                          {abnormalCount}
-                        </div>
-                      </div>
+                          <div>
+                            <div style={{ fontWeight: 800 }}>{doctor.full_name}</div>
+                            <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
+                              {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                            </div>
+                          </div>
 
-                      <div
-                        style={{
-                          padding: 12,
-                          borderRadius: 16,
-                          background: "var(--panel-2)",
-                          border: "1px solid var(--border)",
-                        }}
-                      >
-                        <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                          {t("latestRecord")}
+                          <button
+                            className="secondary-btn"
+                            onClick={() => unassign(row.patient.id, doctor.id)}
+                            disabled={actionLoading === `unassign-${row.patient.id}-${doctor.id}`}
+                          >
+                            {actionLoading === `unassign-${row.patient.id}-${doctor.id}`
+                              ? t("unassigning")
+                              : t("unassign")}
+                          </button>
                         </div>
-                        <div style={{ marginTop: 4, fontWeight: 900 }}>
-                          {valueOrDash(item.latest_document?.report_name || item.latest_document?.filename)}
-                        </div>
-                        <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                          {valueOrDash(item.latest_document?.test_date)}
-                        </div>
-                      </div>
+                      ))}
                     </div>
 
-                    {latestAbnormalLabs.length > 0 && (
+                    {abnormalLabs.length > 0 && (
                       <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                        {latestAbnormalLabs.map((lab, index) => (
+                        {abnormalLabs.map((lab, index) => (
                           <span
                             key={`${lab.display_name}-${index}`}
                             style={{
@@ -511,12 +477,10 @@ export default function MyPatientsPage() {
                             <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
                               {valueOrDash(trend.display_name)}
                             </div>
-
                             <div style={{ marginTop: 5, fontWeight: 900 }}>
                               <TrendArrow direction={trend.direction} /> {valueOrDash(trend.latest_value)}
                               {trend.unit ? ` ${trend.unit}` : ""}
                             </div>
-
                             <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
                               {t("previousLabel")} {valueOrDash(trend.previous_value)}
                             </div>
@@ -525,7 +489,7 @@ export default function MyPatientsPage() {
                       </div>
                     )}
 
-                    {item.active_event && (
+                    {row.active_event && (
                       <div
                         style={{
                           marginTop: 14,
@@ -536,34 +500,39 @@ export default function MyPatientsPage() {
                           fontWeight: 800,
                         }}
                       >
-                        {item.active_event.title}
-                        <span style={{ fontWeight: 600 }}>
-                          {" "}
-                          · {t("admitted")} {valueOrDash(item.active_event.admitted_at)}
-                        </span>
+                        {row.active_event.title}
                       </div>
                     )}
                   </div>
 
                   <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
                     <button
-                      type="button"
                       className="primary-btn"
-                      onClick={() => router.push(`/patients/${item.patient.id}`)}
+                      onClick={() => router.push(`/patients/${row.patient.id}/assign`)}
                     >
-                      {t("openChart")}
+                      {t("reassign")}
                     </button>
+
+                    {row.active_event && (
+                      <button
+                        className="secondary-btn"
+                        onClick={() => discharge(row.patient.id)}
+                        disabled={actionLoading === `discharge-${row.patient.id}`}
+                      >
+                        {actionLoading === `discharge-${row.patient.id}` ? t("discharging") : t("discharge")}
+                      </button>
+                    )}
                   </div>
                 </div>
               </div>
             );
           })}
 
-          {!filteredPatients.length && (
+          {!filteredRows.length && !error && (
             <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{t("noPatientsMatch")}</div>
+              <div style={{ fontWeight: 900 }}>{t("noAssignmentsMatch")}</div>
               <div className="muted-text" style={{ marginTop: 8 }}>
-                {t("noPatientsMatchDesc")}
+                {t("noAssignmentsMatchDesc")}
               </div>
               <button
                 type="button"
@@ -571,7 +540,7 @@ export default function MyPatientsPage() {
                 style={{ marginTop: 16 }}
                 onClick={() => router.push("/patients/search")}
               >
-                {t("searchPatientsButton")}
+                {t("searchPatients")}
               </button>
             </div>
           )}

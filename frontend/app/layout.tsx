@@ -1,6 +1,9 @@
-"use client";
-
 import "./globals.css";
+
+export const metadata = {
+  title: "Bloodwork OS",
+  description: "Clinical records workspace",
+};
 
 export default function RootLayout({
   children,
@@ -8,8 +11,8 @@ export default function RootLayout({
   children: React.ReactNode;
 }>) {
   return (
-    <html lang="en">
-      <body>{children}</body>
+    <html lang="en" suppressHydrationWarning>
+      <body suppressHydrationWarning>{children}</body>
     </html>
   );
 }
