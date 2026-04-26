@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
@@ -43,6 +43,11 @@ type DocumentCard = {
   sample_type?: string | null;
   referring_doctor?: string | null;
   test_date?: string | null;
+  collected_on?: string | null;
+  reported_on?: string | null;
+  registered_on?: string | null;
+  generated_on?: string | null;
+  created_at?: string | null;
   section: string;
   is_verified: boolean;
   has_abnormal?: boolean;
@@ -112,8 +117,44 @@ const SECTION_ORDER = [
 
 type SectionKey = (typeof SECTION_ORDER)[number];
 
+function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <>
+      <style jsx>{`
+        @keyframes bloodworkSpin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .bloodwork-spinner {
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 999px;
+          border: 2px solid var(--border);
+          border-top-color: var(--primary);
+          animation: bloodworkSpin 0.8s linear infinite;
+        }
+      `}</style>
+      <span className="bloodwork-spinner" />
+    </>
+  );
+}
+
 function bestDocumentDate(doc: DocumentCard) {
-  return doc.test_date || "";
+  if (doc.section === "bloodwork") {
+    return doc.collected_on || doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
+  }
+
+  if (doc.section === "scans") {
+    return doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
+  }
+
+  if (doc.section === "notes") {
+    return doc.created_at || doc.test_date || "";
+  }
+
+  return doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
 }
 
 function formatTimelineDate(value?: string | null, noDate = "No date") {
@@ -129,11 +170,56 @@ function formatTimelineDate(value?: string | null, noDate = "No date") {
   });
 }
 
+function getSectionTone(section: string) {
+  if (section === "bloodwork") return { bg: "var(--danger-bg)", text: "var(--danger-text)", border: "var(--danger-border)" };
+  if (section === "scans") return { bg: "var(--success-bg)", text: "var(--success-text)", border: "var(--success-border)" };
+  if (section === "notes") return { bg: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))", text: "var(--primary)", border: "color-mix(in srgb, var(--primary) 32%, var(--border))" };
+  return { bg: "var(--panel-2)", text: "var(--muted)", border: "var(--border)" };
+}
+
 export default function PatientChartPage() {
   const params = useParams();
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const patientId = params?.id as string;
+
+  const labels = useMemo(() => {
+    if (language === "ro") {
+      return {
+        uploadDocument: "Încarcă document",
+        newClinicalNote: "Notă clinică nouă",
+        viewFullTimeline: "Vezi timeline complet",
+        recentTimeline: "Timeline recent",
+        quickActions: "Acțiuni rapide",
+        quickActionsDesc: "Încarcă documente, creează note clinice sau vezi activitatea completă a pacientului.",
+        clinicalNotesVisibility: "Notele clinice sunt vizibile tuturor medicilor cu acces. Doar medicul autor poate edita nota.",
+        recordsDesc: "Documentele pacientului sunt grupate pe tip. Rezultatele anormale nerevizuite sunt marcate cu roșu.",
+        noRecentTimeline: "Nu există activitate recentă.",
+        uploadedBy: "Încărcat de",
+        noDate: "Fără dată",
+        timelineHint: "Se afișează cele mai recente elemente. Folosește timeline-ul complet pentru istoricul complet.",
+        patientDetails: "Detalii pacient",
+        clinicalTeam: "Echipă medicală",
+      };
+    }
+
+    return {
+      uploadDocument: "Upload document",
+      newClinicalNote: "New clinical note",
+      viewFullTimeline: "View full timeline",
+      recentTimeline: "Recent timeline",
+      quickActions: "Quick actions",
+      quickActionsDesc: "Upload documents, create clinical notes, or review the patient’s full activity timeline.",
+      clinicalNotesVisibility: "Clinical notes are visible to all doctors with patient access. Only the authoring doctor can edit their own note.",
+      recordsDesc: "Patient documents are grouped by type. Unreviewed abnormal records are marked in red.",
+      noRecentTimeline: "No recent activity yet.",
+      uploadedBy: "Uploaded by",
+      noDate: "No date",
+      timelineHint: "Showing only the latest items. Use the full timeline for the complete history.",
+      patientDetails: "Patient details",
+      clinicalTeam: "Clinical team",
+    };
+  }, [language]);
 
   const sectionLabels: Record<SectionKey, string> = {
     all_documents: t("allRecords"),
@@ -161,17 +247,6 @@ export default function PatientChartPage() {
   const [eventTitle, setEventTitle] = useState("");
   const [eventDescription, setEventDescription] = useState("");
   const [creatingEvent, setCreatingEvent] = useState(false);
-
-  const [noteTitle, setNoteTitle] = useState("");
-  const [noteBody, setNoteBody] = useState("");
-  const [creatingNote, setCreatingNote] = useState(false);
-
-  const [uploadSection, setUploadSection] = useState<string>("bloodwork");
-  const [uploadFile, setUploadFile] = useState<File | null>(null);
-  const [uploading, setUploading] = useState(false);
-
-  const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
-  const recordsRef = useRef<HTMLDivElement | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -247,77 +322,6 @@ export default function PatientChartPage() {
     }
   }
 
-  async function createNote() {
-    if (!noteTitle.trim()) {
-      setError(t("noteTitleRequired"));
-      return;
-    }
-
-    if (!noteBody.trim()) {
-      setError(t("noteBodyRequired"));
-      return;
-    }
-
-    try {
-      setCreatingNote(true);
-      setError("");
-
-      await api.post(`/patients/${patientId}/notes`, {
-        title: noteTitle,
-        content: noteBody,
-        is_verified: true,
-      });
-
-      setNoteTitle("");
-      setNoteBody("");
-      setActiveSection("notes");
-      await fetchProfile();
-
-      requestAnimationFrame(() => {
-        recordsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
-      });
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedCreateNote")));
-    } finally {
-      setCreatingNote(false);
-    }
-  }
-
-  async function uploadDocument() {
-    if (!uploadFile) {
-      setError(t("chooseFileFirst"));
-      return;
-    }
-
-    try {
-      setUploading(true);
-      setError("");
-
-      const formData = new FormData();
-      formData.append("file", uploadFile);
-      formData.append("patient_id", String(patientId));
-      formData.append("section", uploadSection);
-
-      await api.post("/upload", formData, {
-        headers: { "Content-Type": "multipart/form-data" },
-      });
-
-      setUploadFile(null);
-      if (hiddenFileInputRef.current) hiddenFileInputRef.current.value = "";
-
-      setActiveSection(uploadSection as SectionKey);
-      await fetchProfile();
-
-      requestAnimationFrame(() => {
-        recordsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
-      });
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedUploadDocument")));
-    } finally {
-      setUploading(false);
-    }
-  }
-
   async function openOriginal(documentId: number) {
     try {
       setError("");
@@ -327,9 +331,7 @@ export default function PatientChartPage() {
       });
 
       const rawContentType = response.headers["content-type"];
-      const contentType =
-        typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
-
+      const contentType = typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
 
@@ -341,13 +343,6 @@ export default function PatientChartPage() {
     } catch (err) {
       setError(getErrorMessage(err, t("failedOpenOriginal")));
     }
-  }
-
-  function changeSection(section: SectionKey) {
-    setActiveSection(section);
-    requestAnimationFrame(() => {
-      recordsRef.current?.scrollIntoView({ block: "start", behavior: "auto" });
-    });
   }
 
   const allDocuments = useMemo(() => {
@@ -365,7 +360,6 @@ export default function PatientChartPage() {
 
   const sectionDocuments = useMemo(() => {
     if (!profile) return [];
-
     if (activeSection === "all_documents") return allDocuments;
     return profile.sections[activeSection] || [];
   }, [profile, activeSection, allDocuments]);
@@ -423,9 +417,9 @@ export default function PatientChartPage() {
       id: `event-${event.id}`,
       date: event.discharged_at || event.admitted_at,
       title: event.title,
-      subtitle: `${
-        event.status === "active" ? t("activeAdmission") : t("discharged")
-      } · ${valueOrDash(event.department)} · ${valueOrDash(event.doctor_name)}`,
+      subtitle: `${event.status === "active" ? t("activeAdmission") : t("discharged")} · ${valueOrDash(
+        event.department
+      )} · ${valueOrDash(event.doctor_name)}`,
       kind: "event",
       eventId: event.id,
     }));
@@ -439,24 +433,38 @@ export default function PatientChartPage() {
 
   if (loading || !currentUser || !profile) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingPatientChart")}</p>
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
+          <Spinner size={20} />
+          <span className="muted-text">{t("loadingPatientChart")}</span>
+        </div>
       </main>
     );
   }
 
-  const canUpload = true;
   const canManageEvents = currentUser.role === "doctor";
   const canWriteNotes = currentUser.role === "doctor";
+  const canUpload = currentUser.role === "doctor" || currentUser.role === "admin";
   const recentHospitalizations = profile.events.slice(0, 2);
+  const recentTimeline = timeline.slice(0, 5);
 
   return (
     <AppShell
       user={currentUser}
       title={profile.patient.full_name}
-      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · ${t("dob")} ${valueOrDash(
-        profile.patient.date_of_birth
-      )} · ${t("age")} ${valueOrDash(profile.patient.age)} · ${t("sex")} ${valueOrDash(profile.patient.sex)}`}
+      subtitle={`CNP ${valueOrDash(profile.patient.cnp)} · ID ${valueOrDash(profile.patient.patient_identifier)} · ${t(
+        "dob"
+      )} ${valueOrDash(profile.patient.date_of_birth)} · ${t("age")} ${valueOrDash(profile.patient.age)} · ${t(
+        "sex"
+      )} ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.back()}>
           {t("back")}
@@ -543,143 +551,82 @@ export default function PatientChartPage() {
         </div>
       )}
 
-      {canUpload && (
-        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-          <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
-            <div>
-              <div className="section-title">{t("uploadRecord")}</div>
-              <div className="muted-text" style={{ marginTop: 6 }}>
-                {t("uploadRecordDesc")}
-              </div>
+      <div
+        className="soft-card"
+        style={{
+          padding: 24,
+          marginBottom: 24,
+          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+          <div>
+            <div className="section-title">{labels.quickActions}</div>
+            <div className="muted-text" style={{ marginTop: 6, maxWidth: 760, lineHeight: 1.6 }}>
+              {labels.quickActionsDesc}
             </div>
-
-            <button type="button" className="secondary-btn" onClick={() => hiddenFileInputRef.current?.click()}>
-              {t("chooseFile")}
-            </button>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "220px minmax(0, 1fr) auto",
-              gap: 12,
-              alignItems: "center",
-            }}
-          >
-            <select className="text-input" value={uploadSection} onChange={(e) => setUploadSection(e.target.value)}>
-              {["bloodwork", "medications", "scans", "hospitalizations", "other"].map((section) => (
-                <option key={section} value={section}>
-                  {sectionLabels[section as SectionKey] || section}
-                </option>
-              ))}
-            </select>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            {canUpload && (
+              <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>
+                {labels.uploadDocument}
+              </button>
+            )}
 
-            <div
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 12,
-                border: "1px solid var(--border)",
-                borderRadius: 18,
-                padding: "12px 14px",
-                background: "var(--panel)",
-                minHeight: 58,
-                minWidth: 0,
-              }}
-            >
-              <input
-                ref={hiddenFileInputRef}
-                type="file"
-                style={{ display: "none" }}
-                onChange={(e) => setUploadFile(e.target.files?.[0] || null)}
-              />
+            {canWriteNotes && (
+              <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>
+                {labels.newClinicalNote}
+              </button>
+            )}
 
-              <div
-                className="muted-text"
-                style={{
-                  overflow: "hidden",
-                  textOverflow: "ellipsis",
-                  whiteSpace: "nowrap",
-                  minWidth: 0,
-                }}
-              >
-                {uploadFile ? uploadFile.name : t("noFileSelected")}
-              </div>
-            </div>
-
-            <button className="primary-btn" onClick={uploadDocument} disabled={uploading}>
-              {uploading ? t("fileUploading") : t("upload")}
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
+              {labels.viewFullTimeline}
             </button>
           </div>
         </div>
-      )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: canWriteNotes || canManageEvents ? "1fr 1fr" : "1fr",
-          gap: 20,
-          marginBottom: 24,
-        }}
-      >
         {canWriteNotes && (
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 16 }}>
-              {t("createClinicalNote")}
-            </div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <input
-                className="text-input"
-                value={noteTitle}
-                onChange={(e) => setNoteTitle(e.target.value)}
-                placeholder={t("noteTitle")}
-              />
-              <textarea
-                className="text-input"
-                value={noteBody}
-                onChange={(e) => setNoteBody(e.target.value)}
-                placeholder={t("writeYourNoteHere")}
-                rows={5}
-              />
-              <div>
-                <button className="primary-btn" onClick={createNote} disabled={creatingNote}>
-                  {creatingNote ? t("saving") : t("saveNote")}
-                </button>
-              </div>
-            </div>
-          </div>
-        )}
-
-        {canManageEvents && (
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 16 }}>
-              {t("addHospitalizationEvent")}
-            </div>
-
-            <div style={{ display: "grid", gap: 12 }}>
-              <input
-                className="text-input"
-                value={eventTitle}
-                onChange={(e) => setEventTitle(e.target.value)}
-                placeholder={t("hospitalizationTitlePlaceholder")}
-              />
-              <textarea
-                className="text-input"
-                value={eventDescription}
-                onChange={(e) => setEventDescription(e.target.value)}
-                placeholder={t("careNotesPlaceholder")}
-                rows={5}
-              />
-              <div>
-                <button className="primary-btn" onClick={createEvent} disabled={creatingEvent}>
-                  {creatingEvent ? t("creating") : t("createEvent")}
-                </button>
-              </div>
+          <div
+            className="soft-card-tight"
+            style={{
+              marginTop: 18,
+              padding: 14,
+              background: "var(--panel-2)",
+            }}
+          >
+            <div className="muted-text" style={{ lineHeight: 1.6 }}>
+              {labels.clinicalNotesVisibility}
             </div>
           </div>
         )}
       </div>
+
+      {canManageEvents && (
+        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+          <div className="section-title" style={{ marginBottom: 16 }}>
+            {t("addHospitalizationEvent")}
+          </div>
+
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.8fr) minmax(0, 1fr) auto", gap: 12 }}>
+            <input
+              className="text-input"
+              value={eventTitle}
+              onChange={(e) => setEventTitle(e.target.value)}
+              placeholder={t("hospitalizationTitlePlaceholder")}
+            />
+            <input
+              className="text-input"
+              value={eventDescription}
+              onChange={(e) => setEventDescription(e.target.value)}
+              placeholder={t("careNotesPlaceholder")}
+            />
+            <button className="primary-btn" onClick={createEvent} disabled={creatingEvent}>
+              {creatingEvent ? t("creating") : t("createEvent")}
+            </button>
+          </div>
+        </div>
+      )}
 
       <div
         style={{
@@ -690,12 +637,12 @@ export default function PatientChartPage() {
           marginBottom: 24,
         }}
       >
-        <div ref={recordsRef} className="soft-card" style={{ padding: 24, scrollMarginTop: 24 }}>
+        <div className="soft-card" style={{ padding: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
             <div>
               <div className="section-title">{t("records")}</div>
               <div className="muted-text" style={{ marginTop: 6 }}>
-                {t("recordsDesc")}
+                {labels.recordsDesc}
               </div>
             </div>
           </div>
@@ -722,7 +669,7 @@ export default function PatientChartPage() {
                   key={section}
                   type="button"
                   className={activeSection === section ? "primary-btn" : "secondary-btn"}
-                  onClick={() => changeSection(section)}
+                  onClick={() => setActiveSection(section)}
                 >
                   {sectionLabels[section]} ({count})
                 </button>
@@ -736,6 +683,7 @@ export default function PatientChartPage() {
               const hasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
               const isReviewed = Boolean(doc.reviewed_by_current_doctor);
               const isUnreviewedAbnormal = hasAbnormal && !isReviewed;
+              const tone = getSectionTone(doc.section);
 
               return (
                 <div
@@ -743,7 +691,7 @@ export default function PatientChartPage() {
                   className="soft-card-tight"
                   style={{
                     padding: 18,
-                    borderColor: isUnreviewedAbnormal ? "var(--danger-border)" : "var(--border)",
+                    borderColor: isUnreviewedAbnormal ? "var(--danger-border)" : tone.border,
                     background: isUnreviewedAbnormal ? "var(--danger-bg)" : undefined,
                   }}
                 >
@@ -778,8 +726,9 @@ export default function PatientChartPage() {
                             display: "inline-flex",
                             padding: "5px 9px",
                             borderRadius: 999,
-                            background: "var(--panel-2)",
-                            color: "var(--muted)",
+                            background: tone.bg,
+                            color: tone.text,
+                            border: `1px solid ${tone.border}`,
                             fontSize: 12,
                             fontWeight: 900,
                           }}
@@ -822,7 +771,7 @@ export default function PatientChartPage() {
                       )}
 
                       <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
-                        {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
+                        {valueOrDash(doc.report_type)} · {formatTimelineDate(bestDocumentDate(doc), labels.noDate)}
                       </div>
 
                       {isNote ? (
@@ -831,7 +780,7 @@ export default function PatientChartPage() {
                         </div>
                       ) : (
                         <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                          {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)} · {t("uploadedBy")}{" "}
+                          {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)} · {labels.uploadedBy}{" "}
                           {valueOrDash(doc.uploaded_by?.full_name)}
                         </div>
                       )}
@@ -858,12 +807,27 @@ export default function PatientChartPage() {
         </div>
 
         <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 16 }}>
-            {t("timeline")}
+          <div
+            style={{
+              display: "flex",
+              justifyContent: "space-between",
+              gap: 12,
+              alignItems: "center",
+              marginBottom: 10,
+            }}
+          >
+            <div className="section-title">{labels.recentTimeline}</div>
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
+              →
+            </button>
+          </div>
+
+          <div className="muted-text" style={{ marginBottom: 16, lineHeight: 1.5 }}>
+            {labels.timelineHint}
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
-            {timeline.slice(0, 12).map((item) => (
+            {recentTimeline.map((item) => (
               <div
                 key={item.id}
                 className="soft-card-tight"
@@ -884,6 +848,8 @@ export default function PatientChartPage() {
                           ? "var(--danger-text)"
                           : item.kind === "event"
                           ? "var(--primary)"
+                          : item.kind === "note"
+                          ? "var(--primary)"
                           : "var(--muted)",
                       display: "inline-flex",
                       marginTop: 5,
@@ -894,7 +860,7 @@ export default function PatientChartPage() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 900 }}>{item.title}</div>
                     <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>
-                      {formatTimelineDate(item.date, t("noDate"))} · {item.subtitle}
+                      {formatTimelineDate(item.date, labels.noDate)} · {item.subtitle}
                     </div>
 
                     {item.documentId && (
@@ -912,7 +878,7 @@ export default function PatientChartPage() {
               </div>
             ))}
 
-            {!timeline.length && <div className="muted-text">{t("noTimelineActivity")}</div>}
+            {!recentTimeline.length && <div className="muted-text">{labels.noRecentTimeline}</div>}
           </div>
         </div>
       </div>
@@ -927,7 +893,7 @@ export default function PatientChartPage() {
       >
         <div className="soft-card" style={{ padding: 24 }}>
           <div className="section-title" style={{ marginBottom: 16 }}>
-            {t("assignedDoctors")}
+            {labels.clinicalTeam}
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
@@ -24,8 +24,8 @@ type UploadedBy = {
   hospital_name?: string | null;
 };
 
-type LabItem = {
-  id?: number;
+type LabRow = {
+  id: number;
   raw_test_name?: string | null;
   canonical_name?: string | null;
   display_name?: string | null;
@@ -34,25 +34,25 @@ type LabItem = {
   flag?: string | null;
   reference_range?: string | null;
   unit?: string | null;
+  is_abnormal?: boolean;
+};
+
+type AuditLog = {
+  action: string;
+  actor?: string | null;
+  timestamp: string;
+  details?: string | null;
 };
 
 type LinkedDocument = {
   id: number;
   filename: string;
-  content_type?: string | null;
   report_name?: string | null;
   report_type?: string | null;
-  lab_name?: string | null;
-  sample_type?: string | null;
-  referring_doctor?: string | null;
+  section: string;
   test_date?: string | null;
-  section: "bloodwork" | "scans" | "other" | string;
-  is_verified: boolean;
-  has_abnormal?: boolean;
-  has_abnormal_labs?: boolean;
-  reviewed_by_current_doctor?: boolean;
+  is_verified?: boolean;
   is_linked?: boolean;
-  uploaded_by?: UploadedBy | null;
 };
 
 type DocumentResponse = {
@@ -64,6 +64,7 @@ type DocumentResponse = {
   section: string;
   uploaded_by_user_id?: number | null;
   uploaded_by?: UploadedBy | null;
+  can_edit_note?: boolean;
   parsed_data: {
     patient_name?: string | null;
     date_of_birth?: string | null;
@@ -83,88 +84,204 @@ type DocumentResponse = {
     registered_on?: string | null;
     generated_on?: string | null;
     note_body?: string | null;
-    is_verified: boolean;
+    is_verified?: boolean;
     verified_by?: string | null;
     verified_at?: string | null;
     last_edited_at?: string | null;
     created_at?: string | null;
-    labs: LabItem[];
+    labs: LabRow[];
+    audit_logs: AuditLog[];
     linked_documents?: LinkedDocument[];
     available_linkable_documents?: LinkedDocument[];
   };
 };
 
-type LinkTab = "bloodwork" | "scans" | "other";
+type EditableLabRow = {
+  id?: number;
+  raw_test_name?: string | null;
+  canonical_name?: string | null;
+  display_name?: string | null;
+  category?: string | null;
+  value?: string | null;
+  flag?: string | null;
+  reference_range?: string | null;
+  unit?: string | null;
+};
 
-function prettyDateTime(value?: string | null) {
+function Spinner({ size = 18 }: { size?: number }) {
+  return (
+    <>
+      <style jsx>{`
+        @keyframes bloodworkSpin {
+          to {
+            transform: rotate(360deg);
+          }
+        }
+
+        .bloodwork-spinner {
+          width: ${size}px;
+          height: ${size}px;
+          border-radius: 999px;
+          border: 2px solid var(--border);
+          border-top-color: var(--primary);
+          animation: bloodworkSpin 0.8s linear infinite;
+        }
+      `}</style>
+      <span className="bloodwork-spinner" />
+    </>
+  );
+}
+
+function isAbnormalFlag(flag?: string | null) {
+  const cleaned = (flag || "").trim().toLowerCase();
+  return ["high", "low", "abnormal", "critical", "borderline"].includes(cleaned);
+}
+
+function formatDate(value?: string | null) {
   if (!value) return "—";
 
   const d = new Date(value);
   if (Number.isNaN(d.getTime())) return value;
 
-  return d.toLocaleString();
+  return d.toLocaleString(undefined, {
+    year: "numeric",
+    month: "short",
+    day: "numeric",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
-function isAbnormalFlag(flag?: string | null) {
-  return ["high", "low", "abnormal", "critical", "borderline"].includes(
-    String(flag || "").trim().toLowerCase()
-  );
+function bestDisplayName(lab: LabRow | EditableLabRow) {
+  return lab.display_name || lab.raw_test_name || lab.canonical_name || "Unnamed test";
 }
 
-export default function DocumentDetailPage() {
+function getFlagStyle(flag?: string | null) {
+  const abnormal = isAbnormalFlag(flag);
+
+  if (!flag || flag === "Normal") {
+    return {
+      background: "var(--success-bg)",
+      color: "var(--success-text)",
+      borderColor: "var(--success-border)",
+    };
+  }
+
+  if (abnormal) {
+    return {
+      background: "var(--danger-bg)",
+      color: "var(--danger-text)",
+      borderColor: "var(--danger-border)",
+    };
+  }
+
+  return {
+    background: "var(--panel-2)",
+    color: "var(--muted)",
+    borderColor: "var(--border)",
+  };
+}
+
+export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
   const { t } = useLanguage();
   const documentId = params?.id as string;
 
-  function sectionTitle(section?: string | null) {
-    if (section === "bloodwork") return t("bloodwork");
-    if (section === "scans") return t("scans");
-    if (section === "other") return t("other");
-    return t("documentsLabel");
-  }
-
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
+
   const [loading, setLoading] = useState(true);
+  const [openingOriginal, setOpeningOriginal] = useState(false);
+  const [verifying, setVerifying] = useState(false);
+  const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
-  const [linking, setLinking] = useState<number | null>(null);
-  const [unlinking, setUnlinking] = useState<number | null>(null);
-  const [editing, setEditing] = useState(false);
-  const [noteTitle, setNoteTitle] = useState("");
-  const [noteBody, setNoteBody] = useState("");
-  const [activeLinkTab, setActiveLinkTab] = useState<LinkTab>("bloodwork");
   const [error, setError] = useState("");
 
-  async function fetchMe() {
-    try {
-      const response = await api.get<CurrentUser>("/auth/me");
-      setCurrentUser(response.data);
-      return response.data;
-    } catch {
-      localStorage.removeItem("access_token");
-      router.push("/login");
-      return null;
-    }
+  const [editMode, setEditMode] = useState(false);
+  const [noteEditMode, setNoteEditMode] = useState(false);
+
+  const [patientName, setPatientName] = useState("");
+  const [dateOfBirth, setDateOfBirth] = useState("");
+  const [age, setAge] = useState("");
+  const [sex, setSex] = useState("");
+  const [cnp, setCnp] = useState("");
+  const [patientIdentifier, setPatientIdentifier] = useState("");
+
+  const [labName, setLabName] = useState("");
+  const [sampleType, setSampleType] = useState("");
+  const [referringDoctor, setReferringDoctor] = useState("");
+  const [reportName, setReportName] = useState("");
+  const [reportType, setReportType] = useState("");
+  const [sourceLanguage, setSourceLanguage] = useState("");
+  const [testDate, setTestDate] = useState("");
+  const [collectedOn, setCollectedOn] = useState("");
+  const [reportedOn, setReportedOn] = useState("");
+  const [registeredOn, setRegisteredOn] = useState("");
+  const [generatedOn, setGeneratedOn] = useState("");
+  const [labs, setLabs] = useState<EditableLabRow[]>([]);
+
+  const [noteTitle, setNoteTitle] = useState("");
+  const [noteBody, setNoteBody] = useState("");
+
+  async function fetchData() {
+    const [meResponse, documentResponse] = await Promise.all([
+      api.get<CurrentUser>("/auth/me"),
+      api.get<DocumentResponse>(`/documents/${documentId}`),
+    ]);
+
+    setCurrentUser(meResponse.data);
+    setDocumentData(documentResponse.data);
+    hydrateForm(documentResponse.data);
   }
 
-  async function fetchDocument() {
-    const response = await api.get<DocumentResponse>(`/documents/${documentId}`);
-    setDocumentData(response.data);
-    setNoteTitle(response.data.parsed_data.report_name || "");
-    setNoteBody(response.data.parsed_data.note_body || "");
+  function hydrateForm(next: DocumentResponse) {
+    const parsed = next.parsed_data;
+
+    setPatientName(parsed.patient_name || "");
+    setDateOfBirth(parsed.date_of_birth || "");
+    setAge(parsed.age || "");
+    setSex(parsed.sex || "");
+    setCnp(parsed.cnp || "");
+    setPatientIdentifier(parsed.patient_identifier || "");
+
+    setLabName(parsed.lab_name || "");
+    setSampleType(parsed.sample_type || "");
+    setReferringDoctor(parsed.referring_doctor || "");
+    setReportName(parsed.report_name || "");
+    setReportType(parsed.report_type || "");
+    setSourceLanguage(parsed.source_language || "");
+    setTestDate(parsed.test_date || "");
+    setCollectedOn(parsed.collected_on || "");
+    setReportedOn(parsed.reported_on || "");
+    setRegisteredOn(parsed.registered_on || "");
+    setGeneratedOn(parsed.generated_on || "");
+
+    setLabs(
+      (parsed.labs || []).map((lab) => ({
+        id: lab.id,
+        raw_test_name: lab.raw_test_name || "",
+        canonical_name: lab.canonical_name || "",
+        display_name: lab.display_name || "",
+        category: lab.category || "",
+        value: lab.value || "",
+        flag: lab.flag || "",
+        reference_range: lab.reference_range || "",
+        unit: lab.unit || "",
+      }))
+    );
+
+    setNoteTitle(parsed.report_name || "");
+    setNoteBody(parsed.note_body || "");
   }
 
   useEffect(() => {
     async function init() {
-      const me = await fetchMe();
-      if (!me) return;
-
       try {
         setError("");
-        await fetchDocument();
+        await fetchData();
       } catch (err) {
-        setError(getErrorMessage(err, t("failedLoadRecord")));
+        setError(getErrorMessage(err, "Could not load document."));
       } finally {
         setLoading(false);
       }
@@ -174,51 +291,43 @@ export default function DocumentDetailPage() {
   }, [documentId]);
 
   const isNote = documentData?.section === "notes";
-
-  const isAuthor =
-    !!currentUser &&
-    !!documentData &&
-    currentUser.role === "doctor" &&
-    currentUser.id === documentData.uploaded_by_user_id;
+  const canEditStructured = currentUser?.role === "doctor" || currentUser?.role === "admin";
+  const canVerify = currentUser?.role === "doctor" || currentUser?.role === "admin";
+  const canEditNote = Boolean(documentData?.can_edit_note);
 
   const abnormalLabs = useMemo(() => {
-    return documentData?.parsed_data.labs.filter((lab) => isAbnormalFlag(lab.flag)) || [];
+    return (documentData?.parsed_data.labs || []).filter((lab) => lab.is_abnormal || isAbnormalFlag(lab.flag));
   }, [documentData]);
 
-  const hasAbnormalLabs = abnormalLabs.length > 0;
+  const groupedLabs = useMemo(() => {
+    const groups = new Map<string, LabRow[]>();
 
-  const linkedDocuments = documentData?.parsed_data.linked_documents || [];
-  const availableLinkableDocuments = documentData?.parsed_data.available_linkable_documents || [];
+    for (const lab of documentData?.parsed_data.labs || []) {
+      const key = lab.category || "uncategorized";
+      if (!groups.has(key)) groups.set(key, []);
+      groups.get(key)?.push(lab);
+    }
 
-  const linkedByTab = useMemo(
-    () => ({
-      bloodwork: linkedDocuments.filter((doc) => doc.section === "bloodwork"),
-      scans: linkedDocuments.filter((doc) => doc.section === "scans"),
-      other: linkedDocuments.filter((doc) => doc.section === "other"),
-    }),
-    [linkedDocuments]
-  );
+    return Array.from(groups.entries()).map(([category, rows]) => ({
+      category,
+      rows,
+    }));
+  }, [documentData]);
 
-  const availableByTab = useMemo(
-    () => ({
-      bloodwork: availableLinkableDocuments.filter((doc) => doc.section === "bloodwork"),
-      scans: availableLinkableDocuments.filter((doc) => doc.section === "scans"),
-      other: availableLinkableDocuments.filter((doc) => doc.section === "other"),
-    }),
-    [availableLinkableDocuments]
-  );
+  async function openOriginal() {
+    if (!documentData) return;
 
-  async function openOriginal(documentIdToOpen: number) {
     try {
+      setOpeningOriginal(true);
       setError("");
 
-      const response = await api.get(`/documents/${documentIdToOpen}/file`, {
+      const response = await api.get(`/documents/${documentData.document_id}/file`, {
         responseType: "blob",
       });
 
       const rawContentType = response.headers["content-type"];
       const contentType =
-        typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
+        typeof rawContentType === "string" ? rawContentType : documentData.content_type || "application/octet-stream";
 
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
@@ -229,95 +338,163 @@ export default function DocumentDetailPage() {
         window.URL.revokeObjectURL(fileUrl);
       }, 60_000);
     } catch (err) {
-      setError(getErrorMessage(err, t("failedOpenOriginal")));
+      setError(getErrorMessage(err, "Could not open original file. If this is an older upload, re-upload it after the persistent disk fix."));
+    } finally {
+      setOpeningOriginal(false);
     }
   }
 
-  async function saveNote() {
+  async function verifyDocument() {
     if (!documentData) return;
+
+    try {
+      setVerifying(true);
+      setError("");
+
+      const response = await api.post<DocumentResponse>(`/documents/${documentData.document_id}/verify`, {
+        verifier_name: currentUser?.full_name || "Reviewer",
+      });
+
+      setDocumentData(response.data);
+      hydrateForm(response.data);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not verify document."));
+    } finally {
+      setVerifying(false);
+    }
+  }
+
+  function updateLab(index: number, key: keyof EditableLabRow, value: string) {
+    setLabs((prev) =>
+      prev.map((lab, currentIndex) => (currentIndex === index ? { ...lab, [key]: value } : lab))
+    );
+  }
+
+  function addLabRow() {
+    setLabs((prev) => [
+      ...prev,
+      {
+        raw_test_name: "",
+        canonical_name: "",
+        display_name: "",
+        category: "",
+        value: "",
+        flag: "Normal",
+        reference_range: "",
+        unit: "",
+      },
+    ]);
+  }
+
+  function removeLabRow(index: number) {
+    setLabs((prev) => prev.filter((_, currentIndex) => currentIndex !== index));
+  }
+
+  async function saveStructuredData(event: FormEvent) {
+    event.preventDefault();
+
+    if (!documentData) return;
+
+    try {
+      setSaving(true);
+      setError("");
+
+      const response = await api.put<DocumentResponse>(`/documents/${documentData.document_id}`, {
+        editor_name: currentUser?.full_name || "Manual User",
+        parsed_data: {
+          patient_name: patientName || null,
+          date_of_birth: dateOfBirth || null,
+          age: age || null,
+          sex: sex || null,
+          cnp: cnp || null,
+          patient_identifier: patientIdentifier || null,
+          lab_name: labName || null,
+          sample_type: sampleType || null,
+          referring_doctor: referringDoctor || null,
+          report_name: reportName || null,
+          report_type: reportType || null,
+          source_language: sourceLanguage || null,
+          test_date: testDate || null,
+          collected_on: collectedOn || null,
+          reported_on: reportedOn || null,
+          registered_on: registeredOn || null,
+          generated_on: generatedOn || null,
+          labs: labs.map((lab) => ({
+            raw_test_name: lab.raw_test_name || null,
+            canonical_name: lab.canonical_name || null,
+            display_name: lab.display_name || null,
+            category: lab.category || null,
+            value: lab.value || null,
+            flag: lab.flag || null,
+            reference_range: lab.reference_range || null,
+            unit: lab.unit || null,
+          })),
+        },
+      });
+
+      setDocumentData(response.data);
+      hydrateForm(response.data);
+      setEditMode(false);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not save structured data."));
+    } finally {
+      setSaving(false);
+    }
+  }
+
+  async function saveNote(event: FormEvent) {
+    event.preventDefault();
+
+    if (!documentData) return;
+
+    if (!noteBody.trim()) {
+      setError("Note body is required.");
+      return;
+    }
 
     try {
       setSavingNote(true);
       setError("");
 
-      await api.put(`/documents/${documentData.document_id}/note`, {
-        title: noteTitle,
+      const response = await api.put<DocumentResponse>(`/documents/${documentData.document_id}/note`, {
+        title: noteTitle || documentData.parsed_data.report_name || "Clinical Note",
         content: noteBody,
       });
 
-      await fetchDocument();
-      setEditing(false);
+      setDocumentData(response.data);
+      hydrateForm(response.data);
+      setNoteEditMode(false);
     } catch (err) {
-      setError(getErrorMessage(err, t("failedSaveNote")));
+      setError(getErrorMessage(err, "Could not save note."));
     } finally {
       setSavingNote(false);
     }
   }
 
-  async function linkDocument(linkedDocumentId: number) {
-    if (!documentData) return;
-
-    try {
-      setLinking(linkedDocumentId);
-      setError("");
-
-      await api.post(`/documents/${documentData.document_id}/links`, {
-        linked_document_id: linkedDocumentId,
-      });
-
-      await fetchDocument();
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedLinkDocument")));
-    } finally {
-      setLinking(null);
-    }
-  }
-
-  async function unlinkDocument(linkedDocumentId: number) {
-    if (!documentData) return;
-
-    try {
-      setUnlinking(linkedDocumentId);
-      setError("");
-
-      await api.delete(`/documents/${documentData.document_id}/links/${linkedDocumentId}`);
-      await fetchDocument();
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedUnlinkDocument")));
-    } finally {
-      setUnlinking(null);
-    }
-  }
-
   if (loading || !currentUser || !documentData) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingRecord")}</p>
+      <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
+        <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
+          <Spinner size={20} />
+          <span className="muted-text">Loading structured document...</span>
+        </div>
       </main>
     );
   }
 
+  const parsed = documentData.parsed_data;
+
   return (
     <AppShell
       user={currentUser}
-      title={valueOrDash(documentData.parsed_data.report_name || documentData.filename)}
-      subtitle={isNote ? t("clinicalNote") : valueOrDash(documentData.parsed_data.report_type)}
+      title={parsed.report_name || documentData.filename || "Document"}
+      subtitle={`${valueOrDash(parsed.patient_name)} · ${valueOrDash(parsed.report_type)} · ${
+        parsed.is_verified ? "Verified" : "Unverified"
+      }`}
       rightContent={
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-          {!isNote && !!documentData.content_type && !!documentData.filename && (
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={() => openOriginal(documentData.document_id)}
-            >
-              {t("openOriginalFile")}
-            </button>
-          )}
-
-          <button className="secondary-btn" onClick={() => router.back()}>
-            {t("back")}
-          </button>
-        </div>
+        <button className="secondary-btn" onClick={() => router.push(`/patients/${documentData.patient_id}`)}>
+          Back to chart
+        </button>
       }
     >
       {error && (
@@ -335,59 +512,304 @@ export default function DocumentDetailPage() {
         </div>
       )}
 
-      {!isNote && hasAbnormalLabs && (
-        <div
-          className="soft-card"
-          style={{
-            padding: 20,
-            marginBottom: 24,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: "var(--danger-text)",
-                display: "inline-flex",
-              }}
-            />
-            <div style={{ fontWeight: 950, color: "var(--danger-text)", fontSize: 18 }}>
-              {t("abnormalResultsInRecord")}
-            </div>
-          </div>
-
-          <div className="muted-text" style={{ marginTop: 8 }}>
-            {t("abnormalResultsInRecordDesc")}
-          </div>
-
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-            {abnormalLabs.slice(0, 6).map((lab, index) => (
+      <div
+        className="soft-card"
+        style={{
+          padding: 22,
+          marginBottom: 24,
+          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+        }}
+      >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
+          <div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <span
-                key={`${lab.display_name}-${index}`}
                 style={{
                   display: "inline-flex",
-                  padding: "7px 10px",
+                  padding: "7px 11px",
                   borderRadius: 999,
-                  background: "var(--danger-bg)",
-                  color: "var(--danger-text)",
-                  border: "1px solid var(--danger-border)",
+                  background: parsed.is_verified ? "var(--success-bg)" : "var(--warn-bg)",
+                  color: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)",
+                  border: `1px solid ${parsed.is_verified ? "var(--success-border)" : "var(--warn-border)"}`,
                   fontWeight: 900,
                   fontSize: 12,
                 }}
               >
-                {valueOrDash(lab.display_name || lab.raw_test_name)} {valueOrDash(lab.value)}
-                {lab.unit ? ` ${lab.unit}` : ""} · {valueOrDash(lab.flag)}
+                {parsed.is_verified ? "Verified" : "Unverified"}
               </span>
-            ))}
+
+              <span
+                style={{
+                  display: "inline-flex",
+                  padding: "7px 11px",
+                  borderRadius: 999,
+                  background: "var(--panel-2)",
+                  color: "var(--muted)",
+                  border: "1px solid var(--border)",
+                  fontWeight: 900,
+                  fontSize: 12,
+                }}
+              >
+                {documentData.section}
+              </span>
+
+              {!isNote && abnormalLabs.length > 0 && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    padding: "7px 11px",
+                    borderRadius: 999,
+                    background: "var(--danger-bg)",
+                    color: "var(--danger-text)",
+                    border: "1px solid var(--danger-border)",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
+                  {abnormalLabs.length} abnormal
+                </span>
+              )}
+            </div>
+
+            <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
+              Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)} · Created {formatDate(parsed.created_at)}
+              {parsed.last_edited_at ? ` · Edited ${formatDate(parsed.last_edited_at)}` : ""}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {!isNote && (
+              <button className="secondary-btn" onClick={openOriginal} disabled={openingOriginal}>
+                {openingOriginal ? "Opening..." : "Open original"}
+              </button>
+            )}
+
+            {canVerify && !parsed.is_verified && (
+              <button className="primary-btn" onClick={verifyDocument} disabled={verifying}>
+                {verifying ? "Verifying..." : "Verify"}
+              </button>
+            )}
+
+            {!isNote && canEditStructured && (
+              <button className={editMode ? "secondary-btn" : "primary-btn"} onClick={() => setEditMode((prev) => !prev)}>
+                {editMode ? "Cancel edit" : "Edit structured data"}
+              </button>
+            )}
+
+            {isNote && canEditNote && (
+              <button className={noteEditMode ? "secondary-btn" : "primary-btn"} onClick={() => setNoteEditMode((prev) => !prev)}>
+                {noteEditMode ? "Cancel edit" : "Edit note"}
+              </button>
+            )}
           </div>
         </div>
-      )}
+      </div>
 
       {isNote ? (
+        <div className="soft-card" style={{ padding: 24 }}>
+          {!noteEditMode ? (
+            <>
+              <div className="section-title" style={{ marginBottom: 14 }}>
+                {parsed.report_name || "Clinical Note"}
+              </div>
+
+              <div
+                className="soft-card-tight"
+                style={{
+                  padding: 20,
+                  background: "var(--panel)",
+                  lineHeight: 1.8,
+                  whiteSpace: "pre-wrap",
+                }}
+              >
+                {parsed.note_body || "No note body."}
+              </div>
+            </>
+          ) : (
+            <form onSubmit={saveNote} style={{ display: "grid", gap: 14 }}>
+              <input
+                className="text-input"
+                value={noteTitle}
+                onChange={(e) => setNoteTitle(e.target.value)}
+                placeholder="Note title"
+                disabled={savingNote}
+              />
+
+              <textarea
+                className="text-input"
+                value={noteBody}
+                onChange={(e) => setNoteBody(e.target.value)}
+                rows={16}
+                placeholder="Write clinical note..."
+                disabled={savingNote}
+                style={{ resize: "vertical", lineHeight: 1.7 }}
+              />
+
+              <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
+                <button type="button" className="secondary-btn" onClick={() => setNoteEditMode(false)} disabled={savingNote}>
+                  Cancel
+                </button>
+                <button type="submit" className="primary-btn" disabled={savingNote}>
+                  {savingNote ? "Saving..." : "Save note"}
+                </button>
+              </div>
+            </form>
+          )}
+        </div>
+      ) : editMode ? (
+        <form onSubmit={saveStructuredData} style={{ display: "grid", gap: 24 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: 20,
+            }}
+          >
+            <div className="soft-card" style={{ padding: 24 }}>
+              <div className="section-title" style={{ marginBottom: 16 }}>
+                Patient
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <input className="text-input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Patient name" />
+                <input className="text-input" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} placeholder="Date of birth" />
+                <input className="text-input" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Age" />
+                <input className="text-input" value={sex} onChange={(e) => setSex(e.target.value)} placeholder="Sex" />
+                <input className="text-input" value={cnp} onChange={(e) => setCnp(e.target.value)} placeholder="CNP" />
+                <input
+                  className="text-input"
+                  value={patientIdentifier}
+                  onChange={(e) => setPatientIdentifier(e.target.value)}
+                  placeholder="Patient ID"
+                />
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <div className="section-title" style={{ marginBottom: 16 }}>
+                Document details
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <input className="text-input" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="Report name" />
+                <input className="text-input" value={reportType} onChange={(e) => setReportType(e.target.value)} placeholder="Report type" />
+                <input className="text-input" value={labName} onChange={(e) => setLabName(e.target.value)} placeholder="Lab" />
+                <input className="text-input" value={sampleType} onChange={(e) => setSampleType(e.target.value)} placeholder="Sample type" />
+                <input
+                  className="text-input"
+                  value={referringDoctor}
+                  onChange={(e) => setReferringDoctor(e.target.value)}
+                  placeholder="Referring doctor"
+                />
+                <input
+                  className="text-input"
+                  value={sourceLanguage}
+                  onChange={(e) => setSourceLanguage(e.target.value)}
+                  placeholder="Source language"
+                />
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <div className="section-title" style={{ marginBottom: 16 }}>
+                Dates
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <input className="text-input" value={testDate} onChange={(e) => setTestDate(e.target.value)} placeholder="Test date" />
+                <input className="text-input" value={collectedOn} onChange={(e) => setCollectedOn(e.target.value)} placeholder="Collected on" />
+                <input className="text-input" value={reportedOn} onChange={(e) => setReportedOn(e.target.value)} placeholder="Reported on" />
+                <input className="text-input" value={registeredOn} onChange={(e) => setRegisteredOn(e.target.value)} placeholder="Registered on" />
+                <input className="text-input" value={generatedOn} onChange={(e) => setGeneratedOn(e.target.value)} placeholder="Generated on" />
+              </div>
+            </div>
+          </div>
+
+          <div className="soft-card" style={{ padding: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 16 }}>
+              <div>
+                <div className="section-title">Structured lab rows</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  Edit or add any extracted CBC row.
+                </div>
+              </div>
+
+              <button type="button" className="secondary-btn" onClick={addLabRow}>
+                Add row
+              </button>
+            </div>
+
+            <div style={{ display: "grid", gap: 12 }}>
+              {labs.map((lab, index) => (
+                <div
+                  key={`${lab.id || "new"}-${index}`}
+                  className="soft-card-tight"
+                  style={{
+                    padding: 14,
+                    display: "grid",
+                    gridTemplateColumns: "1.1fr 0.8fr 0.7fr 1fr 0.8fr auto",
+                    gap: 10,
+                    alignItems: "center",
+                  }}
+                >
+                  <input
+                    className="text-input"
+                    value={lab.display_name || lab.raw_test_name || ""}
+                    onChange={(e) => {
+                      updateLab(index, "display_name", e.target.value);
+                      updateLab(index, "raw_test_name", e.target.value);
+                    }}
+                    placeholder="Test"
+                  />
+                  <input className="text-input" value={lab.value || ""} onChange={(e) => updateLab(index, "value", e.target.value)} placeholder="Value" />
+                  <input className="text-input" value={lab.unit || ""} onChange={(e) => updateLab(index, "unit", e.target.value)} placeholder="Unit" />
+                  <input
+                    className="text-input"
+                    value={lab.reference_range || ""}
+                    onChange={(e) => updateLab(index, "reference_range", e.target.value)}
+                    placeholder="Reference"
+                  />
+                  <select className="text-input" value={lab.flag || ""} onChange={(e) => updateLab(index, "flag", e.target.value)}>
+                    <option value="">—</option>
+                    <option value="Normal">Normal</option>
+                    <option value="High">High</option>
+                    <option value="Low">Low</option>
+                    <option value="Abnormal">Abnormal</option>
+                    <option value="Critical">Critical</option>
+                    <option value="Borderline">Borderline</option>
+                  </select>
+                  <button type="button" className="secondary-btn" onClick={() => removeLabRow(index)}>
+                    ×
+                  </button>
+                </div>
+              ))}
+
+              {!labs.length && (
+                <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                  No lab rows yet.
+                </div>
+              )}
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                onClick={() => {
+                  hydrateForm(documentData);
+                  setEditMode(false);
+                }}
+                disabled={saving}
+              >
+                Cancel
+              </button>
+              <button type="submit" className="primary-btn" disabled={saving}>
+                {saving ? "Saving..." : "Save structured data"}
+              </button>
+            </div>
+          </div>
+        </form>
+      ) : (
         <>
           <div
             style={{
@@ -398,484 +820,347 @@ export default function DocumentDetailPage() {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                {t("patient")}
-              </div>
-
-              <div className="soft-card-tight" style={{ padding: 16 }}>
-                <div className="muted-text" style={{ fontSize: 12 }}>
-                  {t("name")}
-                </div>
-                <div style={{ fontWeight: 800, marginTop: 6 }}>
-                  {valueOrDash(documentData.parsed_data.patient_name)}
-                </div>
-              </div>
-
-              <div className="soft-card-tight" style={{ padding: 16, marginTop: 12 }}>
-                <div className="muted-text" style={{ fontSize: 12 }}>
-                  {t("patientId")}
-                </div>
-                <div style={{ fontWeight: 800, marginTop: 6 }}>
-                  {valueOrDash(documentData.parsed_data.patient_identifier)}
-                </div>
-              </div>
-            </div>
-
-            <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                {t("noteDetails")}
+              <div className="section-title" style={{ marginBottom: 14 }}>
+                Patient
               </div>
 
               <div style={{ display: "grid", gap: 12 }}>
                 {[
-                  [t("doctor"), documentData.uploaded_by?.full_name],
-                  [t("department"), documentData.uploaded_by?.department],
-                  [t("hospital"), documentData.uploaded_by?.hospital_name],
-                  [t("created"), prettyDateTime(documentData.parsed_data.created_at || documentData.parsed_data.test_date)],
-                  ...(documentData.parsed_data.last_edited_at
-                    ? [[t("lastEdited"), prettyDateTime(documentData.parsed_data.last_edited_at)]]
-                    : []),
+                  ["Name", parsed.patient_name],
+                  ["Date of birth", parsed.date_of_birth],
+                  ["Age", parsed.age],
+                  ["Sex", parsed.sex],
+                  ["CNP", parsed.cnp],
+                  ["Patient ID", parsed.patient_identifier],
                 ].map(([label, value]) => (
-                  <div key={label} className="soft-card-tight" style={{ padding: 16 }}>
-                    <div className="muted-text" style={{ fontSize: 12 }}>
+                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
+                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
                       {label}
                     </div>
-                    <div style={{ fontWeight: 800, marginTop: 6 }}>
-                      {valueOrDash(value as string)}
+                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <div className="section-title" style={{ marginBottom: 14 }}>
+                Document details
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {[
+                  ["Report name", parsed.report_name],
+                  ["Report type", parsed.report_type],
+                  ["Lab", parsed.lab_name],
+                  ["Sample type", parsed.sample_type],
+                  ["Referring doctor", parsed.referring_doctor],
+                  ["Source language", parsed.source_language],
+                ].map(([label, value]) => (
+                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
+                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
+                      {label}
                     </div>
+                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
+                  </div>
+                ))}
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <div className="section-title" style={{ marginBottom: 14 }}>
+                Dates
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {[
+                  ["Test date", parsed.test_date],
+                  ["Collected on", parsed.collected_on],
+                  ["Reported on", parsed.reported_on],
+                  ["Registered on", parsed.registered_on],
+                  ["Generated on", parsed.generated_on],
+                ].map(([label, value]) => (
+                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
+                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
+                      {label}
+                    </div>
+                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
                   </div>
                 ))}
               </div>
             </div>
           </div>
 
-          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-                alignItems: "center",
-                marginBottom: 16,
-                flexWrap: "wrap",
-              }}
-            >
-              <div className="section-title">{t("note")}</div>
-
-              {isAuthor && !editing && (
-                <button className="secondary-btn" onClick={() => setEditing(true)}>
-                  {t("edit")}
-                </button>
-              )}
-
-              {isAuthor && editing && (
-                <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                  <button
-                    className="secondary-btn"
-                    onClick={() => {
-                      setEditing(false);
-                      setNoteTitle(documentData.parsed_data.report_name || "");
-                      setNoteBody(documentData.parsed_data.note_body || "");
-                    }}
-                  >
-                    {t("cancel")}
-                  </button>
-                  <button className="primary-btn" onClick={saveNote} disabled={savingNote}>
-                    {savingNote ? t("saving") : t("save")}
-                  </button>
-                </div>
-              )}
-            </div>
-
-            <div style={{ display: "grid", gap: 12, marginBottom: 16 }}>
-              {editing ? (
-                <>
-                  <input
-                    className="text-input"
-                    value={noteTitle}
-                    onChange={(e) => setNoteTitle(e.target.value)}
-                    placeholder={t("noteTitle")}
-                  />
-                  <textarea
-                    className="text-input"
-                    value={noteBody}
-                    onChange={(e) => setNoteBody(e.target.value)}
-                    rows={16}
-                    placeholder={t("writeNote")}
-                  />
-                </>
-              ) : (
-                <div
-                  className="soft-card-tight"
-                  style={{
-                    padding: 24,
-                    minHeight: 260,
-                    whiteSpace: "pre-wrap",
-                    lineHeight: 1.8,
-                    fontSize: 16,
-                  }}
-                >
-                  {valueOrDash(documentData.parsed_data.note_body)}
-                </div>
-              )}
-            </div>
-          </div>
-
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 16 }}>
-              {t("linkedRecords")}
-            </div>
-
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-              {(["bloodwork", "scans", "other"] as LinkTab[]).map((tab) => (
-                <button
-                  key={tab}
-                  className={activeLinkTab === tab ? "primary-btn" : "secondary-btn"}
-                  onClick={() => setActiveLinkTab(tab)}
-                >
-                  {sectionTitle(tab)} ({linkedByTab[tab].length})
-                </button>
-              ))}
-            </div>
-
-            <div style={{ display: "grid", gap: 12, marginBottom: isAuthor ? 24 : 0 }}>
-              {linkedByTab[activeLinkTab].map((doc) => {
-                const linkedHasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
-
-                return (
-                  <div
-                    key={doc.id}
-                    className="soft-card-tight"
-                    style={{
-                      padding: 16,
-                      borderColor: linkedHasAbnormal ? "var(--danger-border)" : "var(--border)",
-                    }}
-                  >
-                    <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
-                      <div>
-                        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                          {linkedHasAbnormal && (
-                            <span
-                              style={{
-                                width: 10,
-                                height: 10,
-                                borderRadius: 999,
-                                background: "var(--danger-text)",
-                                display: "inline-flex",
-                              }}
-                            />
-                          )}
-
-                          <div style={{ fontWeight: 800 }}>{valueOrDash(doc.report_name || doc.filename)}</div>
-                        </div>
-
-                        {linkedHasAbnormal && (
-                          <div style={{ marginTop: 8 }}>
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                padding: "5px 10px",
-                                borderRadius: 999,
-                                background: "var(--danger-bg)",
-                                color: "var(--danger-text)",
-                                border: "1px solid var(--danger-border)",
-                                fontSize: 12,
-                                fontWeight: 900,
-                              }}
-                            >
-                              {t("abnormalResults")}
-                            </span>
-                          </div>
-                        )}
-
-                        <div className="muted-text" style={{ marginTop: 6 }}>
-                          {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
-                        </div>
-                      </div>
-
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                        <button className="secondary-btn" onClick={() => router.push(`/documents/${doc.id}`)}>
-                          {t("open")}
-                        </button>
-
-                        {!doc.section.includes("notes") && !!doc.content_type && (
-                          <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
-                            {t("openOriginal")}
-                          </button>
-                        )}
-
-                        {isAuthor && (
-                          <button
-                            className="secondary-btn"
-                            onClick={() => unlinkDocument(doc.id)}
-                            disabled={unlinking === doc.id}
-                          >
-                            {unlinking === doc.id ? t("removing") : t("remove")}
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  </div>
-                );
-              })}
-
-              {!linkedByTab[activeLinkTab].length && (
-                <div className="soft-card-tight" style={{ padding: 16 }}>
-                  <div className="muted-text">
-                    {t("linkedRecordsEmptyPrefix")} {sectionTitle(activeLinkTab).toLowerCase()}{" "}
-                    {t("linkedRecordsEmptySuffix")}
-                  </div>
-                </div>
-              )}
-            </div>
-
-            {isAuthor && (
-              <>
-                <div className="section-title" style={{ marginBottom: 14 }}>
-                  {t("addLinked")} {sectionTitle(activeLinkTab)}
-                </div>
-
-                <div style={{ display: "grid", gap: 12 }}>
-                  {availableByTab[activeLinkTab]
-                    .filter((doc) => !doc.is_linked)
-                    .map((doc) => {
-                      const availableHasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
-
-                      return (
-                        <div
-                          key={doc.id}
-                          className="soft-card-tight"
-                          style={{
-                            padding: 16,
-                            borderColor: availableHasAbnormal ? "var(--danger-border)" : "var(--border)",
-                          }}
-                        >
-                          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr)", gap: 12 }}>
-                            <div>
-                              <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap" }}>
-                                {availableHasAbnormal && (
-                                  <span
-                                    style={{
-                                      width: 10,
-                                      height: 10,
-                                      borderRadius: 999,
-                                      background: "var(--danger-text)",
-                                      display: "inline-flex",
-                                    }}
-                                  />
-                                )}
-
-                                <div style={{ fontWeight: 800 }}>{valueOrDash(doc.report_name || doc.filename)}</div>
-                              </div>
-
-                              {availableHasAbnormal && (
-                                <div style={{ marginTop: 8 }}>
-                                  <span
-                                    style={{
-                                      display: "inline-flex",
-                                      padding: "5px 10px",
-                                      borderRadius: 999,
-                                      background: "var(--danger-bg)",
-                                      color: "var(--danger-text)",
-                                      border: "1px solid var(--danger-border)",
-                                      fontSize: 12,
-                                      fontWeight: 900,
-                                    }}
-                                  >
-                                    {t("abnormalResults")}
-                                  </span>
-                                </div>
-                              )}
-
-                              <div className="muted-text" style={{ marginTop: 6 }}>
-                                {valueOrDash(doc.report_type)} · {valueOrDash(doc.test_date)}
-                              </div>
-                            </div>
-
-                            <div>
-                              <button
-                                className="primary-btn"
-                                onClick={() => linkDocument(doc.id)}
-                                disabled={linking === doc.id}
-                              >
-                                {linking === doc.id ? t("adding") : t("add")}
-                              </button>
-                            </div>
-                          </div>
-                        </div>
-                      );
-                    })}
-
-                  {!availableByTab[activeLinkTab].filter((doc) => !doc.is_linked).length && (
-                    <div className="soft-card-tight" style={{ padding: 16 }}>
-                      <div className="muted-text">
-                        {t("noAdditionalLinkedAvailablePrefix")} {sectionTitle(activeLinkTab).toLowerCase()}{" "}
-                        {t("noAdditionalLinkedAvailableSuffix")}
-                      </div>
-                    </div>
-                  )}
-                </div>
-              </>
-            )}
-          </div>
-        </>
-      ) : (
-        <>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: 14,
-              marginBottom: 20,
-            }}
-          >
-            <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                {t("patient")}
-              </div>
-
-              <div className="soft-card-tight" style={{ padding: 16 }}>
-                <div className="muted-text" style={{ fontSize: 12 }}>
-                  {t("name")}
-                </div>
-                <div style={{ marginTop: 6, fontWeight: 800 }}>
-                  {valueOrDash(documentData.parsed_data.patient_name)}
-                </div>
-              </div>
-
-              <div className="soft-card-tight" style={{ padding: 16, marginTop: 12 }}>
-                <div className="muted-text" style={{ fontSize: 12 }}>
-                  {t("patientId")}
-                </div>
-                <div style={{ marginTop: 6, fontWeight: 800 }}>
-                  {valueOrDash(documentData.parsed_data.patient_identifier)}
-                </div>
-              </div>
-            </div>
-
+          {abnormalLabs.length > 0 && (
             <div
               className="soft-card"
               style={{
-                padding: 24,
-                borderColor: hasAbnormalLabs ? "var(--danger-border)" : "var(--border)",
+                padding: 22,
+                marginBottom: 24,
+                borderColor: "var(--danger-border)",
+                background: "var(--danger-bg)",
               }}
             >
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                {t("documentDetails")}
+              <div style={{ fontWeight: 950, color: "var(--danger-text)", fontSize: 18 }}>
+                Abnormal results
               </div>
 
-              <div style={{ display: "grid", gap: 12 }}>
-                {[
-                  [t("reportName"), documentData.parsed_data.report_name],
-                  [t("reportType"), documentData.parsed_data.report_type],
-                  [t("lab"), documentData.parsed_data.lab_name],
-                  [t("sampleType"), documentData.parsed_data.sample_type],
-                  [t("referringDoctor"), documentData.parsed_data.referring_doctor],
-                  [t("date"), documentData.parsed_data.test_date],
-                ].map(([label, value]) => (
-                  <div key={label} className="soft-card-tight" style={{ padding: 16 }}>
-                    <div className="muted-text" style={{ fontSize: 12 }}>
-                      {label}
-                    </div>
-                    <div style={{ marginTop: 6, fontWeight: 700 }}>{valueOrDash(value as string)}</div>
-                  </div>
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
+                {abnormalLabs.map((lab) => (
+                  <span
+                    key={lab.id}
+                    style={{
+                      display: "inline-flex",
+                      padding: "8px 11px",
+                      borderRadius: 999,
+                      background: "var(--panel)",
+                      color: "var(--danger-text)",
+                      border: "1px solid var(--danger-border)",
+                      fontWeight: 900,
+                      fontSize: 12,
+                    }}
+                  >
+                    {bestDisplayName(lab)} {valueOrDash(lab.value)}
+                    {lab.unit ? ` ${lab.unit}` : ""} · {valueOrDash(lab.flag)}
+                  </span>
                 ))}
               </div>
             </div>
-          </div>
+          )}
 
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 14 }}>
-              {t("structuredData")}
+          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
+              <div>
+                <div className="section-title">Structured Data</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  {parsed.labs?.length
+                    ? `${parsed.labs.length} structured lab rows extracted.`
+                    : "No structured lab values found."}
+                </div>
+              </div>
             </div>
 
-            <div style={{ display: "grid", gap: 12 }}>
-              {documentData.parsed_data.labs.map((lab, index) => {
-                const abnormal = isAbnormalFlag(lab.flag);
-
-                return (
-                  <div
-                    key={`${lab.display_name}-${index}`}
-                    className="soft-card-tight"
-                    style={{
-                      padding: 16,
-                      borderColor: abnormal ? "var(--danger-border)" : "var(--border)",
-                      background: abnormal ? "var(--danger-bg)" : undefined,
-                    }}
-                  >
+            {groupedLabs.length > 0 ? (
+              <div style={{ display: "grid", gap: 20 }}>
+                {groupedLabs.map((group) => (
+                  <div key={group.category}>
                     <div
                       style={{
-                        display: "grid",
-                        gridTemplateColumns: "repeat(auto-fit, minmax(140px, 1fr))",
-                        gap: 12,
-                        alignItems: "center",
+                        fontWeight: 950,
+                        marginBottom: 10,
+                        textTransform: "uppercase",
+                        fontSize: 12,
+                        letterSpacing: "0.08em",
+                        color: "var(--muted)",
                       }}
                     >
-                      <div>
-                        <div className="muted-text" style={{ fontSize: 12 }}>
-                          {t("test")}
-                        </div>
-                        <div style={{ fontWeight: 800, marginTop: 4 }}>
-                          {valueOrDash(lab.display_name || lab.raw_test_name)}
-                        </div>
-                      </div>
+                      {group.category}
+                    </div>
 
-                      <div>
-                        <div className="muted-text" style={{ fontSize: 12 }}>
-                          {t("value")}
-                        </div>
-                        <div style={{ fontWeight: 700, marginTop: 4 }}>{valueOrDash(lab.value)}</div>
-                      </div>
+                    <div style={{ overflowX: "auto" }}>
+                      <table
+                        style={{
+                          width: "100%",
+                          borderCollapse: "separate",
+                          borderSpacing: "0 10px",
+                          minWidth: 760,
+                        }}
+                      >
+                        <thead>
+                          <tr>
+                            {["Test", "Value", "Unit", "Reference range", "Flag"].map((heading) => (
+                              <th
+                                key={heading}
+                                style={{
+                                  textAlign: "left",
+                                  padding: "0 12px 4px",
+                                  color: "var(--muted)",
+                                  fontSize: 12,
+                                  fontWeight: 900,
+                                }}
+                              >
+                                {heading}
+                              </th>
+                            ))}
+                          </tr>
+                        </thead>
 
-                      <div>
-                        <div className="muted-text" style={{ fontSize: 12 }}>
-                          {t("unit")}
-                        </div>
-                        <div style={{ fontWeight: 700, marginTop: 4 }}>{valueOrDash(lab.unit)}</div>
-                      </div>
+                        <tbody>
+                          {group.rows.map((lab) => {
+                            const abnormal = lab.is_abnormal || isAbnormalFlag(lab.flag);
+                            const flagStyle = getFlagStyle(lab.flag);
 
-                      <div>
-                        <div className="muted-text" style={{ fontSize: 12 }}>
-                          {t("reference")}
-                        </div>
-                        <div style={{ fontWeight: 700, marginTop: 4 }}>{valueOrDash(lab.reference_range)}</div>
-                      </div>
+                            return (
+                              <tr key={lab.id}>
+                                <td
+                                  style={{
+                                    padding: 14,
+                                    borderTopLeftRadius: 16,
+                                    borderBottomLeftRadius: 16,
+                                    border: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    borderRight: "none",
+                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
+                                    fontWeight: 950,
+                                  }}
+                                >
+                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                                    {abnormal && (
+                                      <span
+                                        style={{
+                                          width: 10,
+                                          height: 10,
+                                          borderRadius: 999,
+                                          background: "var(--danger-text)",
+                                          display: "inline-flex",
+                                        }}
+                                      />
+                                    )}
+                                    {bestDisplayName(lab)}
+                                  </div>
+                                  {lab.raw_test_name && lab.raw_test_name !== lab.display_name && (
+                                    <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
+                                      Raw: {lab.raw_test_name}
+                                    </div>
+                                  )}
+                                </td>
 
-                      <div>
-                        <div className="muted-text" style={{ fontSize: 12 }}>
-                          {t("flag")}
-                        </div>
-                        <div style={{ marginTop: 6 }}>
-                          <span
-                            style={{
-                              display: "inline-flex",
-                              padding: "4px 9px",
-                              borderRadius: 999,
-                              background: abnormal ? "var(--danger-bg)" : "var(--success-bg)",
-                              color: abnormal ? "var(--danger-text)" : "var(--success-text)",
-                              border: abnormal ? "1px solid var(--danger-border)" : undefined,
-                              fontSize: 12,
-                              fontWeight: 900,
-                            }}
-                          >
-                            {valueOrDash(lab.flag)}
-                          </span>
-                        </div>
-                      </div>
+                                <td
+                                  style={{
+                                    padding: 14,
+                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
+                                    fontWeight: 950,
+                                  }}
+                                >
+                                  {valueOrDash(lab.value)}
+                                </td>
+
+                                <td
+                                  style={{
+                                    padding: 14,
+                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
+                                  }}
+                                >
+                                  {valueOrDash(lab.unit)}
+                                </td>
+
+                                <td
+                                  style={{
+                                    padding: 14,
+                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
+                                  }}
+                                >
+                                  {valueOrDash(lab.reference_range)}
+                                </td>
+
+                                <td
+                                  style={{
+                                    padding: 14,
+                                    borderTopRightRadius: 16,
+                                    borderBottomRightRadius: 16,
+                                    border: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
+                                    borderLeft: "none",
+                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
+                                  }}
+                                >
+                                  <span
+                                    style={{
+                                      display: "inline-flex",
+                                      padding: "7px 10px",
+                                      borderRadius: 999,
+                                      background: flagStyle.background,
+                                      color: flagStyle.color,
+                                      border: `1px solid ${flagStyle.borderColor}`,
+                                      fontWeight: 900,
+                                      fontSize: 12,
+                                    }}
+                                  >
+                                    {valueOrDash(lab.flag)}
+                                  </span>
+                                </td>
+                              </tr>
+                            );
+                          })}
+                        </tbody>
+                      </table>
                     </div>
                   </div>
-                );
-              })}
-
-              {!documentData.parsed_data.labs.length && (
-                <div className="soft-card-tight" style={{ padding: 16 }}>
-                  <div className="muted-text">{t("noStructuredLabs")}</div>
+                ))}
+              </div>
+            ) : (
+              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+                <div style={{ fontWeight: 900 }}>No structured lab values found.</div>
+                <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
+                  If this was a CBC scan, re-upload after the OCR/AI extraction backend is deployed.
                 </div>
-              )}
-            </div>
+              </div>
+            )}
           </div>
         </>
       )}
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+          gap: 20,
+          marginTop: 24,
+        }}
+      >
+        <div className="soft-card" style={{ padding: 24 }}>
+          <div className="section-title" style={{ marginBottom: 14 }}>
+            Audit trail
+          </div>
+
+          <div style={{ display: "grid", gap: 10 }}>
+            {(parsed.audit_logs || []).map((log, index) => (
+              <div key={`${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
+                <div style={{ fontWeight: 900 }}>{log.action}</div>
+                <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.5 }}>
+                  {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
+                </div>
+                {log.details && <div style={{ marginTop: 6 }}>{log.details}</div>}
+              </div>
+            ))}
+
+            {!parsed.audit_logs?.length && <div className="muted-text">No audit logs yet.</div>}
+          </div>
+        </div>
+
+        {isNote && (
+          <div className="soft-card" style={{ padding: 24 }}>
+            <div className="section-title" style={{ marginBottom: 14 }}>
+              Linked documents
+            </div>
+
+            <div style={{ display: "grid", gap: 10 }}>
+              {(parsed.linked_documents || []).map((doc) => (
+                <div key={doc.id} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
+                  <div style={{ fontWeight: 900 }}>{valueOrDash(doc.report_name || doc.filename)}</div>
+                  <div className="muted-text" style={{ marginTop: 4 }}>
+                    {doc.section} · {valueOrDash(doc.test_date)}
+                  </div>
+                  <button
+                    type="button"
+                    className="secondary-btn"
+                    style={{ marginTop: 10 }}
+                    onClick={() => router.push(`/documents/${doc.id}`)}
+                  >
+                    Open
+                  </button>
+                </div>
+              ))}
+
+              {!parsed.linked_documents?.length && <div className="muted-text">No linked documents.</div>}
+            </div>
+          </div>
+        )}
+      </div>
     </AppShell>
   );
 }
