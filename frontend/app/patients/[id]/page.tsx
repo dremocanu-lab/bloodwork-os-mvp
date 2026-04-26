@@ -55,6 +55,7 @@ type DocumentCard = {
   reviewed_by_current_doctor?: boolean;
   uploaded_by?: UploadedBy | null;
   note_preview?: string | null;
+  can_edit_note?: boolean;
 };
 
 type PatientEvent = {
@@ -96,7 +97,7 @@ type PatientProfileResponse = {
 
 type TimelineItem = {
   id: string;
-  date: string;
+  date?: string | null;
   title: string;
   subtitle: string;
   kind: "record" | "note" | "event" | "abnormal";
@@ -141,126 +142,80 @@ function Spinner({ size = 18 }: { size?: number }) {
   );
 }
 
-function bestDocumentDate(doc: DocumentCard) {
-  if (doc.section === "bloodwork") {
-    return doc.collected_on || doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
-  }
-
-  if (doc.section === "scans") {
-    return doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
-  }
-
-  if (doc.section === "notes") {
-    return doc.created_at || doc.test_date || "";
-  }
-
-  return doc.test_date || doc.reported_on || doc.generated_on || doc.created_at || "";
+function isAbnormalDoc(doc: DocumentCard) {
+  return Boolean(doc.has_abnormal || doc.has_abnormal_labs);
 }
 
-function formatTimelineDate(value?: string | null, noDate = "No date") {
-  if (!value) return noDate;
+function isUnreviewedAbnormalDoc(doc: DocumentCard) {
+  return isAbnormalDoc(doc) && !doc.reviewed_by_current_doctor;
+}
 
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value.slice(0, 16);
+function bestDocumentDate(doc: DocumentCard) {
+  return (
+    doc.test_date ||
+    doc.collected_on ||
+    doc.reported_on ||
+    doc.generated_on ||
+    doc.registered_on ||
+    doc.created_at ||
+    ""
+  );
+}
 
-  return d.toLocaleDateString(undefined, {
+function formatTimelineDate(value?: string | null, fallback = "No date") {
+  if (!value) return fallback;
+
+  const parsed = new Date(value);
+
+  if (Number.isNaN(parsed.getTime())) {
+    return value.slice(0, 24);
+  }
+
+  return parsed.toLocaleDateString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
   });
 }
 
-function getSectionTone(section: string) {
-  if (section === "bloodwork") return { bg: "var(--danger-bg)", text: "var(--danger-text)", border: "var(--danger-border)" };
-  if (section === "scans") return { bg: "var(--success-bg)", text: "var(--success-text)", border: "var(--success-border)" };
-  if (section === "notes") return { bg: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))", text: "var(--primary)", border: "color-mix(in srgb, var(--primary) 32%, var(--border))" };
-  return { bg: "var(--panel-2)", text: "var(--muted)", border: "var(--border)" };
-}
-
 export default function PatientChartPage() {
   const params = useParams();
   const router = useRouter();
-  const { t, language } = useLanguage();
+  const { t } = useLanguage();
   const patientId = params?.id as string;
-
-  const labels = useMemo(() => {
-    if (language === "ro") {
-      return {
-        uploadDocument: "Încarcă document",
-        newClinicalNote: "Notă clinică nouă",
-        viewFullTimeline: "Vezi timeline complet",
-        recentTimeline: "Timeline recent",
-        quickActions: "Acțiuni rapide",
-        quickActionsDesc: "Încarcă documente, creează note clinice sau vezi activitatea completă a pacientului.",
-        clinicalNotesVisibility: "Notele clinice sunt vizibile tuturor medicilor cu acces. Doar medicul autor poate edita nota.",
-        recordsDesc: "Documentele pacientului sunt grupate pe tip. Rezultatele anormale nerevizuite sunt marcate cu roșu.",
-        noRecentTimeline: "Nu există activitate recentă.",
-        uploadedBy: "Încărcat de",
-        noDate: "Fără dată",
-        timelineHint: "Se afișează cele mai recente elemente. Folosește timeline-ul complet pentru istoricul complet.",
-        patientDetails: "Detalii pacient",
-        clinicalTeam: "Echipă medicală",
-      };
-    }
-
-    return {
-      uploadDocument: "Upload document",
-      newClinicalNote: "New clinical note",
-      viewFullTimeline: "View full timeline",
-      recentTimeline: "Recent timeline",
-      quickActions: "Quick actions",
-      quickActionsDesc: "Upload documents, create clinical notes, or review the patient’s full activity timeline.",
-      clinicalNotesVisibility: "Clinical notes are visible to all doctors with patient access. Only the authoring doctor can edit their own note.",
-      recordsDesc: "Patient documents are grouped by type. Unreviewed abnormal records are marked in red.",
-      noRecentTimeline: "No recent activity yet.",
-      uploadedBy: "Uploaded by",
-      noDate: "No date",
-      timelineHint: "Showing only the latest items. Use the full timeline for the complete history.",
-      patientDetails: "Patient details",
-      clinicalTeam: "Clinical team",
-    };
-  }, [language]);
-
-  const sectionLabels: Record<SectionKey, string> = {
-    all_documents: t("allRecords"),
-    bloodwork: t("bloodwork"),
-    scans: t("scans"),
-    medications: t("medications"),
-    notes: t("notes"),
-    hospitalizations: t("hospitalizations"),
-    other: t("other"),
-  };
-
-  function sectionLabel(section: string) {
-    if (section === "bloodwork") return t("bloodwork");
-    if (section === "scans") return t("scan");
-    if (section === "medications") return t("medication");
-    if (section === "hospitalizations") return t("hospitalization");
-    if (section === "notes") return t("note");
-    return t("record");
-  }
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<PatientProfileResponse | null>(null);
   const [activeSection, setActiveSection] = useState<SectionKey>("all_documents");
 
-  const [eventTitle, setEventTitle] = useState("");
-  const [eventDescription, setEventDescription] = useState("");
-  const [creatingEvent, setCreatingEvent] = useState(false);
-
   const [loading, setLoading] = useState(true);
+  const [openingId, setOpeningId] = useState<number | null>(null);
+  const [dischargingId, setDischargingId] = useState<number | null>(null);
   const [error, setError] = useState("");
 
+  const sectionLabels: Record<SectionKey, string> = {
+    all_documents: t("allRecords") || "All Records",
+    bloodwork: t("bloodwork") || "Bloodwork",
+    scans: t("scans") || "Scans",
+    medications: t("medications") || "Medications",
+    notes: t("notes") || "Notes",
+    hospitalizations: t("hospitalizations") || "Hospitalizations",
+    other: t("other") || "Other",
+  };
+
+  function sectionLabel(section: string) {
+    if (section === "bloodwork") return t("bloodwork") || "Bloodwork";
+    if (section === "scans") return t("scan") || "Scan";
+    if (section === "medications") return t("medication") || "Medication";
+    if (section === "hospitalizations") return t("hospitalization") || "Hospitalization";
+    if (section === "notes") return t("note") || "Note";
+    return t("record") || "Record";
+  }
+
   async function fetchMe() {
-    try {
-      const response = await api.get<CurrentUser>("/auth/me");
-      setCurrentUser(response.data);
-      return response.data;
-    } catch {
-      localStorage.removeItem("access_token");
-      router.push("/login");
-      return null;
-    }
+    const response = await api.get<CurrentUser>("/auth/me");
+    setCurrentUser(response.data);
+    return response.data;
   }
 
   async function fetchProfile() {
@@ -270,14 +225,18 @@ export default function PatientChartPage() {
 
   useEffect(() => {
     async function init() {
-      const me = await fetchMe();
-      if (!me) return;
-
       try {
         setError("");
+        const user = await fetchMe();
+
+        if (user.role === "patient") {
+          router.push("/my-records");
+          return;
+        }
+
         await fetchProfile();
       } catch (err) {
-        setError(getErrorMessage(err, t("failedLoadPatientChart")));
+        setError(getErrorMessage(err, "Could not load patient chart."));
       } finally {
         setLoading(false);
       }
@@ -286,44 +245,105 @@ export default function PatientChartPage() {
     init();
   }, [patientId]);
 
-  async function createEvent() {
-    if (!eventTitle.trim()) {
-      setError(t("eventTitleRequired"));
-      return;
+  const allDocuments = useMemo(() => {
+    if (!profile) return [];
+
+    return [
+      ...profile.sections.notes,
+      ...profile.sections.bloodwork,
+      ...profile.sections.scans,
+      ...profile.sections.medications,
+      ...profile.sections.hospitalizations,
+      ...profile.sections.other,
+    ].sort((a, b) => bestDocumentDate(b).localeCompare(bestDocumentDate(a)));
+  }, [profile]);
+
+  const sectionDocuments = useMemo(() => {
+    if (!profile) return [];
+
+    if (activeSection === "all_documents") return allDocuments;
+    return profile.sections[activeSection] || [];
+  }, [profile, activeSection, allDocuments]);
+
+  const unreviewedAbnormalDocuments = useMemo(() => {
+    return allDocuments.filter(isUnreviewedAbnormalDoc);
+  }, [allDocuments]);
+
+  const activeEvents = useMemo(() => {
+    return (profile?.events || []).filter((event) => event.status === "active");
+  }, [profile]);
+
+  const recentEvents = useMemo(() => {
+    return (profile?.events || []).slice(0, 3);
+  }, [profile]);
+
+  const stats = useMemo(() => {
+    if (!profile) {
+      return {
+        records: 0,
+        bloodwork: 0,
+        scans: 0,
+        notes: 0,
+        needsReview: 0,
+      };
     }
 
-    try {
-      setCreatingEvent(true);
-      setError("");
+    return {
+      records: allDocuments.length,
+      bloodwork: profile.sections.bloodwork.length,
+      scans: profile.sections.scans.length,
+      notes: profile.sections.notes.length,
+      needsReview: unreviewedAbnormalDocuments.length,
+    };
+  }, [profile, allDocuments, unreviewedAbnormalDocuments]);
 
-      await api.post(`/patients/${patientId}/events`, {
-        event_type: "hospitalization",
-        title: eventTitle,
-        description: eventDescription || null,
-      });
+  const timeline = useMemo<TimelineItem[]>(() => {
+    if (!profile) return [];
 
-      setEventTitle("");
-      setEventDescription("");
-      await fetchProfile();
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedCreateEvent")));
-    } finally {
-      setCreatingEvent(false);
-    }
-  }
+    const documentItems: TimelineItem[] = allDocuments.map((doc) => {
+      const unreviewedAbnormal = isUnreviewedAbnormalDoc(doc);
 
-  async function dischargeEvent(eventId: number) {
-    try {
-      setError("");
-      await api.post(`/patient-events/${eventId}/discharge`);
-      await fetchProfile();
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedDischargeEvent")));
-    }
+      return {
+        id: `doc-${doc.id}`,
+        date: bestDocumentDate(doc),
+        title: valueOrDash(doc.report_name || doc.filename),
+        subtitle: `${sectionLabel(doc.section)} · ${valueOrDash(doc.report_type)} · ${
+          doc.is_verified ? "Verified" : "Unverified"
+        }`,
+        kind: unreviewedAbnormal ? "abnormal" : doc.section === "notes" ? "note" : "record",
+        documentId: doc.id,
+        isUnreviewedAbnormal: unreviewedAbnormal,
+      };
+    });
+
+    const eventItems: TimelineItem[] = profile.events.map((event) => ({
+      id: `event-${event.id}`,
+      date: event.discharged_at || event.admitted_at,
+      title: event.title,
+      subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} · ${valueOrDash(
+        event.department
+      )} · ${valueOrDash(event.doctor_name)}`,
+      kind: "event",
+      eventId: event.id,
+    }));
+
+    return [...documentItems, ...eventItems].sort((a, b) => {
+      const aDate = a.date || "";
+      const bDate = b.date || "";
+      return bDate.localeCompare(aDate);
+    });
+  }, [profile, allDocuments]);
+
+  function getSectionCount(section: SectionKey) {
+    if (!profile) return 0;
+
+    if (section === "all_documents") return allDocuments.length;
+    return profile.sections[section]?.length || 0;
   }
 
   async function openOriginal(documentId: number) {
     try {
+      setOpeningId(documentId);
       setError("");
 
       const response = await api.get(`/documents/${documentId}/file`, {
@@ -341,133 +361,50 @@ export default function PatientChartPage() {
         window.URL.revokeObjectURL(fileUrl);
       }, 60_000);
     } catch (err) {
-      setError(getErrorMessage(err, t("failedOpenOriginal")));
+      setError(getErrorMessage(err, "Could not open original file."));
+    } finally {
+      setOpeningId(null);
     }
   }
 
-  const allDocuments = useMemo(() => {
-    if (!profile) return [];
+  async function dischargeEvent(eventId: number) {
+    try {
+      setDischargingId(eventId);
+      setError("");
 
-    return [
-      ...profile.sections.notes,
-      ...profile.sections.bloodwork,
-      ...profile.sections.medications,
-      ...profile.sections.scans,
-      ...profile.sections.hospitalizations,
-      ...profile.sections.other,
-    ].sort((a, b) => bestDocumentDate(b).localeCompare(bestDocumentDate(a)));
-  }, [profile]);
-
-  const sectionDocuments = useMemo(() => {
-    if (!profile) return [];
-    if (activeSection === "all_documents") return allDocuments;
-    return profile.sections[activeSection] || [];
-  }, [profile, activeSection, allDocuments]);
-
-  const unreviewedAbnormalDocuments = useMemo(() => {
-    return allDocuments.filter((doc) => {
-      const hasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
-      const isReviewed = Boolean(doc.reviewed_by_current_doctor);
-      return hasAbnormal && !isReviewed;
-    });
-  }, [allDocuments]);
-
-  const stats = useMemo(() => {
-    if (!profile) {
-      return {
-        records: 0,
-        bloodwork: 0,
-        scans: 0,
-        notes: 0,
-        abnormal: 0,
-      };
+      await api.post(`/patient-events/${eventId}/discharge`);
+      await fetchProfile();
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not discharge patient."));
+    } finally {
+      setDischargingId(null);
     }
-
-    return {
-      records: allDocuments.length,
-      bloodwork: profile.sections.bloodwork.length,
-      scans: profile.sections.scans.length,
-      notes: profile.sections.notes.length,
-      abnormal: unreviewedAbnormalDocuments.length,
-    };
-  }, [profile, allDocuments, unreviewedAbnormalDocuments]);
-
-  const timeline = useMemo<TimelineItem[]>(() => {
-    if (!profile) return [];
-
-    const documentItems: TimelineItem[] = allDocuments.map((doc) => {
-      const hasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
-      const isReviewed = Boolean(doc.reviewed_by_current_doctor);
-      const isUnreviewedAbnormal = hasAbnormal && !isReviewed;
-
-      return {
-        id: `doc-${doc.id}`,
-        date: bestDocumentDate(doc),
-        title: valueOrDash(doc.report_name || doc.filename),
-        subtitle: `${sectionLabel(doc.section)} · ${valueOrDash(doc.report_type)} · ${
-          doc.is_verified ? t("verified") : t("unverified")
-        }`,
-        kind: isUnreviewedAbnormal ? "abnormal" : doc.section === "notes" ? "note" : "record",
-        documentId: doc.id,
-        isUnreviewedAbnormal,
-      };
-    });
-
-    const eventItems: TimelineItem[] = profile.events.map((event) => ({
-      id: `event-${event.id}`,
-      date: event.discharged_at || event.admitted_at,
-      title: event.title,
-      subtitle: `${event.status === "active" ? t("activeAdmission") : t("discharged")} · ${valueOrDash(
-        event.department
-      )} · ${valueOrDash(event.doctor_name)}`,
-      kind: "event",
-      eventId: event.id,
-    }));
-
-    return [...documentItems, ...eventItems].sort((a, b) => {
-      const aDate = a.date || "";
-      const bDate = b.date || "";
-      return bDate.localeCompare(aDate);
-    });
-  }, [profile, allDocuments, t]);
+  }
 
   if (loading || !currentUser || !profile) {
     return (
-      <main
-        className="app-page-bg"
-        style={{
-          minHeight: "100vh",
-          padding: 24,
-          display: "grid",
-          placeItems: "center",
-        }}
-      >
+      <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
         <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
           <Spinner size={20} />
-          <span className="muted-text">{t("loadingPatientChart")}</span>
+          <span className="muted-text">Loading patient chart...</span>
         </div>
       </main>
     );
   }
 
-  const canManageEvents = currentUser.role === "doctor";
-  const canWriteNotes = currentUser.role === "doctor";
-  const canUpload = currentUser.role === "doctor" || currentUser.role === "admin";
-  const recentHospitalizations = profile.events.slice(0, 2);
-  const recentTimeline = timeline.slice(0, 5);
+  const canDoctorActions = currentUser.role === "doctor";
+  const hasActiveAdmission = activeEvents.length > 0;
 
   return (
     <AppShell
       user={currentUser}
       title={profile.patient.full_name}
-      subtitle={`CNP ${valueOrDash(profile.patient.cnp)} · ID ${valueOrDash(profile.patient.patient_identifier)} · ${t(
-        "dob"
-      )} ${valueOrDash(profile.patient.date_of_birth)} · ${t("age")} ${valueOrDash(profile.patient.age)} · ${t(
-        "sex"
-      )} ${valueOrDash(profile.patient.sex)}`}
+      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · DOB ${valueOrDash(
+        profile.patient.date_of_birth
+      )} · Age ${valueOrDash(profile.patient.age)} · Sex ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.back()}>
-          {t("back")}
+          Back
         </button>
       }
     >
@@ -487,6 +424,103 @@ export default function PatientChartPage() {
       )}
 
       <div
+        className="soft-card"
+        style={{
+          padding: 24,
+          marginBottom: 24,
+          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+        }}
+      >
+        <div
+          style={{
+            display: "grid",
+            gridTemplateColumns: "minmax(0, 1fr) auto",
+            gap: 20,
+            alignItems: "center",
+          }}
+        >
+          <div>
+            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
+              {hasActiveAdmission ? (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    padding: "7px 11px",
+                    borderRadius: 999,
+                    background: "var(--success-bg)",
+                    color: "var(--success-text)",
+                    border: "1px solid var(--success-border)",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
+                  Active admission
+                </span>
+              ) : (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    padding: "7px 11px",
+                    borderRadius: 999,
+                    background: "var(--panel-2)",
+                    color: "var(--muted)",
+                    border: "1px solid var(--border)",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
+                  No active stay
+                </span>
+              )}
+
+              {stats.needsReview > 0 && (
+                <span
+                  style={{
+                    display: "inline-flex",
+                    padding: "7px 11px",
+                    borderRadius: 999,
+                    background: "var(--danger-bg)",
+                    color: "var(--danger-text)",
+                    border: "1px solid var(--danger-border)",
+                    fontWeight: 900,
+                    fontSize: 12,
+                  }}
+                >
+                  {stats.needsReview} need review
+                </span>
+              )}
+            </div>
+
+            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.06em" }}>
+              {profile.patient.full_name}
+            </div>
+
+            <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
+              Patient ID {valueOrDash(profile.patient.patient_identifier)} · CNP {valueOrDash(profile.patient.cnp)}
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+            {canDoctorActions && (
+              <>
+                <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>
+                  Upload document
+                </button>
+
+                <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>
+                  New clinical note
+                </button>
+              </>
+            )}
+
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
+              Full timeline
+            </button>
+          </div>
+        </div>
+      </div>
+
+      <div
         style={{
           display: "grid",
           gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
@@ -495,28 +529,28 @@ export default function PatientChartPage() {
         }}
       >
         <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">{t("totalRecords")}</div>
+          <div className="stat-card-label">Total records</div>
           <div className="stat-card-value">{stats.records}</div>
         </div>
 
         <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">{t("bloodwork")}</div>
+          <div className="stat-card-label">Bloodwork</div>
           <div className="stat-card-value">{stats.bloodwork}</div>
         </div>
 
         <div className="stat-card stat-card-accent-green">
-          <div className="stat-card-label">{t("scans")}</div>
+          <div className="stat-card-label">Scans</div>
           <div className="stat-card-value">{stats.scans}</div>
         </div>
 
         <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">{t("notes")}</div>
+          <div className="stat-card-label">Notes</div>
           <div className="stat-card-value">{stats.notes}</div>
         </div>
 
         <div className="stat-card stat-card-accent-red">
-          <div className="stat-card-label">{t("needsReview")}</div>
-          <div className="stat-card-value">{stats.abnormal}</div>
+          <div className="stat-card-label">Needs review</div>
+          <div className="stat-card-value">{stats.needsReview}</div>
         </div>
       </div>
 
@@ -540,90 +574,14 @@ export default function PatientChartPage() {
                 display: "inline-flex",
               }}
             />
+
             <div style={{ fontWeight: 950, color: "var(--danger-text)", fontSize: 18 }}>
-              {t("abnormalRecordsNeedReview")}
+              Abnormal records need review
             </div>
           </div>
 
           <div className="muted-text" style={{ marginTop: 8 }}>
-            {t("abnormalRecordsNeedReviewDesc")}
-          </div>
-        </div>
-      )}
-
-      <div
-        className="soft-card"
-        style={{
-          padding: 24,
-          marginBottom: 24,
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-        }}
-      >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
-          <div>
-            <div className="section-title">{labels.quickActions}</div>
-            <div className="muted-text" style={{ marginTop: 6, maxWidth: 760, lineHeight: 1.6 }}>
-              {labels.quickActionsDesc}
-            </div>
-          </div>
-
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {canUpload && (
-              <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>
-                {labels.uploadDocument}
-              </button>
-            )}
-
-            {canWriteNotes && (
-              <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>
-                {labels.newClinicalNote}
-              </button>
-            )}
-
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
-              {labels.viewFullTimeline}
-            </button>
-          </div>
-        </div>
-
-        {canWriteNotes && (
-          <div
-            className="soft-card-tight"
-            style={{
-              marginTop: 18,
-              padding: 14,
-              background: "var(--panel-2)",
-            }}
-          >
-            <div className="muted-text" style={{ lineHeight: 1.6 }}>
-              {labels.clinicalNotesVisibility}
-            </div>
-          </div>
-        )}
-      </div>
-
-      {canManageEvents && (
-        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-          <div className="section-title" style={{ marginBottom: 16 }}>
-            {t("addHospitalizationEvent")}
-          </div>
-
-          <div style={{ display: "grid", gridTemplateColumns: "minmax(220px, 0.8fr) minmax(0, 1fr) auto", gap: 12 }}>
-            <input
-              className="text-input"
-              value={eventTitle}
-              onChange={(e) => setEventTitle(e.target.value)}
-              placeholder={t("hospitalizationTitlePlaceholder")}
-            />
-            <input
-              className="text-input"
-              value={eventDescription}
-              onChange={(e) => setEventDescription(e.target.value)}
-              placeholder={t("careNotesPlaceholder")}
-            />
-            <button className="primary-btn" onClick={createEvent} disabled={creatingEvent}>
-              {creatingEvent ? t("creating") : t("createEvent")}
-            </button>
+            Opening each structured record marks it reviewed for your doctor account.
           </div>
         </div>
       )}
@@ -640,50 +598,31 @@ export default function PatientChartPage() {
         <div className="soft-card" style={{ padding: 24 }}>
           <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", marginBottom: 18 }}>
             <div>
-              <div className="section-title">{t("records")}</div>
+              <div className="section-title">Records</div>
               <div className="muted-text" style={{ marginTop: 6 }}>
-                {labels.recordsDesc}
+                Organized documents, notes, and uploaded clinical files.
               </div>
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
-            {SECTION_ORDER.map((section) => {
-              const count =
-                section === "all_documents"
-                  ? allDocuments.length
-                  : section === "notes"
-                  ? profile.sections.notes.length
-                  : section === "bloodwork"
-                  ? profile.sections.bloodwork.length
-                  : section === "medications"
-                  ? profile.sections.medications.length
-                  : section === "scans"
-                  ? profile.sections.scans.length
-                  : section === "hospitalizations"
-                  ? profile.sections.hospitalizations.length
-                  : profile.sections.other.length;
-
-              return (
-                <button
-                  key={section}
-                  type="button"
-                  className={activeSection === section ? "primary-btn" : "secondary-btn"}
-                  onClick={() => setActiveSection(section)}
-                >
-                  {sectionLabels[section]} ({count})
-                </button>
-              );
-            })}
+            {SECTION_ORDER.map((section) => (
+              <button
+                key={section}
+                type="button"
+                className={activeSection === section ? "primary-btn" : "secondary-btn"}
+                onClick={() => setActiveSection(section)}
+              >
+                {sectionLabels[section]} ({getSectionCount(section)})
+              </button>
+            ))}
           </div>
 
           <div style={{ display: "grid", gap: 14 }}>
             {sectionDocuments.map((doc) => {
               const isNote = doc.section === "notes";
-              const hasAbnormal = Boolean(doc.has_abnormal || doc.has_abnormal_labs);
-              const isReviewed = Boolean(doc.reviewed_by_current_doctor);
-              const isUnreviewedAbnormal = hasAbnormal && !isReviewed;
-              const tone = getSectionTone(doc.section);
+              const hasAbnormal = isAbnormalDoc(doc);
+              const unreviewedAbnormal = isUnreviewedAbnormalDoc(doc);
 
               return (
                 <div
@@ -691,8 +630,8 @@ export default function PatientChartPage() {
                   className="soft-card-tight"
                   style={{
                     padding: 18,
-                    borderColor: isUnreviewedAbnormal ? "var(--danger-border)" : tone.border,
-                    background: isUnreviewedAbnormal ? "var(--danger-bg)" : undefined,
+                    borderColor: unreviewedAbnormal ? "var(--danger-border)" : "var(--border)",
+                    background: unreviewedAbnormal ? "var(--danger-bg)" : undefined,
                   }}
                 >
                   <div
@@ -711,13 +650,13 @@ export default function PatientChartPage() {
                               width: 12,
                               height: 12,
                               borderRadius: 999,
-                              background: isUnreviewedAbnormal ? "var(--danger-text)" : "var(--muted)",
+                              background: unreviewedAbnormal ? "var(--danger-text)" : "var(--muted)",
                               display: "inline-flex",
                             }}
                           />
                         )}
 
-                        <div style={{ fontWeight: 900, fontSize: 18 }}>
+                        <div style={{ fontWeight: 950, fontSize: 18 }}>
                           {valueOrDash(doc.report_name || doc.filename)}
                         </div>
 
@@ -726,9 +665,8 @@ export default function PatientChartPage() {
                             display: "inline-flex",
                             padding: "5px 9px",
                             borderRadius: 999,
-                            background: tone.bg,
-                            color: tone.text,
-                            border: `1px solid ${tone.border}`,
+                            background: "var(--panel-2)",
+                            color: "var(--muted)",
                             fontSize: 12,
                             fontWeight: 900,
                           }}
@@ -747,7 +685,7 @@ export default function PatientChartPage() {
                             fontWeight: 900,
                           }}
                         >
-                          {doc.is_verified ? t("verified") : t("unverified")}
+                          {doc.is_verified ? "Verified" : "Unverified"}
                         </span>
                       </div>
 
@@ -758,20 +696,20 @@ export default function PatientChartPage() {
                               display: "inline-flex",
                               padding: "5px 10px",
                               borderRadius: 999,
-                              background: isUnreviewedAbnormal ? "var(--danger-bg)" : "var(--panel-2)",
-                              color: isUnreviewedAbnormal ? "var(--danger-text)" : "var(--muted)",
-                              border: `1px solid ${isUnreviewedAbnormal ? "var(--danger-border)" : "var(--border)"}`,
+                              background: unreviewedAbnormal ? "var(--danger-bg)" : "var(--panel-2)",
+                              color: unreviewedAbnormal ? "var(--danger-text)" : "var(--muted)",
+                              border: `1px solid ${unreviewedAbnormal ? "var(--danger-border)" : "var(--border)"}`,
                               fontSize: 12,
                               fontWeight: 900,
                             }}
                           >
-                            {isUnreviewedAbnormal ? t("abnormalResultsNeedReview") : t("abnormalResultsReviewed")}
+                            {unreviewedAbnormal ? "Abnormal results need review" : "Abnormal results reviewed"}
                           </span>
                         </div>
                       )}
 
                       <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
-                        {valueOrDash(doc.report_type)} · {formatTimelineDate(bestDocumentDate(doc), labels.noDate)}
+                        {valueOrDash(doc.report_type)} · {valueOrDash(bestDocumentDate(doc))}
                       </div>
 
                       {isNote ? (
@@ -780,7 +718,7 @@ export default function PatientChartPage() {
                         </div>
                       ) : (
                         <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                          {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)} · {labels.uploadedBy}{" "}
+                          {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)} · Uploaded by{" "}
                           {valueOrDash(doc.uploaded_by?.full_name)}
                         </div>
                       )}
@@ -788,13 +726,18 @@ export default function PatientChartPage() {
 
                     <div style={{ display: "grid", gap: 8, minWidth: 150 }}>
                       {!isNote && !!doc.content_type && !!doc.filename && (
-                        <button type="button" className="secondary-btn" onClick={() => openOriginal(doc.id)}>
-                          {t("openOriginal")}
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => openOriginal(doc.id)}
+                          disabled={openingId === doc.id}
+                        >
+                          {openingId === doc.id ? "Opening..." : "Open Original"}
                         </button>
                       )}
 
                       <button type="button" className="primary-btn" onClick={() => router.push(`/documents/${doc.id}`)}>
-                        {isNote ? t("openNote") : t("structuredView")}
+                        {isNote ? "Open Note" : "Structured View"}
                       </button>
                     </div>
                   </div>
@@ -802,7 +745,14 @@ export default function PatientChartPage() {
               );
             })}
 
-            {!sectionDocuments.length && <div className="muted-text">{t("noItemsInSection")}</div>}
+            {!sectionDocuments.length && (
+              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+                <div style={{ fontWeight: 900 }}>No items in this section.</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  Upload a document or create a note to add to this chart.
+                </div>
+              </div>
+            )}
           </div>
         </div>
 
@@ -813,21 +763,23 @@ export default function PatientChartPage() {
               justifyContent: "space-between",
               gap: 12,
               alignItems: "center",
-              marginBottom: 10,
+              marginBottom: 16,
             }}
           >
-            <div className="section-title">{labels.recentTimeline}</div>
+            <div>
+              <div className="section-title">Timeline</div>
+              <div className="muted-text" style={{ marginTop: 6 }}>
+                Recent activity
+              </div>
+            </div>
+
             <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
-              →
+              View all
             </button>
           </div>
 
-          <div className="muted-text" style={{ marginBottom: 16, lineHeight: 1.5 }}>
-            {labels.timelineHint}
-          </div>
-
           <div style={{ display: "grid", gap: 12 }}>
-            {recentTimeline.map((item) => (
+            {timeline.slice(0, 6).map((item) => (
               <div
                 key={item.id}
                 className="soft-card-tight"
@@ -848,8 +800,6 @@ export default function PatientChartPage() {
                           ? "var(--danger-text)"
                           : item.kind === "event"
                           ? "var(--primary)"
-                          : item.kind === "note"
-                          ? "var(--primary)"
                           : "var(--muted)",
                       display: "inline-flex",
                       marginTop: 5,
@@ -860,7 +810,7 @@ export default function PatientChartPage() {
                   <div style={{ minWidth: 0 }}>
                     <div style={{ fontWeight: 900 }}>{item.title}</div>
                     <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>
-                      {formatTimelineDate(item.date, labels.noDate)} · {item.subtitle}
+                      {formatTimelineDate(item.date, "No date")} · {item.subtitle}
                     </div>
 
                     {item.documentId && (
@@ -870,7 +820,7 @@ export default function PatientChartPage() {
                         style={{ marginTop: 10 }}
                         onClick={() => router.push(`/documents/${item.documentId}`)}
                       >
-                        {t("open")}
+                        Open
                       </button>
                     )}
                   </div>
@@ -878,7 +828,11 @@ export default function PatientChartPage() {
               </div>
             ))}
 
-            {!recentTimeline.length && <div className="muted-text">{labels.noRecentTimeline}</div>}
+            {!timeline.length && (
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div className="muted-text">No timeline activity yet.</div>
+              </div>
+            )}
           </div>
         </div>
       </div>
@@ -886,20 +840,20 @@ export default function PatientChartPage() {
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "1fr 1fr",
+          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
           gap: 20,
           marginBottom: 24,
         }}
       >
         <div className="soft-card" style={{ padding: 24 }}>
           <div className="section-title" style={{ marginBottom: 16 }}>
-            {labels.clinicalTeam}
+            Assigned doctors
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
             {profile.doctor_access.map((doctor) => (
               <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800 }}>{doctor.doctor_name}</div>
+                <div style={{ fontWeight: 900 }}>{doctor.doctor_name}</div>
                 <div className="muted-text" style={{ marginTop: 4 }}>
                   {doctor.doctor_email}
                 </div>
@@ -909,7 +863,7 @@ export default function PatientChartPage() {
               </div>
             ))}
 
-            {!profile.doctor_access.length && <div className="muted-text">{t("noDoctorsAssigned")}</div>}
+            {!profile.doctor_access.length && <div className="muted-text">No doctors assigned.</div>}
           </div>
         </div>
 
@@ -923,40 +877,69 @@ export default function PatientChartPage() {
               gap: 12,
             }}
           >
-            <div className="section-title">{t("hospitalizations")}</div>
+            <div>
+              <div className="section-title">Hospitalizations</div>
+              <div className="muted-text" style={{ marginTop: 6 }}>
+                Recent stays
+              </div>
+            </div>
+
             <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/hospitalizations`)}>
-              {t("viewAll")}
+              View all
             </button>
           </div>
 
           <div style={{ display: "grid", gap: 12 }}>
-            {recentHospitalizations.map((event) => (
+            {recentEvents.map((event) => (
               <div key={event.id} className="soft-card-tight" style={{ padding: 16, background: "var(--panel)" }}>
                 <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "start" }}>
                   <div>
-                    <div style={{ fontWeight: 800 }}>{event.title}</div>
-                    <div className="muted-text" style={{ marginTop: 4 }}>
+                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+                      <div style={{ fontWeight: 900 }}>{event.title}</div>
+
+                      <span
+                        style={{
+                          display: "inline-flex",
+                          padding: "5px 9px",
+                          borderRadius: 999,
+                          background: event.status === "active" ? "var(--success-bg)" : "var(--panel-2)",
+                          color: event.status === "active" ? "var(--success-text)" : "var(--muted)",
+                          border: "1px solid var(--border)",
+                          fontWeight: 900,
+                          fontSize: 12,
+                        }}
+                      >
+                        {event.status === "active" ? "Active" : "Discharged"}
+                      </span>
+                    </div>
+
+                    <div className="muted-text" style={{ marginTop: 6 }}>
                       {valueOrDash(event.department)} · {valueOrDash(event.hospital_name)}
                     </div>
+
                     <div className="muted-text" style={{ marginTop: 4 }}>
-                      {event.status === "active" ? t("admittedCapital") : t("discharged")} · {t("doctor")}{" "}
-                      {valueOrDash(event.doctor_name)}
+                      Doctor {valueOrDash(event.doctor_name)} · Admitted {formatTimelineDate(event.admitted_at)}
                     </div>
-                    {event.description && <div style={{ marginTop: 8 }}>{event.description}</div>}
+
+                    {event.description && <div style={{ marginTop: 8, lineHeight: 1.6 }}>{event.description}</div>}
                   </div>
 
-                  {canManageEvents && event.status === "active" && (
-                    <button className="secondary-btn" onClick={() => dischargeEvent(event.id)}>
-                      {t("discharge")}
+                  {canDoctorActions && event.status === "active" && event.doctor_user_id === currentUser.id && (
+                    <button
+                      className="secondary-btn"
+                      onClick={() => dischargeEvent(event.id)}
+                      disabled={dischargingId === event.id}
+                    >
+                      {dischargingId === event.id ? "Discharging..." : "Discharge"}
                     </button>
                   )}
                 </div>
               </div>
             ))}
 
-            {!recentHospitalizations.length && (
+            {!recentEvents.length && (
               <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel)" }}>
-                <div className="muted-text">{t("noHospitalizationsRecorded")}</div>
+                <div className="muted-text">No hospitalizations recorded.</div>
               </div>
             )}
           </div>
