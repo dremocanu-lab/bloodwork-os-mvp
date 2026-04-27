@@ -1,265 +1,287 @@
+import base64
 import json
 import os
+import re
+import shutil
+from pathlib import Path
 from typing import Any
 
+import fitz
 from openai import OpenAI
 
-from app.synonyms import normalize_test_name
+
+OPENAI_MODEL = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-4.1-mini")
 
 
-AI_EXTRACTION_MODEL = os.getenv("AI_EXTRACTION_MODEL", "gpt-4.1-mini")
+def _client() -> OpenAI | None:
+    if not os.getenv("OPENAI_API_KEY"):
+        return None
+    return OpenAI()
 
 
-REPORT_SCHEMA = {
-    "name": "medical_lab_report",
-    "schema": {
-        "type": "object",
-        "additionalProperties": False,
-        "properties": {
-            "patient_name": {"type": ["string", "null"]},
-            "date_of_birth": {"type": ["string", "null"]},
-            "age": {"type": ["string", "null"]},
-            "sex": {"type": ["string", "null"]},
-            "cnp": {"type": ["string", "null"]},
-            "patient_identifier": {"type": ["string", "null"]},
-            "lab_name": {"type": ["string", "null"]},
-            "sample_type": {"type": ["string", "null"]},
-            "referring_doctor": {"type": ["string", "null"]},
-            "report_name": {"type": ["string", "null"]},
-            "report_type": {"type": ["string", "null"]},
-            "source_language": {"type": ["string", "null"]},
-            "test_date": {"type": ["string", "null"]},
-            "collected_on": {"type": ["string", "null"]},
-            "reported_on": {"type": ["string", "null"]},
-            "registered_on": {"type": ["string", "null"]},
-            "generated_on": {"type": ["string", "null"]},
-            "labs": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "additionalProperties": False,
-                    "properties": {
-                        "raw_test_name": {"type": ["string", "null"]},
-                        "canonical_name": {"type": ["string", "null"]},
-                        "display_name": {"type": ["string", "null"]},
-                        "category": {"type": ["string", "null"]},
-                        "value": {"type": ["string", "null"]},
-                        "flag": {"type": ["string", "null"]},
-                        "reference_range": {"type": ["string", "null"]},
-                        "unit": {"type": ["string", "null"]},
-                    },
-                    "required": [
-                        "raw_test_name",
-                        "canonical_name",
-                        "display_name",
-                        "category",
-                        "value",
-                        "flag",
-                        "reference_range",
-                        "unit",
-                    ],
-                },
-            },
-        },
-        "required": [
-            "patient_name",
-            "date_of_birth",
-            "age",
-            "sex",
-            "cnp",
-            "patient_identifier",
-            "lab_name",
-            "sample_type",
-            "referring_doctor",
-            "report_name",
-            "report_type",
-            "source_language",
-            "test_date",
-            "collected_on",
-            "reported_on",
-            "registered_on",
-            "generated_on",
-            "labs",
-        ],
-    },
-}
+def _safe_json_loads(text: str) -> dict[str, Any] | None:
+    if not text:
+        return None
+
+    cleaned = text.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    try:
+        return json.loads(cleaned)
+    except Exception:
+        pass
+
+    match = re.search(r"\{.*\}", cleaned, re.DOTALL)
+    if not match:
+        return None
+
+    try:
+        return json.loads(match.group(0))
+    except Exception:
+        return None
 
 
-def _clean_string(value: Any) -> str | None:
+def _image_to_data_url(image_path: Path) -> str:
+    encoded = base64.b64encode(image_path.read_bytes()).decode("utf-8")
+    return f"data:image/png;base64,{encoded}"
+
+
+def render_pdf_pages(file_path: Path, output_dir: Path, max_pages: int = 6) -> list[Path]:
+    output_dir.mkdir(parents=True, exist_ok=True)
+
+    pdf = fitz.open(file_path)
+    paths: list[Path] = []
+
+    try:
+        for page_index in range(min(len(pdf), max_pages)):
+            page = pdf.load_page(page_index)
+
+            matrix = fitz.Matrix(4, 4)
+            pix = page.get_pixmap(matrix=matrix, alpha=False)
+
+            output_path = output_dir / f"page_{page_index + 1}.png"
+            pix.save(str(output_path))
+            paths.append(output_path)
+    finally:
+        pdf.close()
+
+    return paths
+
+
+def _clean_value(value: Any) -> str | None:
     if value is None:
         return None
 
     cleaned = str(value).strip()
-    if not cleaned or cleaned.lower() in {"none", "null", "n/a", "na", "-", "—"}:
-        return None
-
-    return cleaned
+    return cleaned or None
 
 
-def _normalize_flag(flag: str | None) -> str | None:
-    cleaned = _clean_string(flag)
-    if not cleaned:
-        return None
+def normalize_ai_extraction(payload: dict[str, Any]) -> dict[str, Any]:
+    patient = payload.get("patient") or {}
+    report = payload.get("report") or {}
+    labs = payload.get("labs") or []
 
-    lower = cleaned.lower()
+    normalized_labs: list[dict[str, str | None]] = []
 
-    if lower in {"h", "high", "mare", "crescut", "increased", "above range"}:
-        return "High"
+    for lab in labs:
+        if not isinstance(lab, dict):
+            continue
 
-    if lower in {"l", "low", "mic", "scazut", "scăzut", "decreased", "below range"}:
-        return "Low"
+        raw_name = _clean_value(lab.get("raw_test_name") or lab.get("test_name") or lab.get("name"))
+        value = _clean_value(lab.get("value") or lab.get("result"))
 
-    if lower in {"critical", "panic"}:
-        return "Critical"
+        if not raw_name or not value:
+            continue
 
-    if lower in {"borderline", "borderline high", "borderline low"}:
-        return "Borderline"
-
-    if lower in {"normal", "n", "within range", "in range"}:
-        return "Normal"
-
-    return cleaned
-
-
-def _normalize_lab_item(item: dict[str, Any]) -> dict[str, str | None]:
-    raw_name = _clean_string(item.get("raw_test_name") or item.get("display_name"))
-
-    normalized = normalize_test_name(raw_name or "")
-
-    display_name = (
-        normalized.get("display_name")
-        or _clean_string(item.get("display_name"))
-        or raw_name
-    )
-
-    canonical_name = normalized.get("canonical_name") or _clean_string(item.get("canonical_name"))
-    category = normalized.get("category") or _clean_string(item.get("category"))
+        normalized_labs.append(
+            {
+                "raw_test_name": raw_name,
+                "value": value,
+                "unit": _clean_value(lab.get("unit")) or "",
+                "reference_range": _clean_value(lab.get("reference_range") or lab.get("range")) or "",
+                "flag": _clean_value(lab.get("flag")) or "Normal",
+            }
+        )
 
     return {
-        "raw_test_name": raw_name,
-        "canonical_name": canonical_name,
-        "display_name": display_name,
-        "category": category,
-        "value": _clean_string(item.get("value")),
-        "flag": _normalize_flag(item.get("flag")),
-        "reference_range": _clean_string(item.get("reference_range")),
-        "unit": _clean_string(item.get("unit")),
+        "patient_name": _clean_value(patient.get("full_name") or patient.get("name")),
+        "date_of_birth": _clean_value(patient.get("date_of_birth")),
+        "age": _clean_value(patient.get("age")),
+        "sex": _clean_value(patient.get("sex")),
+        "cnp": _clean_value(patient.get("cnp")),
+        "patient_identifier": _clean_value(patient.get("patient_identifier") or patient.get("patient_id")),
+        "lab_name": _clean_value(report.get("lab_name")),
+        "sample_type": _clean_value(report.get("sample_type")),
+        "referring_doctor": _clean_value(report.get("referring_doctor") or report.get("doctor")),
+        "report_name": _clean_value(report.get("report_name") or report.get("title")),
+        "report_type": _clean_value(report.get("report_type")),
+        "source_language": _clean_value(report.get("source_language")) or "unknown",
+        "test_date": _clean_value(report.get("test_date") or report.get("collected_on")),
+        "collected_on": _clean_value(report.get("collected_on")),
+        "reported_on": _clean_value(report.get("reported_on") or report.get("validated_on")),
+        "registered_on": _clean_value(report.get("registered_on")),
+        "generated_on": _clean_value(report.get("generated_on") or report.get("released_on")),
+        "labs": normalized_labs,
+        "ai_extraction_used": True,
     }
 
 
-def validate_ai_report(data: dict[str, Any]) -> dict[str, Any]:
-    labs = data.get("labs")
-    if not isinstance(labs, list):
-        labs = []
+def extract_report_with_ai_from_images(image_paths: list[Path], ocr_text: str = "") -> dict[str, Any] | None:
+    client = _client()
 
-    clean_labs = []
-    seen = set()
+    if client is None:
+        print("AI extraction skipped: OPENAI_API_KEY is missing")
+        return None
 
-    for item in labs:
-        if not isinstance(item, dict):
-            continue
+    if not image_paths:
+        print("AI extraction skipped: no images to send")
+        return None
 
-        lab = _normalize_lab_item(item)
+    prompt = """
+You are Bloodwork OS extraction engine.
 
-        if not lab["raw_test_name"] or not lab["value"]:
-            continue
+You receive images of medical documents. They may be Romanian, English, scanned, blurry, or exported from hospital software.
 
-        dedupe_key = (
-            lab["canonical_name"]
-            or lab["display_name"]
-            or lab["raw_test_name"]
-            or ""
-        ).strip().lower()
+Return ONLY valid JSON. No markdown. No explanation.
 
-        if not dedupe_key or dedupe_key in seen:
-            continue
+Your job:
+1. Extract patient identifiers.
+2. Extract document metadata.
+3. Extract EVERY visible structured lab/result row, not only abnormal values.
+4. If it is a CBC / hemogram / hematology report, extract all CBC rows visible.
 
-        seen.add(dedupe_key)
-        clean_labs.append(lab)
+Important Romanian terms:
+- Nume / Nume si prenume = patient name
+- Varsta / Vârsta = age
+- Sex = sex
+- CNP = national ID
+- Cod pacient / ID pacient = patient identifier
+- Data recoltarii = collected on
+- Data validarii / Data raportarii = reported/validated on
+- Buletin Analize Medicale = medical analysis report
+- Hemograma / Hemoleucograma = CBC
 
-    return {
-        "patient_name": _clean_string(data.get("patient_name")),
-        "date_of_birth": _clean_string(data.get("date_of_birth")),
-        "age": _clean_string(data.get("age")),
-        "sex": _clean_string(data.get("sex")),
-        "cnp": _clean_string(data.get("cnp")),
-        "patient_identifier": _clean_string(data.get("patient_identifier")),
-        "lab_name": _clean_string(data.get("lab_name")),
-        "sample_type": _clean_string(data.get("sample_type")),
-        "referring_doctor": _clean_string(data.get("referring_doctor")),
-        "report_name": _clean_string(data.get("report_name")),
-        "report_type": _clean_string(data.get("report_type")),
-        "source_language": _clean_string(data.get("source_language")),
-        "test_date": _clean_string(data.get("test_date")),
-        "collected_on": _clean_string(data.get("collected_on")),
-        "reported_on": _clean_string(data.get("reported_on")),
-        "registered_on": _clean_string(data.get("registered_on")),
-        "generated_on": _clean_string(data.get("generated_on")),
-        "labs": clean_labs,
+For CBC, capture rows such as:
+WBC, RBC, HGB, HCT, MCV, MCH, MCHC, PLT, RDW-SD, RDW-CV, PDW, MPV, P-LCR, PCT,
+NEUT#, NEUT%, LYMPH#, LYMPH%, MONO#, MONO%, EO#, EO%, BASO#, BASO%, IG#, IG%,
+NRBC#, NRBC%, RET%, RET#, IRF, LFR, MFR, HFR, RET-HE, RBC-HE, HYPO-HE, HYPER-HE, DELTA-HE.
+
+Also extract non-CBC rows if present:
+glucose/glicemie, creatinine/creatinina, urea/uree, sodium/sodiu, potassium/potasiu,
+AST/ASAT/TGO, ALT/ALAT/TGP, bilirubin, cholesterol, HDL, LDL, triglycerides, TSH, FT4,
+CRP, ESR/VSH, ferritin, iron/sideremie, vitamin D, HbA1c, INR, PT, aPTT, urinalysis rows, pathology results.
+
+Rules:
+- Do not invent values.
+- If a field is not visible, use null.
+- If a lab row is visible but unit/range is unclear, still include it and leave unit/range blank.
+- Preserve abbreviations exactly when visible.
+- For flag use one of: Normal, High, Low, Abnormal, Critical, Borderline.
+- If there is H/L/+/- or the value is visibly outside the reference range, use the correct flag.
+- If unsure, use Normal.
+- Return JSON in this exact shape:
+
+{
+  "patient": {
+    "full_name": null,
+    "date_of_birth": null,
+    "age": null,
+    "sex": null,
+    "cnp": null,
+    "patient_identifier": null
+  },
+  "report": {
+    "report_name": null,
+    "report_type": null,
+    "lab_name": null,
+    "sample_type": null,
+    "referring_doctor": null,
+    "test_date": null,
+    "collected_on": null,
+    "reported_on": null,
+    "registered_on": null,
+    "generated_on": null,
+    "source_language": null
+  },
+  "labs": [
+    {
+      "raw_test_name": "WBC",
+      "value": "4.49",
+      "unit": "10^3/uL",
+      "reference_range": "3.98 - 10.00",
+      "flag": "Normal"
     }
-
-
-def extract_report_with_ai(extracted_text: str) -> dict[str, Any] | None:
-    api_key = os.getenv("OPENAI_API_KEY")
-    if not api_key:
-        return None
-
-    text = (extracted_text or "").strip()
-    if len(text) < 40:
-        return None
-
-    text = text[:24000]
-
-    client = OpenAI(api_key=api_key)
-
-    system_prompt = """
-You extract structured data from medical laboratory reports.
-
-Return only fields that are visible or strongly implied in the text.
-Do not invent patient data, dates, values, units, or reference ranges.
-Preserve the original value strings and units.
-For labs, extract each individual analyte/test row.
-Use English display names when possible.
-Set source_language to "ro", "en", or "mixed".
-Flag should be High, Low, Normal, Critical, Borderline, or null.
-If a value has H/L markers or is outside the reference range, infer the flag.
-If a field is not present, use null.
+  ]
+}
 """.strip()
 
-    user_prompt = f"""
-Extract structured data from this OCR/PDF text.
+    if ocr_text.strip():
+        prompt += "\n\nOCR fallback text from the same document:\n" + ocr_text[:16000]
 
-TEXT:
-{text}
-""".strip()
+    content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
+
+    for image_path in image_paths:
+        content.append(
+            {
+                "type": "input_image",
+                "image_url": _image_to_data_url(image_path),
+            }
+        )
 
     try:
         response = client.responses.create(
-            model=AI_EXTRACTION_MODEL,
+            model=OPENAI_MODEL,
             input=[
                 {
-                    "role": "system",
-                    "content": system_prompt,
-                },
-                {
                     "role": "user",
-                    "content": user_prompt,
-                },
+                    "content": content,
+                }
             ],
-            response_format={
-                "type": "json_schema",
-                "json_schema": REPORT_SCHEMA,
-            },
             temperature=0,
+            max_output_tokens=12000,
         )
-
-        raw_json = response.output_text
-        data = json.loads(raw_json)
-
-        if not isinstance(data, dict):
-            return None
-
-        return validate_ai_report(data)
-
-    except Exception:
+    except Exception as exc:
+        print(f"AI extraction request failed: {exc}")
         return None
+
+    raw = response.output_text
+    payload = _safe_json_loads(raw)
+
+    if not payload:
+        print(f"AI extraction returned non-JSON: {raw[:1000]}")
+        return None
+
+    normalized = normalize_ai_extraction(payload)
+
+    print(
+        "AI extraction success:",
+        {
+            "model": OPENAI_MODEL,
+            "labs": len(normalized.get("labs", [])),
+            "patient_name": normalized.get("patient_name"),
+            "report_name": normalized.get("report_name"),
+        },
+    )
+
+    return normalized
+
+
+def extract_report_with_ai(file_path: Path, upload_dir: Path, ocr_text: str = "") -> dict[str, Any] | None:
+    suffix = file_path.suffix.lower()
+    temp_dir = upload_dir / f"_ai_pages_{file_path.stem}"
+
+    try:
+        if suffix == ".pdf":
+            image_paths = render_pdf_pages(file_path, temp_dir)
+        elif suffix in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff"}:
+            image_paths = [file_path]
+        else:
+            image_paths = []
+
+        return extract_report_with_ai_from_images(image_paths, ocr_text=ocr_text)
+    finally:
+        if temp_dir.exists():
+            shutil.rmtree(temp_dir, ignore_errors=True)
