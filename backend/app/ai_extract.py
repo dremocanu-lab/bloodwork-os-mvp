@@ -10,7 +10,7 @@ import fitz
 from openai import OpenAI
 
 
-OPENAI_MODEL = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-4.1-mini")
+OPENAI_MODEL = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5.4")
 
 
 def _client() -> OpenAI | None:
@@ -49,7 +49,7 @@ def _image_to_data_url(image_path: Path) -> str:
     return f"data:image/png;base64,{encoded}"
 
 
-def render_pdf_pages(file_path: Path, output_dir: Path, max_pages: int = 6) -> list[Path]:
+def render_pdf_pages(file_path: Path, output_dir: Path, max_pages: int = 10) -> list[Path]:
     output_dir.mkdir(parents=True, exist_ok=True)
 
     pdf = fitz.open(file_path)
@@ -59,7 +59,8 @@ def render_pdf_pages(file_path: Path, output_dir: Path, max_pages: int = 6) -> l
         for page_index in range(min(len(pdf), max_pages)):
             page = pdf.load_page(page_index)
 
-            matrix = fitz.Matrix(4, 4)
+            # Higher scale helps table rows and tiny CBC values.
+            matrix = fitz.Matrix(5, 5)
             pix = page.get_pixmap(matrix=matrix, alpha=False)
 
             output_path = output_dir / f"page_{page_index + 1}.png"
@@ -129,71 +130,73 @@ def normalize_ai_extraction(payload: dict[str, Any]) -> dict[str, Any]:
     }
 
 
-def extract_report_with_ai_from_images(image_paths: list[Path], ocr_text: str = "") -> dict[str, Any] | None:
+def _extract_page_with_ai(
+    image_path: Path,
+    page_number: int,
+    total_pages: int,
+    ocr_text: str = "",
+) -> dict[str, Any] | None:
     client = _client()
 
     if client is None:
         print("AI extraction skipped: OPENAI_API_KEY is missing")
         return None
 
-    if not image_paths:
-        print("AI extraction skipped: no images to send")
-        return None
+    prompt = f"""
+You are Bloodwork OS table extraction engine.
 
-    prompt = """
-You are Bloodwork OS extraction engine.
-
-You receive images of medical documents. They may be Romanian, English, scanned, blurry, or exported from hospital software.
+You are reading PAGE {page_number} of {total_pages} from a medical document.
 
 Return ONLY valid JSON. No markdown. No explanation.
 
-Your job:
-1. Extract patient identifiers.
-2. Extract document metadata.
-3. Extract EVERY visible structured lab/result row, not only abnormal values.
-4. If it is a CBC / hemogram / hematology report, extract all CBC rows visible.
+Your task is NOT to summarize.
+Your task is to copy every visible structured result row from this page.
 
-Important Romanian terms:
-- Nume / Nume si prenume = patient name
+Very important:
+- Extract EVERY row from every visible table.
+- Do not stop after the first result.
+- Do not only extract abnormal rows.
+- Do not ignore rows with abbreviations.
+- If the page has a CBC / hemogram / hematology table, extract all rows from the CBC table.
+- If a row has a test name and a numeric/text result, include it.
+- If unit or reference range is missing/unclear, leave it blank but still include the row.
+- Preserve test abbreviations exactly.
+
+Romanian terms:
+- Nume / Nume si prenume / Nume și prenume = patient name
 - Varsta / Vârsta = age
 - Sex = sex
 - CNP = national ID
 - Cod pacient / ID pacient = patient identifier
-- Data recoltarii = collected on
-- Data validarii / Data raportarii = reported/validated on
-- Buletin Analize Medicale = medical analysis report
+- Data recoltarii / Data recoltării = collected on
+- Data validarii / Data validării = validated/reported on
+- Buletin Analize Medicale = medical report
 - Hemograma / Hemoleucograma = CBC
 
-For CBC, capture rows such as:
+Common CBC rows to look for:
 WBC, RBC, HGB, HCT, MCV, MCH, MCHC, PLT, RDW-SD, RDW-CV, PDW, MPV, P-LCR, PCT,
 NEUT#, NEUT%, LYMPH#, LYMPH%, MONO#, MONO%, EO#, EO%, BASO#, BASO%, IG#, IG%,
 NRBC#, NRBC%, RET%, RET#, IRF, LFR, MFR, HFR, RET-HE, RBC-HE, HYPO-HE, HYPER-HE, DELTA-HE.
 
-Also extract non-CBC rows if present:
-glucose/glicemie, creatinine/creatinina, urea/uree, sodium/sodiu, potassium/potasiu,
-AST/ASAT/TGO, ALT/ALAT/TGP, bilirubin, cholesterol, HDL, LDL, triglycerides, TSH, FT4,
-CRP, ESR/VSH, ferritin, iron/sideremie, vitamin D, HbA1c, INR, PT, aPTT, urinalysis rows, pathology results.
+Also extract chemistry, coagulation, urine, pathology, or other result rows if visible.
 
-Rules:
-- Do not invent values.
-- If a field is not visible, use null.
-- If a lab row is visible but unit/range is unclear, still include it and leave unit/range blank.
-- Preserve abbreviations exactly when visible.
-- For flag use one of: Normal, High, Low, Abnormal, Critical, Borderline.
-- If there is H/L/+/- or the value is visibly outside the reference range, use the correct flag.
-- If unsure, use Normal.
-- Return JSON in this exact shape:
+Flag rules:
+- Use "High" if marked high or above range.
+- Use "Low" if marked low or below range.
+- Use "Abnormal" if clearly abnormal but direction unclear.
+- Use "Normal" if normal or unclear.
 
-{
-  "patient": {
+Return this exact JSON shape:
+{{
+  "patient": {{
     "full_name": null,
     "date_of_birth": null,
     "age": null,
     "sex": null,
     "cnp": null,
     "patient_identifier": null
-  },
-  "report": {
+  }},
+  "report": {{
     "report_name": null,
     "report_type": null,
     "lab_name": null,
@@ -205,31 +208,30 @@ Rules:
     "registered_on": null,
     "generated_on": null,
     "source_language": null
-  },
+  }},
   "labs": [
-    {
+    {{
       "raw_test_name": "WBC",
       "value": "4.49",
       "unit": "10^3/uL",
       "reference_range": "3.98 - 10.00",
       "flag": "Normal"
-    }
+    }}
   ]
-}
+}}
+
+OCR fallback text for this document:
+{ocr_text[:12000]}
 """.strip()
 
-    if ocr_text.strip():
-        prompt += "\n\nOCR fallback text from the same document:\n" + ocr_text[:16000]
-
-    content: list[dict[str, Any]] = [{"type": "input_text", "text": prompt}]
-
-    for image_path in image_paths:
-        content.append(
-            {
-                "type": "input_image",
-                "image_url": _image_to_data_url(image_path),
-            }
-        )
+    content: list[dict[str, Any]] = [
+        {"type": "input_text", "text": prompt},
+        {
+            "type": "input_image",
+            "image_url": _image_to_data_url(image_path),
+            "detail": "high",
+        },
+    ]
 
     try:
         response = client.responses.create(
@@ -241,25 +243,26 @@ Rules:
                 }
             ],
             temperature=0,
-            max_output_tokens=12000,
+            max_output_tokens=16000,
         )
     except Exception as exc:
-        print(f"AI extraction request failed: {exc}")
+        print(f"AI page extraction request failed on page {page_number}: {exc}")
         return None
 
     raw = response.output_text
     payload = _safe_json_loads(raw)
 
     if not payload:
-        print(f"AI extraction returned non-JSON: {raw[:1000]}")
+        print(f"AI page extraction returned non-JSON on page {page_number}: {raw[:1200]}")
         return None
 
     normalized = normalize_ai_extraction(payload)
 
     print(
-        "AI extraction success:",
+        "AI page extraction success:",
         {
             "model": OPENAI_MODEL,
+            "page": page_number,
             "labs": len(normalized.get("labs", [])),
             "patient_name": normalized.get("patient_name"),
             "report_name": normalized.get("report_name"),
@@ -267,6 +270,61 @@ Rules:
     )
 
     return normalized
+
+
+def _merge_extractions(extractions: list[dict[str, Any]]) -> dict[str, Any] | None:
+    if not extractions:
+        return None
+
+    merged: dict[str, Any] = {
+        "patient_name": None,
+        "date_of_birth": None,
+        "age": None,
+        "sex": None,
+        "cnp": None,
+        "patient_identifier": None,
+        "lab_name": None,
+        "sample_type": None,
+        "referring_doctor": None,
+        "report_name": None,
+        "report_type": None,
+        "source_language": None,
+        "test_date": None,
+        "collected_on": None,
+        "reported_on": None,
+        "registered_on": None,
+        "generated_on": None,
+        "labs": [],
+        "ai_extraction_used": True,
+    }
+
+    for extraction in extractions:
+        for key in merged.keys():
+            if key in {"labs", "ai_extraction_used"}:
+                continue
+
+            if not merged.get(key) and extraction.get(key):
+                merged[key] = extraction.get(key)
+
+    seen_lab_keys: set[str] = set()
+
+    for extraction in extractions:
+        for lab in extraction.get("labs", []):
+            raw = str(lab.get("raw_test_name") or "").strip().lower()
+            value = str(lab.get("value") or "").strip().lower()
+            unit = str(lab.get("unit") or "").strip().lower()
+            key = f"{raw}::{value}::{unit}"
+
+            if not raw or not value:
+                continue
+
+            if key in seen_lab_keys:
+                continue
+
+            seen_lab_keys.add(key)
+            merged["labs"].append(lab)
+
+    return merged
 
 
 def extract_report_with_ai(file_path: Path, upload_dir: Path, ocr_text: str = "") -> dict[str, Any] | None:
@@ -281,7 +339,39 @@ def extract_report_with_ai(file_path: Path, upload_dir: Path, ocr_text: str = ""
         else:
             image_paths = []
 
-        return extract_report_with_ai_from_images(image_paths, ocr_text=ocr_text)
+        if not image_paths:
+            print(f"AI extraction skipped: unsupported file type {suffix}")
+            return None
+
+        page_extractions: list[dict[str, Any]] = []
+
+        for index, image_path in enumerate(image_paths):
+            page_result = _extract_page_with_ai(
+                image_path=image_path,
+                page_number=index + 1,
+                total_pages=len(image_paths),
+                ocr_text=ocr_text,
+            )
+
+            if page_result:
+                page_extractions.append(page_result)
+
+        merged = _merge_extractions(page_extractions)
+
+        if merged:
+            print(
+                "AI merged extraction:",
+                {
+                    "model": OPENAI_MODEL,
+                    "pages": len(image_paths),
+                    "labs": len(merged.get("labs", [])),
+                    "patient_name": merged.get("patient_name"),
+                    "report_name": merged.get("report_name"),
+                },
+            )
+
+        return merged
+
     finally:
         if temp_dir.exists():
             shutil.rmtree(temp_dir, ignore_errors=True)

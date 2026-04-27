@@ -1228,6 +1228,100 @@ def debug_document_extraction(
         ],
     }
 
+@app.post("/debug/reextract/{document_id}")
+def debug_reextract_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if not document.saved_to:
+        raise HTTPException(status_code=404, detail="Document has no saved file")
+
+    file_path = Path(document.saved_to)
+
+    if not file_path.exists():
+        raise HTTPException(status_code=404, detail=f"File not found: {document.saved_to}")
+
+    extracted_text = extract_text(file_path, document.filename)
+
+    ai_data = None
+    try:
+        ai_data = extract_report_with_ai(
+            file_path=file_path,
+            upload_dir=UPLOAD_DIR,
+            ocr_text=extracted_text,
+        )
+    except Exception as exc:
+        print(f"AI re-extraction failed for {document.filename}: {exc}")
+
+    parsed_data = parse_bloodwork_text(extracted_text, ai_data=ai_data)
+
+    document.extracted_text = extracted_text
+    document.lab_name = parsed_data.get("lab_name")
+    document.sample_type = parsed_data.get("sample_type")
+    document.referring_doctor = parsed_data.get("referring_doctor")
+    document.report_name = parsed_data.get("report_name")
+    document.report_type = parsed_data.get("report_type")
+    document.source_language = parsed_data.get("source_language")
+    document.test_date = parsed_data.get("test_date")
+    document.collected_on = parsed_data.get("collected_on")
+    document.reported_on = parsed_data.get("reported_on")
+    document.registered_on = parsed_data.get("registered_on")
+    document.generated_on = parsed_data.get("generated_on")
+    document.last_edited_at = now_iso()
+    document.is_verified = 0
+    document.verified_by = None
+    document.verified_at = None
+
+    existing_labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+    for lab in existing_labs:
+        db.delete(lab)
+
+    db.commit()
+
+    for lab in parsed_data.get("labs", []):
+        db.add(
+            models.LabResult(
+                document_id=document.id,
+                raw_test_name=lab.get("raw_test_name"),
+                canonical_name=lab.get("canonical_name"),
+                display_name=lab.get("display_name"),
+                category=lab.get("category"),
+                value=lab.get("value"),
+                flag=lab.get("flag"),
+                reference_range=lab.get("reference_range"),
+                unit=lab.get("unit"),
+            )
+        )
+
+    add_audit_log(
+        db,
+        document_id=document.id,
+        action="reextract",
+        actor=current_user.full_name,
+        details=f"AI re-extraction completed. Labs found: {len(parsed_data.get('labs', []))}",
+    )
+
+    db.commit()
+    db.refresh(document)
+
+    labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+    logs = (
+        db.query(models.AuditLog)
+        .filter(models.AuditLog.document_id == document.id)
+        .order_by(models.AuditLog.id.desc())
+        .all()
+    )
+
+    return get_document_payload(document, labs, logs, db=db, current_user=current_user)
 
 # -----------------------------
 # Auth
