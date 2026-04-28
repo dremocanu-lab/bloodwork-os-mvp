@@ -29,3 +29,5 @@ frontend/.env.development
 Thumbs.db
 .vscode/
 .idea/
+# Local debug/upload archives
+*.zip
