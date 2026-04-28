@@ -15,15 +15,14 @@ KNOWN_TEST_ALIASES = {
     "MCHC": "MCHC",
     "PLT": "Platelets",
     "RDW-SD": "RDW-SD",
-    "RDW SD": "RDW-SD",
-    "RDW_CV": "RDW-CV",
+    "RDWSD": "RDW-SD",
+    "RDW": "RDW",
     "RDW-CV": "RDW-CV",
-    "RDW CV": "RDW-CV",
+    "RDWCV": "RDW-CV",
     "PDW": "PDW",
     "MPV": "MPV",
     "P-LCR": "P-LCR",
-    "P LCR": "P-LCR",
-    "P_LCR": "P-LCR",
+    "PLCR": "P-LCR",
     "PCT": "Plateletcrit",
     "NRBC#": "NRBC Absolute",
     "NRBC": "NRBC Absolute",
@@ -72,7 +71,6 @@ KNOWN_TEST_ALIASES = {
     "LDL": "LDL Cholesterol",
 }
 
-
 SKIP_LINE_KEYWORDS = [
     "denumire",
     "analiza",
@@ -99,7 +97,40 @@ SKIP_LINE_KEYWORDS = [
     "sex",
     "sectie",
     "medic",
+    "spitalizare",
+    "institutul",
+    "laborator",
 ]
+
+ARROW_HIGH_MARKERS = ["↑", "▲", "↗", "⬆", "➚", "7"]
+ARROW_LOW_MARKERS = ["↓", "▼", "↘", "⬇", "➘"]
+
+JUNK_TOKENS = {
+    "",
+    "-",
+    "—",
+    "–",
+    "|",
+    ":",
+    ".",
+    ",",
+    "•",
+    "·",
+    "»",
+    "«",
+    ">",
+    "<",
+    "↑",
+    "↓",
+    "▲",
+    "▼",
+    "↗",
+    "↘",
+    "⬆",
+    "⬇",
+    "➚",
+    "➘",
+}
 
 
 def normalize_decimal(value: str | None) -> str | None:
@@ -123,6 +154,30 @@ def to_float(value: str | None) -> float | None:
         return float(cleaned)
     except Exception:
         return None
+
+
+def fix_missing_decimal_for_percent_or_small_range(value: str | None, low: str | None, high: str | None) -> str | None:
+    """
+    OCR sometimes turns 7.2 into 72 or 4.7 - 12.5 into 47 - 125.
+    This conservative correction only applies when the value is an integer
+    and the reference range strongly suggests a decimal percentage-type field.
+    """
+    if value is None or low is None or high is None:
+        return value
+
+    raw = str(value).strip()
+    low_f = to_float(low)
+    high_f = to_float(high)
+
+    if not raw.isdigit() or low_f is None or high_f is None:
+        return value
+
+    numeric = float(raw)
+
+    if numeric > high_f and numeric / 10 <= high_f * 1.5:
+        return str(numeric / 10).rstrip("0").rstrip(".")
+
+    return value
 
 
 def infer_flag(value: str | None, reference_range: str | None) -> str:
@@ -164,21 +219,50 @@ def clean_unit(unit: str | None) -> str | None:
     cleaned = str(unit).strip()
     cleaned = cleaned.replace("µ", "u").replace("μ", "u")
     cleaned = cleaned.replace(" ", "")
-    cleaned = cleaned.replace("l", "L") if cleaned.endswith("/l") else cleaned
 
-    return cleaned or None
+    replacements = {
+        "103/uL": "10^3/uL",
+        "10^3/ul": "10^3/uL",
+        "10^3/uL": "10^3/uL",
+        "106/uL": "10^6/uL",
+        "10^6/ul": "10^6/uL",
+        "10^6/uL": "10^6/uL",
+        "g/dl": "g/dL",
+        "g/dL": "g/dL",
+        "FL": "fL",
+    }
+
+    return replacements.get(cleaned, cleaned) or None
+
+
+def normalize_test_token(token: str) -> str:
+    cleaned = token.strip().upper()
+    cleaned = cleaned.replace("_", "-")
+    cleaned = cleaned.replace(" ", "")
+    cleaned = cleaned.replace("＃", "#")
+    cleaned = cleaned.replace("％", "%")
+    cleaned = cleaned.replace("S", "S")
+
+    # OCR often loses the dash in these.
+    if cleaned == "RDWSD":
+        return "RDW-SD"
+    if cleaned == "RDWCV":
+        return "RDW-CV"
+    if cleaned == "PLCR":
+        return "P-LCR"
+
+    return cleaned
 
 
 def normalize_raw_test_name(raw_name: str) -> str:
     cleaned = raw_name.strip()
     cleaned = cleaned.replace("↑", "").replace("↓", "")
     cleaned = cleaned.replace("▲", "").replace("▼", "")
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.replace("↗", "").replace("↘", "")
+    cleaned = cleaned.replace("⬆", "").replace("⬇", "")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
-    upper = cleaned.upper()
-
-    # OCR sometimes separates symbols.
-    upper = upper.replace(" #", "#").replace(" %", "%")
+    upper = normalize_test_token(cleaned)
 
     return KNOWN_TEST_ALIASES.get(upper, cleaned)
 
@@ -221,26 +305,33 @@ def should_skip_line(line: str) -> bool:
     return any(keyword in lowered for keyword in SKIP_LINE_KEYWORDS)
 
 
-def split_possible_table_line(line: str) -> list[str]:
-    cleaned = line.strip()
+def clean_ocr_text_for_rows(text: str) -> str:
+    cleaned = text or ""
 
-    # Remove visual flag arrows but remember they may imply abnormality elsewhere.
-    cleaned = cleaned.replace("↗", " ").replace("↘", " ")
-    cleaned = cleaned.replace("↑", " ").replace("↓", " ")
-    cleaned = cleaned.replace("▲", " ").replace("▼", " ")
+    # Remove visual abnormal arrows as separators. They should not block row parsing.
+    for marker in ARROW_HIGH_MARKERS + ARROW_LOW_MARKERS:
+        cleaned = cleaned.replace(marker, " ")
 
-    cleaned = re.sub(r"\s+", " ", cleaned)
+    cleaned = cleaned.replace("|", " ")
+    cleaned = cleaned.replace("¦", " ")
+    cleaned = cleaned.replace("│", " ")
+    cleaned = cleaned.replace("€", " ")
+    cleaned = cleaned.replace("®", " ")
+    cleaned = cleaned.replace("™", " ")
 
-    return cleaned.split(" ")
+    # Normalize table-like whitespace.
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+
+    return cleaned
 
 
-def extract_flag_from_line(line: str, value: str | None, reference_range: str | None) -> str:
-    lowered = line.lower()
+def extract_flag_from_line(original_line: str, value: str | None, reference_range: str | None) -> str:
+    lowered = f" {original_line.lower()} "
 
-    if any(marker in line for marker in ["↑", "▲", "↗"]) or " high " in f" {lowered} ":
+    if any(marker in original_line for marker in ARROW_HIGH_MARKERS[:-1]) or " high " in lowered:
         return "High"
 
-    if any(marker in line for marker in ["↓", "▼", "↘"]) or " low " in f" {lowered} ":
+    if any(marker in original_line for marker in ARROW_LOW_MARKERS) or " low " in lowered:
         return "Low"
 
     return infer_flag(value, reference_range)
@@ -250,21 +341,22 @@ def parse_generic_table_rows(text: str) -> list[dict]:
     labs: list[dict] = []
     seen: set[str] = set()
 
-    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    original_lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    cleaned_lines = [clean_ocr_text_for_rows(line).strip() for line in original_lines]
 
-    # This catches rows such as:
-    # WBC 11.44 3.98 - 10.00 10^3/ul
-    # RBC 5.75 3.93 - 6.08 10^6/ul
-    # HGB 14.4 11.2 - 17.5 g/dL
+    # Allows junk between name and value:
+    # WBC 18.52 3.98 - 10.00 10^3/ul
+    # WBC arrow 18.52 3.98 - 10.00 10^3/ul
     row_pattern = re.compile(
         r"""
         ^\s*
         (?P<name>[A-Za-zĂÂÎȘȚăâîșț][A-Za-zĂÂÎȘȚăâîșț0-9#%_\-\/\.]{0,24})
+        (?:\s+[^\d\s]{1,5}){0,3}
         \s+
         (?P<value>[-+]?\d+(?:[.,]\d+)?)
         \s+
         (?P<low>[-+]?\d+(?:[.,]\d+)?)
-        \s*[-–—]\s*
+        \s*[-–—]?\s*
         (?P<high>[-+]?\d+(?:[.,]\d+)?)
         (?P<tail>.*?)
         \s*$
@@ -272,42 +364,22 @@ def parse_generic_table_rows(text: str) -> list[dict]:
         re.IGNORECASE | re.VERBOSE,
     )
 
-    # This catches rows where OCR loses the dash but leaves enough numeric structure:
-    # WBC 11.44 3.98 10.00 10^3/ul
-    row_no_dash_pattern = re.compile(
-        r"""
-        ^\s*
-        (?P<name>[A-Za-zĂÂÎȘȚăâîșț][A-Za-zĂÂÎȘȚăâîșț0-9#%_\-\/\.]{0,24})
-        \s+
-        (?P<value>[-+]?\d+(?:[.,]\d+)?)
-        \s+
-        (?P<low>[-+]?\d+(?:[.,]\d+)?)
-        \s+
-        (?P<high>[-+]?\d+(?:[.,]\d+)?)
-        (?P<tail>.*?)
-        \s*$
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
+    for idx, line in enumerate(cleaned_lines):
+        original_line = original_lines[idx]
 
-    for original_line in lines:
         if should_skip_line(original_line):
             continue
 
-        line = original_line.strip()
-        line = line.replace("|", " ")
-        line = re.sub(r"\s+", " ", line)
-
-        match = row_pattern.match(line) or row_no_dash_pattern.match(line)
+        line = re.sub(r"\s+", " ", line).strip()
+        match = row_pattern.match(line)
 
         if not match:
             continue
 
         raw_name = match.group("name").strip()
-        raw_name_upper = raw_name.upper().replace("_", "-")
+        raw_name_upper = normalize_test_token(raw_name)
 
-        # Avoid capturing random words as tests.
-        if raw_name_upper not in KNOWN_TEST_ALIASES and len(raw_name_upper) <= 2 and raw_name_upper not in {"EO", "IG"}:
+        if raw_name_upper not in KNOWN_TEST_ALIASES:
             continue
 
         value = match.group("value")
@@ -315,18 +387,35 @@ def parse_generic_table_rows(text: str) -> list[dict]:
         high = match.group("high")
         tail = (match.group("tail") or "").strip()
 
-        reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
+        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
+        fixed_low = low
+        fixed_high = high
 
-        # Unit is usually the remaining non-empty tail after the reference range.
+        # If range was OCR'd as 47 - 125 for percent-style tests, make it 4.7 - 12.5.
+        if raw_name_upper.endswith("%") or raw_name_upper in {"MONO", "NEUT", "LYMPH", "BASO", "EO", "EOS", "IG"}:
+            low_f = to_float(low)
+            high_f = to_float(high)
+            if low_f is not None and high_f is not None and high_f > 100:
+                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
+                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
+
+        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
+
         unit = tail.strip()
-        unit = re.sub(r"^[^\w%µμ\/]+", "", unit)
+        unit = re.sub(r"^[^\w%µμ\/\^]+", "", unit)
         unit = unit or None
 
-        flag = extract_flag_from_line(original_line, value, reference_range)
+        if not unit:
+            if raw_name_upper.endswith("%"):
+                unit = "%"
+            elif raw_name_upper.endswith("#"):
+                unit = "10^3/uL"
+
+        flag = extract_flag_from_line(original_line, fixed_value, reference_range)
 
         result = build_lab_result(
             raw_test_name=raw_name,
-            value=value,
+            value=fixed_value,
             flag=flag,
             reference_range=reference_range,
             unit=unit,
@@ -344,29 +433,170 @@ def parse_generic_table_rows(text: str) -> list[dict]:
     return labs
 
 
-def parse_wrapped_table_rows(text: str) -> list[dict]:
-    """
-    Tesseract sometimes splits a visual table row into multiple lines:
-    WBC
-    11.44
-    3.98 - 10.00 10^3/ul
+def tokenize_ocr_text(text: str) -> list[str]:
+    cleaned = clean_ocr_text_for_rows(text or "")
 
-    This pass tries to recover those cases.
+    # Keep useful symbols inside tokens.
+    cleaned = re.sub(r"([A-Za-zĂÂÎȘȚăâîșț]+)\s+([#%])", r"\1\2", cleaned)
+    cleaned = cleaned.replace("RDW SD", "RDW-SD")
+    cleaned = cleaned.replace("RDW CV", "RDW-CV")
+    cleaned = cleaned.replace("P LCR", "P-LCR")
+
+    tokens = re.findall(
+        r"[A-Za-zĂÂÎȘȚăâîșț]+[#%]?"
+        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
+        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+[#%]?"
+        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
+        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
+        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Z]+"
+        r"|[A-Z]+-[A-Z]+[#%]?"
+        r"|[-+]?\d+(?:[.,]\d+)?"
+        r"|10\^?\d+/?[uµμ]?[lL]?"
+        r"|[%]"
+        r"|[A-Za-zµμ/%^0-9]+",
+        cleaned,
+    )
+
+    return [token.strip() for token in tokens if token.strip() and token.strip() not in JUNK_TOKENS]
+
+
+def is_number_token(token: str) -> bool:
+    return re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", token.strip()) is not None
+
+
+def looks_like_unit(token: str) -> bool:
+    cleaned = token.strip()
+    if not cleaned:
+        return False
+
+    lowered = cleaned.lower()
+
+    return (
+        "%" in cleaned
+        or "/" in cleaned
+        or "^" in cleaned
+        or lowered in {"fl", "g/dl", "g/dl", "pg", "u/l", "mg/dl", "mmol/l"}
+        or re.fullmatch(r"10\^?\d+/?[uµμ]?[lL]?", cleaned) is not None
+        or re.fullmatch(r"10\d+/?[uµμ]?[lL]?", cleaned) is not None
+    )
+
+
+def parse_token_stream_rows(text: str) -> list[dict]:
+    """
+    Backup parser for OCR text where table rows are badly split.
+    It scans token-by-token:
+    TEST -> value -> low -> high -> optional unit
+    and ignores arrow/junk artifacts.
     """
     labs: list[dict] = []
     seen: set[str] = set()
 
-    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
-    cleaned_lines = [re.sub(r"\s+", " ", line.replace("|", " ")).strip() for line in lines]
+    tokens = tokenize_ocr_text(text)
 
-    for idx, line in enumerate(cleaned_lines):
-        name = line.strip()
-        name_upper = name.upper().replace("_", "-")
+    i = 0
+    while i < len(tokens):
+        token = tokens[i]
+        test_key = normalize_test_token(token)
 
-        if name_upper not in KNOWN_TEST_ALIASES:
+        # OCR sometimes sees "RDW" "SD" as two tokens.
+        if test_key == "RDW" and i + 1 < len(tokens):
+            nxt = normalize_test_token(tokens[i + 1])
+            if nxt in {"SD", "CV"}:
+                test_key = f"RDW-{nxt}"
+                i += 1
+
+        if test_key == "P" and i + 1 < len(tokens):
+            nxt = normalize_test_token(tokens[i + 1])
+            if nxt == "LCR":
+                test_key = "P-LCR"
+                i += 1
+
+        if test_key not in KNOWN_TEST_ALIASES:
+            i += 1
             continue
 
-        window = " ".join(cleaned_lines[idx + 1 : idx + 5])
+        # Look ahead for the next 3 numbers. They are usually value, low, high.
+        lookahead = tokens[i + 1 : i + 12]
+        number_positions = []
+
+        for offset, candidate in enumerate(lookahead):
+            if is_number_token(candidate):
+                number_positions.append((offset, candidate))
+                if len(number_positions) >= 3:
+                    break
+
+        if len(number_positions) < 3:
+            i += 1
+            continue
+
+        value = number_positions[0][1]
+        low = number_positions[1][1]
+        high = number_positions[2][1]
+
+        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
+        fixed_low = low
+        fixed_high = high
+
+        if test_key.endswith("%"):
+            low_f = to_float(low)
+            high_f = to_float(high)
+            if low_f is not None and high_f is not None and high_f > 100:
+                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
+                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
+
+        unit = None
+        after_numbers_start = number_positions[2][0] + 1
+
+        for candidate in lookahead[after_numbers_start : after_numbers_start + 4]:
+            if looks_like_unit(candidate):
+                unit = candidate
+                break
+
+        if not unit:
+            if test_key.endswith("%"):
+                unit = "%"
+            elif test_key.endswith("#"):
+                unit = "10^3/uL"
+
+        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
+
+        local_text = " ".join(lookahead[: after_numbers_start + 4])
+        flag = extract_flag_from_line(local_text, fixed_value, reference_range)
+
+        result = build_lab_result(
+            raw_test_name=test_key,
+            value=fixed_value,
+            flag=flag,
+            reference_range=reference_range,
+            unit=unit,
+            confidence=0.78,
+        )
+
+        dedupe_key = result["canonical_name"] or result["display_name"] or test_key
+
+        if dedupe_key not in seen:
+            seen.add(dedupe_key)
+            labs.append(result)
+
+        i += 1
+
+    return labs
+
+
+def parse_wrapped_table_rows(text: str) -> list[dict]:
+    labs: list[dict] = []
+    seen: set[str] = set()
+
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    cleaned_lines = [clean_ocr_text_for_rows(line).strip() for line in lines]
+
+    for idx, line in enumerate(cleaned_lines):
+        name = normalize_test_token(line)
+
+        if name not in KNOWN_TEST_ALIASES:
+            continue
+
+        window = " ".join(cleaned_lines[idx + 1 : idx + 6])
         numbers = re.findall(r"[-+]?\d+(?:[.,]\d+)?", window)
 
         if len(numbers) < 3:
@@ -376,25 +606,42 @@ def parse_wrapped_table_rows(text: str) -> list[dict]:
         low = numbers[1]
         high = numbers[2]
 
+        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
+        fixed_low = low
+        fixed_high = high
+
+        if name.endswith("%"):
+            low_f = to_float(low)
+            high_f = to_float(high)
+            if low_f is not None and high_f is not None and high_f > 100:
+                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
+                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
+
         unit_match = re.search(
-            r"(10\^?\d+\s*/?\s*[uµμ]?[lL]|[a-zA-Zµμ%\/]+(?:\/[a-zA-Zµμ]+)?)",
+            r"(10\^?\d+\s*/?\s*[uµμ]?[lL]|10\d+\s*/?\s*[uµμ]?[lL]|[a-zA-Zµμ%\/]+(?:\/[a-zA-Zµμ]+)?)",
             window,
         )
         unit = unit_match.group(1) if unit_match else None
 
-        reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
-        flag = extract_flag_from_line(window, value, reference_range)
+        if not unit:
+            if name.endswith("%"):
+                unit = "%"
+            elif name.endswith("#"):
+                unit = "10^3/uL"
+
+        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
+        flag = extract_flag_from_line(window, fixed_value, reference_range)
 
         result = build_lab_result(
             raw_test_name=name,
-            value=value,
+            value=fixed_value,
             flag=flag,
             reference_range=reference_range,
             unit=unit,
             confidence=0.72,
         )
 
-        dedupe_key = result["canonical_name"] or result["display_name"] or name_upper
+        dedupe_key = result["canonical_name"] or result["display_name"] or name
 
         if dedupe_key in seen:
             continue
@@ -460,11 +707,35 @@ def merge_labs(*lab_lists: list[dict]) -> list[dict]:
 
             key = str(key).lower()
 
-            if key in seen:
+            existing_index = None
+            for idx, existing in enumerate(merged):
+                existing_key = existing.get("canonical_name") or existing.get("display_name") or existing.get("raw_test_name")
+                if existing_key and str(existing_key).lower() == key:
+                    existing_index = idx
+                    break
+
+            if existing_index is None:
+                seen.add(key)
+                merged.append(lab)
                 continue
 
-            seen.add(key)
-            merged.append(lab)
+            # Prefer higher-confidence rows with reference range and unit.
+            existing = merged[existing_index]
+            existing_score = float(existing.get("confidence") or 0)
+            new_score = float(lab.get("confidence") or 0)
+
+            if lab.get("reference_range"):
+                new_score += 0.1
+            if lab.get("unit"):
+                new_score += 0.05
+
+            if existing.get("reference_range"):
+                existing_score += 0.1
+            if existing.get("unit"):
+                existing_score += 0.05
+
+            if new_score > existing_score:
+                merged[existing_index] = lab
 
     return merged
 
@@ -475,17 +746,18 @@ def parse_bloodwork_text(text: str) -> dict:
     metadata = extract_report_metadata(safe_text)
 
     table_labs = parse_generic_table_rows(safe_text)
+    token_labs = parse_token_stream_rows(safe_text)
     wrapped_labs = parse_wrapped_table_rows(safe_text)
     inline_labs = extract_known_inline_labs(safe_text)
 
-    labs = merge_labs(table_labs, wrapped_labs, inline_labs)
+    labs = merge_labs(table_labs, token_labs, wrapped_labs, inline_labs)
 
     report_name = metadata.get("report_type") or "Bloodwork Report"
 
     warnings = []
     if not labs:
         warnings.append("No structured lab results were confidently extracted. Manual review is recommended.")
-    elif len(labs) < 5:
+    elif len(labs) < 10:
         warnings.append("Only a small number of lab rows were extracted. Manual review is recommended.")
 
     return {
