@@ -3,7 +3,8 @@ from pathlib import Path
 
 import fitz
 import pytesseract
-from PIL import Image, ImageOps, ImageFilter
+from PIL import Image, ImageFilter, ImageOps
+from pytesseract import Output
 
 
 tesseract_cmd = os.getenv("TESSERACT_CMD")
@@ -13,36 +14,99 @@ if tesseract_cmd:
 
 def preprocess_image_for_ocr(file_path: Path) -> Image.Image:
     image = Image.open(file_path).convert("RGB")
-
-    # Convert to grayscale
     image = ImageOps.grayscale(image)
-
-    # Light denoising/sharpening. Conservative so we do not destroy lab text.
     image = image.filter(ImageFilter.SHARPEN)
 
-    # Upscale small images for better OCR.
     width, height = image.size
-    if width < 1600:
-        scale = 1600 / max(width, 1)
+
+    if width < 1800:
+        scale = 1800 / max(width, 1)
         new_size = (int(width * scale), int(height * scale))
         image = image.resize(new_size)
 
     return image
 
 
+def extract_text_from_image_object(image: Image.Image) -> str:
+    try:
+        return pytesseract.image_to_string(
+            image,
+            lang="ron+eng",
+            config="--oem 3 --psm 6",
+        )
+    except Exception:
+        return pytesseract.image_to_string(
+            image,
+            lang="eng",
+            config="--oem 3 --psm 6",
+        )
+
+
+def extract_ocr_words_from_image_object(image: Image.Image, page_index: int = 0) -> list[dict]:
+    try:
+        data = pytesseract.image_to_data(
+            image,
+            lang="ron+eng",
+            config="--oem 3 --psm 6",
+            output_type=Output.DICT,
+        )
+    except Exception:
+        data = pytesseract.image_to_data(
+            image,
+            lang="eng",
+            config="--oem 3 --psm 6",
+            output_type=Output.DICT,
+        )
+
+    words: list[dict] = []
+
+    total = len(data.get("text", []))
+
+    for index in range(total):
+        text = (data["text"][index] or "").strip()
+
+        if not text:
+            continue
+
+        try:
+            conf = float(data["conf"][index])
+        except Exception:
+            conf = 0.0
+
+        words.append(
+            {
+                "text": text,
+                "conf": conf,
+                "left": int(data["left"][index]),
+                "top": int(data["top"][index]),
+                "width": int(data["width"][index]),
+                "height": int(data["height"][index]),
+                "page": page_index,
+                "block_num": int(data.get("block_num", [0])[index]),
+                "par_num": int(data.get("par_num", [0])[index]),
+                "line_num": int(data.get("line_num", [0])[index]),
+                "word_num": int(data.get("word_num", [0])[index]),
+            }
+        )
+
+    return words
+
+
 def extract_text_from_image(file_path: Path) -> str:
     image = preprocess_image_for_ocr(file_path)
+    return extract_text_from_image_object(image)
 
-    try:
-        return pytesseract.image_to_string(image, lang="ron+eng")
-    except Exception:
-        return pytesseract.image_to_string(image, lang="eng")
+
+def extract_words_from_image(file_path: Path) -> list[dict]:
+    image = preprocess_image_for_ocr(file_path)
+    return extract_ocr_words_from_image_object(image, page_index=0)
 
 
 def extract_text_from_pdf(file_path: Path) -> str:
     text_parts: list[str] = []
 
     pdf_document = fitz.open(file_path)
+
     try:
         for page in pdf_document:
             text_parts.append(page.get_text())
@@ -52,23 +116,30 @@ def extract_text_from_pdf(file_path: Path) -> str:
     return "\n".join(text_parts).strip()
 
 
-def extract_text_from_scanned_pdf(file_path: Path, temp_dir: Path) -> str:
+def extract_text_and_words_from_scanned_pdf(file_path: Path, temp_dir: Path) -> dict:
     text_parts: list[str] = []
+    all_words: list[dict] = []
 
     pdf_document = fitz.open(file_path)
+
     try:
         for page_index in range(len(pdf_document)):
             page = pdf_document.load_page(page_index)
 
-            # Higher DPI improves OCR quality for scanned lab PDFs.
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2), alpha=False)
+            # 3x render gives Tesseract much better table-row OCR on scanned lab reports.
+            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
 
             temp_image_path = temp_dir / f"temp_ocr_page_{page_index}.png"
             pix.save(str(temp_image_path))
 
             try:
-                page_text = extract_text_from_image(temp_image_path)
+                image = preprocess_image_for_ocr(temp_image_path)
+
+                page_text = extract_text_from_image_object(image)
                 text_parts.append(page_text)
+
+                page_words = extract_ocr_words_from_image_object(image, page_index=page_index)
+                all_words.extend(page_words)
             finally:
                 if temp_image_path.exists():
                     temp_image_path.unlink()
@@ -76,7 +147,10 @@ def extract_text_from_scanned_pdf(file_path: Path, temp_dir: Path) -> str:
     finally:
         pdf_document.close()
 
-    return "\n".join(text_parts).strip()
+    return {
+        "text": "\n".join(text_parts).strip(),
+        "words": all_words,
+    }
 
 
 def looks_like_bad_text(text: str) -> bool:
@@ -104,29 +178,36 @@ def extract_text(file_path: Path, filename: str, temp_dir: Path) -> dict:
         if not looks_like_bad_text(embedded_text):
             return {
                 "text": embedded_text,
+                "words": [],
                 "method": "pdf_text",
                 "warnings": [],
             }
 
-        ocr_text = extract_text_from_scanned_pdf(file_path, temp_dir)
+        ocr_result = extract_text_and_words_from_scanned_pdf(file_path, temp_dir)
 
         return {
-            "text": ocr_text,
+            "text": ocr_result["text"],
+            "words": ocr_result["words"],
             "method": "pdf_ocr",
             "warnings": ["PDF text layer was weak or missing, OCR fallback was used."],
         }
 
     if lower_name.endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")):
-        image_text = extract_text_from_image(file_path)
+        image = preprocess_image_for_ocr(file_path)
+
+        image_text = extract_text_from_image_object(image)
+        image_words = extract_ocr_words_from_image_object(image, page_index=0)
 
         return {
             "text": image_text,
+            "words": image_words,
             "method": "image_ocr",
             "warnings": [],
         }
 
     return {
         "text": "",
+        "words": [],
         "method": "unsupported",
         "warnings": ["Unsupported file type for OCR/text extraction."],
     }
@@ -165,6 +246,11 @@ def score_ocr_quality(text: str) -> dict:
         "tsh",
         "alt",
         "ast",
+        "wbc",
+        "rbc",
+        "hgb",
+        "hct",
+        "plt",
     ]
 
     lowered = cleaned.lower()
@@ -194,6 +280,7 @@ def score_ocr_quality(text: str) -> dict:
     score = min(round(score, 2), 1.0)
 
     warnings = []
+
     if score < 0.4:
         warnings.append("OCR/text quality appears low. Manual review is recommended.")
     elif score < 0.7:
