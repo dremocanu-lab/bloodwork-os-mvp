@@ -4,150 +4,489 @@ from app.report_fields import extract_report_metadata
 from app.synonyms import normalize_test_name
 
 
-def infer_flag(value: str, reference_range: str) -> str:
+KNOWN_TEST_ALIASES = {
+    "WBC": "White Blood Cells",
+    "RBC": "Red Blood Cell Count",
+    "HGB": "Hemoglobin",
+    "HB": "Hemoglobin",
+    "HCT": "Hematocrit",
+    "MCV": "MCV",
+    "MCH": "MCH",
+    "MCHC": "MCHC",
+    "PLT": "Platelets",
+    "RDW-SD": "RDW-SD",
+    "RDW SD": "RDW-SD",
+    "RDW_CV": "RDW-CV",
+    "RDW-CV": "RDW-CV",
+    "RDW CV": "RDW-CV",
+    "PDW": "PDW",
+    "MPV": "MPV",
+    "P-LCR": "P-LCR",
+    "P LCR": "P-LCR",
+    "P_LCR": "P-LCR",
+    "PCT": "Plateletcrit",
+    "NRBC#": "NRBC Absolute",
+    "NRBC": "NRBC Absolute",
+    "NRBC%": "NRBC Percent",
+    "NEUT#": "Neutrophils Absolute",
+    "NEUT": "Neutrophils Absolute",
+    "NEUT%": "Neutrophils Percent",
+    "LYMPH#": "Lymphocytes Absolute",
+    "LYMPH": "Lymphocytes Absolute",
+    "LYMPH%": "Lymphocytes Percent",
+    "MONO#": "Monocytes Absolute",
+    "MONO": "Monocytes Absolute",
+    "MONO%": "Monocytes Percent",
+    "EO#": "Eosinophils Absolute",
+    "EO": "Eosinophils Absolute",
+    "EO%": "Eosinophils Percent",
+    "EOS#": "Eosinophils Absolute",
+    "EOS": "Eosinophils Absolute",
+    "EOS%": "Eosinophils Percent",
+    "BASO#": "Basophils Absolute",
+    "BASO": "Basophils Absolute",
+    "BASO%": "Basophils Percent",
+    "IG#": "Immature Granulocytes Absolute",
+    "IG": "Immature Granulocytes Absolute",
+    "IG%": "Immature Granulocytes Percent",
+    "GLU": "Glucose",
+    "GLUCOSE": "Glucose",
+    "GLUCOZA": "Glucose",
+    "GLICEMIE": "Glucose",
+    "CREATININA": "Creatinine",
+    "CREATININĂ": "Creatinine",
+    "CREATININE": "Creatinine",
+    "UREE": "Urea",
+    "UREA": "Urea",
+    "BUN": "Urea",
+    "ALT": "ALT",
+    "ALAT": "ALT",
+    "TGP": "ALT",
+    "AST": "AST",
+    "ASAT": "AST",
+    "TGO": "AST",
+    "GGT": "GGT",
+    "TSH": "TSH",
+    "CRP": "CRP",
+    "HDL": "HDL Cholesterol",
+    "LDL": "LDL Cholesterol",
+}
+
+
+SKIP_LINE_KEYWORDS = [
+    "denumire",
+    "analiza",
+    "analiză",
+    "rezultat",
+    "interval",
+    "biologic",
+    "referinta",
+    "referință",
+    "citomorfologie",
+    "hematograma",
+    "hemogram",
+    "starea probei",
+    "conforma",
+    "data validare",
+    "nota",
+    "buletin",
+    "nume",
+    "cnp",
+    "telefon",
+    "varsta",
+    "vârsta",
+    "cod pacient",
+    "sex",
+    "sectie",
+    "medic",
+]
+
+
+def normalize_decimal(value: str | None) -> str | None:
+    if value is None:
+        return None
+
+    cleaned = str(value).strip()
+    cleaned = cleaned.replace(",", ".")
+
+    if cleaned.startswith("."):
+        cleaned = "0" + cleaned
+
+    return cleaned
+
+
+def to_float(value: str | None) -> float | None:
     try:
-        numeric_value = float(str(value).replace(",", "."))
-        matches = re.findall(r"[-+]?\d*\.?\d+", str(reference_range).replace(",", "."))
-        if len(matches) >= 2:
-            low = float(matches[0])
-            high = float(matches[1])
+        cleaned = normalize_decimal(value)
+        if cleaned is None:
+            return None
+        return float(cleaned)
+    except Exception:
+        return None
+
+
+def infer_flag(value: str | None, reference_range: str | None) -> str:
+    numeric_value = to_float(value)
+
+    if numeric_value is None or not reference_range:
+        return "Normal"
+
+    matches = re.findall(r"[-+]?\d+(?:[.,]\d+)?", str(reference_range))
+
+    if len(matches) >= 2:
+        low = to_float(matches[0])
+        high = to_float(matches[1])
+
+        if low is not None and high is not None:
             if numeric_value < low:
                 return "Low"
             if numeric_value > high:
                 return "High"
-    except Exception:
-        pass
 
     return "Normal"
 
 
+def clean_reference_range(reference_range: str | None) -> str | None:
+    if not reference_range:
+        return None
+
+    cleaned = str(reference_range)
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    return cleaned or None
+
+
+def clean_unit(unit: str | None) -> str | None:
+    if not unit:
+        return None
+
+    cleaned = str(unit).strip()
+    cleaned = cleaned.replace("µ", "u").replace("μ", "u")
+    cleaned = cleaned.replace(" ", "")
+    cleaned = cleaned.replace("l", "L") if cleaned.endswith("/l") else cleaned
+
+    return cleaned or None
+
+
+def normalize_raw_test_name(raw_name: str) -> str:
+    cleaned = raw_name.strip()
+    cleaned = cleaned.replace("↑", "").replace("↓", "")
+    cleaned = cleaned.replace("▲", "").replace("▼", "")
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    upper = cleaned.upper()
+
+    # OCR sometimes separates symbols.
+    upper = upper.replace(" #", "#").replace(" %", "%")
+
+    return KNOWN_TEST_ALIASES.get(upper, cleaned)
+
+
 def build_lab_result(
     raw_test_name: str,
-    value: str,
+    value: str | None,
     flag: str | None,
-    reference_range: str,
-    unit: str,
+    reference_range: str | None,
+    unit: str | None,
     confidence: float = 0.85,
 ) -> dict:
-    normalized = normalize_test_name(raw_test_name)
+    display_candidate = normalize_raw_test_name(raw_test_name)
+    normalized = normalize_test_name(display_candidate)
 
-    final_flag = flag or infer_flag(value, reference_range)
+    final_reference_range = clean_reference_range(reference_range)
+    final_unit = clean_unit(unit)
+
+    final_flag = flag or infer_flag(value, final_reference_range)
 
     return {
-        "raw_test_name": normalized["raw_test_name"],
+        "raw_test_name": raw_test_name.strip() if raw_test_name else display_candidate,
         "canonical_name": normalized["canonical_name"],
         "display_name": normalized["display_name"],
         "category": normalized["category"],
-        "value": value.strip() if value else None,
+        "value": normalize_decimal(value),
         "flag": final_flag,
-        "reference_range": reference_range.strip() if reference_range else None,
-        "unit": unit.strip() if unit else None,
+        "reference_range": final_reference_range,
+        "unit": final_unit,
         "confidence": confidence,
     }
 
 
-def clean_reference_range(reference_range: str) -> str:
-    return re.sub(r"\s+", " ", reference_range or "").strip()
+def should_skip_line(line: str) -> bool:
+    lowered = line.lower()
+
+    if not lowered.strip():
+        return True
+
+    return any(keyword in lowered for keyword in SKIP_LINE_KEYWORDS)
 
 
-def clean_unit(unit: str) -> str:
-    return re.sub(r"\s+", "", unit or "").strip()
+def split_possible_table_line(line: str) -> list[str]:
+    cleaned = line.strip()
+
+    # Remove visual flag arrows but remember they may imply abnormality elsewhere.
+    cleaned = cleaned.replace("↗", " ").replace("↘", " ")
+    cleaned = cleaned.replace("↑", " ").replace("↓", " ")
+    cleaned = cleaned.replace("▲", " ").replace("▼", " ")
+
+    cleaned = re.sub(r"\s+", " ", cleaned)
+
+    return cleaned.split(" ")
 
 
-def extract_match_labs(text: str) -> list[dict]:
+def extract_flag_from_line(line: str, value: str | None, reference_range: str | None) -> str:
+    lowered = line.lower()
+
+    if any(marker in line for marker in ["↑", "▲", "↗"]) or " high " in f" {lowered} ":
+        return "High"
+
+    if any(marker in line for marker in ["↓", "▼", "↘"]) or " low " in f" {lowered} ":
+        return "Low"
+
+    return infer_flag(value, reference_range)
+
+
+def parse_generic_table_rows(text: str) -> list[dict]:
     labs: list[dict] = []
     seen: set[str] = set()
 
-    lab_patterns = [
-        # CBC
-        (r"\b(Haemoglobin|Hemoglobin|Hemoglobina|Hemoglobină|HGB|Hb)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Hemoglobin"),
-        (r"\b(Leucocite|Leukocite|WBC|White Blood Cells|Total Leucocyte Count|Total Leukocyte Count|Total WBC count)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "White Blood Cells"),
-        (r"\b(Eritrocite|RBC|Red Blood Cells|RBC Count|Total RBC count)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Red Blood Cells"),
-        (r"\b(Hematocrit|Hematocritul|HCT)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Hematocrit"),
-        (r"\b(Platelets|Trombocite|PLT)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Platelets"),
-        (r"\b(MCV)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "MCV"),
-        (r"\b(MCH)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "MCH"),
-        (r"\b(MCHC)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "MCHC"),
-        (r"\b(RDW)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "RDW"),
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
 
-        # Differential
-        (r"\b(Neutrophils|Neutrofile|NEUT)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Neutrophils"),
-        (r"\b(Lymphocytes|Limfocite|LYMPH)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Lymphocytes"),
-        (r"\b(Monocytes|Monocite|MONO)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Monocytes"),
-        (r"\b(Eosinophils|Eozinofile|EOS)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Eosinophils"),
-        (r"\b(Basophils|Bazofile|BASO)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "Basophils"),
+    # This catches rows such as:
+    # WBC 11.44 3.98 - 10.00 10^3/ul
+    # RBC 5.75 3.93 - 6.08 10^6/ul
+    # HGB 14.4 11.2 - 17.5 g/dL
+    row_pattern = re.compile(
+        r"""
+        ^\s*
+        (?P<name>[A-Za-zĂÂÎȘȚăâîșț][A-Za-zĂÂÎȘȚăâîșț0-9#%_\-\/\.]{0,24})
+        \s+
+        (?P<value>[-+]?\d+(?:[.,]\d+)?)
+        \s+
+        (?P<low>[-+]?\d+(?:[.,]\d+)?)
+        \s*[-–—]\s*
+        (?P<high>[-+]?\d+(?:[.,]\d+)?)
+        (?P<tail>.*?)
+        \s*$
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
 
-        # Kidney / electrolytes
-        (r"\b(Creatinine|Creatinina|Creatinină)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Creatinine"),
-        (r"\b(Uree|Urea|BUN)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Urea"),
-        (r"\b(eGFR|GFR|RFG)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "eGFR"),
-        (r"\b(Sodium|Sodiu|Na)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Sodium"),
-        (r"\b(Potassium|Potasiu|K)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Potassium"),
+    # This catches rows where OCR loses the dash but leaves enough numeric structure:
+    # WBC 11.44 3.98 10.00 10^3/ul
+    row_no_dash_pattern = re.compile(
+        r"""
+        ^\s*
+        (?P<name>[A-Za-zĂÂÎȘȚăâîșț][A-Za-zĂÂÎȘȚăâîșț0-9#%_\-\/\.]{0,24})
+        \s+
+        (?P<value>[-+]?\d+(?:[.,]\d+)?)
+        \s+
+        (?P<low>[-+]?\d+(?:[.,]\d+)?)
+        \s+
+        (?P<high>[-+]?\d+(?:[.,]\d+)?)
+        (?P<tail>.*?)
+        \s*$
+        """,
+        re.IGNORECASE | re.VERBOSE,
+    )
 
-        # Metabolic
-        (r"\b(Glucose|Glucoza|Glicemie|Glicemia)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Glucose"),
-        (r"\b(HbA1c|Hemoglobina glicata|Hemoglobină glicată)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*(%)?", "HbA1c"),
+    for original_line in lines:
+        if should_skip_line(original_line):
+            continue
 
-        # Lipids
-        (r"\b(Total Cholesterol|Cholesterol total|Colesterol total)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Total Cholesterol"),
-        (r"\b(HDL|HDL Cholesterol|Colesterol HDL)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "HDL Cholesterol"),
-        (r"\b(LDL|LDL Cholesterol|Colesterol LDL)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "LDL Cholesterol"),
-        (r"\b(Triglycerides|Trigliceride)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Triglycerides"),
+        line = original_line.strip()
+        line = line.replace("|", " ")
+        line = re.sub(r"\s+", " ", line)
 
-        # Liver
-        (r"\b(ALT|ALAT|GPT|TGP)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "ALT"),
-        (r"\b(AST|ASAT|GOT|TGO)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "AST"),
-        (r"\b(GGT|Gamma GT)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "GGT"),
-        (r"\b(Bilirubin|Bilirubina|Bilirubină)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Bilirubin"),
+        match = row_pattern.match(line) or row_no_dash_pattern.match(line)
 
-        # Thyroid / inflammation
-        (r"\b(TSH)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "TSH"),
-        (r"\b(Free T4|FT4|fT4)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "Free T4"),
-        (r"\b(CRP|Proteina C reactiva|Proteina C reactivă)\b\s*[:\-]?\s*([\d.,]+)\s*(?:High|Low|H|L)?\s*([\d.,]+\s*[-–—]\s*[\d.,]+)?\s*([a-zA-Z/%µμ0-9^]+)?", "CRP"),
-    ]
+        if not match:
+            continue
 
-    for pattern, canonical_guess in lab_patterns:
-        for match in re.finditer(pattern, text, re.IGNORECASE):
-            raw_name = match.group(1).strip() if match.group(1) else canonical_guess
-            value = match.group(2).strip() if len(match.groups()) >= 2 and match.group(2) else ""
-            reference_range = clean_reference_range(match.group(3)) if len(match.groups()) >= 3 and match.group(3) else ""
-            unit = clean_unit(match.group(4)) if len(match.groups()) >= 4 and match.group(4) else ""
+        raw_name = match.group("name").strip()
+        raw_name_upper = raw_name.upper().replace("_", "-")
 
-            if not value:
-                continue
+        # Avoid capturing random words as tests.
+        if raw_name_upper not in KNOWN_TEST_ALIASES and len(raw_name_upper) <= 2 and raw_name_upper not in {"EO", "IG"}:
+            continue
 
-            normalized = normalize_test_name(canonical_guess)
-            dedupe_key = normalized["canonical_name"] or normalized["display_name"].lower()
+        value = match.group("value")
+        low = match.group("low")
+        high = match.group("high")
+        tail = (match.group("tail") or "").strip()
 
-            # Preserve first match for each canonical test.
-            if dedupe_key in seen:
-                continue
+        reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
 
-            seen.add(dedupe_key)
+        # Unit is usually the remaining non-empty tail after the reference range.
+        unit = tail.strip()
+        unit = re.sub(r"^[^\w%µμ\/]+", "", unit)
+        unit = unit or None
 
-            labs.append(
-                build_lab_result(
-                    raw_test_name=raw_name,
-                    value=value,
-                    flag=None,
-                    reference_range=reference_range,
-                    unit=unit,
-                    confidence=0.85 if reference_range else 0.7,
-                )
-            )
+        flag = extract_flag_from_line(original_line, value, reference_range)
+
+        result = build_lab_result(
+            raw_test_name=raw_name,
+            value=value,
+            flag=flag,
+            reference_range=reference_range,
+            unit=unit,
+            confidence=0.9,
+        )
+
+        dedupe_key = result["canonical_name"] or result["display_name"] or raw_name_upper
+
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        labs.append(result)
 
     return labs
 
 
-def parse_bloodwork_text(text: str) -> dict:
-    metadata = extract_report_metadata(text or "")
-    labs = extract_match_labs(text or "")
+def parse_wrapped_table_rows(text: str) -> list[dict]:
+    """
+    Tesseract sometimes splits a visual table row into multiple lines:
+    WBC
+    11.44
+    3.98 - 10.00 10^3/ul
 
-    report_name = metadata.get("report_type") or "Unknown Report"
+    This pass tries to recover those cases.
+    """
+    labs: list[dict] = []
+    seen: set[str] = set()
+
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    cleaned_lines = [re.sub(r"\s+", " ", line.replace("|", " ")).strip() for line in lines]
+
+    for idx, line in enumerate(cleaned_lines):
+        name = line.strip()
+        name_upper = name.upper().replace("_", "-")
+
+        if name_upper not in KNOWN_TEST_ALIASES:
+            continue
+
+        window = " ".join(cleaned_lines[idx + 1 : idx + 5])
+        numbers = re.findall(r"[-+]?\d+(?:[.,]\d+)?", window)
+
+        if len(numbers) < 3:
+            continue
+
+        value = numbers[0]
+        low = numbers[1]
+        high = numbers[2]
+
+        unit_match = re.search(
+            r"(10\^?\d+\s*/?\s*[uµμ]?[lL]|[a-zA-Zµμ%\/]+(?:\/[a-zA-Zµμ]+)?)",
+            window,
+        )
+        unit = unit_match.group(1) if unit_match else None
+
+        reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
+        flag = extract_flag_from_line(window, value, reference_range)
+
+        result = build_lab_result(
+            raw_test_name=name,
+            value=value,
+            flag=flag,
+            reference_range=reference_range,
+            unit=unit,
+            confidence=0.72,
+        )
+
+        dedupe_key = result["canonical_name"] or result["display_name"] or name_upper
+
+        if dedupe_key in seen:
+            continue
+
+        seen.add(dedupe_key)
+        labs.append(result)
+
+    return labs
+
+
+def extract_known_inline_labs(text: str) -> list[dict]:
+    labs: list[dict] = []
+    seen: set[str] = set()
+
+    inline_patterns = [
+        (r"\b(Haemoglobin|Hemoglobin|Hemoglobina|Hemoglobină|HGB|Hb)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Hemoglobin"),
+        (r"\b(Leucocite|Leukocite|WBC|White Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "White Blood Cells"),
+        (r"\b(Eritrocite|RBC|Red Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Red Blood Cell Count"),
+        (r"\b(Hematocrit|Hematocritul|HCT)\b\s*[:\-]?\s*([\d.,]+)\s*(%)?", "Hematocrit"),
+        (r"\b(Platelets|Trombocite|PLT)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Platelets"),
+        (r"\b(Creatinine|Creatinina|Creatinină)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Creatinine"),
+        (r"\b(Glucose|Glucoza|Glicemie|Glicemia)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Glucose"),
+        (r"\b(TSH)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "TSH"),
+        (r"\b(CRP|Proteina C reactiva|Proteina C reactivă)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "CRP"),
+    ]
+
+    for pattern, fallback_name in inline_patterns:
+        for match in re.finditer(pattern, text or "", re.IGNORECASE):
+            raw_name = match.group(1) or fallback_name
+            value = match.group(2)
+            unit = match.group(3) if len(match.groups()) >= 3 else None
+
+            result = build_lab_result(
+                raw_test_name=raw_name,
+                value=value,
+                flag=None,
+                reference_range=None,
+                unit=unit,
+                confidence=0.6,
+            )
+
+            dedupe_key = result["canonical_name"] or result["display_name"] or raw_name.lower()
+
+            if dedupe_key in seen:
+                continue
+
+            seen.add(dedupe_key)
+            labs.append(result)
+
+    return labs
+
+
+def merge_labs(*lab_lists: list[dict]) -> list[dict]:
+    merged: list[dict] = []
+    seen: set[str] = set()
+
+    for lab_list in lab_lists:
+        for lab in lab_list:
+            key = lab.get("canonical_name") or lab.get("display_name") or lab.get("raw_test_name")
+
+            if not key:
+                continue
+
+            key = str(key).lower()
+
+            if key in seen:
+                continue
+
+            seen.add(key)
+            merged.append(lab)
+
+    return merged
+
+
+def parse_bloodwork_text(text: str) -> dict:
+    safe_text = text or ""
+
+    metadata = extract_report_metadata(safe_text)
+
+    table_labs = parse_generic_table_rows(safe_text)
+    wrapped_labs = parse_wrapped_table_rows(safe_text)
+    inline_labs = extract_known_inline_labs(safe_text)
+
+    labs = merge_labs(table_labs, wrapped_labs, inline_labs)
+
+    report_name = metadata.get("report_type") or "Bloodwork Report"
 
     warnings = []
     if not labs:
         warnings.append("No structured lab results were confidently extracted. Manual review is recommended.")
+    elif len(labs) < 5:
+        warnings.append("Only a small number of lab rows were extracted. Manual review is recommended.")
 
     return {
         "patient_name": metadata.get("patient_name"),
@@ -160,7 +499,7 @@ def parse_bloodwork_text(text: str) -> dict:
         "sample_type": metadata.get("sample_type"),
         "referring_doctor": metadata.get("referring_doctor"),
         "report_name": report_name,
-        "report_type": metadata.get("report_type"),
+        "report_type": metadata.get("report_type") or "Bloodwork",
         "source_language": metadata.get("source_language"),
         "test_date": metadata.get("collected_on") or metadata.get("reported_on") or metadata.get("generated_on"),
         "collected_on": metadata.get("collected_on"),
