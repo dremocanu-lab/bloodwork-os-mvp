@@ -856,6 +856,142 @@ def get_patient_profile(
     }
 
 
+@app.get("/patients/{patient_id}/bloodwork-trends")
+def get_patient_bloodwork_trends(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    if not can_access_patient(db, current_user, patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    documents = (
+        db.query(models.Document)
+        .filter(
+            models.Document.patient_id == patient_id,
+            models.Document.section == "bloodwork",
+        )
+        .order_by(models.Document.id.asc())
+        .all()
+    )
+
+    trends_by_test: dict[str, dict] = {}
+
+    for document in documents:
+        labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+
+        date_value = (
+            document.test_date
+            or document.collected_on
+            or document.reported_on
+            or document.generated_on
+            or str(document.id)
+        )
+
+        for lab in labs:
+            test_key = lab.canonical_name or lab.display_name or lab.raw_test_name
+            display_name = lab.display_name or lab.raw_test_name or lab.canonical_name or "Unknown test"
+
+            if not test_key:
+                continue
+
+            raw_value = lab.value
+            numeric_value = None
+
+            try:
+                if raw_value is not None:
+                    numeric_value = float(str(raw_value).replace(",", ".").strip())
+            except Exception:
+                numeric_value = None
+
+            if numeric_value is None:
+                continue
+
+            if test_key not in trends_by_test:
+                trends_by_test[test_key] = {
+                    "canonical_name": lab.canonical_name,
+                    "display_name": display_name,
+                    "category": lab.category,
+                    "unit": lab.unit,
+                    "points": [],
+                    "latest": None,
+                    "previous": None,
+                    "change": None,
+                }
+
+            trends_by_test[test_key]["points"].append(
+                {
+                    "document_id": document.id,
+                    "date": date_value,
+                    "value": numeric_value,
+                    "raw_value": raw_value,
+                    "unit": lab.unit,
+                    "flag": lab.flag,
+                    "reference_range": lab.reference_range,
+                    "filename": document.filename,
+                }
+            )
+
+    trends = []
+
+    for trend in trends_by_test.values():
+        points = trend["points"]
+
+        if not points:
+            continue
+
+        latest = points[-1]
+        previous = points[-2] if len(points) >= 2 else None
+
+        trend["latest"] = latest
+        trend["previous"] = previous
+
+        if previous is not None:
+            percent_change = None
+            if previous["value"] != 0:
+                percent_change = round(((latest["value"] - previous["value"]) / previous["value"]) * 100, 2)
+
+            trend["change"] = {
+                "absolute": round(latest["value"] - previous["value"], 3),
+                "percent": percent_change,
+            }
+
+        trends.append(trend)
+
+    trends.sort(key=lambda item: item.get("display_name") or "")
+
+    abnormal_trends = []
+
+    for trend in trends:
+        has_abnormal = any(
+            point.get("flag") and str(point.get("flag")).lower() not in {"normal", "none", ""}
+            for point in trend.get("points", [])
+        )
+
+        if has_abnormal:
+            abnormal_trends.append(trend)
+
+    return {
+        "patient": {
+            "id": patient.id,
+            "full_name": patient.full_name,
+            "date_of_birth": patient.date_of_birth,
+            "age": patient.age,
+            "sex": patient.sex,
+            "cnp": patient.cnp,
+            "patient_identifier": patient.patient_identifier,
+        },
+        "trends": trends,
+        "abnormal_trends": abnormal_trends,
+        "count": len(trends),
+    }
+
+
 @app.get("/my/profile")
 def get_my_profile(
     db: Session = Depends(get_db),
