@@ -1,22 +1,17 @@
 import os
-import re
 import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-import fitz
-import pytesseract
 from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from PIL import Image
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy.orm import Session
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
 from app.db import SessionLocal, engine
-from app.report_fields import extract_report_metadata
-from app.synonyms import get_cbc_template, identify_test_from_line, normalize_test_name
+from app.services.document_pipeline import process_uploaded_document
 
 app = FastAPI()
 
@@ -39,24 +34,11 @@ app.add_middleware(
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 
-tesseract_cmd = os.getenv("TESSERACT_CMD")
-if tesseract_cmd:
-    pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
-
 ALLOWED_SECTIONS = {"bloodwork", "medications", "scans", "hospitalizations", "other"}
 
 
 def now_iso() -> str:
     return datetime.now(UTC).isoformat()
-
-
-def value_or_none(value: str | None) -> str | None:
-    if value is None:
-        return None
-    value = re.sub(r"\s+", " ", str(value)).strip()
-    if value in {"", "-", "—", "–", "?", "-?"}:
-        return None
-    return value
 
 
 def add_audit_log(
@@ -218,318 +200,6 @@ class AccessRequestRespondRequest(BaseModel):
     status: str
 
 
-def extract_text_from_pdf(file_path: Path) -> str:
-    text = ""
-    pdf_document = fitz.open(file_path)
-    try:
-        for page in pdf_document:
-            text += page.get_text()
-    finally:
-        pdf_document.close()
-    return text
-
-
-def extract_text_from_image(file_path: Path) -> str:
-    image = Image.open(file_path).convert("RGB")
-    try:
-        return pytesseract.image_to_string(image, lang="ron+eng")
-    except Exception:
-        return pytesseract.image_to_string(image, lang="eng")
-
-
-def extract_text_from_scanned_pdf(file_path: Path) -> str:
-    pdf_document = fitz.open(file_path)
-    all_text = []
-
-    try:
-        for page_index in range(len(pdf_document)):
-            page = pdf_document.load_page(page_index)
-            pix = page.get_pixmap(matrix=fitz.Matrix(2, 2))
-            temp_image_path = UPLOAD_DIR / f"temp_page_{page_index}_{int(datetime.now(UTC).timestamp())}.png"
-            pix.save(str(temp_image_path))
-
-            try:
-                page_text = extract_text_from_image(temp_image_path)
-                all_text.append(page_text)
-            finally:
-                if temp_image_path.exists():
-                    temp_image_path.unlink()
-
-        return "\n".join(all_text)
-    finally:
-        pdf_document.close()
-
-
-def extract_text(file_path: Path, filename: str) -> str:
-    lower_name = filename.lower()
-
-    if lower_name.endswith(".pdf"):
-        extracted_text = extract_text_from_pdf(file_path)
-        if extracted_text.strip():
-            return extracted_text
-        return extract_text_from_scanned_pdf(file_path)
-
-    if lower_name.endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")):
-        return extract_text_from_image(file_path)
-
-    return ""
-
-
-def parse_number(value: str | None) -> float | None:
-    if value is None:
-        return None
-    try:
-        cleaned = value.replace(",", ".").strip()
-        return float(cleaned)
-    except Exception:
-        return None
-
-
-def infer_flag(value: str | None, reference_range: str | None) -> str | None:
-    numeric_value = parse_number(value)
-    if numeric_value is None or not reference_range:
-        return None
-
-    matches = re.findall(r"[-+]?\d+(?:[.,]\d+)?", reference_range)
-    if len(matches) < 2:
-        return None
-
-    low = parse_number(matches[0])
-    high = parse_number(matches[1])
-
-    if low is None or high is None:
-        return None
-
-    if numeric_value < low:
-        return "Low"
-    if numeric_value > high:
-        return "High"
-
-    return "Normal"
-
-
-def extract_explicit_flag(line: str) -> str | None:
-    lowered = line.lower()
-
-    if re.search(r"\b(high|mare|crescut|crescută|h)\b", lowered):
-        return "High"
-
-    if re.search(r"\b(low|mic|scazut|scăzut|scazuta|scăzută|l)\b", lowered):
-        return "Low"
-
-    return None
-
-
-def clean_unit(unit: str | None) -> str | None:
-    unit = value_or_none(unit)
-    if not unit:
-        return None
-
-    unit = unit.strip()
-    unit = unit.replace("10^", "10^")
-    unit = re.sub(r"\s+", "", unit)
-
-    junk_words = {
-        "normal",
-        "high",
-        "low",
-        "mare",
-        "mic",
-        "crescut",
-        "scazut",
-        "scăzut",
-    }
-
-    if unit.lower() in junk_words:
-        return None
-
-    return unit
-
-
-def clean_reference_range(reference_range: str | None) -> str | None:
-    reference_range = value_or_none(reference_range)
-    if not reference_range:
-        return None
-
-    reference_range = reference_range.strip()
-    reference_range = re.sub(r"\s+", " ", reference_range)
-    return reference_range
-
-
-def extract_result_parts(line: str, matched_label: str | None = None) -> dict:
-    working = line
-
-    if matched_label:
-        working = re.sub(re.escape(matched_label), " ", working, flags=re.IGNORECASE)
-
-    working = working.replace(",", ".")
-    working = re.sub(r"[|;]", " ", working)
-    working = re.sub(r"\s+", " ", working).strip()
-
-    explicit_flag = extract_explicit_flag(working)
-
-    number_pattern = r"[-+]?\d+(?:\.\d+)?"
-    numbers = re.findall(number_pattern, working)
-
-    value = numbers[0] if numbers else None
-    reference_range = None
-
-    range_match = re.search(
-        rf"({number_pattern})\s*(?:-|–|—|to|pana la|până la)\s*({number_pattern})",
-        working,
-        re.IGNORECASE,
-    )
-    if range_match:
-        reference_range = f"{range_match.group(1)} - {range_match.group(2)}"
-    elif len(numbers) >= 3:
-        reference_range = f"{numbers[1]} - {numbers[2]}"
-    elif len(numbers) == 2:
-        reference_range = numbers[1]
-
-    unit = None
-
-    if value:
-        value_index = working.find(value)
-        after_value = working[value_index + len(value):].strip()
-
-        unit_match = re.search(
-            r"([xX]?\s*10\^?\d+\s*/?\s*[a-zA-Zµu%/]+|[a-zA-Zµu%/]+(?:/[a-zA-Zµu]+)?|%)",
-            after_value,
-        )
-        if unit_match:
-            possible_unit = unit_match.group(1).strip()
-            if not re.match(r"^(high|low|normal|mare|mic|crescut|scazut|scăzut)$", possible_unit, re.IGNORECASE):
-                unit = possible_unit
-
-    if not unit and "%" in working:
-        unit = "%"
-
-    reference_range = clean_reference_range(reference_range)
-    unit = clean_unit(unit)
-
-    return {
-        "value": value_or_none(value),
-        "flag": explicit_flag or infer_flag(value, reference_range),
-        "reference_range": reference_range,
-        "unit": unit,
-    }
-
-
-def build_lab_result(
-    raw_test_name: str | None,
-    canonical_name: str | None,
-    display_name: str | None,
-    category: str | None,
-    value: str | None = None,
-    flag: str | None = None,
-    reference_range: str | None = None,
-    unit: str | None = None,
-    source: str = "extracted",
-    is_present: bool = True,
-) -> dict:
-    normalized = normalize_test_name(raw_test_name or display_name or canonical_name or "")
-
-    return {
-        "raw_test_name": raw_test_name or normalized["raw_test_name"],
-        "canonical_name": canonical_name or normalized["canonical_name"],
-        "display_name": display_name or normalized["display_name"],
-        "category": category or normalized["category"],
-        "value": value_or_none(value),
-        "flag": value_or_none(flag),
-        "reference_range": value_or_none(reference_range),
-        "unit": value_or_none(unit),
-        "source": source,
-        "is_present": is_present,
-    }
-
-
-def should_use_for_existing_result(existing: dict | None, candidate: dict) -> bool:
-    if existing is None:
-        return True
-
-    existing_score = 0
-    candidate_score = 0
-
-    for key in ["value", "reference_range", "unit", "flag"]:
-        if existing.get(key):
-            existing_score += 1
-        if candidate.get(key):
-            candidate_score += 1
-
-    return candidate_score > existing_score
-
-
-def parse_structured_cbc(text: str) -> list[dict]:
-    template = get_cbc_template()
-    results_by_canonical = {item["canonical_name"]: item for item in template}
-
-    lines = [line.strip() for line in text.splitlines() if line.strip()]
-
-    for original_line in lines:
-        compact_line = re.sub(r"\s+", " ", original_line).strip()
-        definition = identify_test_from_line(compact_line)
-
-        if not definition:
-            continue
-
-        parts = extract_result_parts(compact_line)
-
-        if not parts.get("value"):
-            continue
-
-        candidate = build_lab_result(
-            raw_test_name=definition["short_name"],
-            canonical_name=definition["canonical_name"],
-            display_name=definition["display_name"],
-            category=definition["category"],
-            value=parts.get("value"),
-            flag=parts.get("flag"),
-            reference_range=parts.get("reference_range"),
-            unit=parts.get("unit"),
-            source="ocr",
-            is_present=True,
-        )
-
-        current = results_by_canonical.get(definition["canonical_name"])
-        if should_use_for_existing_result(current, candidate):
-            results_by_canonical[definition["canonical_name"]] = candidate
-
-    ordered_results = []
-    for item in template:
-        canonical = item["canonical_name"]
-        ordered_results.append(results_by_canonical.get(canonical, item))
-
-    return ordered_results
-
-
-def parse_bloodwork_text(text: str) -> dict:
-    metadata = extract_report_metadata(text)
-    cbc_labs = parse_structured_cbc(text)
-
-    report_name = metadata.get("report_type") or "Complete Blood Count"
-
-    return {
-        "patient_name": metadata.get("patient_name"),
-        "date_of_birth": metadata.get("date_of_birth"),
-        "age": metadata.get("age"),
-        "sex": metadata.get("sex"),
-        "cnp": metadata.get("cnp"),
-        "patient_identifier": metadata.get("patient_identifier"),
-        "lab_name": metadata.get("lab_name"),
-        "sample_type": metadata.get("sample_type"),
-        "referring_doctor": metadata.get("referring_doctor"),
-        "report_name": report_name,
-        "report_type": metadata.get("report_type") or "cbc",
-        "source_language": metadata.get("source_language"),
-        "test_date": metadata.get("collected_on") or metadata.get("reported_on") or metadata.get("generated_on"),
-        "collected_on": metadata.get("collected_on"),
-        "reported_on": metadata.get("reported_on"),
-        "registered_on": metadata.get("registered_on"),
-        "generated_on": metadata.get("generated_on"),
-        "labs": cbc_labs,
-    }
-
-
 def get_document_payload(document, labs, audit_logs):
     return {
         "document_id": document.id,
@@ -644,6 +314,11 @@ def resolve_or_create_patient(db: Session, parsed_data: dict):
         db.refresh(patient)
 
     return patient
+
+
+@app.get("/")
+def root():
+    return {"message": "API is running"}
 
 
 @app.post("/auth/signup")
@@ -893,6 +568,7 @@ def get_my_access_requests(
                 "responded_at": req.responded_at,
             }
         )
+
     return results
 
 
@@ -957,11 +633,6 @@ def respond_to_access_request(
     }
 
 
-@app.get("/")
-def root():
-    return {"message": "API is running"}
-
-
 @app.get("/documents")
 def get_documents(
     db: Session = Depends(get_db),
@@ -1024,6 +695,7 @@ def get_document(
         .order_by(models.AuditLog.id.desc())
         .all()
     )
+
     return get_document_payload(document, labs, logs)
 
 
@@ -1078,6 +750,7 @@ def search_patients(
                 (patient.patient_identifier or "").lower(),
             ]
         )
+
         if term not in haystack:
             continue
 
@@ -1273,6 +946,7 @@ def verify_document(
         .order_by(models.AuditLog.id.desc())
         .all()
     )
+
     return get_document_payload(document, labs, logs)
 
 
@@ -1337,17 +1011,16 @@ def update_document(
     db.commit()
 
     for lab in parsed.labs:
-        normalized = normalize_test_name(lab.raw_test_name or lab.display_name or lab.canonical_name or "")
         new_lab = models.LabResult(
             document_id=document.id,
-            raw_test_name=lab.raw_test_name or normalized["raw_test_name"],
-            canonical_name=lab.canonical_name or normalized["canonical_name"],
-            display_name=lab.display_name or normalized["display_name"],
-            category=lab.category or normalized["category"],
-            value=value_or_none(lab.value),
-            flag=value_or_none(lab.flag),
-            reference_range=value_or_none(lab.reference_range),
-            unit=value_or_none(lab.unit),
+            raw_test_name=lab.raw_test_name,
+            canonical_name=lab.canonical_name,
+            display_name=lab.display_name,
+            category=lab.category,
+            value=lab.value,
+            flag=lab.flag,
+            reference_range=lab.reference_range,
+            unit=lab.unit,
         )
         db.add(new_lab)
 
@@ -1369,6 +1042,7 @@ def update_document(
         .order_by(models.AuditLog.id.desc())
         .all()
     )
+
     return get_document_payload(document, updated_labs, logs)
 
 
@@ -1392,6 +1066,7 @@ async def upload_file(
     else:
         if patient_id is None:
             raise HTTPException(status_code=400, detail="patient_id is required")
+
         target_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
         if not target_patient:
             raise HTTPException(status_code=404, detail="Patient not found")
@@ -1399,34 +1074,22 @@ async def upload_file(
         if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient_id):
             raise HTTPException(status_code=403, detail="Forbidden")
 
-    safe_filename = re.sub(r"[^a-zA-Z0-9_.-]+", "_", file.filename or "upload")
-    safe_name = f"{int(datetime.now(UTC).timestamp())}_{safe_filename}"
+    safe_name = f"{int(datetime.now(UTC).timestamp())}_{file.filename}"
     file_path = UPLOAD_DIR / safe_name
 
     with file_path.open("wb") as buffer:
         shutil.copyfileobj(file.file, buffer)
 
-    extracted_text = extract_text(file_path, file.filename or safe_filename)
-    parsed_data = parse_bloodwork_text(extracted_text) if section == "bloodwork" else {
-        "patient_name": None,
-        "date_of_birth": None,
-        "age": None,
-        "sex": None,
-        "cnp": None,
-        "patient_identifier": None,
-        "lab_name": None,
-        "sample_type": None,
-        "referring_doctor": None,
-        "report_name": section.title(),
-        "report_type": section,
-        "source_language": None,
-        "test_date": None,
-        "collected_on": None,
-        "reported_on": None,
-        "registered_on": None,
-        "generated_on": None,
-        "labs": [],
-    }
+    pipeline_result = process_uploaded_document(
+        file_path=file_path,
+        filename=file.filename,
+        section=section,
+        temp_dir=UPLOAD_DIR,
+    )
+
+    extracted_text = pipeline_result.get("extracted_text") or ""
+    parsed_data = pipeline_result.get("parsed_data") or {}
+    pipeline_warnings = pipeline_result.get("warnings") or []
 
     if target_patient:
         parsed_data["patient_name"] = target_patient.full_name
@@ -1440,7 +1103,7 @@ async def upload_file(
         patient_id=target_patient.id if target_patient else None,
         uploaded_by_user_id=current_user.id,
         section=section,
-        filename=file.filename or safe_filename,
+        filename=file.filename,
         content_type=file.content_type,
         saved_to=str(file_path),
         extracted_text=extracted_text,
@@ -1477,19 +1140,23 @@ async def upload_file(
                 canonical_name=lab.get("canonical_name"),
                 display_name=lab.get("display_name"),
                 category=lab.get("category"),
-                value=value_or_none(lab.get("value")),
-                flag=value_or_none(lab.get("flag")),
-                reference_range=value_or_none(lab.get("reference_range")),
-                unit=value_or_none(lab.get("unit")),
+                value=lab.get("value"),
+                flag=lab.get("flag"),
+                reference_range=lab.get("reference_range"),
+                unit=lab.get("unit"),
             )
             db.add(lab_result)
+
+    details = f"Document uploaded to section '{section}': {file.filename}"
+    if pipeline_warnings:
+        details += " | Warnings: " + "; ".join(pipeline_warnings[:5])
 
     add_audit_log(
         db,
         document_id=document.id,
         action="upload",
         actor=current_user.full_name,
-        details=f"Document uploaded to section '{section}': {file.filename}",
+        details=details,
     )
 
     db.commit()
@@ -1501,4 +1168,5 @@ async def upload_file(
         .order_by(models.AuditLog.id.desc())
         .all()
     )
+
     return get_document_payload(document, created_labs, logs)
