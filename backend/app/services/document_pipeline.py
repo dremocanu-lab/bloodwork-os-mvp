@@ -1,527 +1,595 @@
 from __future__ import annotations
 
-import json
-import mimetypes
-import os
+import re
 from pathlib import Path
 from typing import Any
 
-from google.api_core.client_options import ClientOptions
-from google.cloud import documentai
-from google.oauth2 import service_account
+from app.parsers.google_table_parser import parse_labs_from_google_extraction
+from app.report_fields import extract_report_metadata
+from app.services.lab_catalog import build_report_name_from_categories, normalize_lab_rows
+from app.services.ocr_service import extract_text, score_ocr_quality
+
+try:
+    from app.services.ai_lab_organizer import organize_labs_with_ai
+except Exception:
+    organize_labs_with_ai = None
 
 
-def get_env_value(name: str) -> str | None:
-    value = os.getenv(name)
+NULL_VALUE_TOKENS = {
+    "",
+    "-",
+    "--",
+    "---",
+    "----",
+    "—",
+    "–",
+    "nil",
+    "null",
+    "none",
+    "n/a",
+    "na",
+    "absent",
+}
 
+
+def empty_parsed_document(section: str) -> dict[str, Any]:
+    clean_section = section or "document"
+
+    return {
+        "patient_name": None,
+        "date_of_birth": None,
+        "age": None,
+        "sex": None,
+        "cnp": None,
+        "patient_identifier": None,
+        "lab_name": None,
+        "sample_type": None,
+        "referring_doctor": None,
+        "report_name": clean_section.replace("_", " ").title(),
+        "report_type": clean_section,
+        "source_language": None,
+        "test_date": None,
+        "collected_on": None,
+        "reported_on": None,
+        "registered_on": None,
+        "generated_on": None,
+        "labs": [],
+        "warnings": [],
+    }
+
+
+def clean_string(value: Any) -> str | None:
     if value is None:
         return None
 
-    value = value.strip()
-    return value or None
-
-
-def get_document_ai_debug_config() -> dict[str, Any]:
-    credentials_path = get_env_value("GOOGLE_APPLICATION_CREDENTIALS")
-    credentials_json = get_env_value("GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON")
-
-    return {
-        "project_id": get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID"),
-        "location": get_env_value("GOOGLE_DOCUMENT_AI_LOCATION"),
-        "processor_id": get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID"),
-        "processor_version": get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION"),
-        "has_credentials_path": bool(credentials_path),
-        "credentials_path_exists": bool(credentials_path and Path(credentials_path).exists()),
-        "has_credentials_json_env": bool(credentials_json),
-    }
-
-
-def is_google_document_ai_configured() -> bool:
-    return bool(
-        get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID")
-        and get_env_value("GOOGLE_DOCUMENT_AI_LOCATION")
-        and get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID")
-    )
-
-
-def get_document_ai_client(location: str):
-    api_endpoint = f"{location}-documentai.googleapis.com"
-
-    credentials_json = get_env_value("GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON")
-    credentials_path = get_env_value("GOOGLE_APPLICATION_CREDENTIALS")
-
-    if credentials_json:
-        try:
-            credentials_info = json.loads(credentials_json)
-        except json.JSONDecodeError as error:
-            raise RuntimeError(f"GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON is not valid JSON: {error}") from error
-
-        credentials = service_account.Credentials.from_service_account_info(credentials_info)
-
-        return documentai.DocumentProcessorServiceClient(
-            credentials=credentials,
-            client_options=ClientOptions(api_endpoint=api_endpoint),
-        )
-
-    if credentials_path:
-        path = Path(credentials_path)
-
-        if not path.exists():
-            raise RuntimeError(f"GOOGLE_APPLICATION_CREDENTIALS points to a missing file: {credentials_path}")
-
-        credentials = service_account.Credentials.from_service_account_file(str(path))
-
-        return documentai.DocumentProcessorServiceClient(
-            credentials=credentials,
-            client_options=ClientOptions(api_endpoint=api_endpoint),
-        )
-
-    return documentai.DocumentProcessorServiceClient(
-        client_options=ClientOptions(api_endpoint=api_endpoint),
-    )
-
-
-def guess_mime_type(file_path: Path, filename: str) -> str:
-    guessed, _ = mimetypes.guess_type(filename or str(file_path))
-
-    if guessed:
-        return guessed
-
-    suffix = file_path.suffix.lower()
-
-    if suffix == ".pdf":
-        return "application/pdf"
-
-    if suffix in {".jpg", ".jpeg"}:
-        return "image/jpeg"
-
-    if suffix == ".png":
-        return "image/png"
-
-    if suffix in {".tif", ".tiff"}:
-        return "image/tiff"
-
-    if suffix == ".webp":
-        return "image/webp"
-
-    return "application/octet-stream"
-
-
-def layout_to_text(layout, full_text: str) -> str:
-    if not layout or not layout.text_anchor:
-        return ""
-
-    parts: list[str] = []
-
-    for segment in layout.text_anchor.text_segments:
-        start = int(segment.start_index) if segment.start_index else 0
-        end = int(segment.end_index) if segment.end_index else 0
-
-        if end > start:
-            parts.append(full_text[start:end])
-
-    return "".join(parts).strip()
-
-
-def clean_extracted_text(value: str | None) -> str:
-    if not value:
-        return ""
-
     cleaned = str(value)
     cleaned = cleaned.replace("\ufeff", "")
     cleaned = cleaned.replace("\u00a0", " ")
-    cleaned = cleaned.replace("µ", "u").replace("μ", "u")
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
-    cleaned = cleaned.replace("｜", "|")
-    cleaned = cleaned.replace("＃", "#")
-    cleaned = cleaned.replace("％", "%")
-    cleaned = " ".join(cleaned.split())
+    cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n;:")
 
-    return cleaned.strip()
+    return cleaned or None
 
 
-def clean_block_text(value: str | None) -> str:
-    if not value:
-        return ""
+def normalize_value(value: Any) -> str | None:
+    cleaned = clean_string(value)
 
-    cleaned = str(value)
-    cleaned = cleaned.replace("\ufeff", "")
-    cleaned = cleaned.replace("\u00a0", " ")
-    cleaned = cleaned.replace("µ", "u").replace("μ", "u")
-    cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
-    cleaned = cleaned.replace("｜", "|")
-    cleaned = cleaned.replace("＃", "#")
-    cleaned = cleaned.replace("％", "%")
+    if cleaned is None:
+        return None
 
-    lines = []
+    lowered = cleaned.lower()
 
-    for line in cleaned.splitlines():
-        line = " ".join(line.split()).strip()
+    if lowered in NULL_VALUE_TOKENS:
+        return None
 
-        if line:
-            lines.append(line)
+    cleaned = cleaned.replace(",", ".")
+    cleaned = re.sub(r"[^0-9.+-]", "", cleaned)
 
-    return "\n".join(lines).strip()
+    if cleaned.startswith("."):
+        cleaned = "0" + cleaned
 
+    if cleaned in NULL_VALUE_TOKENS or cleaned in {"+", "-", ".", "+.", "-."}:
+        return None
 
-def get_page_dimensions(page) -> tuple[float, float]:
-    width = 1.0
-    height = 1.0
+    return cleaned
 
-    if page.dimension:
-        if page.dimension.width:
-            width = float(page.dimension.width)
-        if page.dimension.height:
-            height = float(page.dimension.height)
 
-    return width, height
+def numeric_float(value: Any) -> float | None:
+    cleaned = normalize_value(value)
 
-
-def bounding_poly_to_box(layout, page_width: float, page_height: float) -> dict[str, float]:
-    if not layout or not layout.bounding_poly:
-        return {
-            "left": 0.0,
-            "top": 0.0,
-            "width": 1.0,
-            "height": 1.0,
-        }
-
-    vertices: list[tuple[float, float]] = []
-
-    if layout.bounding_poly.normalized_vertices:
-        for vertex in layout.bounding_poly.normalized_vertices:
-            vertices.append(
-                (
-                    float(vertex.x or 0) * page_width,
-                    float(vertex.y or 0) * page_height,
-                )
-            )
-    elif layout.bounding_poly.vertices:
-        for vertex in layout.bounding_poly.vertices:
-            vertices.append(
-                (
-                    float(vertex.x or 0),
-                    float(vertex.y or 0),
-                )
-            )
-
-    if not vertices:
-        return {
-            "left": 0.0,
-            "top": 0.0,
-            "width": 1.0,
-            "height": 1.0,
-        }
-
-    xs = [vertex[0] for vertex in vertices]
-    ys = [vertex[1] for vertex in vertices]
-
-    left = min(xs)
-    top = min(ys)
-    right = max(xs)
-    bottom = max(ys)
-
-    return {
-        "left": left,
-        "top": top,
-        "width": max(right - left, 1.0),
-        "height": max(bottom - top, 1.0),
-    }
-
-
-def extract_tokens_from_document(document) -> list[dict[str, Any]]:
-    words: list[dict[str, Any]] = []
-    full_text = document.text or ""
-
-    for page_index, page in enumerate(document.pages or []):
-        page_width, page_height = get_page_dimensions(page)
-
-        for token_index, token in enumerate(page.tokens or []):
-            token_text = layout_to_text(token.layout, full_text)
-            token_text = clean_extracted_text(token_text)
-
-            if not token_text:
-                continue
-
-            box = bounding_poly_to_box(
-                token.layout,
-                page_width=page_width,
-                page_height=page_height,
-            )
-
-            try:
-                confidence = float(token.layout.confidence or 0)
-            except Exception:
-                confidence = 0.0
-
-            words.append(
-                {
-                    "text": token_text,
-                    "confidence": confidence,
-                    "conf": confidence * 100,
-                    "left": box["left"],
-                    "top": box["top"],
-                    "width": box["width"],
-                    "height": box["height"],
-                    "page": page_index,
-                    "token_index": token_index,
-                    "provider": "google_document_ai",
-                }
-            )
-
-    return words
-
-
-def extract_lines_from_document(document) -> list[dict[str, Any]]:
-    full_text = document.text or ""
-    lines: list[dict[str, Any]] = []
-
-    for page_index, page in enumerate(document.pages or []):
-        page_width, page_height = get_page_dimensions(page)
-
-        for line_index, line in enumerate(page.lines or []):
-            line_text = layout_to_text(line.layout, full_text)
-            line_text = clean_extracted_text(line_text)
-
-            if not line_text:
-                continue
-
-            box = bounding_poly_to_box(
-                line.layout,
-                page_width=page_width,
-                page_height=page_height,
-            )
-
-            try:
-                confidence = float(line.layout.confidence or 0)
-            except Exception:
-                confidence = 0.0
-
-            lines.append(
-                {
-                    "page": page_index,
-                    "line_index": line_index,
-                    "text": line_text,
-                    "confidence": confidence,
-                    **box,
-                }
-            )
-
-    return lines
-
-
-def extract_tables_from_document(document) -> list[dict[str, Any]]:
-    full_text = document.text or ""
-    tables: list[dict[str, Any]] = []
-
-    for page_index, page in enumerate(document.pages or []):
-        page_width, page_height = get_page_dimensions(page)
-
-        for table_index, table in enumerate(page.tables or []):
-            parsed_rows: list[dict[str, Any]] = []
-
-            source_rows = []
-
-            for header_row in table.header_rows or []:
-                source_rows.append(("header", header_row))
-
-            for body_row in table.body_rows or []:
-                source_rows.append(("body", body_row))
-
-            for row_index, (row_type, row) in enumerate(source_rows):
-                parsed_cells: list[dict[str, Any]] = []
-
-                for cell_index, cell in enumerate(row.cells or []):
-                    cell_text = layout_to_text(cell.layout, full_text)
-                    cell_text = clean_extracted_text(cell_text)
-
-                    box = bounding_poly_to_box(
-                        cell.layout,
-                        page_width=page_width,
-                        page_height=page_height,
-                    )
-
-                    try:
-                        confidence = float(cell.layout.confidence or 0)
-                    except Exception:
-                        confidence = 0.0
-
-                    parsed_cells.append(
-                        {
-                            "cell_index": cell_index,
-                            "text": cell_text,
-                            "confidence": confidence,
-                            "row_span": int(cell.row_span or 1),
-                            "col_span": int(cell.col_span or 1),
-                            **box,
-                        }
-                    )
-
-                if parsed_cells:
-                    parsed_rows.append(
-                        {
-                            "row_index": row_index,
-                            "row_type": row_type,
-                            "cells": parsed_cells,
-                        }
-                    )
-
-            if parsed_rows:
-                tables.append(
-                    {
-                        "page": page_index,
-                        "table_index": table_index,
-                        "rows": parsed_rows,
-                    }
-                )
-
-    return tables
-
-
-def render_tables_as_text(tables: list[dict[str, Any]]) -> str:
-    blocks: list[str] = []
-
-    for table in tables:
-        blocks.append(
-            f"--- GOOGLE DOCUMENT AI TABLE page={table['page'] + 1} table={table['table_index'] + 1} ---"
-        )
-
-        for row in table.get("rows", []):
-            cells = [cell.get("text", "") for cell in row.get("cells", [])]
-            cells = [clean_extracted_text(cell) for cell in cells]
-            blocks.append(" | ".join(cells))
-
-    return "\n".join(blocks).strip()
-
-
-def render_lines_as_text(lines: list[dict[str, Any]]) -> str:
-    ordered = sorted(
-        lines or [],
-        key=lambda item: (
-            int(item.get("page", 0)),
-            float(item.get("top", 0)),
-            float(item.get("left", 0)),
-        ),
-    )
-
-    return "\n".join(line["text"] for line in ordered if line.get("text")).strip()
-
-
-def render_tokens_as_text(words: list[dict[str, Any]]) -> str:
-    ordered = sorted(
-        words or [],
-        key=lambda item: (
-            int(item.get("page", 0)),
-            float(item.get("top", 0)),
-            float(item.get("left", 0)),
-        ),
-    )
-
-    return " ".join(word["text"] for word in ordered if word.get("text")).strip()
-
-
-def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str, Any]:
-    project_id = get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID")
-    location = get_env_value("GOOGLE_DOCUMENT_AI_LOCATION") or "eu"
-    processor_id = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID")
-    processor_version = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION")
-
-    if not project_id or not processor_id:
-        raise RuntimeError("Google Document AI is not configured. Missing project ID or processor ID.")
-
-    client = get_document_ai_client(location)
-
-    if processor_version:
-        name = client.processor_version_path(
-            project_id,
-            location,
-            processor_id,
-            processor_version,
-        )
-    else:
-        name = client.processor_path(
-            project_id,
-            location,
-            processor_id,
-        )
-
-    mime_type = guess_mime_type(file_path, filename)
-
-    with file_path.open("rb") as file:
-        file_content = file.read()
-
-    raw_document = documentai.RawDocument(
-        content=file_content,
-        mime_type=mime_type,
-    )
+    if cleaned is None:
+        return None
 
     try:
-        process_options = documentai.ProcessOptions(
-            ocr_config=documentai.OcrConfig(
-                enable_native_pdf_parsing=True,
-                enable_image_quality_scores=True,
-                enable_symbol=False,
-            )
-        )
-
-        request = documentai.ProcessRequest(
-            name=name,
-            raw_document=raw_document,
-            process_options=process_options,
-        )
+        return float(cleaned)
     except Exception:
-        request = documentai.ProcessRequest(
-            name=name,
-            raw_document=raw_document,
-        )
+        return None
 
-    result = client.process_document(request=request)
-    document = result.document
 
-    plain_text = clean_block_text(document.text or "")
-    tables = extract_tables_from_document(document)
-    lines = extract_lines_from_document(document)
-    words = extract_tokens_from_document(document)
+def normalize_reference_range(value: Any) -> str | None:
+    cleaned = clean_string(value)
 
-    table_text = render_tables_as_text(tables)
-    lines_text = render_lines_as_text(lines)
-    tokens_text = render_tokens_as_text(words)
+    if cleaned is None:
+        return None
 
-    combined_parts: list[str] = []
+    cleaned = cleaned.replace(",", ".")
+    cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
 
-    if plain_text:
-        combined_parts.append("--- GOOGLE DOCUMENT AI PLAIN TEXT ---")
-        combined_parts.append(plain_text)
+    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", cleaned)
 
-    if lines_text:
-        combined_parts.append("--- GOOGLE DOCUMENT AI LINES ---")
-        combined_parts.append(lines_text)
+    if len(nums) < 2:
+        return None
 
-    if table_text:
-        combined_parts.append(table_text)
+    low_raw = nums[0]
+    high_raw = nums[1]
 
-    if tokens_text:
-        combined_parts.append("--- GOOGLE DOCUMENT AI TOKENS ---")
-        combined_parts.append(tokens_text)
+    # In CBC-style reference intervals, a leading minus on the high value is
+    # usually the OCR reading the range separator as part of the number.
+    if high_raw.startswith("-") and not low_raw.startswith("-"):
+        high_raw = high_raw[1:]
 
-    combined_text = "\n".join(combined_parts).strip()
+    low = normalize_value(low_raw)
+    high = normalize_value(high_raw)
+
+    if low is None or high is None:
+        return None
+
+    low_float = numeric_float(low)
+    high_float = numeric_float(high)
+
+    if low_float is None or high_float is None:
+        return None
+
+    if high_float < low_float:
+        low, high = high, low
+
+    return f"{low} - {high}"
+
+
+def normalize_unit(value: Any) -> str | None:
+    cleaned = clean_string(value)
+
+    if cleaned is None:
+        return None
+
+    compact = cleaned.replace(" ", "")
+    lowered = compact.lower()
+
+    if re.search(r"10\^?3/?u?l", compact, re.IGNORECASE):
+        return "10^3/uL"
+
+    if re.search(r"10\^?6/?u?l", compact, re.IGNORECASE):
+        return "10^6/uL"
+
+    if re.search(r"10\^?9/?l", compact, re.IGNORECASE):
+        return "10^9/L"
+
+    if re.search(r"10\^?12/?l", compact, re.IGNORECASE):
+        return "10^12/L"
+
+    if lowered in {"g/dl"}:
+        return "g/dL"
+
+    if lowered in {"g/l"}:
+        return "g/L"
+
+    if lowered in {"mg/dl"}:
+        return "mg/dL"
+
+    if lowered in {"mg/l"}:
+        return "mg/L"
+
+    if lowered in {"mmol/l"}:
+        return "mmol/L"
+
+    if lowered in {"umol/l", "µmol/l", "μmol/l"}:
+        return "umol/L"
+
+    if lowered in {"uiu/ml", "ui/ml", "uiu/ml"}:
+        return "uIU/mL"
+
+    if lowered in {"miu/l"}:
+        return "mIU/L"
+
+    if lowered in {"iu/l"}:
+        return "IU/L"
+
+    if lowered in {"u/l"}:
+        return "U/L"
+
+    if lowered in {"fl"}:
+        return "fL"
+
+    if lowered == "pg":
+        return "pg"
+
+    if compact == "%":
+        return "%"
+
+    return cleaned
+
+
+def normalize_flag(value: Any) -> str | None:
+    cleaned = clean_string(value)
+
+    if cleaned is None:
+        return None
+
+    lowered = cleaned.lower()
+
+    if lowered in {"high", "h", "crescut", "mare", "↑", "▲"}:
+        return "High"
+
+    if lowered in {"low", "l", "scazut", "scăzut", "mic", "↓", "▼"}:
+        return "Low"
+
+    if lowered in {"normal", "n"}:
+        return "Normal"
+
+    return None
+
+
+def infer_flag(value: Any, reference_range: Any) -> str | None:
+    numeric = numeric_float(value)
+
+    if numeric is None:
+        return None
+
+    reference = normalize_reference_range(reference_range)
+
+    if reference is None:
+        return None
+
+    nums = re.findall(r"[-+]?\d+(?:\.\d+)?", reference)
+
+    if len(nums) < 2:
+        return None
+
+    low = numeric_float(nums[0])
+    high = numeric_float(nums[1])
+
+    if low is None or high is None:
+        return None
+
+    if high < low:
+        low, high = high, low
+
+    if numeric < low:
+        return "Low"
+
+    if numeric > high:
+        return "High"
+
+    return "Normal"
+
+
+def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
+    raw_name = (
+        lab.get("raw_test_name")
+        or lab.get("raw_name")
+        or lab.get("test_name")
+        or lab.get("name")
+        or lab.get("display_name")
+        or lab.get("canonical_name")
+        or ""
+    )
+
+    canonical_name = lab.get("canonical_name") or lab.get("test_name") or lab.get("display_name") or raw_name
+    display_name = lab.get("display_name") or canonical_name or raw_name
+    category = lab.get("category") or "Alte analize"
+
+    value = normalize_value(lab.get("value"))
+    reference_range = normalize_reference_range(lab.get("reference_range"))
+    unit = normalize_unit(lab.get("unit"))
+
+    flag = normalize_flag(lab.get("flag"))
+
+    if value is not None and flag is None:
+        flag = infer_flag(value, reference_range)
+
+    if value is None:
+        flag = None
+
+    # Safety: never show Normal unless a reference range exists.
+    if value is not None and not reference_range and flag == "Normal":
+        flag = None
+
+    confidence = lab.get("confidence")
+
+    try:
+        confidence = float(confidence) if confidence is not None else None
+    except Exception:
+        confidence = None
 
     return {
-        "text": combined_text,
-        "plain_text": plain_text,
-        "lines_text": lines_text,
-        "table_text": table_text,
-        "tokens_text": tokens_text,
-        "tables": tables,
-        "lines": lines,
-        "words": words,
-        "method": "google_document_ai",
-        "warnings": ["Google Document AI extraction was used."],
-        "debug": {
-            "table_count": len(tables),
-            "line_count": len(lines),
-            "token_count": len(words),
-            "mime_type": mime_type,
-            "config": get_document_ai_debug_config(),
-        },
+        "raw_test_name": clean_string(raw_name),
+        "canonical_name": clean_string(canonical_name),
+        "display_name": clean_string(display_name),
+        "category": clean_string(category) or "Alte analize",
+        "value": value,
+        "flag": flag,
+        "reference_range": reference_range,
+        "unit": unit,
+        "confidence": confidence,
+    }
+
+
+def get_lab_identity(lab: dict[str, Any]) -> str:
+    value = (
+        lab.get("raw_test_name")
+        or lab.get("canonical_name")
+        or lab.get("display_name")
+        or lab.get("raw_name")
+        or lab.get("test_name")
+        or lab.get("name")
+        or ""
+    )
+
+    return str(value).strip().lower()
+
+
+def lab_quality_score(lab: dict[str, Any]) -> float:
+    row = standardize_lab_row_shape(lab)
+
+    score = float(row.get("confidence") or 0)
+
+    if row.get("value") is not None:
+        score += 0.40
+
+    if row.get("reference_range"):
+        score += 0.40
+
+    if row.get("unit"):
+        score += 0.15
+
+    if row.get("flag") in {"High", "Low"}:
+        score += 0.08
+
+    if row.get("raw_test_name") or row.get("canonical_name"):
+        score += 0.05
+
+    return score
+
+
+def merge_lab_results(*lab_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    merged_by_key: dict[str, dict[str, Any]] = {}
+
+    for lab_list in lab_lists:
+        for lab in lab_list or []:
+            row = standardize_lab_row_shape(lab)
+            key = get_lab_identity(row)
+
+            if not key:
+                continue
+
+            if key not in merged_by_key:
+                merged_by_key[key] = row
+                continue
+
+            if lab_quality_score(row) >= lab_quality_score(merged_by_key[key]):
+                merged_by_key[key] = row
+
+    return [standardize_lab_row_shape(row) for row in merged_by_key.values()]
+
+
+def dedupe_warnings(warnings: list[str]) -> list[str]:
+    deduped: list[str] = []
+    seen: set[str] = set()
+
+    for warning in warnings:
+        clean_warning = str(warning).strip()
+
+        if not clean_warning:
+            continue
+
+        if clean_warning in seen:
+            continue
+
+        deduped.append(clean_warning)
+        seen.add(clean_warning)
+
+    return deduped
+
+
+def build_category_report_name(parsed_data: dict[str, Any], labs: list[dict[str, Any]]) -> str:
+    return build_report_name_from_categories(
+        labs,
+        collected_on=parsed_data.get("collected_on"),
+        test_date=parsed_data.get("test_date"),
+        reported_on=parsed_data.get("reported_on"),
+        registered_on=parsed_data.get("registered_on"),
+        generated_on=parsed_data.get("generated_on"),
+        created_at=None,
+        fallback_name=parsed_data.get("report_name") or "Analize medicale",
+    )
+
+
+def lab_rows_need_ai_help(labs: list[dict[str, Any]], parsed_data: dict[str, Any]) -> bool:
+    if not labs:
+        return True
+
+    if len(labs) < 10:
+        return True
+
+    if not parsed_data.get("collected_on") and not parsed_data.get("test_date"):
+        return True
+
+    rows_with_values = [row for row in labs if row.get("value") is not None]
+
+    if not rows_with_values:
+        return True
+
+    rows_with_refs = [row for row in rows_with_values if row.get("reference_range")]
+
+    if len(rows_with_refs) < max(3, int(len(rows_with_values) * 0.60)):
+        return True
+
+    return False
+
+
+def merge_metadata(primary: dict[str, Any], fallback: dict[str, Any]) -> dict[str, Any]:
+    merged = dict(primary)
+
+    for key in [
+        "patient_name",
+        "date_of_birth",
+        "age",
+        "sex",
+        "cnp",
+        "patient_identifier",
+        "lab_name",
+        "sample_type",
+        "referring_doctor",
+        "report_name",
+        "report_type",
+        "source_language",
+        "test_date",
+        "collected_on",
+        "reported_on",
+        "registered_on",
+        "generated_on",
+    ]:
+        if not merged.get(key) and fallback.get(key):
+            merged[key] = fallback.get(key)
+
+    return merged
+
+
+def extract_google_labs(
+    extraction: dict[str, Any],
+    extracted_text: str,
+    warnings: list[str],
+) -> list[dict[str, Any]]:
+    google_labs = parse_labs_from_google_extraction(extraction)
+    normalized_google_labs = normalize_lab_rows(google_labs, context_text=extracted_text)
+    standardized_labs = [standardize_lab_row_shape(row) for row in normalized_google_labs]
+
+    table_count = len(extraction.get("tables") or [])
+    line_count = len(extraction.get("lines") or [])
+    word_count = len(extraction.get("words") or [])
+
+    warnings.append(
+        f"Google Document AI parser extracted {len(standardized_labs)} structured lab rows "
+        f"from {table_count} tables, {line_count} lines, and {word_count} tokens."
+    )
+
+    return standardized_labs
+
+
+def apply_ai_fallback(
+    extracted_text: str,
+    parsed_data: dict[str, Any],
+    current_labs: list[dict[str, Any]],
+    warnings: list[str],
+) -> tuple[dict[str, Any], list[dict[str, Any]]]:
+    if organize_labs_with_ai is None:
+        warnings.append("OpenAI organizer fallback is unavailable because the module could not be imported.")
+        return parsed_data, current_labs
+
+    ai_result = organize_labs_with_ai(
+        extracted_text=extracted_text,
+        deterministic_labs=current_labs,
+    )
+
+    if not ai_result.get("ok"):
+        if ai_result.get("warning"):
+            warnings.append(str(ai_result["warning"]))
+        else:
+            warnings.append("OpenAI organizer fallback did not return usable structured data.")
+        return parsed_data, current_labs
+
+    warnings.append("OpenAI organizer fallback improved or validated Google Document AI extraction.")
+
+    ai_metadata = ai_result.get("metadata") or {}
+    ai_labs = ai_result.get("labs") or []
+
+    parsed_data = merge_metadata(parsed_data, ai_metadata)
+
+    normalized_ai_labs = normalize_lab_rows(ai_labs, context_text=extracted_text)
+    standardized_ai_labs = [standardize_lab_row_shape(row) for row in normalized_ai_labs]
+
+    merged_labs = merge_lab_results(current_labs, standardized_ai_labs)
+
+    return parsed_data, merged_labs
+
+
+def process_bloodwork_document(
+    extraction: dict[str, Any],
+    extracted_text: str,
+    warnings: list[str],
+) -> dict[str, Any]:
+    parsed_data = extract_report_metadata(extracted_text)
+    parsed_data["report_type"] = "Bloodwork"
+    parsed_data.setdefault("labs", [])
+    parsed_data.setdefault("warnings", [])
+
+    google_labs = extract_google_labs(
+        extraction=extraction,
+        extracted_text=extracted_text,
+        warnings=warnings,
+    )
+
+    merged_labs = google_labs
+
+    if lab_rows_need_ai_help(merged_labs, parsed_data):
+        parsed_data, merged_labs = apply_ai_fallback(
+            extracted_text=extracted_text,
+            parsed_data=parsed_data,
+            current_labs=merged_labs,
+            warnings=warnings,
+        )
+
+    merged_labs = normalize_lab_rows(merged_labs, context_text=extracted_text)
+    merged_labs = [standardize_lab_row_shape(row) for row in merged_labs]
+
+    parsed_data["labs"] = merged_labs
+    parsed_data["report_name"] = build_category_report_name(parsed_data, merged_labs)
+
+    if not parsed_data.get("collected_on") and not parsed_data.get("test_date"):
+        warnings.append("No clinical collection/test date was extracted. Timeline will show this as undated.")
+
+    if len(merged_labs) < 10:
+        warnings.append("Fewer than 10 structured lab rows were extracted. Manual review is recommended.")
+
+    rows_with_values = [row for row in merged_labs if row.get("value") is not None]
+    rows_with_refs = [row for row in rows_with_values if row.get("reference_range")]
+
+    if rows_with_values and len(rows_with_refs) < max(3, int(len(rows_with_values) * 0.60)):
+        warnings.append("Many lab rows are missing reference ranges. Manual review is recommended.")
+
+    return parsed_data
+
+
+def process_uploaded_document(
+    file_path: Path,
+    filename: str,
+    section: str,
+    temp_dir: Path,
+) -> dict[str, Any]:
+    extraction = extract_text(file_path=file_path, filename=filename, temp_dir=temp_dir)
+
+    extracted_text = extraction.get("text") or ""
+    ocr_quality = score_ocr_quality(extracted_text)
+
+    warnings: list[str] = []
+    warnings.extend(extraction.get("warnings", []) or [])
+    warnings.extend(ocr_quality.get("warnings", []) or [])
+
+    if section == "bloodwork":
+        parsed_data = process_bloodwork_document(
+            extraction=extraction,
+            extracted_text=extracted_text,
+            warnings=warnings,
+        )
+    else:
+        parsed_data = empty_parsed_document(section)
+
+    warnings.extend(parsed_data.get("warnings", []) or [])
+
+    return {
+        "extracted_text": extracted_text,
+        "parsed_data": parsed_data,
+        "ocr_method": extraction.get("method"),
+        "ocr_quality": ocr_quality,
+        "warnings": dedupe_warnings(warnings),
     }
