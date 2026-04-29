@@ -3,8 +3,8 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.parsers.bloodwork_parser import parse_bloodwork_text
-from app.parsers.ocr_table_parser import parse_labs_from_ocr_words
+from app.parsers.google_table_parser import parse_labs_from_google_tables
+from app.report_fields import extract_report_metadata
 from app.services.lab_catalog import build_report_name_from_categories, normalize_lab_rows
 from app.services.ocr_service import extract_text, score_ocr_quality
 
@@ -62,7 +62,6 @@ def normalize_value(value: Any) -> str | None:
     if lowered in {"nil", "null", "none", "n/a", "na", "-", "--", "---", "----", "—", "–"}:
         return None
 
-    # Keep decimals exactly as OCR found them. Do not round.
     cleaned = cleaned.replace(",", ".")
 
     return cleaned
@@ -109,7 +108,6 @@ def infer_flag(value: Any, reference_range: Any) -> str | None:
     reference = clean_string(reference_range)
 
     if not reference:
-        # Safety rule: no range means no automatic normal/high/low.
         return None
 
     import re
@@ -163,7 +161,6 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
     if value is None:
         flag = None
 
-    # Safety rule: never say Normal if no reference range exists.
     if value is not None and not reference_range and flag == "Normal":
         flag = None
 
@@ -300,8 +297,10 @@ def lab_rows_need_ai_help(labs: list[dict[str, Any]], parsed_data: dict[str, Any
 
     rows_with_refs = [row for row in rows_with_values if row.get("reference_range")]
 
-    # If most values have no reference ranges, ask AI organizer for help.
-    if len(rows_with_refs) < max(3, int(len(rows_with_values) * 0.55)):
+    if len(rows_with_refs) < max(3, int(len(rows_with_values) * 0.60)):
+        return True
+
+    if len(labs) < 15:
         return True
 
     return False
@@ -339,7 +338,7 @@ def process_uploaded_document(file_path: Path, filename: str, section: str, temp
     extraction = extract_text(file_path=file_path, filename=filename, temp_dir=temp_dir)
 
     extracted_text = extraction.get("text") or ""
-    ocr_words = extraction.get("words") or []
+    google_tables = extraction.get("tables") or []
     ocr_quality = score_ocr_quality(extracted_text)
 
     warnings: list[str] = []
@@ -347,26 +346,25 @@ def process_uploaded_document(file_path: Path, filename: str, section: str, temp
     warnings.extend(ocr_quality.get("warnings", []) or [])
 
     if section == "bloodwork":
-        parsed_data = parse_bloodwork_text(extracted_text)
+        parsed_data = extract_report_metadata(extracted_text)
+        parsed_data["report_type"] = "Bloodwork"
+        parsed_data.setdefault("labs", [])
+        parsed_data.setdefault("warnings", [])
 
-        text_labs = parsed_data.get("labs", []) or []
-        table_labs = parse_labs_from_ocr_words(ocr_words) or []
+        google_labs = parse_labs_from_google_tables(google_tables)
+        normalized_google_labs = normalize_lab_rows(google_labs, context_text=extracted_text)
+        merged_labs = [standardize_lab_row_shape(row) for row in normalized_google_labs]
 
-        if table_labs:
-            warnings.append(f"Coordinate OCR parser extracted {len(table_labs)} candidate lab rows.")
-
-        normalized_table_labs = normalize_lab_rows(table_labs, context_text=extracted_text)
-        normalized_text_labs = normalize_lab_rows(text_labs, context_text=extracted_text)
-
-        merged_labs = merge_lab_results(normalized_table_labs, normalized_text_labs)
-        merged_labs = normalize_lab_rows(merged_labs, context_text=extracted_text)
-        merged_labs = [standardize_lab_row_shape(row) for row in merged_labs]
+        warnings.append(f"Google Document AI table parser extracted {len(merged_labs)} structured lab rows.")
 
         if lab_rows_need_ai_help(merged_labs, parsed_data) and organize_labs_with_ai is not None:
-            ai_result = organize_labs_with_ai(extracted_text=extracted_text, deterministic_labs=merged_labs)
+            ai_result = organize_labs_with_ai(
+                extracted_text=extracted_text,
+                deterministic_labs=merged_labs,
+            )
 
             if ai_result.get("ok"):
-                warnings.append("OpenAI organizer fallback improved or validated structured extraction.")
+                warnings.append("OpenAI organizer fallback improved or validated Google Document AI extraction.")
 
                 ai_metadata = ai_result.get("metadata") or {}
                 ai_labs = ai_result.get("labs") or []
@@ -382,7 +380,6 @@ def process_uploaded_document(file_path: Path, filename: str, section: str, temp
                     warnings.append(str(ai_result["warning"]))
 
         parsed_data["labs"] = merged_labs
-        parsed_data["report_type"] = "Bloodwork"
         parsed_data["report_name"] = build_category_report_name(parsed_data, merged_labs)
 
         if not parsed_data.get("collected_on") and not parsed_data.get("test_date"):

@@ -1,7 +1,10 @@
+from __future__ import annotations
+
 import json
 import mimetypes
 import os
 from pathlib import Path
+from typing import Any
 
 from google.api_core.client_options import ClientOptions
 from google.cloud import documentai
@@ -10,6 +13,7 @@ from google.oauth2 import service_account
 
 def get_env_value(name: str) -> str | None:
     value = os.getenv(name)
+
     if value is None:
         return None
 
@@ -25,7 +29,7 @@ def is_google_document_ai_configured() -> bool:
     )
 
 
-def get_document_ai_debug_config() -> dict:
+def get_document_ai_debug_config() -> dict[str, Any]:
     credentials_path = get_env_value("GOOGLE_APPLICATION_CREDENTIALS")
     credentials_json = get_env_value("GOOGLE_DOCUMENT_AI_CREDENTIALS_JSON")
 
@@ -103,7 +107,7 @@ def layout_to_text(layout, full_text: str) -> str:
     if not layout or not layout.text_anchor:
         return ""
 
-    parts = []
+    parts: list[str] = []
 
     for segment in layout.text_anchor.text_segments:
         start = int(segment.start_index) if segment.start_index else 0
@@ -126,11 +130,16 @@ def get_page_dimensions(page) -> tuple[float, float]:
     return width, height
 
 
-def bounding_poly_to_box(layout, page_width: float, page_height: float) -> tuple[int, int, int, int]:
+def bounding_poly_to_box(layout, page_width: float, page_height: float) -> dict[str, float]:
     if not layout or not layout.bounding_poly:
-        return 0, 0, 1, 1
+        return {
+            "left": 0.0,
+            "top": 0.0,
+            "width": 1.0,
+            "height": 1.0,
+        }
 
-    vertices = []
+    vertices: list[tuple[float, float]] = []
 
     if layout.bounding_poly.normalized_vertices:
         for vertex in layout.bounding_poly.normalized_vertices:
@@ -150,24 +159,40 @@ def bounding_poly_to_box(layout, page_width: float, page_height: float) -> tuple
             )
 
     if not vertices:
-        return 0, 0, 1, 1
+        return {
+            "left": 0.0,
+            "top": 0.0,
+            "width": 1.0,
+            "height": 1.0,
+        }
 
     xs = [item[0] for item in vertices]
     ys = [item[1] for item in vertices]
 
-    left = int(min(xs))
-    top = int(min(ys))
-    right = int(max(xs))
-    bottom = int(max(ys))
+    left = min(xs)
+    top = min(ys)
+    right = max(xs)
+    bottom = max(ys)
 
-    width = max(right - left, 1)
-    height = max(bottom - top, 1)
+    return {
+        "left": left,
+        "top": top,
+        "width": max(right - left, 1.0),
+        "height": max(bottom - top, 1.0),
+    }
 
-    return left, top, width, height
+
+def clean_cell_text(value: str) -> str:
+    value = value or ""
+    value = value.replace("\u00a0", " ")
+    value = value.replace("µ", "u").replace("μ", "u")
+    value = value.replace("−", "-").replace("–", "-").replace("—", "-")
+    value = " ".join(value.split())
+    return value.strip()
 
 
-def extract_tokens_from_document(document) -> list[dict]:
-    words: list[dict] = []
+def extract_tokens_from_document(document) -> list[dict[str, Any]]:
+    words: list[dict[str, Any]] = []
     full_text = document.text or ""
 
     for page_index, page in enumerate(document.pages or []):
@@ -179,77 +204,157 @@ def extract_tokens_from_document(document) -> list[dict]:
             if not token_text:
                 continue
 
-            left, top, width, height = bounding_poly_to_box(
+            box = bounding_poly_to_box(
                 token.layout,
                 page_width=page_width,
                 page_height=page_height,
             )
 
             try:
-                confidence = float(token.layout.confidence or 0) * 100
+                confidence = float(token.layout.confidence or 0)
             except Exception:
                 confidence = 0.0
 
             words.append(
                 {
-                    "text": token_text,
-                    "conf": confidence,
-                    "left": left,
-                    "top": top,
-                    "width": width,
-                    "height": height,
+                    "text": clean_cell_text(token_text),
+                    "confidence": confidence,
+                    "conf": confidence * 100,
+                    "left": box["left"],
+                    "top": box["top"],
+                    "width": box["width"],
+                    "height": box["height"],
                     "page": page_index,
-                    "block_num": 0,
-                    "par_num": 0,
-                    "line_num": 0,
-                    "word_num": token_index,
-                    "ocr_config": "google_document_ai",
+                    "token_index": token_index,
+                    "provider": "google_document_ai",
                 }
             )
 
     return words
 
 
-def extract_lines_from_document(document) -> str:
+def extract_lines_from_document(document) -> list[dict[str, Any]]:
     full_text = document.text or ""
+    lines: list[dict[str, Any]] = []
+
+    for page_index, page in enumerate(document.pages or []):
+        page_width, page_height = get_page_dimensions(page)
+
+        for line_index, line in enumerate(page.lines or []):
+            text = layout_to_text(line.layout, full_text)
+
+            if not text:
+                continue
+
+            box = bounding_poly_to_box(
+                line.layout,
+                page_width=page_width,
+                page_height=page_height,
+            )
+
+            try:
+                confidence = float(line.layout.confidence or 0)
+            except Exception:
+                confidence = 0.0
+
+            lines.append(
+                {
+                    "page": page_index,
+                    "line_index": line_index,
+                    "text": clean_cell_text(text),
+                    "confidence": confidence,
+                    **box,
+                }
+            )
+
+    return lines
+
+
+def extract_tables_from_document(document) -> list[dict[str, Any]]:
+    full_text = document.text or ""
+    tables: list[dict[str, Any]] = []
+
+    for page_index, page in enumerate(document.pages or []):
+        page_width, page_height = get_page_dimensions(page)
+
+        for table_index, table in enumerate(page.tables or []):
+            parsed_rows: list[dict[str, Any]] = []
+
+            source_rows = []
+
+            for header_row in table.header_rows or []:
+                source_rows.append(("header", header_row))
+
+            for body_row in table.body_rows or []:
+                source_rows.append(("body", body_row))
+
+            for row_index, (row_type, row) in enumerate(source_rows):
+                parsed_cells: list[dict[str, Any]] = []
+
+                for cell_index, cell in enumerate(row.cells or []):
+                    cell_text = layout_to_text(cell.layout, full_text)
+                    cell_text = clean_cell_text(cell_text)
+
+                    box = bounding_poly_to_box(
+                        cell.layout,
+                        page_width=page_width,
+                        page_height=page_height,
+                    )
+
+                    try:
+                        confidence = float(cell.layout.confidence or 0)
+                    except Exception:
+                        confidence = 0.0
+
+                    parsed_cells.append(
+                        {
+                            "cell_index": cell_index,
+                            "text": cell_text,
+                            "confidence": confidence,
+                            "row_span": int(cell.row_span or 1),
+                            "col_span": int(cell.col_span or 1),
+                            **box,
+                        }
+                    )
+
+                if parsed_cells:
+                    parsed_rows.append(
+                        {
+                            "row_index": row_index,
+                            "row_type": row_type,
+                            "cells": parsed_cells,
+                        }
+                    )
+
+            if parsed_rows:
+                tables.append(
+                    {
+                        "page": page_index,
+                        "table_index": table_index,
+                        "rows": parsed_rows,
+                    }
+                )
+
+    return tables
+
+
+def render_tables_as_text(tables: list[dict[str, Any]]) -> str:
     lines: list[str] = []
 
-    for page in document.pages or []:
-        for line in page.lines or []:
-            text = layout_to_text(line.layout, full_text)
-            if text:
-                lines.append(text)
+    for table in tables:
+        lines.append(
+            f"--- GOOGLE DOCUMENT AI TABLE page={table['page'] + 1} table={table['table_index'] + 1} ---"
+        )
+
+        for row in table.get("rows", []):
+            cells = [cell.get("text", "") for cell in row.get("cells", [])]
+            cells = [clean_cell_text(cell) for cell in cells]
+            lines.append(" | ".join(cells))
 
     return "\n".join(lines).strip()
 
 
-def extract_tables_from_document(document) -> str:
-    full_text = document.text or ""
-    table_lines: list[str] = []
-
-    for page_number, page in enumerate(document.pages or [], start=1):
-        for table_index, table in enumerate(page.tables or [], start=1):
-            table_lines.append(f"--- GOOGLE DOCUMENT AI TABLE page={page_number} table={table_index} ---")
-
-            all_rows = []
-            all_rows.extend(table.header_rows or [])
-            all_rows.extend(table.body_rows or [])
-
-            for row in all_rows:
-                cells = []
-
-                for cell in row.cells or []:
-                    cell_text = layout_to_text(cell.layout, full_text)
-                    cell_text = " ".join(cell_text.split())
-                    cells.append(cell_text)
-
-                if cells:
-                    table_lines.append(" | ".join(cells))
-
-    return "\n".join(table_lines).strip()
-
-
-def process_with_google_document_ai(file_path: Path, filename: str) -> dict:
+def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str, Any]:
     project_id = get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID")
     location = get_env_value("GOOGLE_DOCUMENT_AI_LOCATION") or "eu"
     processor_id = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID")
@@ -299,19 +404,22 @@ def process_with_google_document_ai(file_path: Path, filename: str) -> dict:
     result = client.process_document(request=request)
     document = result.document
 
-    document_text = document.text or ""
-    document_lines = extract_lines_from_document(document)
-    table_text = extract_tables_from_document(document)
+    full_text = clean_cell_text(document.text or "")
+    tables = extract_tables_from_document(document)
+    lines = extract_lines_from_document(document)
     words = extract_tokens_from_document(document)
+    table_text = render_tables_as_text(tables)
+
+    line_text = "\n".join(line["text"] for line in lines if line.get("text")).strip()
 
     combined_parts = []
 
-    if document_text:
-        combined_parts.append(document_text)
+    if full_text:
+        combined_parts.append(full_text)
 
-    if document_lines:
+    if line_text:
         combined_parts.append("--- GOOGLE DOCUMENT AI LINES ---")
-        combined_parts.append(document_lines)
+        combined_parts.append(line_text)
 
     if table_text:
         combined_parts.append(table_text)
@@ -320,7 +428,18 @@ def process_with_google_document_ai(file_path: Path, filename: str) -> dict:
 
     return {
         "text": combined_text,
+        "plain_text": full_text,
+        "lines_text": line_text,
+        "table_text": table_text,
+        "tables": tables,
+        "lines": lines,
         "words": words,
         "method": "google_document_ai",
-        "warnings": ["Google Document AI OCR/layout extraction was used."],
+        "warnings": ["Google Document AI document/table extraction was used."],
+        "debug": {
+            "table_count": len(tables),
+            "line_count": len(lines),
+            "token_count": len(words),
+            "mime_type": mime_type,
+        },
     }
