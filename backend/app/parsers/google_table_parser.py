@@ -17,7 +17,10 @@ from app.parsers.bloodwork_parser import (
 
 
 NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
-NULL_RESULT_RE = re.compile(r"^(?:-{1,}|_{1,}|—+|–+|nil|n/a|na|null|none|nu|absent)$", re.IGNORECASE)
+NULL_RESULT_RE = re.compile(
+    r"^(?:-{1,}|_{1,}|—+|–+|nil|n/a|na|null|none|nu|absent)$",
+    re.IGNORECASE,
+)
 
 UNIT_PATTERNS: list[tuple[str, str]] = [
     (r"10\s*[\^]?\s*3\s*/?\s*u?l", "10^3/uL"),
@@ -108,8 +111,18 @@ def normalize_space(value: Any) -> str:
     text = text.replace("\u00a0", " ")
     text = text.replace("µ", "u").replace("μ", "u")
     text = text.replace("−", "-").replace("–", "-").replace("—", "-")
-    text = " ".join(text.split())
+    text = text.replace("＃", "#").replace("％", "%")
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
+
+
+def normalize_cbc_key(raw_key: str) -> str:
+    key = normalize_test_token(raw_key)
+    key = key.replace("RDWSD", "RDW-SD")
+    key = key.replace("RDWCV", "RDW-CV")
+    key = key.replace("PLCR", "P-LCR")
+    key = key.replace("P LCR", "P-LCR")
+    return key
 
 
 def is_null_result(value: Any) -> bool:
@@ -119,6 +132,23 @@ def is_null_result(value: Any) -> bool:
         return True
 
     return NULL_RESULT_RE.fullmatch(text) is not None
+
+
+def get_numbers(value: Any) -> list[str]:
+    text = normalize_space(value).replace(",", ".")
+    return NUMBER_RE.findall(text)
+
+
+def clean_number(value: Any) -> str | None:
+    cleaned = normalize_decimal(value)
+
+    if cleaned is None:
+        return None
+
+    if cleaned.startswith("+"):
+        cleaned = cleaned[1:]
+
+    return cleaned
 
 
 def extract_unit(value: Any) -> str | None:
@@ -140,25 +170,8 @@ def remove_unit_text(value: Any) -> str:
     for pattern, _unit in UNIT_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
-    text = " ".join(text.split())
+    text = re.sub(r"\s+", " ", text)
     return text.strip()
-
-
-def get_numbers(value: Any) -> list[str]:
-    text = normalize_space(value).replace(",", ".")
-    return NUMBER_RE.findall(text)
-
-
-def clean_number(value: Any) -> str | None:
-    cleaned = normalize_decimal(value)
-
-    if cleaned is None:
-        return None
-
-    if cleaned.startswith("+"):
-        cleaned = cleaned[1:]
-
-    return cleaned
 
 
 def format_range(low: str, high: str) -> str | None:
@@ -183,15 +196,17 @@ def format_range(low: str, high: str) -> str | None:
 def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = normalize_space(token).replace(" ", "").replace(",", ".")
 
-    # 3.936-08 -> 3.93 - 6.08
     match = re.fullmatch(r"(\d{1,3})\.(\d{1,3})(\d)-(\d{1,3})", compact)
     if match:
-        return match.group(1) + "." + match.group(2), match.group(3) + "." + match.group(4)
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
-    # 34.151-0 -> 34.1 - 51.0
     match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
-        return match.group(1) + "." + match.group(2), match.group(3) + "." + match.group(4)
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
     return None
 
@@ -255,21 +270,23 @@ def detect_test_key(value: Any) -> str | None:
     pieces = re.split(r"[\s:/|;]+", text)
 
     for piece in pieces:
-        token = normalize_test_token(piece)
+        token = normalize_cbc_key(piece)
 
         if token in KNOWN_TEST_ALIASES:
             return token
 
-    compact = normalize_test_token(text)
+    compact = normalize_cbc_key(text)
 
-    for alias in sorted(KNOWN_TEST_ALIASES.keys(), key=len, reverse=True):
-        alias_pattern = re.escape(alias)
-        alias_pattern = alias_pattern.replace(r"\-", r"[-\s]?")
-        alias_pattern = alias_pattern.replace(r"\#", r"[#＃]?")
-        alias_pattern = alias_pattern.replace(r"\%", r"[%％]?")
+    if compact in KNOWN_TEST_ALIASES:
+        return compact
 
-        if re.search(rf"(?<![A-Z0-9]){alias_pattern}(?![A-Z0-9])", compact, re.IGNORECASE):
-            return normalize_test_token(alias)
+    match = CBC_KEY_RE.search(text)
+
+    if match:
+        candidate = normalize_cbc_key(match.group(1))
+
+        if candidate in KNOWN_TEST_ALIASES:
+            return candidate
 
     return None
 
@@ -302,32 +319,6 @@ def detect_explicit_flag(value: Any) -> str | None:
     return None
 
 
-def choose_result_and_reference_cells(cells: list[str], test_cell_index: int) -> tuple[str, str, str | None]:
-    after = cells[test_cell_index + 1 :]
-
-    if not after:
-        return "", "", None
-
-    result_cell = after[0]
-    explicit_flag = detect_explicit_flag(" ".join(after))
-
-    reference_parts = after[1:]
-
-    if len(after) >= 3:
-        second = after[1]
-        third = after[2]
-
-        second_has_unit = extract_unit(second) is not None and extract_reference_range(second) is None
-        third_has_range = extract_reference_range(third) is not None
-
-        if second_has_unit and third_has_range:
-            reference_parts = [third, second, *after[3:]]
-
-    reference_cell = " ".join(part for part in reference_parts if normalize_space(part)).strip()
-
-    return result_cell, reference_cell, explicit_flag
-
-
 def parse_table_row_cells(cells: list[str]) -> dict | None:
     clean_cells = [normalize_space(cell) for cell in cells]
     clean_cells = [cell for cell in clean_cells if cell]
@@ -352,8 +343,25 @@ def parse_table_row_cells(cells: list[str]) -> dict | None:
     if not test_key:
         return None
 
-    result_cell, reference_cell, explicit_flag = choose_result_and_reference_cells(clean_cells, test_cell_index)
+    after = clean_cells[test_cell_index + 1 :]
 
+    if not after:
+        return None
+
+    result_cell = after[0]
+    reference_cell = " ".join(after[1:])
+
+    if len(after) >= 3:
+        second = after[1]
+        third = after[2]
+
+        second_is_unit_only = extract_unit(second) is not None and extract_reference_range(second) is None
+        third_has_ref = extract_reference_range(third) is not None
+
+        if second_is_unit_only and third_has_ref:
+            reference_cell = f"{third} {second}"
+
+    explicit_flag = detect_explicit_flag(" ".join(after))
     result_value = extract_result_value(result_cell)
     reference_range = extract_reference_range(reference_cell)
     unit = extract_unit(reference_cell) or extract_unit(result_cell)
@@ -378,54 +386,26 @@ def parse_table_row_cells(cells: list[str]) -> dict | None:
     )
 
 
-def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
-    labs_by_key: dict[str, dict] = {}
-
-    for table in tables or []:
-        for row in table.get("rows", []) or []:
-            cell_texts = []
-
-            for cell in row.get("cells", []) or []:
-                cell_texts.append(cell.get("text") or "")
-
-            parsed = parse_table_row_cells(cell_texts)
-
-            if not parsed:
-                continue
-
-            key = lab_key(parsed)
-
-            if not key:
-                continue
-
-            if key not in labs_by_key:
-                labs_by_key[key] = parsed
-                continue
-
-            existing = labs_by_key[key]
-            if quality_score(parsed) >= quality_score(existing):
-                labs_by_key[key] = parsed
-
-    return list(labs_by_key.values())
-
-
-def normalize_cbc_key(raw_key: str) -> str:
-    key = normalize_test_token(raw_key)
-    key = key.replace("RDWSD", "RDW-SD")
-    key = key.replace("RDWCV", "RDW-CV")
-    key = key.replace("PLCR", "P-LCR")
-    return key
-
-
-def line_contains_cbc_key(line: str) -> str | None:
+def normalize_line_for_cbc(line: str) -> str:
     text = normalize_space(line)
-
-    for match in CBC_KEY_RE.finditer(text):
-        candidate = normalize_cbc_key(match.group(1))
-        if candidate in KNOWN_TEST_ALIASES:
-            return candidate
-
-    return None
+    text = re.sub(r"\bRDW\s+SD\b", "RDW-SD", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bRDW\s+CV\b", "RDW-CV", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bP\s+LCR\b", "P-LCR", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bNRBC\s+#\b", "NRBC#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bNRBC\s+%\b", "NRBC%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bNEUT\s+#\b", "NEUT#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bNEUT\s+%\b", "NEUT%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bLYMPH\s+#\b", "LYMPH#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bLYMPH\s+%\b", "LYMPH%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bMONO\s+#\b", "MONO#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bMONO\s+%\b", "MONO%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bBASO\s+#\b", "BASO#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bBASO\s+%\b", "BASO%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bEO\s+#\b", "EO#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bEO\s+%\b", "EO%", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bIG\s+#\b", "IG#", text, flags=re.IGNORECASE)
+    text = re.sub(r"\bIG\s+%\b", "IG%", text, flags=re.IGNORECASE)
+    return text
 
 
 def extract_candidate_cbc_block(text: str) -> str:
@@ -441,6 +421,7 @@ def extract_candidate_cbc_block(text: str) -> str:
 
     end_markers = [
         "Citomorfologie (Manual",
+        "Manual Citomorfologie",
         "Frotiu Tub",
         "Frotiu",
         "Validat de",
@@ -451,9 +432,9 @@ def extract_candidate_cbc_block(text: str) -> str:
 
     for marker in start_markers:
         found = safe.lower().find(marker.lower())
-        if found >= 0:
-            if start < 0 or found < start:
-                start = found
+
+        if found >= 0 and (start < 0 or found < start):
+            start = found
 
     if start < 0:
         start = 0
@@ -462,37 +443,43 @@ def extract_candidate_cbc_block(text: str) -> str:
 
     for marker in end_markers:
         found = safe.lower().find(marker.lower(), start + 20)
+
         if found >= 0:
             end = min(end, found)
 
     return safe[start:end]
 
 
-def normalize_line_for_cbc(line: str) -> str:
-    text = normalize_space(line)
-    text = text.replace("＃", "#")
-    text = text.replace("％", "%")
-    text = text.replace(" #", "#")
-    text = text.replace(" %", "%")
-    text = re.sub(r"\bRDW\s+SD\b", "RDW-SD", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bRDW\s+CV\b", "RDW-CV", text, flags=re.IGNORECASE)
-    text = re.sub(r"\bP\s+LCR\b", "P-LCR", text, flags=re.IGNORECASE)
-    return text
+def line_contains_cbc_key(line: str) -> str | None:
+    text = normalize_line_for_cbc(line)
+
+    match = CBC_KEY_RE.search(text)
+
+    if not match:
+        return None
+
+    key = normalize_cbc_key(match.group(1))
+
+    if key in KNOWN_TEST_ALIASES:
+        return key
+
+    return None
 
 
 def extract_cbc_lines_from_text(text: str) -> list[str]:
     block = extract_candidate_cbc_block(text)
-    lines = []
+    output: list[str] = []
 
     for raw_line in block.splitlines():
         line = normalize_line_for_cbc(raw_line)
+
         if not line:
             continue
 
         if line_contains_cbc_key(line):
-            lines.append(line)
+            output.append(line)
 
-    return lines
+    return output
 
 
 def parse_cbc_line(line: str) -> dict | None:
@@ -503,18 +490,17 @@ def parse_cbc_line(line: str) -> dict | None:
         return None
 
     match = CBC_KEY_RE.search(line)
+
     if not match:
         return None
 
     after = line[match.end() :].strip()
     after = after.replace("|", " ")
+    after = normalize_space(after)
 
     explicit_flag = detect_explicit_flag(after)
-
-    numbers = get_numbers(after)
-    unit = extract_unit(after)
-
     has_null_marker = bool(re.search(r"(?:^|\s)(?:---+|--+|nil|n/a|na)(?:\s|$)", after, re.IGNORECASE))
+    unit = extract_unit(after)
 
     if has_null_marker:
         reference_range = extract_reference_range(after)
@@ -525,6 +511,8 @@ def parse_cbc_line(line: str) -> dict | None:
             confidence=0.92 if reference_range else 0.80,
         )
 
+    numbers = get_numbers(after)
+
     if not numbers:
         return None
 
@@ -533,15 +521,7 @@ def parse_cbc_line(line: str) -> dict | None:
     if result_value is None:
         return None
 
-    reference_range = None
-
-    # Strong case: whole rest of line has result + reference + unit.
-    # result is first number, reference is the next two numbers.
-    if len(numbers) >= 3:
-        reference_range = format_range(numbers[1], numbers[2])
-    else:
-        reference_range = extract_reference_range(after)
-
+    reference_range = format_range(numbers[1], numbers[2]) if len(numbers) >= 3 else extract_reference_range(after)
     flag = explicit_flag or infer_flag(result_value, reference_range)
 
     return build_lab_result(
@@ -568,65 +548,65 @@ def parse_labs_from_google_text(text: str) -> list[dict]:
         if not key:
             continue
 
-        if key not in labs_by_key:
-            labs_by_key[key] = parsed
-            continue
-
-        if quality_score(parsed) >= quality_score(labs_by_key[key]):
+        if key not in labs_by_key or quality_score(parsed) >= quality_score(labs_by_key[key]):
             labs_by_key[key] = parsed
 
-    ordered = []
+    ordered: list[dict] = []
 
-    for key in CBC_ORDER:
-        display_key = normalize_test_token(key)
-        aliases_to_try = {
-            display_key.lower(),
-            key.lower(),
-            (KNOWN_TEST_ALIASES.get(display_key) or "").lower(),
-        }
+    for desired_key in CBC_ORDER:
+        normalized_desired = normalize_cbc_key(desired_key).lower()
 
-        found = None
+        found_key = None
 
-        for existing_key, row in labs_by_key.items():
-            if existing_key in aliases_to_try:
-                found = existing_key
+        for existing_key in labs_by_key:
+            if existing_key == normalized_desired:
+                found_key = existing_key
                 break
 
-        if found:
-            ordered.append(labs_by_key.pop(found))
+        if found_key:
+            ordered.append(labs_by_key.pop(found_key))
 
     ordered.extend(labs_by_key.values())
+
     return ordered
 
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
-    table_labs = parse_labs_from_google_tables(extraction.get("tables") or [])
-
-    text_labs = parse_labs_from_google_text(
-        "\n".join(
-            [
-                extraction.get("table_text") or "",
-                extraction.get("lines_text") or "",
-                extraction.get("plain_text") or "",
-                extraction.get("text") or "",
-            ]
-        )
-    )
-
     labs_by_key: dict[str, dict] = {}
 
-    for row in [*text_labs, *table_labs]:
-        key = lab_key(row)
+    for table in extraction.get("tables") or []:
+        for row in table.get("rows", []) or []:
+            cells = [cell.get("text") or "" for cell in row.get("cells", []) or []]
+            parsed = parse_table_row_cells(cells)
+
+            if not parsed:
+                continue
+
+            key = lab_key(parsed)
+
+            if not key:
+                continue
+
+            if key not in labs_by_key or quality_score(parsed) >= quality_score(labs_by_key[key]):
+                labs_by_key[key] = parsed
+
+    combined_text = "\n".join(
+        [
+            extraction.get("table_text") or "",
+            extraction.get("lines_text") or "",
+            extraction.get("plain_text") or "",
+            extraction.get("text") or "",
+        ]
+    )
+
+    for parsed in parse_labs_from_google_text(combined_text):
+        key = lab_key(parsed)
 
         if not key:
             continue
 
-        if key not in labs_by_key:
-            labs_by_key[key] = row
-            continue
-
-        if quality_score(row) >= quality_score(labs_by_key[key]):
-            labs_by_key[key] = row
+        if key not in labs_by_key or quality_score(parsed) >= quality_score(labs_by_key[key]):
+            labs_by_key[key] = parsed
 
     return list(labs_by_key.values())
 
@@ -638,7 +618,8 @@ def lab_key(row: dict) -> str:
         or row.get("display_name")
         or ""
     )
-    return normalize_test_token(str(key)).lower()
+
+    return normalize_cbc_key(str(key)).lower()
 
 
 def quality_score(row: dict) -> float:
