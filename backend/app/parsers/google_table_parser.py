@@ -66,6 +66,8 @@ UNIT_PATTERNS: list[tuple[str, str]] = [
     (r"\bmg\s*/\s*L\b", "mg/L"),
     (r"\bmmol\s*/\s*L\b", "mmol/L"),
     (r"\bumol\s*/\s*L\b", "umol/L"),
+    (r"\bµmol\s*/\s*L\b", "umol/L"),
+    (r"\bμmol\s*/\s*L\b", "umol/L"),
     (r"\buIU\s*/\s*mL\b", "uIU/mL"),
     (r"\bmIU\s*/\s*L\b", "mIU/L"),
     (r"\bIU\s*/\s*L\b", "IU/L"),
@@ -204,13 +206,13 @@ def format_range(low: Any, high: Any) -> str | None:
 def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = norm(token).replace(" ", "").replace(",", ".")
 
-    # Common OCR-fused ranges:
-    # 3.936-08 -> 3.93 - 6.08
-    # 34.151-0 -> 34.1 - 51.0
-    # 11.217-5 -> 11.2 - 17.5
-    # 35.146-3 -> 35.1 - 46.3
-    # 11.614-4 -> 11.6 - 14.4
-    # 19.353-1 -> 19.3 - 53.1
+    # OCR-fused examples:
+    # 3.936-08   -> 3.93 - 6.08
+    # 34.151-0   -> 34.1 - 51.0
+    # 11.217-5   -> 11.2 - 17.5
+    # 35.146-3   -> 35.1 - 46.3
+    # 11.614-4   -> 11.6 - 14.4
+    # 19.353-1   -> 19.3 - 53.1
     match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
@@ -224,7 +226,7 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
 
 def extract_reference_range(value: Any) -> str | None:
     text = remove_units(value).replace(",", ".")
-    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+    text = text.replace("−", "-").replace("–", "-").replace("—", "-")
 
     if not text:
         return None
@@ -369,32 +371,21 @@ def token_center(token: dict[str, Any]) -> tuple[float, float]:
     return token_left(token) + token_width(token) / 2, token_top(token) + token_height(token) / 2
 
 
-def token_text(tokens: list[dict[str, Any]]) -> str:
-    ordered = sorted(tokens, key=lambda token: token_left(token))
-    return " ".join(norm(token.get("text")) for token in ordered if norm(token.get("text"))).strip()
+def get_tokens(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    tokens = []
 
+    for token in words or []:
+        text = norm(token.get("text"))
 
-def is_header_or_noise_text(text: str) -> bool:
-    lowered = text.lower()
+        if not text:
+            continue
 
-    return any(
-        marker in lowered
-        for marker in [
-            "hemograma",
-            "denumire",
-            "rezultat",
-            "interval biologic",
-            "starea probei",
-            "citomorfologie",
-            "tip proba",
-            "automatic",
-        ]
-    )
+        copy = dict(token)
+        copy["text"] = text
+        tokens.append(copy)
 
-
-def get_all_tokens(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     return sorted(
-        [token for token in words or [] if norm(token.get("text"))],
+        tokens,
         key=lambda token: (
             int(token.get("page") or 0),
             token_top(token),
@@ -403,148 +394,184 @@ def get_all_tokens(words: list[dict[str, Any]]) -> list[dict[str, Any]]:
     )
 
 
-def find_test_anchors(tokens: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    anchors: list[dict[str, Any]] = []
+def coordinate_stats(tokens: list[dict[str, Any]]) -> dict[str, float]:
+    xs = [token_center(token)[0] for token in tokens]
+    ys = [token_center(token)[1] for token in tokens]
+    heights = [token_height(token) for token in tokens if token_height(token) > 0]
+
+    max_x = max(xs) if xs else 1.0
+    max_y = max(ys) if ys else 1.0
+    med_h = median(heights) if heights else (0.01 if max_y <= 2 else 8.0)
+
+    normalized = max_x <= 2 and max_y <= 2
+
+    return {
+        "max_x": max_x,
+        "max_y": max_y,
+        "med_h": med_h,
+        "normalized": 1.0 if normalized else 0.0,
+        "row_tol": max(0.007, med_h * 0.90) if normalized else max(5.0, med_h * 0.90),
+        "x_gap": max(0.003, max_x * 0.002) if normalized else max(2.0, max_x * 0.002),
+    }
+
+
+def group_tokens_into_visual_rows(tokens: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    stats = coordinate_stats(tokens)
+    row_tol = stats["row_tol"]
+
+    rows_by_page: dict[int, list[list[dict[str, Any]]]] = {}
 
     for token in tokens:
-        text = norm(token.get("text"))
-        key = detect_key(text)
+        page = int(token.get("page") or 0)
+        _x, y = token_center(token)
 
-        if not key:
-            continue
+        page_rows = rows_by_page.setdefault(page, [])
+        best_row = None
+        best_distance = None
 
-        if is_header_or_noise_text(text):
-            continue
+        for row in page_rows:
+            row_y = median([token_center(item)[1] for item in row])
+            distance = abs(y - row_y)
 
-        x, y = token_center(token)
+            if distance <= row_tol and (best_distance is None or distance < best_distance):
+                best_row = row
+                best_distance = distance
 
-        # Test names in this report are in the left half of the CBC table.
-        # This prevents weird right-column fragments from becoming anchors.
-        if x > 0.45:
-            continue
+        if best_row is None:
+            page_rows.append([token])
+        else:
+            best_row.append(token)
 
-        anchors.append(
-            {
-                "key": key,
-                "token": token,
-                "x": x,
-                "y": y,
-                "page": int(token.get("page") or 0),
-            }
+    all_rows: list[list[dict[str, Any]]] = []
+
+    for page in sorted(rows_by_page):
+        for row in rows_by_page[page]:
+            row.sort(key=lambda token: token_left(token))
+            all_rows.append(row)
+
+    all_rows.sort(
+        key=lambda row: (
+            int(row[0].get("page") or 0),
+            median([token_center(token)[1] for token in row]),
         )
+    )
 
-    deduped: list[dict[str, Any]] = []
-    seen: set[tuple[int, str, int]] = set()
+    return all_rows
 
-    for anchor in anchors:
-        bucket = int(anchor["y"] * 1000)
-        marker = (anchor["page"], anchor["key"], bucket)
 
-        if marker in seen:
+def row_text(row: list[dict[str, Any]]) -> str:
+    return " ".join(norm(token.get("text")) for token in row if norm(token.get("text")))
+
+
+def is_header_or_noise_row(row: list[dict[str, Any]]) -> bool:
+    text = row_text(row).lower()
+
+    return any(
+        marker in text
+        for marker in [
+            "hemograma",
+            "denumire analiza",
+            "denumire analiză",
+            "rezultat",
+            "interval biologic",
+            "starea probei",
+            "citomorfologie",
+            "tip proba",
+            "tip probă",
+            "automatic",
+            "automat",
+        ]
+    )
+
+
+def find_key_in_row(row: list[dict[str, Any]]) -> tuple[int, str] | None:
+    for index, token in enumerate(row):
+        key = detect_key(token.get("text"))
+
+        if key:
+            return index, key
+
+    return None
+
+
+def infer_result_column_x(rows: list[list[dict[str, Any]]]) -> float | None:
+    xs: list[float] = []
+
+    for row in rows:
+        if is_header_or_noise_row(row):
             continue
 
-        seen.add(marker)
-        deduped.append(anchor)
+        key_hit = find_key_in_row(row)
 
-    return deduped
+        if not key_hit:
+            continue
 
+        key_index, _key = key_hit
+        key_x, _ = token_center(row[key_index])
 
-def infer_table_columns(tokens: list[dict[str, Any]], anchors: list[dict[str, Any]]) -> tuple[float | None, float | None]:
-    result_xs: list[float] = []
-    reference_xs: list[float] = []
-
-    for anchor in anchors:
-        page = anchor["page"]
-        y = anchor["y"]
-        anchor_x = anchor["x"]
-
-        row_tokens = [
+        right_tokens = [
             token
-            for token in tokens
-            if int(token.get("page") or 0) == page
-            and abs(token_center(token)[1] - y) <= 0.012
-            and token_center(token)[0] > anchor_x
+            for token in row[key_index + 1 :]
+            if token_center(token)[0] > key_x
         ]
 
-        for token in sorted(row_tokens, key=lambda item: token_left(item)):
+        for token in right_tokens:
             text = norm(token.get("text"))
 
             if cell_has_result_value(text):
                 x, _ = token_center(token)
-                result_xs.append(x)
+                xs.append(x)
                 break
 
-        for token in sorted(row_tokens, key=lambda item: token_left(item)):
+    return median(xs) if xs else None
+
+
+def infer_reference_column_x(rows: list[list[dict[str, Any]]]) -> float | None:
+    xs: list[float] = []
+
+    for row in rows:
+        if is_header_or_noise_row(row):
+            continue
+
+        key_hit = find_key_in_row(row)
+
+        if not key_hit:
+            continue
+
+        key_index, _key = key_hit
+        key_x, _ = token_center(row[key_index])
+
+        for token in row[key_index + 1 :]:
+            x, _ = token_center(token)
+
+            if x <= key_x:
+                continue
+
             text = norm(token.get("text"))
 
             if looks_like_reference(text) or extract_unit(text):
-                x, _ = token_center(token)
-                reference_xs.append(x)
+                xs.append(x)
                 break
 
-    result_x = median(result_xs) if result_xs else None
-    reference_x = median(reference_xs) if reference_xs else None
-
-    return result_x, reference_x
+    return median(xs) if xs else None
 
 
-def row_band_for_anchor(
-    anchor: dict[str, Any],
-    anchors: list[dict[str, Any]],
-) -> tuple[float, float]:
-    same_page = [
-        item
-        for item in anchors
-        if item["page"] == anchor["page"]
-    ]
-
-    same_page = sorted(same_page, key=lambda item: item["y"])
-    index = same_page.index(anchor)
-
-    y = anchor["y"]
-
-    if index > 0:
-        previous_y = same_page[index - 1]["y"]
-        top = (previous_y + y) / 2
-    else:
-        top = y - 0.012
-
-    if index + 1 < len(same_page):
-        next_y = same_page[index + 1]["y"]
-        bottom = (y + next_y) / 2
-    else:
-        bottom = y + 0.012
-
-    return top, bottom
-
-
-def collect_tokens_for_anchor_row(
-    anchor: dict[str, Any],
-    anchors: list[dict[str, Any]],
-    tokens: list[dict[str, Any]],
-) -> list[dict[str, Any]]:
-    top, bottom = row_band_for_anchor(anchor, anchors)
-    anchor_x = anchor["x"]
-
-    row_tokens = [
-        token
-        for token in tokens
-        if int(token.get("page") or 0) == anchor["page"]
-        and top <= token_center(token)[1] < bottom
-        and token_center(token)[0] > anchor_x + 0.005
-    ]
-
-    return sorted(row_tokens, key=lambda token: token_left(token))
+def token_join(tokens: list[dict[str, Any]]) -> str:
+    ordered = sorted(tokens, key=lambda token: token_left(token))
+    return " ".join(norm(token.get("text")) for token in ordered if norm(token.get("text"))).strip()
 
 
 def choose_result_token(
-    row_tokens: list[dict[str, Any]],
+    row: list[dict[str, Any]],
+    start_index: int,
     result_x: float | None,
     reference_x: float | None,
 ) -> dict[str, Any] | None:
-    candidates: list[tuple[float, dict[str, Any]]] = []
+    candidates: list[tuple[float, float, dict[str, Any]]] = []
 
-    for token in row_tokens:
+    key_x, _ = token_center(row[start_index])
+
+    for token in row[start_index + 1 :]:
         text = norm(token.get("text"))
 
         if not cell_has_result_value(text):
@@ -552,69 +579,95 @@ def choose_result_token(
 
         x, _ = token_center(token)
 
-        if reference_x is not None and x >= reference_x - 0.015:
+        if x <= key_x:
             continue
 
-        distance = abs(x - result_x) if result_x is not None else 0
-        candidates.append((distance, token))
+        # This is the key guard: never let the reference/unit column become the result.
+        if reference_x is not None and x >= reference_x:
+            continue
+
+        column_distance = abs(x - result_x) if result_x is not None else 0.0
+        left_to_right = x
+
+        candidates.append((column_distance, left_to_right, token))
 
     if not candidates:
         return None
 
-    candidates.sort(key=lambda item: item[0])
-    return candidates[0][1]
+    candidates.sort(key=lambda item: (item[0], item[1]))
+    return candidates[0][2]
 
 
-def build_reference_text_after_result(
-    row_tokens: list[dict[str, Any]],
+def build_reference_text(
+    row: list[dict[str, Any]],
     result_token: dict[str, Any],
 ) -> str:
     result_x, _ = token_center(result_token)
 
-    reference_tokens = [
+    tokens = [
         token
-        for token in row_tokens
-        if token_center(token)[0] > result_x + 0.01
+        for token in row
+        if token_center(token)[0] > result_x
+        and token is not result_token
     ]
 
-    return token_text(reference_tokens)
+    return token_join(tokens)
 
 
-def parse_labs_from_anchor_rows(words: list[dict[str, Any]]) -> list[dict]:
-    tokens = get_all_tokens(words)
-    anchors = find_test_anchors(tokens)
+def parse_visual_row(
+    row: list[dict[str, Any]],
+    result_x: float | None,
+    reference_x: float | None,
+) -> dict | None:
+    if is_header_or_noise_row(row):
+        return None
 
-    if not anchors:
+    key_hit = find_key_in_row(row)
+
+    if not key_hit:
+        return None
+
+    key_index, key = key_hit
+
+    result_token = choose_result_token(
+        row=row,
+        start_index=key_index,
+        result_x=result_x,
+        reference_x=reference_x,
+    )
+
+    if result_token is None:
+        return None
+
+    result_text = norm(result_token.get("text"))
+    reference_text = build_reference_text(row, result_token)
+
+    return make_lab_row(
+        key=key,
+        result_text=result_text,
+        reference_text=reference_text,
+        unit_text=reference_text,
+        confidence=0.985,
+    )
+
+
+def parse_labs_from_visual_token_rows(words: list[dict[str, Any]]) -> list[dict]:
+    tokens = get_tokens(words)
+    rows = group_tokens_into_visual_rows(tokens)
+
+    if not rows:
         return []
 
-    result_x, reference_x = infer_table_columns(tokens, anchors)
+    result_x = infer_result_column_x(rows)
+    reference_x = infer_reference_column_x(rows)
 
     labs: list[dict] = []
 
-    for anchor in anchors:
-        row_tokens = collect_tokens_for_anchor_row(anchor, anchors, tokens)
-
-        if not row_tokens:
-            continue
-
-        result_token = choose_result_token(
-            row_tokens=row_tokens,
+    for row in rows:
+        parsed = parse_visual_row(
+            row=row,
             result_x=result_x,
             reference_x=reference_x,
-        )
-
-        if result_token is None:
-            continue
-
-        result_text = norm(result_token.get("text"))
-        reference_text = build_reference_text_after_result(row_tokens, result_token)
-
-        parsed = make_lab_row(
-            key=anchor["key"],
-            result_text=result_text,
-            reference_text=reference_text,
-            unit_text=reference_text,
-            confidence=0.985,
         )
 
         if parsed:
@@ -628,72 +681,63 @@ def table_row_to_cells(row: dict[str, Any]) -> list[str]:
     return [norm(cell.get("text") or "") for cell in cells]
 
 
-def parse_labs_from_table_rows_strict(table_rows: list[list[str]]) -> list[dict]:
-    labs: list[dict] = []
+def parse_table_cells_dynamic(row: list[str]) -> dict | None:
+    cells = [norm(cell) for cell in row if norm(cell)]
 
-    for row in table_rows:
-        clean_row = [norm(cell) for cell in row if norm(cell)]
+    if not cells:
+        return None
 
-        if not clean_row:
-            continue
+    key = None
+    key_index = -1
 
-        key = None
-        key_index = -1
+    for index, cell in enumerate(cells):
+        detected = detect_key(cell)
 
-        for index, cell in enumerate(clean_row):
-            detected = detect_key(cell)
+        if detected:
+            key = detected
+            key_index = index
+            break
 
-            if detected:
-                key = detected
-                key_index = index
-                break
+    if not key:
+        return None
 
-        if not key:
-            continue
+    after = cells[key_index + 1 :]
 
-        after = clean_row[key_index + 1 :]
+    if not after:
+        return None
 
-        if not after:
-            continue
+    result_index = -1
+    result_text = None
 
-        result_text = None
-        result_index = -1
+    for index, cell in enumerate(after):
+        if cell_has_result_value(cell):
+            result_index = index
+            result_text = cell
+            break
 
-        for index, cell in enumerate(after):
-            if cell_has_result_value(cell):
-                result_text = cell
-                result_index = index
-                break
+    if result_index < 0 or result_text is None:
+        return None
 
-        if result_text is None:
-            continue
+    reference_text = " ".join(after[result_index + 1 :])
 
-        reference_text = " ".join(after[result_index + 1 :])
-
-        parsed = make_lab_row(
-            key=key,
-            result_text=result_text,
-            reference_text=reference_text,
-            unit_text=reference_text,
-            confidence=0.99,
-        )
-
-        if parsed:
-            labs.append(parsed)
-
-    return labs
+    return make_lab_row(
+        key=key,
+        result_text=result_text,
+        reference_text=reference_text,
+        unit_text=reference_text,
+        confidence=0.99,
+    )
 
 
 def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
     labs: list[dict] = []
 
     for table in tables or []:
-        table_rows: list[list[str]] = []
-
         for row in table.get("rows", []) or []:
-            table_rows.append(table_row_to_cells(row))
+            parsed = parse_table_cells_dynamic(table_row_to_cells(row))
 
-        labs.extend(parse_labs_from_table_rows_strict(table_rows))
+            if parsed:
+                labs.append(parsed)
 
     return labs
 
@@ -734,10 +778,12 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     candidates: list[dict] = []
 
-    # Table cells first, anchor-row token parser second.
-    # No sequential fallback. No plain-text fallback. No fabricated rows.
+    # Use both sources, but both are strict:
+    # - Google table cells if available.
+    # - Visual rows rebuilt from Google token coordinates.
+    # No sequential fallback. No plain-text fallback. No invented rows.
     candidates.extend(parse_labs_from_google_tables(extraction.get("tables") or []))
-    candidates.extend(parse_labs_from_anchor_rows(extraction.get("words") or []))
+    candidates.extend(parse_labs_from_visual_token_rows(extraction.get("words") or []))
 
     labs_by_key: dict[str, dict] = {}
 
