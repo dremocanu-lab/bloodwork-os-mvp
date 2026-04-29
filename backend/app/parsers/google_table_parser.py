@@ -95,41 +95,6 @@ NULL_TEXT = {
     "absent",
 }
 
-HEADER_HINTS_TEST = {
-    "denumire",
-    "analiza",
-    "analiză",
-    "test",
-    "parameter",
-    "parametru",
-    "investigatie",
-    "investigație",
-}
-
-HEADER_HINTS_RESULT = {
-    "rezultat",
-    "result",
-    "valoare",
-    "value",
-}
-
-HEADER_HINTS_REFERENCE = {
-    "interval",
-    "referinta",
-    "referință",
-    "reference",
-    "ref",
-    "biologic",
-    "biologică",
-}
-
-HEADER_HINTS_UNIT = {
-    "unit",
-    "unitate",
-    "um",
-    "u/m",
-}
-
 
 def norm(value: Any) -> str:
     text = clean_text(value)
@@ -203,7 +168,8 @@ def clean_number(value: Any) -> str | None:
 
 
 def is_null_value(value: Any) -> bool:
-    return norm(value).lower() in NULL_TEXT
+    text = norm(value).lower()
+    return text in NULL_TEXT or re.fullmatch(r"[-_]{2,}", text or "") is not None
 
 
 def extract_unit(value: Any) -> str | None:
@@ -225,31 +191,7 @@ def remove_units(value: Any) -> str:
     for pattern, _unit in UNIT_PATTERNS:
         text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
 
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
-
-
-def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
-    """
-    Handles combined cells like:
-    - 3.98 - 10.00 10^3/uL
-    - 3.93 - 6.08 10^6/uL
-    - 11.2 - 17.5 g/dL
-    - 34.1 - 51.0 %
-    - 80.0 - 100.0 FL
-    - 0.17 - 0.35 %
-    Returns (reference_range, unit).
-    """
-    text = norm(value)
-
-    if not text:
-        return None, None
-
-    unit = extract_unit(text)
-    reference_text = remove_units(text)
-    reference_range = extract_reference_range(reference_text)
-
-    return reference_range, unit
+    return re.sub(r"\s+", " ", text).strip()
 
 
 def format_range(low: Any, high: Any) -> str | None:
@@ -274,12 +216,16 @@ def format_range(low: Any, high: Any) -> str | None:
 def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = norm(token).replace(" ", "").replace(",", ".")
 
+    # Examples:
     # 3.936-08 -> 3.93 - 6.08
+    # 34.151-0 -> 34.1 - 51.0
+    # 11.217-5 -> 11.2 - 17.5
+    # 35.146-3 -> 35.1 - 46.3
+    # 11.614-4 -> 11.6 - 14.4
     match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
-    # 34.151-0 -> 34.1 - 51.0
     match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
@@ -290,6 +236,9 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
 def extract_reference_range(value: Any) -> str | None:
     text = remove_units(value).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+
+    if not text:
+        return None
 
     for token in text.split():
         fused = split_fused_range_token(token)
@@ -319,6 +268,18 @@ def extract_reference_range(value: Any) -> str | None:
     return None
 
 
+def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
+    text = norm(value)
+
+    if not text:
+        return None, None
+
+    unit = extract_unit(text)
+    reference_range = extract_reference_range(text)
+
+    return reference_range, unit
+
+
 def extract_result(value: Any) -> str | None:
     text = norm(value)
 
@@ -346,98 +307,6 @@ def cell_has_only_one_result_number(value: Any) -> bool:
     return True
 
 
-def score_test_cell(value: Any) -> float:
-    text = norm(value)
-    lowered = text.lower()
-
-    score = 0.0
-
-    if detect_key(text):
-        score += 10.0
-
-    for hint in HEADER_HINTS_TEST:
-        if hint in lowered:
-            score += 3.0
-
-    if any(char.isalpha() for char in text) and len(numbers(text)) == 0:
-        score += 1.0
-
-    return score
-
-
-def score_result_cell(value: Any) -> float:
-    text = norm(value)
-    lowered = text.lower()
-
-    score = 0.0
-
-    if is_null_value(text):
-        score += 2.0
-
-    if cell_has_only_one_result_number(text):
-        score += 6.0
-
-    for hint in HEADER_HINTS_RESULT:
-        if hint in lowered:
-            score += 3.0
-
-    if extract_reference_range(text):
-        score -= 5.0
-
-    if extract_unit(text):
-        score -= 1.5
-
-    if detect_key(text):
-        score -= 5.0
-
-    return score
-
-
-def score_reference_cell(value: Any) -> float:
-    text = norm(value)
-    lowered = text.lower()
-
-    score = 0.0
-
-    reference_range, unit = split_reference_and_unit(text)
-
-    if reference_range:
-        score += 8.0
-
-    if unit:
-        score += 1.5
-
-    for hint in HEADER_HINTS_REFERENCE:
-        if hint in lowered:
-            score += 3.0
-
-    if detect_key(text):
-        score -= 5.0
-
-    return score
-
-
-def score_unit_cell(value: Any) -> float:
-    text = norm(value)
-    lowered = text.lower()
-
-    reference_range, unit = split_reference_and_unit(text)
-
-    score = 0.0
-
-    if unit:
-        score += 6.0
-
-    for hint in HEADER_HINTS_UNIT:
-        if hint in lowered:
-            score += 3.0
-
-    if reference_range:
-        score -= 1.0
-
-    return score
-
-
 def make_lab_row(
     key: str,
     result_text: str | None,
@@ -448,7 +317,7 @@ def make_lab_row(
     value = extract_result(result_text or "")
 
     reference_range, unit_from_reference = split_reference_and_unit(reference_text or "")
-    _unit_ref_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "")
+    _reference_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "")
 
     unit = (
         unit_from_unit_cell
@@ -528,6 +397,70 @@ def group_tokens_into_rows(tokens: list[dict[str, Any]]) -> list[list[dict[str, 
     return rows
 
 
+def parse_labs_from_sequential_tokens(words: list[dict[str, Any]]) -> list[dict]:
+    """
+    Strong fallback for Fundeni/Hippocrate CBCs:
+    sort all tokens visually, find every CBC code, then treat everything until the next
+    CBC code as that row's result/reference/unit segment.
+    This catches MONO# and MONO% even when row grouping fails.
+    """
+    tokens = sorted(
+        words or [],
+        key=lambda token: (
+            int(token.get("page") or 0),
+            float(token.get("top") or 0),
+            float(token.get("left") or 0),
+        ),
+    )
+
+    hits: list[tuple[int, str]] = []
+
+    for index, token in enumerate(tokens):
+        key = detect_key(token.get("text"))
+
+        if key:
+            hits.append((index, key))
+
+    labs: list[dict] = []
+
+    for hit_index, (start_index, key) in enumerate(hits):
+        end_index = hits[hit_index + 1][0] if hit_index + 1 < len(hits) else min(start_index + 18, len(tokens))
+        segment = tokens[start_index + 1 : end_index]
+        segment_texts = [norm(token.get("text")) for token in segment if norm(token.get("text"))]
+
+        if not segment_texts:
+            continue
+
+        result_index = -1
+
+        for local_index, text in enumerate(segment_texts):
+            if is_null_value(text) or cell_has_only_one_result_number(text):
+                result_index = local_index
+                break
+
+        if result_index < 0:
+            continue
+
+        result_text = segment_texts[result_index]
+        after_result = segment_texts[result_index + 1 :]
+
+        reference_text = " ".join(after_result)
+        unit_text = reference_text
+
+        parsed = make_lab_row(
+            key=key,
+            result_text=result_text,
+            reference_text=reference_text,
+            unit_text=unit_text,
+            confidence=0.96,
+        )
+
+        if parsed:
+            labs.append(parsed)
+
+    return labs
+
+
 def infer_column_bands_from_token_rows(rows: list[list[dict[str, Any]]]) -> dict[str, float] | None:
     test_xs: list[float] = []
     result_xs: list[float] = []
@@ -600,9 +533,9 @@ def row_tokens_to_dynamic_cells(
 
     cells: dict[str, str] = {}
 
-    for name, tokens in buckets.items():
-        tokens.sort(key=lambda token: float(token.get("left") or 0))
-        cells[name] = " ".join(norm(token.get("text")) for token in tokens if norm(token.get("text"))).strip()
+    for name, bucket_tokens in buckets.items():
+        bucket_tokens.sort(key=lambda token: float(token.get("left") or 0))
+        cells[name] = " ".join(norm(token.get("text")) for token in bucket_tokens if norm(token.get("text"))).strip()
 
     return cells
 
@@ -687,100 +620,47 @@ def table_row_to_cells(row: dict[str, Any]) -> list[str]:
     return [norm(cell.get("text") or "") for cell in cells]
 
 
-def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
-    column_count = max((len(row) for row in rows), default=0)
-
-    scores: dict[str, list[float]] = {
-        "test": [0.0] * column_count,
-        "result": [0.0] * column_count,
-        "reference": [0.0] * column_count,
-        "unit": [0.0] * column_count,
-    }
-
-    for row in rows:
-        for index in range(column_count):
-            value = row[index] if index < len(row) else ""
-
-            scores["test"][index] += score_test_cell(value)
-            scores["result"][index] += score_result_cell(value)
-            scores["reference"][index] += score_reference_cell(value)
-            scores["unit"][index] += score_unit_cell(value)
-
-    chosen: dict[str, int] = {}
-    used: set[int] = set()
-
-    for role in ["test", "reference", "result", "unit"]:
-        ranked = sorted(
-            range(column_count),
-            key=lambda index: scores[role][index],
-            reverse=True,
-        )
-
-        for index in ranked:
-            if scores[role][index] <= 0:
-                continue
-
-            # Unit is allowed to share the reference column.
-            if role != "unit" and index in used:
-                continue
-
-            chosen[role] = index
-
-            if role != "unit":
-                used.add(index)
-
-            break
-
-    return chosen
-
-
 def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict]:
-    rows = [[norm(cell) for cell in row] for row in table_rows]
-    rows = [row for row in rows if any(row)]
-
-    if not rows:
-        return []
-
-    columns = infer_columns_from_table_rows(rows)
-
-    if "test" not in columns:
-        return []
-
     labs: list[dict] = []
 
-    for row in rows:
-        test_text = row[columns["test"]] if columns["test"] < len(row) else ""
-        key = detect_key(test_text)
+    for row in table_rows:
+        clean_row = [norm(cell) for cell in row if norm(cell)]
+
+        if not clean_row:
+            continue
+
+        key = None
+        key_index = -1
+
+        for index, cell in enumerate(clean_row):
+            detected = detect_key(cell)
+
+            if detected:
+                key = detected
+                key_index = index
+                break
 
         if not key:
             continue
 
-        result_text = row[columns["result"]] if "result" in columns and columns["result"] < len(row) else ""
-        reference_text = row[columns["reference"]] if "reference" in columns and columns["reference"] < len(row) else ""
-        unit_text = row[columns["unit"]] if "unit" in columns and columns["unit"] < len(row) else ""
+        after = clean_row[key_index + 1 :]
 
-        if not result_text:
-            for cell in row:
-                if cell_has_only_one_result_number(cell) or is_null_value(cell):
-                    if not detect_key(cell) and not extract_reference_range(cell):
-                        result_text = cell
-                        break
+        if not after:
+            continue
 
-        if not reference_text:
-            for cell in row:
-                reference_range, _unit = split_reference_and_unit(cell)
+        result_index = -1
 
-                if reference_range:
-                    reference_text = cell
-                    break
+        for index, cell in enumerate(after):
+            if is_null_value(cell) or cell_has_only_one_result_number(cell):
+                result_index = index
+                break
 
-        if not unit_text:
-            for cell in row:
-                _reference_range, unit = split_reference_and_unit(cell)
+        if result_index < 0:
+            continue
 
-                if unit:
-                    unit_text = cell
-                    break
+        result_text = after[result_index]
+        reference_text = " ".join(after[result_index + 1 :])
+        unit_text = reference_text
 
         parsed = make_lab_row(
             key=key,
@@ -854,13 +734,7 @@ def parse_labs_from_text_lines(text: str) -> list[dict]:
 
 
 def lab_key(row: dict) -> str:
-    key = (
-        row.get("raw_test_name")
-        or row.get("canonical_name")
-        or row.get("display_name")
-        or ""
-    )
-
+    key = row.get("raw_test_name") or row.get("canonical_name") or row.get("display_name") or ""
     return norm_key(str(key)).lower()
 
 
@@ -897,6 +771,7 @@ def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
 
     candidates.extend(parse_labs_from_google_tables(extraction.get("tables") or []))
     candidates.extend(parse_labs_from_token_coordinates(extraction.get("words") or []))
+    candidates.extend(parse_labs_from_sequential_tokens(extraction.get("words") or []))
     candidates.extend(parse_labs_from_text_lines(extraction.get("lines_text") or ""))
     candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
 

@@ -31,6 +31,68 @@ NULL_VALUE_TOKENS = {
     "absent",
 }
 
+CBC_EXACT_LABELS = {
+    "WBC": "White Blood Cell Count",
+    "RBC": "Red Blood Cell Count",
+    "HGB": "Hemoglobin",
+    "HCT": "Hematocrit",
+    "MCV": "Mean Corpuscular Volume",
+    "MCH": "Mean Corpuscular Hemoglobin",
+    "MCHC": "Mean Corpuscular Hemoglobin Concentration",
+    "PLT": "Platelet Count",
+    "RDW-SD": "Red Cell Distribution Width - SD",
+    "RDW-CV": "Red Cell Distribution Width - CV",
+    "PDW": "Platelet Distribution Width",
+    "MPV": "Mean Platelet Volume",
+    "P-LCR": "P-LCR",
+    "PCT": "Plateletcrit",
+    "NRBC#": "Nucleated Red Blood Cells Absolute",
+    "NRBC%": "NRBC Percent",
+    "NEUT#": "Neutrophils Absolute",
+    "NEUT%": "Neutrophils Percent",
+    "LYMPH#": "Lymphocytes Absolute",
+    "LYMPH%": "Lymphocytes Percent",
+    "MONO#": "Monocytes Absolute",
+    "MONO%": "Monocytes Percent",
+    "EO#": "Eosinophils Absolute",
+    "EO%": "Eosinophils Percent",
+    "BASO#": "Basophils Absolute",
+    "BASO%": "Basophils Percent",
+    "IG#": "Immature Granulocytes Absolute",
+    "IG%": "Immature Granulocytes Percent",
+}
+
+CBC_ORDER = [
+    "WBC",
+    "RBC",
+    "HGB",
+    "HCT",
+    "MCV",
+    "MCH",
+    "MCHC",
+    "PLT",
+    "RDW-SD",
+    "RDW-CV",
+    "PDW",
+    "MPV",
+    "P-LCR",
+    "PCT",
+    "NRBC#",
+    "NRBC%",
+    "NEUT#",
+    "NEUT%",
+    "LYMPH#",
+    "LYMPH%",
+    "MONO#",
+    "MONO%",
+    "EO#",
+    "EO%",
+    "BASO#",
+    "BASO%",
+    "IG#",
+    "IG%",
+]
+
 
 def empty_parsed_document(section: str) -> dict[str, Any]:
     clean_section = section or "document"
@@ -66,9 +128,56 @@ def clean_string(value: Any) -> str | None:
     cleaned = cleaned.replace("\ufeff", "")
     cleaned = cleaned.replace("\u00a0", " ")
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
+    cleaned = cleaned.replace("Â", "")
+    cleaned = cleaned.replace("â€", "")
+    cleaned = cleaned.replace("�", "")
     cleaned = re.sub(r"\s+", " ", cleaned).strip(" \t\r\n;:")
 
     return cleaned or None
+
+
+def normalize_cbc_raw_key(value: Any) -> str | None:
+    cleaned = clean_string(value)
+
+    if cleaned is None:
+        return None
+
+    key = cleaned.upper()
+    key = key.replace(" ", "")
+    key = key.replace("_", "-")
+    key = key.replace(".", "")
+    key = key.replace("＃", "#").replace("％", "%")
+
+    if key == "RDWSD":
+        key = "RDW-SD"
+
+    if key == "RDWCV":
+        key = "RDW-CV"
+
+    if key in {"PLCR", "P-LCR%"}:
+        key = "P-LCR"
+
+    if key in CBC_EXACT_LABELS:
+        return key
+
+    return None
+
+
+def find_cbc_key_in_lab(lab: dict[str, Any]) -> str | None:
+    for field in [
+        "raw_test_name",
+        "raw_name",
+        "test_name",
+        "name",
+        "code",
+        "abbreviation",
+    ]:
+        key = normalize_cbc_raw_key(lab.get(field))
+
+        if key:
+            return key
+
+    return None
 
 
 def normalize_value(value: Any) -> str | None:
@@ -260,6 +369,8 @@ def infer_flag(value: Any, reference_range: Any) -> str | None:
 
 
 def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
+    cbc_key = find_cbc_key_in_lab(lab)
+
     raw_name = (
         lab.get("raw_test_name")
         or lab.get("raw_name")
@@ -270,14 +381,9 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
         or ""
     )
 
-    canonical_name = lab.get("canonical_name") or lab.get("test_name") or lab.get("display_name") or raw_name
-    display_name = lab.get("display_name") or canonical_name or raw_name
-    category = lab.get("category") or "Alte analize"
-
     value = normalize_value(lab.get("value"))
     reference_range = normalize_reference_range(lab.get("reference_range"))
     unit = normalize_unit(lab.get("unit"))
-
     flag = normalize_flag(lab.get("flag"))
 
     if value is not None and flag is None:
@@ -296,6 +402,25 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         confidence = None
 
+    if cbc_key:
+        display_name = CBC_EXACT_LABELS[cbc_key]
+
+        return {
+            "raw_test_name": cbc_key,
+            "canonical_name": display_name,
+            "display_name": display_name,
+            "category": "Hematologie",
+            "value": value,
+            "flag": flag,
+            "reference_range": reference_range,
+            "unit": unit,
+            "confidence": confidence,
+        }
+
+    canonical_name = lab.get("canonical_name") or lab.get("test_name") or lab.get("display_name") or raw_name
+    display_name = lab.get("display_name") or canonical_name or raw_name
+    category = lab.get("category") or "Alte analize"
+
     return {
         "raw_test_name": clean_string(raw_name),
         "canonical_name": clean_string(canonical_name),
@@ -309,7 +434,31 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
     }
 
 
+def normalize_rows_preserving_cbc(
+    labs: list[dict[str, Any]],
+    context_text: str = "",
+) -> list[dict[str, Any]]:
+    cbc_rows: list[dict[str, Any]] = []
+    non_cbc_rows: list[dict[str, Any]] = []
+
+    for lab in labs or []:
+        if find_cbc_key_in_lab(lab):
+            cbc_rows.append(standardize_lab_row_shape(lab))
+        else:
+            non_cbc_rows.append(lab)
+
+    normalized_non_cbc = normalize_lab_rows(non_cbc_rows, context_text=context_text) if non_cbc_rows else []
+    standardized_non_cbc = [standardize_lab_row_shape(row) for row in normalized_non_cbc]
+
+    return cbc_rows + standardized_non_cbc
+
+
 def get_lab_identity(lab: dict[str, Any]) -> str:
+    cbc_key = find_cbc_key_in_lab(lab)
+
+    if cbc_key:
+        return f"cbc:{cbc_key.lower()}"
+
     value = (
         lab.get("raw_test_name")
         or lab.get("canonical_name")
@@ -340,6 +489,9 @@ def lab_quality_score(lab: dict[str, Any]) -> float:
     if row.get("flag") in {"High", "Low"}:
         score += 0.08
 
+    if find_cbc_key_in_lab(row):
+        score += 0.25
+
     if row.get("raw_test_name") or row.get("canonical_name"):
         score += 0.05
 
@@ -360,7 +512,31 @@ def merge_lab_results(*lab_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if key not in merged_by_key or lab_quality_score(row) >= lab_quality_score(merged_by_key[key]):
                 merged_by_key[key] = row
 
-    return [standardize_lab_row_shape(row) for row in merged_by_key.values()]
+    return order_lab_rows([standardize_lab_row_shape(row) for row in merged_by_key.values()])
+
+
+def order_lab_rows(labs: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cbc_by_key: dict[str, dict[str, Any]] = {}
+    other_rows: list[dict[str, Any]] = []
+
+    for row in labs or []:
+        cbc_key = find_cbc_key_in_lab(row)
+
+        if cbc_key:
+            cbc_by_key[cbc_key] = row
+        else:
+            other_rows.append(row)
+
+    ordered: list[dict[str, Any]] = []
+
+    for key in CBC_ORDER:
+        if key in cbc_by_key:
+            ordered.append(cbc_by_key.pop(key))
+
+    ordered.extend(cbc_by_key.values())
+    ordered.extend(other_rows)
+
+    return ordered
 
 
 def dedupe_warnings(warnings: list[str]) -> list[str]:
@@ -394,6 +570,11 @@ def build_category_report_name(parsed_data: dict[str, Any], labs: list[dict[str,
 
 def lab_rows_need_ai_help(labs: list[dict[str, Any]], parsed_data: dict[str, Any]) -> bool:
     if not labs:
+        return True
+
+    cbc_count = len([row for row in labs if find_cbc_key_in_lab(row)])
+
+    if 0 < cbc_count < 24:
         return True
 
     if len(labs) < 20:
@@ -446,8 +627,8 @@ def extract_google_labs(
     warnings: list[str],
 ) -> list[dict[str, Any]]:
     google_labs = parse_labs_from_google_extraction(extraction)
-    normalized_google_labs = normalize_lab_rows(google_labs, context_text=extracted_text)
-    standardized_labs = [standardize_lab_row_shape(row) for row in normalized_google_labs]
+    standardized_labs = normalize_rows_preserving_cbc(google_labs, context_text=extracted_text)
+    standardized_labs = order_lab_rows(standardized_labs)
 
     table_count = len(extraction.get("tables") or [])
     line_count = len(extraction.get("lines") or [])
@@ -457,6 +638,15 @@ def extract_google_labs(
         f"Google Document AI parser extracted {len(standardized_labs)} structured lab rows "
         f"from {table_count} tables, {line_count} lines, and {word_count} tokens."
     )
+
+    missing_cbc = [
+        key
+        for key in CBC_ORDER
+        if key not in {find_cbc_key_in_lab(row) for row in standardized_labs if find_cbc_key_in_lab(row)}
+    ]
+
+    if 0 < len(missing_cbc) < len(CBC_ORDER):
+        warnings.append(f"Missing CBC rows after Google parser: {', '.join(missing_cbc)}.")
 
     return standardized_labs
 
@@ -494,9 +684,7 @@ def apply_ai_fallback(
 
     parsed_data = merge_metadata(parsed_data, ai_metadata)
 
-    normalized_ai_labs = normalize_lab_rows(ai_labs, context_text=extracted_text)
-    standardized_ai_labs = [standardize_lab_row_shape(row) for row in normalized_ai_labs]
-
+    standardized_ai_labs = normalize_rows_preserving_cbc(ai_labs, context_text=extracted_text)
     merged_labs = merge_lab_results(current_labs, standardized_ai_labs)
 
     return parsed_data, merged_labs
@@ -532,8 +720,8 @@ def process_bloodwork_document(
             filename=filename,
         )
 
-    merged_labs = normalize_lab_rows(merged_labs, context_text=extracted_text)
-    merged_labs = [standardize_lab_row_shape(row) for row in merged_labs]
+    merged_labs = normalize_rows_preserving_cbc(merged_labs, context_text=extracted_text)
+    merged_labs = merge_lab_results(merged_labs)
 
     parsed_data["labs"] = merged_labs
     parsed_data["report_name"] = build_category_report_name(parsed_data, merged_labs)
