@@ -1,226 +1,349 @@
-import re
+﻿import re
+from datetime import datetime
 
 
-def _clean(value: str | None) -> str | None:
-    if value is None:
+MONTHS_RO_EN = {
+    "ian": "Jan",
+    "ianuarie": "Jan",
+    "jan": "Jan",
+    "feb": "Feb",
+    "februarie": "Feb",
+    "mar": "Mar",
+    "martie": "Mar",
+    "apr": "Apr",
+    "aprilie": "Apr",
+    "mai": "May",
+    "may": "May",
+    "iun": "Jun",
+    "iunie": "Jun",
+    "jun": "Jun",
+    "iul": "Jul",
+    "iulie": "Jul",
+    "jul": "Jul",
+    "aug": "Aug",
+    "august": "Aug",
+    "sep": "Sep",
+    "sept": "Sep",
+    "septembrie": "Sep",
+    "oct": "Oct",
+    "octombrie": "Oct",
+    "nov": "Nov",
+    "noiembrie": "Nov",
+    "dec": "Dec",
+    "decembrie": "Dec",
+}
+
+
+def clean_spaces(value: str | None) -> str | None:
+    if not value:
         return None
 
-    value = re.sub(r"\s+", " ", str(value)).strip(" :-\t")
-    return value or None
+    cleaned = re.sub(r"\s+", " ", str(value)).strip(" :-–—\t\r\n")
+
+    return cleaned or None
 
 
-def _match_first(text: str, patterns: list[str]) -> str | None:
+def normalize_date_text(value: str | None) -> str | None:
+    if not value:
+        return None
+
+    cleaned = clean_spaces(value)
+
+    if not cleaned:
+        return None
+
+    cleaned = cleaned.replace(",", " ")
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
+    for ro, en in MONTHS_RO_EN.items():
+        cleaned = re.sub(rf"\b{re.escape(ro)}\b", en, cleaned, flags=re.IGNORECASE)
+
+    return cleaned
+
+
+def parse_date_to_display(value: str | None) -> str | None:
+    cleaned = normalize_date_text(value)
+
+    if not cleaned:
+        return None
+
+    formats = [
+        "%d %b %Y %H:%M",
+        "%d %B %Y %H:%M",
+        "%d.%m.%Y %H:%M",
+        "%d/%m/%Y %H:%M",
+        "%d-%m-%Y %H:%M",
+        "%Y-%m-%d %H:%M",
+        "%Y-%m-%dT%H:%M:%S",
+        "%Y-%m-%dT%H:%M:%S%z",
+        "%d %b %Y",
+        "%d %B %Y",
+        "%d.%m.%Y",
+        "%d/%m/%Y",
+        "%d-%m-%Y",
+        "%Y-%m-%d",
+    ]
+
+    for fmt in formats:
+        try:
+            parsed = datetime.strptime(cleaned, fmt)
+            if "%H" in fmt:
+                return parsed.strftime("%d %b %Y %H:%M")
+            return parsed.strftime("%d %b %Y")
+        except Exception:
+            pass
+
+    return cleaned
+
+
+def first_match(text: str, patterns: list[str], flags: int = re.IGNORECASE | re.MULTILINE) -> str | None:
     for pattern in patterns:
-        match = re.search(pattern, text, re.IGNORECASE | re.MULTILINE)
+        match = re.search(pattern, text or "", flags)
+
         if match:
-            return _clean(match.group(1))
-    return None
-
-
-def _extract_standalone_name_before_age(text: str) -> str | None:
-    lines = [line.strip() for line in text.splitlines()]
-
-    for i, line in enumerate(lines):
-        if re.match(r"^(Age|Varsta|Vârsta|VARSTA|VÂRSTA)\s*[:\-]", line, re.IGNORECASE):
-            if i <= 0:
-                continue
-
-            candidate = lines[i - 1].strip()
-
-            if not candidate:
-                continue
-
-            if re.search(
-                r"(pathology|laboratory|lab|doctor|dr\.|technician|generated|reported|registered|sample|collection|ref\. by|accurate|caring|instant|smart|drlogy|fundeni|spital|institut)",
-                candidate,
-                re.IGNORECASE,
-            ):
-                continue
-
-            if len(candidate.split()) >= 2 and re.match(r"^[A-Za-zĂÂÎȘŞȚŢăâîșşțţ.\- ]+$", candidate):
-                return candidate
+            for group in match.groups():
+                cleaned = clean_spaces(group)
+                if cleaned:
+                    return cleaned
 
     return None
 
 
-def _extract_age_and_sex_combo(text: str) -> tuple[str | None, str | None]:
-    value = _match_first(
+def extract_date_after_label(text: str, labels: list[str]) -> str | None:
+    safe_text = text or ""
+
+    date_pattern = (
+        r"("
+        r"\d{1,2}\s+[A-Za-zăâîșțĂÂÎȘȚ]{3,12}\s+\d{4}\s+\d{1,2}:\d{2}"
+        r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s+\d{1,2}:\d{2}"
+        r"|\d{4}-\d{1,2}-\d{1,2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2})?"
+        r"|\d{1,2}\s+[A-Za-zăâîșțĂÂÎȘȚ]{3,12}\s+\d{4}"
+        r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+        r")"
+    )
+
+    for label in labels:
+        pattern = rf"{label}\s*[:\-–—]?\s*(?:setului\s+de\s+analize\s*[:\-–—]?\s*)?{date_pattern}"
+        match = re.search(pattern, safe_text, re.IGNORECASE | re.MULTILINE)
+
+        if match:
+            return parse_date_to_display(match.group(1))
+
+    return None
+
+
+def extract_patient_name(text: str) -> str | None:
+    return first_match(
         text,
         [
-            r"(?:Age\/Gender|Varsta\/Sex|Vârsta\/Sex|Varsta\/Gen|Vârstă\/Gen)\s*[:\-]?\s*([^\n]+)",
+            r"\bNume\s*[:\-]?\s*([A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚa-zăâîșț .'-]{2,80})",
+            r"\bPacient\s*[:\-]?\s*([A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚa-zăâîșț .'-]{2,80})",
+            r"\bName\s*[:\-]?\s*([A-Z][A-Za-z .'-]{2,80})",
         ],
     )
 
-    age = None
-    sex = None
 
-    if value and "/" in value:
-        left, right = value.split("/", 1)
-        age = _clean(left)
-        sex = _clean(right)
+def extract_cnp(text: str) -> str | None:
+    return first_match(
+        text,
+        [
+            r"\bCNP\s*[:\-]?\s*(\d{13})",
+            r"\bCod\s+numeric\s+personal\s*[:\-]?\s*(\d{13})",
+        ],
+    )
 
-    return age, sex
+
+def extract_patient_identifier(text: str) -> str | None:
+    return first_match(
+        text,
+        [
+            r"\bCod\s+pacient\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
+            r"\bID\s+pacient\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
+            r"\bPatient\s+ID\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
+            r"\bNr\.?\s*Foaie\s+Observatie\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
+        ],
+    )
+
+
+def extract_age(text: str) -> str | None:
+    raw = first_match(
+        text,
+        [
+            r"\bV[âa]rsta\s*[:\-]?\s*([0-9]{1,3}\s*(?:ani|an|years?|y)?(?:\s*(?:si|și)?\s*[0-9]{1,2}\s*(?:luni|months?))?)",
+            r"\bAge\s*[:\-]?\s*([0-9]{1,3}\s*(?:years?|y)?(?:\s*[0-9]{1,2}\s*months?)?)",
+        ],
+    )
+
+    return clean_spaces(raw)
+
+
+def extract_sex(text: str) -> str | None:
+    raw = first_match(
+        text,
+        [
+            r"\bSex\s*[:\-]?\s*(Masculin|Feminin|Male|Female|M|F)\b",
+            r"\bGen\s*[:\-]?\s*(Masculin|Feminin|Male|Female|M|F)\b",
+        ],
+    )
+
+    if not raw:
+        return None
+
+    lowered = raw.lower()
+
+    if lowered in {"m", "male", "masculin"}:
+        return "Male"
+
+    if lowered in {"f", "female", "feminin"}:
+        return "Female"
+
+    return raw
+
+
+def extract_lab_name(text: str) -> str | None:
+    return first_match(
+        text,
+        [
+            r"(Institutul\s+Clinic\s+Fundeni)",
+            r"(Laborator(?:ul)?\s+de\s+Analize[^\n]{0,80})",
+            r"(Synevo[^\n]{0,80})",
+            r"(Regina\s+Maria[^\n]{0,80})",
+            r"(MedLife[^\n]{0,80})",
+        ],
+    )
+
+
+def extract_referring_doctor(text: str) -> str | None:
+    return first_match(
+        text,
+        [
+            r"\bMedic\s*[:\-]?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
+            r"\bDoctor\s*[:\-]?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
+            r"\bDr\.?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
+        ],
+    )
+
+
+def extract_sample_type(text: str) -> str | None:
+    return first_match(
+        text,
+        [
+            r"\bTip\s+proba\s*[:\-]?\s*([A-Za-zĂÂÎȘȚăâîșț0-9 .'-]{2,60})",
+            r"\bTip\s+prob[ăa]\s*[:\-]?\s*([A-Za-zĂÂÎȘȚăâîșț0-9 .'-]{2,60})",
+            r"\bSample\s+type\s*[:\-]?\s*([A-Za-z0-9 .'-]{2,60})",
+            r"\bCod\s+proba\s*[:\-]?\s*([A-Za-z0-9\-_/]{2,40})",
+        ],
+    )
+
+
+def extract_report_name(text: str, collected_on: str | None = None) -> str:
+    lowered = (text or "").lower()
+
+    if "hematologie" in lowered or "hemograma" in lowered or "hemogram" in lowered or "citomorfologie" in lowered:
+        base = "Hematologie"
+    elif "biochimie" in lowered:
+        base = "Biochimie"
+    elif "urina" in lowered or "urină" in lowered:
+        base = "Urinalysis"
+    else:
+        base = "Analize medicale"
+
+    if collected_on:
+        return f"{base} {collected_on}"
+
+    return base
+
+
+def extract_source_language(text: str) -> str:
+    lowered = (text or "").lower()
+
+    romanian_markers = [
+        "buletin analize",
+        "recoltarii",
+        "recoltării",
+        "varsta",
+        "vârsta",
+        "sectie",
+        "secție",
+        "medic",
+        "interval biologic",
+    ]
+
+    if any(marker in lowered for marker in romanian_markers):
+        return "ro"
+
+    return "en"
 
 
 def extract_report_metadata(text: str) -> dict:
-    patient_name = _match_first(
-        text,
+    safe_text = text or ""
+
+    collected_on = extract_date_after_label(
+        safe_text,
         [
-            r"(?:NUME SI PRENUME|NUME ȘI PRENUME|Nume si prenume|Nume și prenume)\s*[:\-]?\s*([^\n]+)",
-            r"(?:NUME|Nume)\s*[:\-]?\s*([A-ZĂÂÎȘŞȚŢ][A-ZĂÂÎȘŞȚŢa-zăâîșşțţ.\- ]{2,})",
-            r"(?:Nume pacient|Pacient|Name|Patient)\s*[:\-]?\s*([^\n]+)",
+            r"Data\s+si\s+ora\s+recoltarii",
+            r"Data\s+și\s+ora\s+recoltării",
+            r"Data\s+recoltarii",
+            r"Data\s+recoltării",
+            r"Recoltat(?:ă|a)?\s+la",
+            r"Collected(?:\s+on)?",
+            r"Collection\s+date",
         ],
     )
 
-    if not patient_name:
-        patient_name = _extract_standalone_name_before_age(text)
-
-    first_name = _match_first(text, [r"(?:Prenume|First Name)\s*[:\-]?\s*([^\n]+)"])
-    last_name = _match_first(text, [r"(?:Nume de familie|Last Name|Surname)\s*[:\-]?\s*([^\n]+)"])
-
-    if not patient_name and (first_name or last_name):
-        patient_name = _clean(" ".join(part for part in [last_name, first_name] if part))
-
-    combo_age, combo_sex = _extract_age_and_sex_combo(text)
-
-    date_of_birth = _match_first(
-        text,
+    reported_on = extract_date_after_label(
+        safe_text,
         [
-            r"(?:Data nasterii|Data nașterii|Data de nastere|Data de naștere|DOB|Date of Birth)\s*[:\-]?\s*([^\n]+)",
+            r"Data\s+validare",
+            r"Data\s+validarii",
+            r"Data\s+validării",
+            r"Data\s+si\s+ora\s+validarii",
+            r"Data\s+și\s+ora\s+validării",
+            r"Reported(?:\s+on)?",
+            r"Validated(?:\s+on)?",
         ],
     )
 
-    age = combo_age or _match_first(
-        text,
+    registered_on = extract_date_after_label(
+        safe_text,
         [
-            r"(?:VARSTA|VÂRSTA|Varsta|Vârsta|Age)\s*[:\-]?\s*([^\n]+)",
+            r"Data\s+si\s+ora\s+sosirii\s+in\s+laborator",
+            r"Data\s+și\s+ora\s+sosirii\s+în\s+laborator",
+            r"Sosit(?:ă|a)?\s+in\s+laborator",
+            r"Registered(?:\s+on)?",
+            r"Received(?:\s+on)?",
         ],
     )
 
-    sex = combo_sex or _match_first(
-        text,
+    generated_on = extract_date_after_label(
+        safe_text,
         [
-            r"(?:SEX|Sex|Gen|Gender)\s*[:\-]?\s*([^\n]+)",
+            r"Generated(?:\s+on)?",
+            r"Printed(?:\s+on)?",
+            r"Printat(?:\s+la)?",
         ],
     )
 
-    cnp = _match_first(
-        text,
-        [
-            r"(?:CNP)\s*[:\-]?\s*([0-9]{13})",
-        ],
-    )
+    test_date = collected_on or reported_on or registered_on or generated_on
 
-    patient_identifier = _match_first(
-        text,
-        [
-            r"(?:COD PACIENT|Cod pacient|ID pacient|Pacient ID|Patient ID|PID)\s*[:\-]?\s*([^\n]+)",
-        ],
-    )
-
-    lab_name = _match_first(
-        text,
-        [
-            r"(?:Laborator|Laboratory|Lab Name)\s*[:\-]?\s*([^\n]+)",
-            r"(Laborator de Analize Hematologice Speciale[^\n]*)",
-            r"(Citomorfologie)",
-            r"(Anatomie Patologic[ăa])",
-        ],
-    )
-
-    sample_type = _match_first(
-        text,
-        [
-            r"(?:Tip proba|Tip probă|Tip esantion|Tip eșantion|Sample Type|Primary Sample Type)\s*[:\-]?\s*([^\n]+)",
-            r"(?:PROBA|Prob[ăa])\s*[:\-]?\s*([^\n]+)",
-        ],
-    )
-
-    referring_doctor = _match_first(
-        text,
-        [
-            r"(?:MEDIC|Medic)\s*[:\-]?\s*([^\n]+)",
-            r"(?:Medic trimitator|Medic trimițător|Ref\. By|Ref By|Referred By|Doctor)\s*[:\-]?\s*([^\n]+)",
-            r"(?:DR\.|Dr\.)\s*([A-ZĂÂÎȘŞȚŢa-zăâîșşțţ.\- ]+)",
-        ],
-    )
-
-    collected_on = _match_first(
-        text,
-        [
-            r"(?:Data si ora recoltarii setului de analize|Data și ora recoltării setului de analize)\s*[:\-]?\s*([^\n]+)",
-            r"(?:Data recoltarii|Data recoltării|Recoltat la|Collected on|Collection Date)\s*[:\-]?\s*([^\n]+)",
-        ],
-    )
-
-    reported_on = _match_first(
-        text,
-        [
-            r"(?:Data validare|Data validării|Data validarii)\s*[:\-]?\s*([^\n]+)",
-            r"(?:Data raportarii|Data raportării|Reported on|Report Date)\s*[:\-]?\s*([^\n]+)",
-        ],
-    )
-
-    registered_on = _match_first(
-        text,
-        [
-            r"(?:Inregistrat la|Înregistrat la|Registered on)\s*[:\-]?\s*([^\n]+)",
-        ],
-    )
-
-    generated_on = _match_first(
-        text,
-        [
-            r"(?:Data eliberarii|Data eliberării|Eliberat la|Released on)\s*[:\-]?\s*([^\n]+)",
-            r"(?:Generated on)\s*[:\-]?\s*(.+?)(?:Page\s+\d+\s+of\s+\d+|$)",
-        ],
-    )
-
-    report_type = _match_first(
-        text,
-        [
-            r"(Buletin Analize Medicale)",
-            r"(Hemograma simpla cu reticulocite)",
-            r"(Hemogram[ăa][^\n]*)",
-            r"(Citomorfologie)",
-            r"(Buletin Anatomie Patologic[ăa])",
-            r"(ANATOMIE PATOLOGIC[ĂA])",
-            r"(Histopatologic)",
-            r"(Raport Histopatologic)",
-            r"(Complete Blood Count\s*CBC)",
-            r"(CBC)",
-            r"(Biochimie)",
-            r"(Lipid Profile)",
-            r"(Profil lipidic)",
-            r"(TSH)",
-            r"(Free T4)",
-        ],
-    )
-
-    source_language = (
-        "ro"
-        if re.search(
-            r"\b(?:nume|varsta|vârsta|data recoltarii|data recoltării|medic|tip probă|tip proba|cnp|cod pacient|buletin analize)\b",
-            text,
-            re.IGNORECASE,
-        )
-        else "en"
-    )
+    report_name = extract_report_name(safe_text, collected_on or test_date)
 
     return {
-        "patient_name": patient_name,
-        "date_of_birth": date_of_birth,
-        "age": age,
-        "sex": sex,
-        "cnp": cnp,
-        "patient_identifier": patient_identifier,
-        "lab_name": lab_name,
-        "sample_type": sample_type,
-        "referring_doctor": referring_doctor,
+        "patient_name": extract_patient_name(safe_text),
+        "date_of_birth": None,
+        "age": extract_age(safe_text),
+        "sex": extract_sex(safe_text),
+        "cnp": extract_cnp(safe_text),
+        "patient_identifier": extract_patient_identifier(safe_text),
+        "lab_name": extract_lab_name(safe_text),
+        "sample_type": extract_sample_type(safe_text),
+        "referring_doctor": extract_referring_doctor(safe_text),
+        "report_name": report_name,
+        "report_type": "Bloodwork",
+        "source_language": extract_source_language(safe_text),
+        "test_date": test_date,
         "collected_on": collected_on,
         "reported_on": reported_on,
         "registered_on": registered_on,
         "generated_on": generated_on,
-        "report_type": report_type,
-        "source_language": source_language,
     }
