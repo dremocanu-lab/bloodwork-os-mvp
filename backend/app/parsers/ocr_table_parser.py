@@ -1,7 +1,9 @@
 ﻿from __future__ import annotations
 
 import re
+from dataclasses import dataclass
 from statistics import median
+from typing import Any
 
 from app.parsers.bloodwork_parser import (
     ARROW_HIGH_MARKERS,
@@ -14,10 +16,7 @@ from app.parsers.bloodwork_parser import (
     extract_reference_range,
     infer_flag,
     normalize_decimal,
-    normalize_reference_number,
     normalize_test_token,
-    split_fused_reference_range,
-    to_float,
 )
 
 
@@ -25,7 +24,16 @@ NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 NULL_RE = re.compile(r"^(?:-{2,}|_{2,}|—+|–+|nil|n/a|na|null|none)$", re.IGNORECASE)
 
 
-def clean_word(text: str | None) -> str:
+@dataclass
+class PageColumns:
+    page: int
+    test_left: float
+    result_left: float
+    reference_left: float
+    right_edge: float
+
+
+def clean_word(text: Any) -> str:
     if text is None:
         return ""
 
@@ -41,12 +49,12 @@ def clean_word(text: str | None) -> str:
     cleaned = cleaned.replace("µ", "u")
     cleaned = cleaned.replace("μ", "u")
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
-    cleaned = cleaned.strip()
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
     return cleaned
 
 
-def is_number(text: str | None) -> bool:
+def is_number(text: Any) -> bool:
     cleaned = normalize_decimal(clean_word(text))
 
     if cleaned is None:
@@ -55,13 +63,17 @@ def is_number(text: str | None) -> bool:
     return NUMBER_RE.fullmatch(cleaned) is not None
 
 
-def is_null_marker(text: str | None) -> bool:
+def is_null_marker(text: Any) -> bool:
     cleaned = clean_word(text)
 
     if not cleaned:
         return False
 
     return NULL_RE.fullmatch(cleaned) is not None
+
+
+def word_left(word: dict) -> float:
+    return float(word.get("left", 0))
 
 
 def word_right(word: dict) -> float:
@@ -129,7 +141,7 @@ def group_words_into_rows(words: list[dict]) -> list[list[dict]]:
         page_words = [word for word in useful_words if word["page"] == page]
         heights = [word["height"] for word in page_words if word["height"] > 0]
         typical_height = median(heights) if heights else 12
-        y_threshold = max(6, typical_height * 0.70)
+        y_threshold = max(5, typical_height * 0.70)
 
         page_words.sort(key=lambda item: (item["y_center"], item["left"]))
 
@@ -184,144 +196,242 @@ def possible_test_key_from_row(row_words: list[dict]) -> tuple[str | None, int]:
     return None, -1
 
 
-def merge_split_decimal_numbers(number_words: list[dict]) -> list[dict]:
-    merged = []
-    i = 0
+def page_words_from_rows(rows: list[list[dict]], page: int) -> list[dict]:
+    output = []
 
-    while i < len(number_words):
-        current = dict(number_words[i])
-        current_text = str(current["number_text"])
+    for row in rows:
+        if row and int(row[0].get("page", 0)) == page:
+            output.extend(row)
 
-        if i + 1 < len(number_words):
-            next_cell = number_words[i + 1]
-            next_text = str(next_cell["number_text"])
-
-            gap = float(next_cell["left_f"]) - float(current["right_f"])
-            max_height = max(float(current.get("height", 0)), float(next_cell.get("height", 0)), 1)
-            close_enough = gap <= max(18, max_height * 1.25)
-
-            if close_enough and next_text.isdigit() and len(next_text) == 1:
-                if "." in current_text:
-                    current["number_text"] = f"{current_text}{next_text}"
-                    current["right_f"] = next_cell["right_f"]
-                    current["x"] = (float(current["left_f"]) + float(next_cell["right_f"])) / 2
-                    i += 2
-                    merged.append(current)
-                    continue
-
-                if current_text.isdigit() and len(current_text) <= 2:
-                    current["number_text"] = f"{current_text}.{next_text}"
-                    current["right_f"] = next_cell["right_f"]
-                    current["x"] = (float(current["left_f"]) + float(next_cell["right_f"])) / 2
-                    i += 2
-                    merged.append(current)
-                    continue
-
-        merged.append(current)
-        i += 1
-
-    return merged
+    return output
 
 
-def numeric_words_after_test(row_words: list[dict], test_index: int) -> list[dict]:
-    test_word = row_words[test_index]
-    test_right = word_right(test_word)
+def find_header_column_x(page_words: list[dict], header_words: set[str]) -> float | None:
+    candidates = []
 
-    result = []
+    for word in page_words:
+        token = clean_word(word.get("text")).upper()
 
-    for word in row_words[test_index + 1 :]:
-        if float(word.get("left", 0)) < test_right - 3:
-            continue
+        if token in header_words:
+            candidates.append(word_center_x(word))
 
-        text = clean_word(word.get("text"))
+    if not candidates:
+        return None
 
-        if not is_number(text):
-            continue
+    return median(candidates)
 
-        normalized = normalize_decimal(text)
 
-        if normalized is None:
-            continue
+def infer_columns_from_header(page: int, rows: list[list[dict]]) -> PageColumns | None:
+    words = page_words_from_rows(rows, page)
 
-        result.append(
-            {
-                **word,
-                "number_text": normalized,
-                "x": word_center_x(word),
-                "left_f": float(word.get("left", 0)),
-                "right_f": word_right(word),
-            }
+    if not words:
+        return None
+
+    left_edge = min(word_left(word) for word in words)
+    right_edge = max(word_right(word) for word in words)
+
+    result_x = find_header_column_x(words, {"REZULTAT", "RESULT", "VALUE"})
+    reference_x = find_header_column_x(
+        words,
+        {
+            "INTERVAL",
+            "REFERINTA",
+            "REFERINȚĂ",
+            "REFERENCE",
+            "BIOLOGIC",
+            "BIOLOGICĂ",
+            "REF",
+        },
+    )
+
+    if result_x is not None and reference_x is not None and reference_x > result_x:
+        return PageColumns(
+            page=page,
+            test_left=left_edge,
+            result_left=result_x - 30,
+            reference_left=reference_x - 36,
+            right_edge=right_edge,
         )
-
-    return merge_split_decimal_numbers(result)
-
-
-def split_row_into_result_and_reference(row_words: list[dict], test_index: int) -> tuple[list[dict], list[dict], list[dict]]:
-    numbers = numeric_words_after_test(row_words, test_index)
-    null_words = [word for word in row_words[test_index + 1 :] if is_null_marker(clean_word(word.get("text")))]
-
-    if not numbers:
-        return [], [], null_words
-
-    # For Fundeni CBC rows:
-    # first number after test = result
-    # next two numbers = reference interval
-    result_numbers = numbers[:1]
-    reference_numbers = numbers[1:3]
-
-    return result_numbers, reference_numbers, null_words
-
-
-def get_reference_range(reference_numbers: list[dict], row_words: list[dict] | None = None) -> str | None:
-    if len(reference_numbers) >= 2:
-        low = normalize_reference_number(str(reference_numbers[0].get("number_text")))
-        high = normalize_reference_number(str(reference_numbers[1].get("number_text")))
-
-        if low is not None and high is not None:
-            low_float = to_float(low)
-            high_float = to_float(high)
-
-            if low_float is not None and high_float is not None:
-                if high_float < low_float:
-                    low, high = high, low
-
-                return f"{low} - {high}"
-
-    if row_words:
-        text = row_text(row_words)
-
-        fused = split_fused_reference_range(text)
-
-        if fused:
-            return f"{fused[0]} - {fused[1]}"
-
-        return extract_reference_range(text)
 
     return None
 
 
-def detect_unit(row_words: list[dict], test_key: str, reference_numbers: list[dict]) -> str | None:
-    row = row_text(row_words)
+def infer_columns_from_lab_rows(page: int, rows: list[list[dict]]) -> PageColumns | None:
+    result_x_values = []
+    reference_x_values = []
+    test_left_values = []
+    right_values = []
 
-    explicit_patterns = [
-        r"10\s*\^?\s*3\s*/?\s*u?l",
-        r"10\s*\^?\s*6\s*/?\s*u?l",
-        r"\bg\s*/\s*dL\b",
-        r"\bg\s*/\s*dl\b",
-        r"\bfL\b",
-        r"\bFL\b",
-        r"\bfl\b",
-        r"\bpg\b",
-        r"%",
+    for row in rows:
+        if not row or int(row[0].get("page", 0)) != page:
+            continue
+
+        test_key, test_index = possible_test_key_from_row(row)
+
+        if not test_key or test_index < 0:
+            continue
+
+        numbers = []
+
+        for word in row[test_index + 1 :]:
+            if is_number(word.get("text")):
+                numbers.append(word_center_x(word))
+
+        # Normal row:
+        # test | result | ref low | ref high | unit
+        if len(numbers) >= 3:
+            result_x_values.append(numbers[0])
+            reference_x_values.append(numbers[1])
+            test_left_values.append(word_left(row[test_index]))
+            right_values.append(max(word_right(word) for word in row))
+
+        # Blank result row:
+        # test | --- | ref low | ref high | unit
+        elif len(numbers) >= 2:
+            null_words = [word for word in row[test_index + 1 :] if is_null_marker(word.get("text"))]
+
+            if null_words:
+                result_x_values.append(min(word_center_x(word) for word in null_words))
+                reference_x_values.append(numbers[0])
+                test_left_values.append(word_left(row[test_index]))
+                right_values.append(max(word_right(word) for word in row))
+
+    if not result_x_values or not reference_x_values:
+        return None
+
+    result_x = median(result_x_values)
+    reference_x = median(reference_x_values)
+
+    if reference_x <= result_x:
+        return None
+
+    return PageColumns(
+        page=page,
+        test_left=min(test_left_values) if test_left_values else 0,
+        result_left=result_x - 26,
+        reference_left=reference_x - 26,
+        right_edge=max(right_values) if right_values else reference_x + 240,
+    )
+
+
+def build_page_columns(rows: list[list[dict]]) -> dict[int, PageColumns]:
+    pages = sorted({int(row[0].get("page", 0)) for row in rows if row})
+    output: dict[int, PageColumns] = {}
+
+    for page in pages:
+        columns = infer_columns_from_header(page, rows) or infer_columns_from_lab_rows(page, rows)
+
+        if columns:
+            output[page] = columns
+
+    return output
+
+
+def words_between_x(row_words: list[dict], left: float, right: float) -> list[dict]:
+    return [word for word in row_words if word_center_x(word) >= left and word_center_x(word) < right]
+
+
+def words_after_x(row_words: list[dict], left: float) -> list[dict]:
+    return [word for word in row_words if word_center_x(word) >= left]
+
+
+def extract_first_number_from_words(words: list[dict]) -> str | None:
+    for word in words:
+        text = clean_word(word.get("text"))
+
+        if is_null_marker(text):
+            continue
+
+        if is_number(text):
+            return normalize_decimal(text)
+
+    text = " ".join(clean_word(word.get("text")) for word in words)
+    match = NUMBER_RE.search(text)
+
+    if not match:
+        return None
+
+    return normalize_decimal(match.group(0))
+
+
+def words_have_null_marker(words: list[dict]) -> bool:
+    return any(is_null_marker(word.get("text")) for word in words)
+
+
+def extract_unit_from_text(text: str, test_key: str) -> str | None:
+    unit_patterns = [
+        (r"10\s*\^?\s*3\s*/?\s*u?l", "10^3/uL"),
+        (r"10\s*\^?\s*6\s*/?\s*u?l", "10^6/uL"),
+        (r"\bg\s*/\s*dL\b", "g/dL"),
+        (r"\bg\s*/\s*dl\b", "g/dL"),
+        (r"\bfL\b", "fL"),
+        (r"\bFL\b", "fL"),
+        (r"\bfl\b", "fL"),
+        (r"\bpg\b", "pg"),
+        (r"%", "%"),
     ]
 
-    for pattern in explicit_patterns:
-        match = re.search(pattern, row, re.IGNORECASE)
+    for pattern, normalized_unit in unit_patterns:
+        if re.search(pattern, text, re.IGNORECASE):
+            return normalized_unit
 
-        if match:
-            return clean_unit(match.group(0), test_key)
+    return clean_unit(None, test_key)
 
-    return DEFAULT_CBC_UNITS.get(test_key)
+
+def extract_reference_and_unit_from_words(
+    words: list[dict],
+    test_key: str,
+) -> tuple[str | None, str | None]:
+    """
+    Reference column can be:
+      3.98 - 10.00 10^3/uL
+      3.93 - 6.08 10^6/uL
+      11.2 - 17.5 g/dL
+      34.1 - 51.0 %
+      13.0 - 43.0 %
+    This function separates:
+      reference_range -> only numeric interval
+      unit -> only unit
+    """
+    if not words:
+        return None, clean_unit(None, test_key)
+
+    text = " ".join(clean_word(word.get("text")) for word in words)
+    text = text.replace(",", ".")
+    unit = extract_unit_from_text(text, test_key)
+
+    reference_range = extract_reference_range(text)
+
+    if reference_range:
+        return reference_range, unit
+
+    numbers = []
+
+    for word in words:
+        if is_number(word.get("text")):
+            parsed = normalize_decimal(word.get("text"))
+
+            if parsed is not None:
+                numbers.append(parsed)
+
+    if len(numbers) >= 2:
+        low = numbers[0]
+        high = numbers[1]
+
+        try:
+            low_float = float(low)
+            high_float = float(high)
+        except Exception:
+            low_float = None
+            high_float = None
+
+        if low_float is not None and high_float is not None:
+            if high_float < low_float:
+                low, high = high, low
+
+            reference_range = f"{low} - {high}"
+
+    return reference_range, unit
 
 
 def detect_flag(row_words: list[dict], value: str | None, reference_range: str | None) -> str | None:
@@ -336,57 +446,140 @@ def detect_flag(row_words: list[dict], value: str | None, reference_range: str |
     return infer_flag(value, reference_range)
 
 
-def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
+def parse_row_by_grid(row_words: list[dict], columns: PageColumns | None) -> dict | None:
+    test_key, _test_index = possible_test_key_from_row(row_words)
+
+    if not test_key:
+        return None
+
+    if columns is None:
+        return parse_row_without_columns(row_words)
+
+    result_words = words_between_x(row_words, columns.result_left, columns.reference_left)
+    reference_words = words_after_x(row_words, columns.reference_left)
+
+    result_value = extract_first_number_from_words(result_words)
+    result_is_null = words_have_null_marker(result_words)
+
+    reference_range, unit = extract_reference_and_unit_from_words(reference_words, test_key)
+
+    if result_is_null or result_value is None:
+        return build_nil_result(
+            raw_test_name=test_key,
+            reference_range=reference_range,
+            unit=unit,
+            confidence=0.98,
+        )
+
+    flag = detect_flag(row_words, result_value, reference_range)
+
+    return build_lab_result(
+        raw_test_name=test_key,
+        value=result_value,
+        flag=flag,
+        reference_range=reference_range,
+        unit=unit,
+        confidence=0.98 if reference_range else 0.82,
+    )
+
+
+def parse_row_without_columns(row_words: list[dict]) -> dict | None:
     test_key, test_index = possible_test_key_from_row(row_words)
 
     if not test_key:
         return None
 
-    result_numbers, reference_numbers, null_words = split_row_into_result_and_reference(row_words, test_index)
+    after_test = row_words[test_index + 1 :]
 
-    reference_range = get_reference_range(reference_numbers, row_words)
-    unit = detect_unit(row_words, test_key, reference_numbers)
+    null_positions = [word_center_x(word) for word in after_test if is_null_marker(word.get("text"))]
+    number_words = [word for word in after_test if is_number(word.get("text"))]
 
-    if null_words and not result_numbers:
+    if null_positions and number_words:
+        first_null = min(null_positions)
+        first_number = min(word_center_x(word) for word in number_words)
+
+        # Result is blank/---, numbers belong to reference range.
+        if first_null <= first_number + 8:
+            reference_range, unit = extract_reference_and_unit_from_words(number_words, test_key)
+
+            return build_nil_result(
+                raw_test_name=test_key,
+                reference_range=reference_range,
+                unit=unit,
+                confidence=0.90,
+            )
+
+    if null_positions and not number_words:
+        _, unit = extract_reference_and_unit_from_words(after_test, test_key)
+
         return build_nil_result(
             raw_test_name=test_key,
-            reference_range=reference_range,
+            reference_range=None,
             unit=unit,
-            confidence=0.99,
+            confidence=0.90,
         )
 
-    if not result_numbers:
+    if not number_words:
         return None
 
-    value = normalize_decimal(str(result_numbers[0].get("number_text")))
+    result_value = normalize_decimal(number_words[0].get("text"))
+    reference_range, unit = extract_reference_and_unit_from_words(number_words[1:], test_key)
 
-    if value is None:
+    if result_value is None:
         return build_nil_result(
             raw_test_name=test_key,
             reference_range=reference_range,
             unit=unit,
-            confidence=0.95,
+            confidence=0.85,
         )
 
-    flag = detect_flag(row_words, value, reference_range)
+    flag = detect_flag(row_words, result_value, reference_range)
 
     return build_lab_result(
         raw_test_name=test_key,
-        value=value,
+        value=result_value,
         flag=flag,
         reference_range=reference_range,
         unit=unit,
-        confidence=0.98 if reference_range else 0.80,
+        confidence=0.78,
     )
+
+
+def merge_duplicate_labs(existing: dict, candidate: dict) -> dict:
+    def score(row: dict) -> float:
+        total = float(row.get("confidence") or 0)
+
+        if row.get("value") is not None:
+            total += 0.40
+
+        if row.get("reference_range"):
+            total += 0.35
+
+        if row.get("unit"):
+            total += 0.15
+
+        if row.get("flag") in {"High", "Low"}:
+            total += 0.05
+
+        return total
+
+    return candidate if score(candidate) >= score(existing) else existing
 
 
 def parse_labs_from_ocr_words(words: list[dict]) -> list[dict]:
     rows = group_words_into_rows(words)
-    labs: list[dict] = []
-    seen: set[str] = set()
+    columns_by_page = build_page_columns(rows)
+
+    labs_by_key: dict[str, dict] = {}
 
     for row in rows:
-        parsed = parse_row_by_coordinates(row)
+        if not row:
+            continue
+
+        page = int(row[0].get("page", 0))
+        columns = columns_by_page.get(page)
+
+        parsed = parse_row_by_grid(row, columns)
 
         if not parsed:
             continue
@@ -398,10 +591,9 @@ def parse_labs_from_ocr_words(words: list[dict]) -> list[dict]:
 
         key = str(key).lower()
 
-        if key in seen:
-            continue
+        if key in labs_by_key:
+            labs_by_key[key] = merge_duplicate_labs(labs_by_key[key], parsed)
+        else:
+            labs_by_key[key] = parsed
 
-        seen.add(key)
-        labs.append(parsed)
-
-    return labs
+    return list(labs_by_key.values())
