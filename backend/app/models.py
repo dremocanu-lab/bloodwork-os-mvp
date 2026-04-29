@@ -1,4 +1,4 @@
-from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -127,7 +127,7 @@ class Document(Base):
 
     note_body = Column(Text, nullable=True)
 
-    is_verified = Column(Boolean, nullable=False, default=False)
+    is_verified = Column(Integer, nullable=False, default=0)
     verified_by = Column(String, nullable=True)
     verified_at = Column(String, nullable=True)
     last_edited_at = Column(String, nullable=True)
