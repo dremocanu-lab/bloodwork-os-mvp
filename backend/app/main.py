@@ -1137,7 +1137,7 @@ def verify_document(
     if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    document.is_verified = True
+    document.is_verified = 1
     document.verified_by = payload.verifier_name or current_user.full_name
     document.verified_at = now_iso()
 
@@ -1199,7 +1199,7 @@ def update_document(
     document.generated_on = parsed.generated_on
     document.note_body = parsed.note_body
     document.last_edited_at = now_iso()
-    document.is_verified = False
+    document.is_verified = 0
     document.verified_by = None
     document.verified_at = None
 
@@ -1544,7 +1544,7 @@ async def upload_file(
         registered_on=parsed_data.get("registered_on"),
         generated_on=parsed_data.get("generated_on"),
         note_body=parsed_data.get("note_body"),
-        is_verified=False,
+        is_verified=0,
         last_edited_at=None,
         created_at=now_iso(),
     )
