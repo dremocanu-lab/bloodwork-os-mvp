@@ -11,11 +11,12 @@ from app.parsers.bloodwork_parser import (
     build_lab_result,
     build_nil_result,
     clean_unit,
-    detect_explicit_flag,
     extract_reference_range,
     infer_flag,
     normalize_decimal,
+    normalize_reference_number,
     normalize_test_token,
+    split_fused_reference_range,
     to_float,
 )
 
@@ -183,39 +184,6 @@ def possible_test_key_from_row(row_words: list[dict]) -> tuple[str | None, int]:
     return None, -1
 
 
-def numeric_words_after_test(row_words: list[dict], test_index: int) -> list[dict]:
-    test_word = row_words[test_index]
-    test_right = word_right(test_word)
-
-    result = []
-
-    for word in row_words[test_index + 1 :]:
-        if float(word.get("left", 0)) < test_right - 3:
-            continue
-
-        text = clean_word(word.get("text"))
-
-        if not is_number(text):
-            continue
-
-        normalized = normalize_decimal(text)
-
-        if normalized is None:
-            continue
-
-        result.append(
-            {
-                **word,
-                "number_text": normalized,
-                "x": word_center_x(word),
-                "left_f": float(word.get("left", 0)),
-                "right_f": word_right(word),
-            }
-        )
-
-    return merge_split_decimal_numbers(result)
-
-
 def merge_split_decimal_numbers(number_words: list[dict]) -> list[dict]:
     merged = []
     i = 0
@@ -255,24 +223,37 @@ def merge_split_decimal_numbers(number_words: list[dict]) -> list[dict]:
     return merged
 
 
-def find_column_split(numbers: list[dict]) -> int:
-    if len(numbers) <= 1:
-        return 1
+def numeric_words_after_test(row_words: list[dict], test_index: int) -> list[dict]:
+    test_word = row_words[test_index]
+    test_right = word_right(test_word)
 
-    gaps = []
+    result = []
 
-    for i in range(len(numbers) - 1):
-        gap = float(numbers[i + 1]["x"]) - float(numbers[i]["x"])
-        gaps.append((gap, i + 1))
+    for word in row_words[test_index + 1 :]:
+        if float(word.get("left", 0)) < test_right - 3:
+            continue
 
-    gaps.sort(reverse=True)
+        text = clean_word(word.get("text"))
 
-    biggest_gap, split_index = gaps[0]
+        if not is_number(text):
+            continue
 
-    if biggest_gap >= 45:
-        return split_index
+        normalized = normalize_decimal(text)
 
-    return 1
+        if normalized is None:
+            continue
+
+        result.append(
+            {
+                **word,
+                "number_text": normalized,
+                "x": word_center_x(word),
+                "left_f": float(word.get("left", 0)),
+                "right_f": word_right(word),
+            }
+        )
+
+    return merge_split_decimal_numbers(result)
 
 
 def split_row_into_result_and_reference(row_words: list[dict], test_index: int) -> tuple[list[dict], list[dict], list[dict]]:
@@ -282,40 +263,41 @@ def split_row_into_result_and_reference(row_words: list[dict], test_index: int) 
     if not numbers:
         return [], [], null_words
 
-    split_index = find_column_split(numbers)
+    # For Fundeni CBC rows:
+    # first number after test = result
+    # next two numbers = reference interval
+    result_numbers = numbers[:1]
+    reference_numbers = numbers[1:3]
 
-    result_numbers = numbers[:split_index]
-    reference_numbers = numbers[split_index:]
-
-    if len(result_numbers) > 1:
-        result_numbers = [result_numbers[0]]
-
-    if len(reference_numbers) < 2 and len(numbers) >= 3:
-        reference_numbers = numbers[1:3]
-
-    return result_numbers, reference_numbers[:2], null_words
+    return result_numbers, reference_numbers, null_words
 
 
-def get_reference_range(reference_numbers: list[dict]) -> str | None:
-    if len(reference_numbers) < 2:
-        return None
+def get_reference_range(reference_numbers: list[dict], row_words: list[dict] | None = None) -> str | None:
+    if len(reference_numbers) >= 2:
+        low = normalize_reference_number(str(reference_numbers[0].get("number_text")))
+        high = normalize_reference_number(str(reference_numbers[1].get("number_text")))
 
-    low = normalize_decimal(str(reference_numbers[0].get("number_text")))
-    high = normalize_decimal(str(reference_numbers[1].get("number_text")))
+        if low is not None and high is not None:
+            low_float = to_float(low)
+            high_float = to_float(high)
 
-    if low is None or high is None:
-        return None
+            if low_float is not None and high_float is not None:
+                if high_float < low_float:
+                    low, high = high, low
 
-    low_float = to_float(low)
-    high_float = to_float(high)
+                return f"{low} - {high}"
 
-    if low_float is None or high_float is None:
-        return None
+    if row_words:
+        text = row_text(row_words)
 
-    if high_float < low_float:
-        low, high = high, low
+        fused = split_fused_reference_range(text)
 
-    return f"{low} - {high}"
+        if fused:
+            return f"{fused[0]} - {fused[1]}"
+
+        return extract_reference_range(text)
+
+    return None
 
 
 def detect_unit(row_words: list[dict], test_key: str, reference_numbers: list[dict]) -> str | None:
@@ -362,7 +344,7 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
 
     result_numbers, reference_numbers, null_words = split_row_into_result_and_reference(row_words, test_index)
 
-    reference_range = get_reference_range(reference_numbers)
+    reference_range = get_reference_range(reference_numbers, row_words)
     unit = detect_unit(row_words, test_key, reference_numbers)
 
     if null_words and not result_numbers:

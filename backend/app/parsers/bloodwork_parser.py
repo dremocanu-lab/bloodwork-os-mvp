@@ -56,7 +56,6 @@ KNOWN_TEST_ALIASES = {
     "GLUCOZA": "Glucose",
     "GLICEMIE": "Glucose",
     "CREATININA": "Creatinine",
-    "CREATININĂ": "Creatinine",
     "CREATININE": "Creatinine",
     "UREE": "Urea",
     "UREA": "Urea",
@@ -166,9 +165,6 @@ ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
 ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
 
 NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
-RANGE_RE = re.compile(
-    r"(?P<low>[-+]?\d+(?:[.,]\d+)?)\s*[-–—]\s*(?P<high>[-+]?\d+(?:[.,]\d+)?)"
-)
 
 
 def clean_text(value: Any) -> str:
@@ -180,6 +176,7 @@ def clean_text(value: Any) -> str:
     cleaned = cleaned.replace("\u00a0", " ")
     cleaned = cleaned.replace("µ", "u").replace("μ", "u")
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
+    cleaned = cleaned.replace("|", " ")
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
     return cleaned
@@ -202,6 +199,20 @@ def normalize_decimal(value: Any) -> str | None:
 
     if cleaned in {"", "+", "-", ".", "+.", "-."}:
         return None
+
+    return cleaned
+
+
+def normalize_reference_number(value: Any) -> str | None:
+    cleaned = normalize_decimal(value)
+
+    if cleaned is None:
+        return None
+
+    # CBC reference ranges in these reports are non-negative.
+    # OCR sometimes attaches the separator dash to the upper number.
+    if cleaned.startswith("-"):
+        cleaned = cleaned[1:]
 
     return cleaned
 
@@ -259,14 +270,12 @@ def detect_test_key(value: Any) -> str | None:
 
     parts = re.split(r"[\s|:;]+", text)
 
-    # Exact token pass first.
     for part in parts:
         token = normalize_test_token(part)
 
         if token in KNOWN_TEST_ALIASES:
             return token
 
-    # Compact row pass.
     compact = normalize_test_token(text)
 
     for alias in sorted(KNOWN_TEST_ALIASES.keys(), key=len, reverse=True):
@@ -298,7 +307,7 @@ def clean_unit(unit: Any, test_key: str | None = None) -> str | None:
     if lower == "pg":
         return "pg"
 
-    if lower in {"g/dl", "g/dL".lower()}:
+    if lower in {"g/dl"}:
         return "g/dL"
 
     if re.search(r"10\^?3/?u?l", compact, re.IGNORECASE):
@@ -316,7 +325,7 @@ def clean_unit(unit: Any, test_key: str | None = None) -> str | None:
     return cleaned
 
 
-def extract_unit_from_reference(reference_cell: str, test_key: str | None = None) -> str | None:
+def extract_unit_from_reference(reference_cell: Any, test_key: str | None = None) -> str | None:
     text = clean_text(reference_cell)
 
     unit_patterns = [
@@ -342,30 +351,112 @@ def extract_unit_from_reference(reference_cell: str, test_key: str | None = None
     return clean_unit(None, test_key)
 
 
+def split_fused_reference_range(text: Any) -> tuple[str, str] | None:
+    """
+    Repairs common OCR-fused reference ranges:
+      3.936-08  -> 3.93 - 6.08
+      34.151-0  -> 34.1 - 51.0
+      11.217-5  -> 11.2 - 17.5
+      35.146-3  -> 35.1 - 46.3
+      11.614-4  -> 11.6 - 14.4
+      0.010-08  -> 0.01 - 0.08
+    """
+    compact = clean_text(text).replace(" ", "")
+    compact = compact.replace(",", ".")
+    compact = compact.replace("−", "-").replace("–", "-").replace("—", "-")
+
+    # Case: 3.936-08 -> 3.93 and 6.08
+    match = re.search(r"(?<!\d)(\d{1,3})\.(\d{1,3})(\d)-(\d{1,3})(?!\d)", compact)
+
+    if match:
+        whole = match.group(1)
+        low_decimals = match.group(2)
+        high_first_digit = match.group(3)
+        high_rest = match.group(4)
+
+        low = f"{whole}.{low_decimals}"
+        high = f"{high_first_digit}.{high_rest}"
+
+        low_f = to_float(low)
+        high_f = to_float(high)
+
+        if low_f is not None and high_f is not None and high_f > low_f:
+            return low, high
+
+    # Case: 34.151-0 -> 34.1 and 51.0
+    match = re.search(r"(?<!\d)(\d{1,3})\.(\d)(\d{2})-(\d)(?!\d)", compact)
+
+    if match:
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+
+        low_f = to_float(low)
+        high_f = to_float(high)
+
+        if low_f is not None and high_f is not None and high_f > low_f:
+            return low, high
+
+    return None
+
+
 def extract_reference_range(value: Any) -> str | None:
     text = clean_text(value)
 
     if not text:
         return None
 
-    match = RANGE_RE.search(text)
+    fused = split_fused_reference_range(text)
 
-    if not match:
+    if fused:
+        low, high = fused
+        return f"{low} - {high}"
+
+    text = text.replace(",", ".")
+    text = text.replace("−", "-").replace("–", "-").replace("—", "-")
+
+    # Explicit normal range.
+    explicit = re.search(
+        r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
+        text,
+    )
+
+    if explicit:
+        low = normalize_reference_number(explicit.group(1))
+        high = normalize_reference_number(explicit.group(2))
+
+        if low is not None and high is not None:
+            low_f = to_float(low)
+            high_f = to_float(high)
+
+            if low_f is not None and high_f is not None:
+                if high_f < low_f:
+                    low, high = high, low
+
+                return f"{low} - {high}"
+
+    nums = NUMBER_RE.findall(text)
+
+    cleaned_nums = []
+
+    for num in nums:
+        cleaned = normalize_reference_number(num)
+
+        if cleaned is not None:
+            cleaned_nums.append(cleaned)
+
+    if len(cleaned_nums) < 2:
         return None
 
-    low = normalize_decimal(match.group("low"))
-    high = normalize_decimal(match.group("high"))
+    low = cleaned_nums[0]
+    high = cleaned_nums[1]
 
-    if low is None or high is None:
+    low_f = to_float(low)
+    high_f = to_float(high)
+
+    if low_f is None or high_f is None:
         return None
 
-    low_float = to_float(low)
-    high_float = to_float(high)
-
-    if low_float is None or high_float is None:
-        return None
-
-    if high_float < low_float:
+    if high_f < low_f:
         low, high = high, low
 
     return f"{low} - {high}"
@@ -450,7 +541,7 @@ def build_lab_result(
     normalized = normalize_test_name(display_candidate)
 
     final_value = normalize_decimal(value)
-    final_reference = extract_reference_range(reference_range) or clean_text(reference_range) or None
+    final_reference = extract_reference_range(reference_range)
     final_unit = clean_unit(unit, test_key)
 
     final_flag = None
@@ -470,6 +561,7 @@ def build_lab_result(
 
         final_flag = explicit_flag or infer_flag(final_value, final_reference)
 
+        # Safety rule.
         if not final_reference and final_flag == "Normal":
             final_flag = None
 
@@ -637,14 +729,6 @@ def compact_alias_pattern(alias: str) -> str:
 
 
 def parse_flat_known_cbc_rows(text: str) -> list[dict]:
-    """
-    Last-resort text parser for Fundeni CBC pages.
-
-    It looks for known CBC aliases in order and tries to capture:
-      alias result reference-low reference-high unit
-
-    This is intentionally conservative. It will not call Normal without a reference.
-    """
     flat = clean_text(text)
     labs = []
     seen = set()
@@ -664,7 +748,7 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
         for alias in aliases:
             pattern = compact_alias_pattern(alias)
             match = re.search(
-                rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])(?P<tail>.{{0,180}})",
+                rf"(?<![A-Za-z0-9]){pattern}(?![A-Za-z0-9])(?P<tail>.{{0,220}})",
                 flat,
                 re.IGNORECASE,
             )
@@ -677,7 +761,6 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
 
         tail = match.group("tail") or ""
 
-        # Stop at next CBC alias if found.
         cut = len(tail)
 
         for other_key in CBC_ORDER:
@@ -713,9 +796,13 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
         value = normalize_decimal(numbers[0])
         reference_range = None
 
-        if len(numbers) >= 3:
-            low = normalize_decimal(numbers[1])
-            high = normalize_decimal(numbers[2])
+        fused_reference = split_fused_reference_range(tail)
+
+        if fused_reference:
+            reference_range = f"{fused_reference[0]} - {fused_reference[1]}"
+        elif len(numbers) >= 3:
+            low = normalize_reference_number(numbers[1])
+            high = normalize_reference_number(numbers[2])
 
             if low and high:
                 low_f = to_float(low)
@@ -759,7 +846,7 @@ def dedupe_labs(lab_lists: list[list[dict]]) -> list[dict]:
             value += 0.35
 
         if row.get("reference_range"):
-            value += 0.45
+            value += 0.55
 
         if row.get("unit"):
             value += 0.15
