@@ -740,6 +740,20 @@ export default function MyRecordsPage() {
     }
   }
 
+  async function refreshRecordsSilently() {
+    try {
+      const profileResponse = await fetchProfile();
+
+      await Promise.all([
+        fetchRequests(),
+        fetchTrends(profileResponse.patient.id),
+        refreshUploadJobs(),
+      ]);
+    } catch {
+      // Silent refresh should never break the page.
+    }
+  }
+
   async function respondToRequest(requestId: number, status: "approved" | "denied") {
     try {
       setError("");
@@ -816,16 +830,16 @@ export default function MyRecordsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-useEffect(() => {
-  if (activeCount <= 0) return;
+  useEffect(() => {
+    if (activeCount <= 0) return;
 
-  const interval = window.setInterval(() => {
-    void refreshRecordsSilently();
-  }, 4000);
+    const interval = window.setInterval(() => {
+      void refreshRecordsSilently();
+    }, 4000);
 
-  return () => window.clearInterval(interval);
-  // eslint-disable-next-line react-hooks/exhaustive-deps
-}, [activeCount]);
+    return () => window.clearInterval(interval);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [activeCount]);
 
   useEffect(() => {
     setVisibleCount(PAGE_SIZE);
