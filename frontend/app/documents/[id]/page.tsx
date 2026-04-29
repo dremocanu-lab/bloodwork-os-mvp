@@ -51,6 +51,7 @@ type LinkedDocument = {
   report_type?: string | null;
   section: string;
   test_date?: string | null;
+  collected_on?: string | null;
   is_verified?: boolean;
   is_linked?: boolean;
 };
@@ -108,6 +109,20 @@ type EditableLabRow = {
   unit?: string | null;
 };
 
+const CATEGORY_ORDER = [
+  "Hematologie",
+  "Coagulare",
+  "Biochimie generala",
+  "Endocrinologie",
+  "Imunologie",
+  "Markeri tumorali",
+  "Biologie moleculara generala",
+  "Microbiologie",
+  "Alte analize",
+];
+
+const CATEGORY_OPTIONS = CATEGORY_ORDER;
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
@@ -153,7 +168,7 @@ function formatDate(value?: string | null) {
 }
 
 function bestDisplayName(lab: LabRow | EditableLabRow) {
-  return lab.display_name || lab.raw_test_name || lab.canonical_name || "Unnamed test";
+  return lab.display_name || lab.canonical_name || lab.raw_test_name || "Unnamed test";
 }
 
 function getFlagStyle(flag?: string | null) {
@@ -182,6 +197,11 @@ function getFlagStyle(flag?: string | null) {
   };
 }
 
+function categorySortIndex(category: string) {
+  const index = CATEGORY_ORDER.indexOf(category);
+  return index === -1 ? 999 : index;
+}
+
 export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
@@ -196,6 +216,8 @@ export default function DocumentStructuredPage() {
   const [verifying, setVerifying] = useState(false);
   const [saving, setSaving] = useState(false);
   const [savingNote, setSavingNote] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [error, setError] = useState("");
 
   const [editMode, setEditMode] = useState(false);
@@ -263,7 +285,7 @@ export default function DocumentStructuredPage() {
         raw_test_name: lab.raw_test_name || "",
         canonical_name: lab.canonical_name || "",
         display_name: lab.display_name || "",
-        category: lab.category || "",
+        category: lab.category || "Alte analize",
         value: lab.value || "",
         flag: lab.flag || "",
         reference_range: lab.reference_range || "",
@@ -288,30 +310,34 @@ export default function DocumentStructuredPage() {
     }
 
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
   const isNote = documentData?.section === "notes";
   const canEditStructured = currentUser?.role === "doctor" || currentUser?.role === "admin";
   const canVerify = currentUser?.role === "doctor" || currentUser?.role === "admin";
   const canEditNote = Boolean(documentData?.can_edit_note);
+  const canDelete =
+    Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
+    currentUser?.role === "admin";
 
   const abnormalLabs = useMemo(() => {
     return (documentData?.parsed_data.labs || []).filter((lab) => lab.is_abnormal || isAbnormalFlag(lab.flag));
   }, [documentData]);
 
-  const groupedLabs = useMemo(() => {
+  const orderedGroupedLabs = useMemo(() => {
     const groups = new Map<string, LabRow[]>();
 
     for (const lab of documentData?.parsed_data.labs || []) {
-      const key = lab.category || "uncategorized";
+      const key = lab.category || "Alte analize";
+
       if (!groups.has(key)) groups.set(key, []);
       groups.get(key)?.push(lab);
     }
 
-    return Array.from(groups.entries()).map(([category, rows]) => ({
-      category,
-      rows,
-    }));
+    return Array.from(groups.entries())
+      .sort(([a], [b]) => categorySortIndex(a) - categorySortIndex(b))
+      .map(([category, rows]) => ({ category, rows }));
   }, [documentData]);
 
   async function openOriginal() {
@@ -338,7 +364,12 @@ export default function DocumentStructuredPage() {
         window.URL.revokeObjectURL(fileUrl);
       }, 60_000);
     } catch (err) {
-      setError(getErrorMessage(err, "Could not open original file. If this is an older upload, re-upload it after the persistent disk fix."));
+      setError(
+        getErrorMessage(
+          err,
+          "Could not open original file. If this is an older upload, re-upload it after the persistent disk fix."
+        )
+      );
     } finally {
       setOpeningOriginal(false);
     }
@@ -364,10 +395,30 @@ export default function DocumentStructuredPage() {
     }
   }
 
+  async function deleteDocument() {
+    if (!documentData) return;
+
+    try {
+      setDeleting(true);
+      setError("");
+
+      await api.delete(`/documents/${documentData.document_id}`);
+
+      if (documentData.patient_id) {
+        router.push(`/patients/${documentData.patient_id}`);
+      } else {
+        router.push("/my-records");
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not delete document."));
+      setConfirmDeleteOpen(false);
+    } finally {
+      setDeleting(false);
+    }
+  }
+
   function updateLab(index: number, key: keyof EditableLabRow, value: string) {
-    setLabs((prev) =>
-      prev.map((lab, currentIndex) => (currentIndex === index ? { ...lab, [key]: value } : lab))
-    );
+    setLabs((prev) => prev.map((lab, currentIndex) => (currentIndex === index ? { ...lab, [key]: value } : lab)));
   }
 
   function addLabRow() {
@@ -377,7 +428,7 @@ export default function DocumentStructuredPage() {
         raw_test_name: "",
         canonical_name: "",
         display_name: "",
-        category: "",
+        category: "Alte analize",
         value: "",
         flag: "Normal",
         reference_range: "",
@@ -420,10 +471,10 @@ export default function DocumentStructuredPage() {
           registered_on: registeredOn || null,
           generated_on: generatedOn || null,
           labs: labs.map((lab) => ({
-            raw_test_name: lab.raw_test_name || null,
-            canonical_name: lab.canonical_name || null,
-            display_name: lab.display_name || null,
-            category: lab.category || null,
+            raw_test_name: lab.raw_test_name || lab.display_name || lab.canonical_name || null,
+            canonical_name: lab.canonical_name || lab.display_name || lab.raw_test_name || null,
+            display_name: lab.display_name || lab.canonical_name || lab.raw_test_name || null,
+            category: lab.category || "Alte analize",
             value: lab.value || null,
             flag: lab.flag || null,
             reference_range: lab.reference_range || null,
@@ -473,7 +524,15 @@ export default function DocumentStructuredPage() {
 
   if (loading || !currentUser || !documentData) {
     return (
-      <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
         <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
           <Spinner size={20} />
           <span className="muted-text">Loading structured document...</span>
@@ -492,8 +551,8 @@ export default function DocumentStructuredPage() {
         parsed.is_verified ? "Verified" : "Unverified"
       }`}
       rightContent={
-        <button className="secondary-btn" onClick={() => router.push(`/patients/${documentData.patient_id}`)}>
-          Back to chart
+        <button className="secondary-btn" onClick={() => router.back()}>
+          Back
         </button>
       }
     >
@@ -509,6 +568,72 @@ export default function DocumentStructuredPage() {
           }}
         >
           {error}
+        </div>
+      )}
+
+      {confirmDeleteOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(15, 23, 42, 0.42)",
+            display: "grid",
+            placeItems: "center",
+            padding: 20,
+            backdropFilter: "blur(10px)",
+          }}
+        >
+          <div
+            className="soft-card"
+            style={{
+              width: "min(520px, 100%)",
+              padding: 24,
+              boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
+            }}
+          >
+            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>Delete this report?</div>
+
+            <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
+              This removes the report from the patient files and timeline. This can only be done by the uploader or an
+              admin.
+            </div>
+
+            <div
+              className="soft-card-tight"
+              style={{
+                marginTop: 16,
+                padding: 14,
+                background: "var(--panel-2)",
+              }}
+            >
+              <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
+              <div className="muted-text" style={{ marginTop: 5 }}>
+                Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+              <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+                Cancel
+              </button>
+              <button
+                onClick={deleteDocument}
+                disabled={deleting}
+                style={{
+                  border: "1px solid var(--danger-border)",
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  borderRadius: 14,
+                  padding: "11px 15px",
+                  fontWeight: 950,
+                  cursor: deleting ? "not-allowed" : "pointer",
+                }}
+              >
+                {deleting ? "Deleting..." : "Delete report"}
+              </button>
+            </div>
+          </div>
         </div>
       )}
 
@@ -599,6 +724,23 @@ export default function DocumentStructuredPage() {
             {isNote && canEditNote && (
               <button className={noteEditMode ? "secondary-btn" : "primary-btn"} onClick={() => setNoteEditMode((prev) => !prev)}>
                 {noteEditMode ? "Cancel edit" : "Edit note"}
+              </button>
+            )}
+
+            {canDelete && (
+              <button
+                onClick={() => setConfirmDeleteOpen(true)}
+                style={{
+                  border: "1px solid var(--danger-border)",
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  borderRadius: 14,
+                  padding: "11px 15px",
+                  fontWeight: 950,
+                  cursor: "pointer",
+                }}
+              >
+                Delete
               </button>
             )}
           </div>
@@ -730,7 +872,7 @@ export default function DocumentStructuredPage() {
               <div>
                 <div className="section-title">Structured lab rows</div>
                 <div className="muted-text" style={{ marginTop: 6 }}>
-                  Edit or add any extracted CBC row.
+                  Edit categories, values, units, references, and flags.
                 </div>
               </div>
 
@@ -747,7 +889,7 @@ export default function DocumentStructuredPage() {
                   style={{
                     padding: 14,
                     display: "grid",
-                    gridTemplateColumns: "1.1fr 0.8fr 0.7fr 1fr 0.8fr auto",
+                    gridTemplateColumns: "1.1fr 1fr 0.8fr 0.7fr 1fr 0.8fr auto",
                     gap: 10,
                     alignItems: "center",
                   }}
@@ -761,6 +903,19 @@ export default function DocumentStructuredPage() {
                     }}
                     placeholder="Test"
                   />
+
+                  <select
+                    className="text-input"
+                    value={lab.category || "Alte analize"}
+                    onChange={(e) => updateLab(index, "category", e.target.value)}
+                  >
+                    {CATEGORY_OPTIONS.map((category) => (
+                      <option key={category} value={category}>
+                        {category}
+                      </option>
+                    ))}
+                  </select>
+
                   <input className="text-input" value={lab.value || ""} onChange={(e) => updateLab(index, "value", e.target.value)} placeholder="Value" />
                   <input className="text-input" value={lab.unit || ""} onChange={(e) => updateLab(index, "unit", e.target.value)} placeholder="Unit" />
                   <input
@@ -895,33 +1050,42 @@ export default function DocumentStructuredPage() {
             <div
               className="soft-card"
               style={{
-                padding: 22,
+                padding: 24,
                 marginBottom: 24,
                 borderColor: "var(--danger-border)",
-                background: "var(--danger-bg)",
+                background: "linear-gradient(135deg, var(--danger-bg), var(--panel))",
               }}
             >
-              <div style={{ fontWeight: 950, color: "var(--danger-text)", fontSize: 18 }}>
+              <div className="section-title" style={{ marginBottom: 12 }}>
                 Abnormal results
               </div>
 
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                {abnormalLabs.map((lab) => (
+              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+                {abnormalLabs.map((lab, index) => (
                   <span
-                    key={lab.id}
+                    key={`abnormal-${lab.id}-${lab.canonical_name || lab.display_name || lab.raw_test_name}-${index}`}
                     style={{
                       display: "inline-flex",
+                      alignItems: "center",
+                      gap: 8,
                       padding: "8px 11px",
                       borderRadius: 999,
                       background: "var(--panel)",
                       color: "var(--danger-text)",
                       border: "1px solid var(--danger-border)",
-                      fontWeight: 900,
-                      fontSize: 12,
+                      fontWeight: 850,
+                      fontSize: 13,
                     }}
                   >
-                    {bestDisplayName(lab)} {valueOrDash(lab.value)}
-                    {lab.unit ? ` ${lab.unit}` : ""} · {valueOrDash(lab.flag)}
+                    <span
+                      style={{
+                        width: 8,
+                        height: 8,
+                        borderRadius: 999,
+                        background: "var(--danger-text)",
+                      }}
+                    />
+                    {bestDisplayName(lab)} · {valueOrDash(lab.value)} {valueOrDash(lab.unit)}
                   </span>
                 ))}
               </div>
@@ -929,158 +1093,112 @@ export default function DocumentStructuredPage() {
           )}
 
           <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", marginBottom: 18 }}>
-              <div>
-                <div className="section-title">Structured Data</div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  {parsed.labs?.length
-                    ? `${parsed.labs.length} structured lab rows extracted.`
-                    : "No structured lab values found."}
-                </div>
-              </div>
+            <div className="section-title" style={{ marginBottom: 6 }}>
+              Structured Data
             </div>
 
-            {groupedLabs.length > 0 ? (
-              <div style={{ display: "grid", gap: 20 }}>
-                {groupedLabs.map((group) => (
-                  <div key={group.category}>
+            <div className="muted-text" style={{ marginBottom: 18 }}>
+              {(parsed.labs || []).length} structured lab rows extracted.
+            </div>
+
+            {orderedGroupedLabs.length > 0 ? (
+              <div style={{ display: "grid", gap: 26 }}>
+                {orderedGroupedLabs.map(({ category, rows }) => (
+                  <section key={category}>
                     <div
                       style={{
+                        fontSize: 13,
                         fontWeight: 950,
-                        marginBottom: 10,
+                        letterSpacing: "0.06em",
                         textTransform: "uppercase",
-                        fontSize: 12,
-                        letterSpacing: "0.08em",
                         color: "var(--muted)",
+                        marginBottom: 10,
                       }}
                     >
-                      {group.category}
+                      {category}
                     </div>
 
-                    <div style={{ overflowX: "auto" }}>
-                      <table
-                        style={{
-                          width: "100%",
-                          borderCollapse: "separate",
-                          borderSpacing: "0 10px",
-                          minWidth: 760,
-                        }}
-                      >
+                    <div
+                      style={{
+                        border: "1px solid var(--border)",
+                        borderRadius: 20,
+                        overflow: "hidden",
+                        background: "var(--panel)",
+                      }}
+                    >
+                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
                         <thead>
-                          <tr>
-                            {["Test", "Value", "Unit", "Reference range", "Flag"].map((heading) => (
+                          <tr style={{ background: "var(--panel-2)" }}>
+                            {["Test", "Value", "Unit", "Reference range", "Flag"].map((header) => (
                               <th
-                                key={heading}
+                                key={header}
                                 style={{
-                                  textAlign: "left",
-                                  padding: "0 12px 4px",
-                                  color: "var(--muted)",
+                                  padding: 14,
+                                  textAlign: header === "Test" ? "left" : "center",
                                   fontSize: 12,
-                                  fontWeight: 900,
+                                  color: "var(--muted)",
+                                  fontWeight: 950,
+                                  borderBottom: "1px solid var(--border)",
                                 }}
                               >
-                                {heading}
+                                {header}
                               </th>
                             ))}
                           </tr>
                         </thead>
 
                         <tbody>
-                          {group.rows.map((lab) => {
-                            const abnormal = lab.is_abnormal || isAbnormalFlag(lab.flag);
+                          {rows.map((lab, index) => {
                             const flagStyle = getFlagStyle(lab.flag);
+                            const abnormal = lab.is_abnormal || isAbnormalFlag(lab.flag);
 
                             return (
-                              <tr key={lab.id}>
-                                <td
-                                  style={{
-                                    padding: 14,
-                                    borderTopLeftRadius: 16,
-                                    borderBottomLeftRadius: 16,
-                                    border: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    borderRight: "none",
-                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
-                                    fontWeight: 950,
-                                  }}
-                                >
-                                  <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+                              <tr
+                                key={`${category}-${lab.id}-${lab.canonical_name || lab.display_name || lab.raw_test_name}-${index}`}
+                                style={{
+                                  background: abnormal ? "var(--danger-bg)" : "transparent",
+                                  borderBottom: index === rows.length - 1 ? "none" : "1px solid var(--border)",
+                                }}
+                              >
+                                <td style={{ padding: 14, textAlign: "left" }}>
+                                  <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
                                     {abnormal && (
                                       <span
                                         style={{
-                                          width: 10,
-                                          height: 10,
+                                          width: 8,
+                                          height: 8,
                                           borderRadius: 999,
                                           background: "var(--danger-text)",
-                                          display: "inline-flex",
+                                          flex: "0 0 auto",
                                         }}
                                       />
                                     )}
-                                    {bestDisplayName(lab)}
-                                  </div>
-                                  {lab.raw_test_name && lab.raw_test_name !== lab.display_name && (
-                                    <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                                      Raw: {lab.raw_test_name}
+                                    <div>
+                                      <div style={{ fontWeight: 900 }}>{bestDisplayName(lab)}</div>
+                                      <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+                                        Raw: {valueOrDash(lab.raw_test_name)}
+                                      </div>
                                     </div>
-                                  )}
+                                  </div>
                                 </td>
 
-                                <td
-                                  style={{
-                                    padding: 14,
-                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
-                                    fontWeight: 950,
-                                  }}
-                                >
-                                  {valueOrDash(lab.value)}
-                                </td>
-
-                                <td
-                                  style={{
-                                    padding: 14,
-                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
-                                  }}
-                                >
-                                  {valueOrDash(lab.unit)}
-                                </td>
-
-                                <td
-                                  style={{
-                                    padding: 14,
-                                    borderTop: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    borderBottom: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
-                                  }}
-                                >
-                                  {valueOrDash(lab.reference_range)}
-                                </td>
-
-                                <td
-                                  style={{
-                                    padding: 14,
-                                    borderTopRightRadius: 16,
-                                    borderBottomRightRadius: 16,
-                                    border: `1px solid ${abnormal ? "var(--danger-border)" : "var(--border)"}`,
-                                    borderLeft: "none",
-                                    background: abnormal ? "var(--danger-bg)" : "var(--panel)",
-                                  }}
-                                >
+                                <td style={{ padding: 14, textAlign: "center", fontWeight: 950 }}>{valueOrDash(lab.value)}</td>
+                                <td style={{ padding: 14, textAlign: "center" }}>{valueOrDash(lab.unit)}</td>
+                                <td style={{ padding: 14, textAlign: "center" }}>{valueOrDash(lab.reference_range)}</td>
+                                <td style={{ padding: 14, textAlign: "center" }}>
                                   <span
                                     style={{
                                       display: "inline-flex",
-                                      padding: "7px 10px",
+                                      padding: "6px 10px",
                                       borderRadius: 999,
+                                      border: `1px solid ${flagStyle.borderColor}`,
                                       background: flagStyle.background,
                                       color: flagStyle.color,
-                                      border: `1px solid ${flagStyle.borderColor}`,
-                                      fontWeight: 900,
                                       fontSize: 12,
+                                      fontWeight: 950,
                                     }}
                                   >
-                                    {valueOrDash(lab.flag)}
+                                    {valueOrDash(lab.flag || "Normal")}
                                   </span>
                                 </td>
                               </tr>
@@ -1089,78 +1207,48 @@ export default function DocumentStructuredPage() {
                         </tbody>
                       </table>
                     </div>
-                  </div>
+                  </section>
                 ))}
               </div>
             ) : (
-              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
                 <div style={{ fontWeight: 900 }}>No structured lab values found.</div>
-                <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                  If this was a CBC scan, re-upload after the OCR/AI extraction backend is deployed.
+                <div className="muted-text" style={{ marginTop: 6 }}>
+                  If this was a lab report, re-upload after the OCR/AI extraction backend is deployed.
                 </div>
               </div>
             )}
           </div>
-        </>
-      )}
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-          gap: 20,
-          marginTop: 24,
-        }}
-      >
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 14 }}>
-            Audit trail
-          </div>
-
-          <div style={{ display: "grid", gap: 10 }}>
-            {(parsed.audit_logs || []).map((log, index) => (
-              <div key={`${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
-                <div style={{ fontWeight: 900 }}>{log.action}</div>
-                <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.5 }}>
-                  {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
-                </div>
-                {log.details && <div style={{ marginTop: 6 }}>{log.details}</div>}
-              </div>
-            ))}
-
-            {!parsed.audit_logs?.length && <div className="muted-text">No audit logs yet.</div>}
-          </div>
-        </div>
-
-        {isNote && (
           <div className="soft-card" style={{ padding: 24 }}>
             <div className="section-title" style={{ marginBottom: 14 }}>
-              Linked documents
+              Audit trail
             </div>
 
-            <div style={{ display: "grid", gap: 10 }}>
-              {(parsed.linked_documents || []).map((doc) => (
-                <div key={doc.id} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
-                  <div style={{ fontWeight: 900 }}>{valueOrDash(doc.report_name || doc.filename)}</div>
+            <div style={{ display: "grid", gap: 12 }}>
+              {(parsed.audit_logs || []).map((log, index) => (
+                <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 14 }}>
+                  <div style={{ fontWeight: 900 }}>{log.action}</div>
                   <div className="muted-text" style={{ marginTop: 4 }}>
-                    {doc.section} · {valueOrDash(doc.test_date)}
+                    {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                   </div>
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    style={{ marginTop: 10 }}
-                    onClick={() => router.push(`/documents/${doc.id}`)}
-                  >
-                    Open
-                  </button>
+                  {log.details && (
+                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.5 }}>
+                      {log.details}
+                    </div>
+                  )}
                 </div>
               ))}
 
-              {!parsed.linked_documents?.length && <div className="muted-text">No linked documents.</div>}
+              {!parsed.audit_logs?.length && (
+                <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                  No audit logs yet.
+                </div>
+              )}
             </div>
           </div>
-        )}
-      </div>
+        </>
+      )}
     </AppShell>
   );
 }

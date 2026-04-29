@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -127,7 +127,7 @@ class Document(Base):
 
     note_body = Column(Text, nullable=True)
 
-    is_verified = Column(Integer, nullable=False, default=0)
+    is_verified = Column(Boolean, nullable=False, default=False)
     verified_by = Column(String, nullable=True)
     verified_at = Column(String, nullable=True)
     last_edited_at = Column(String, nullable=True)
@@ -179,10 +179,12 @@ class LabResult(Base):
 
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+
     raw_test_name = Column(String, nullable=True)
     canonical_name = Column(String, nullable=True, index=True)
     display_name = Column(String, nullable=True)
-    category = Column(String, nullable=True)
+    category = Column(String, nullable=True, index=True)
+
     value = Column(String, nullable=True)
     flag = Column(String, nullable=True)
     reference_range = Column(String, nullable=True)
@@ -203,6 +205,7 @@ class AuditLog(Base):
 
     document = relationship("Document", back_populates="audit_logs")
 
+
 class AdminActionLog(Base):
     __tablename__ = "admin_action_logs"
 
@@ -217,6 +220,7 @@ class AdminActionLog(Base):
     admin_user = relationship("User", foreign_keys=[admin_user_id])
     doctor_user = relationship("User", foreign_keys=[doctor_user_id])
     patient = relationship("Patient")
+
 
 class DoctorDocumentReview(Base):
     __tablename__ = "doctor_document_reviews"

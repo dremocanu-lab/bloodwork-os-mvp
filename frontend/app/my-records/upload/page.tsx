@@ -69,6 +69,7 @@ function getFileBadge(file: File) {
 
 function isImageFile(file: File) {
   const name = file.name.toLowerCase();
+
   return (
     name.endsWith(".png") ||
     name.endsWith(".jpg") ||
@@ -90,14 +91,8 @@ function getQueuedPhase(file: File) {
 }
 
 function getProcessingPhase(file: File) {
-  if (isImageFile(file)) {
-    return "Reading image with OCR, then using AI to structure results...";
-  }
-
-  if (isPdfFile(file)) {
-    return "Reading PDF text and using AI to structure results...";
-  }
-
+  if (isImageFile(file)) return "Reading image with OCR, then using AI to structure results...";
+  if (isPdfFile(file)) return "Reading PDF text and using AI to structure results...";
   return "Reading document and saving structured record...";
 }
 
@@ -150,6 +145,7 @@ export default function MyRecordsUploadPage() {
     }
 
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const selectedCount = items.length;
@@ -177,9 +173,7 @@ export default function MyRecordsUploadPage() {
   }, [selectedCount, uploadedCount, failedCount, processingCount, t]);
 
   function updateItem(id: string, patch: Partial<UploadItem>) {
-    setItems((prev) =>
-      prev.map((current) => (current.id === id ? { ...current, ...patch } : current))
-    );
+    setItems((prev) => prev.map((current) => (current.id === id ? { ...current, ...patch } : current)));
   }
 
   function appendFiles(fileList: FileList | File[]) {
@@ -211,6 +205,7 @@ export default function MyRecordsUploadPage() {
 
   function clearFiles() {
     if (uploading) return;
+
     setItems([]);
     setError("");
 
@@ -359,8 +354,8 @@ export default function MyRecordsUploadPage() {
   return (
     <AppShell
       user={currentUser}
-      title={t("uploadDocumentsTitle")}
-      subtitle={t("uploadDocumentsSubtitle")}
+      title={t("Upload Documents")}
+      subtitle={t("Add bloodwork, scans, medication lists, hospital documents, or other records")}
       rightContent={
         <button className="secondary-btn" onClick={() => router.push("/my-records")} disabled={uploading}>
           {t("backToMyRecords")}
@@ -397,9 +392,7 @@ export default function MyRecordsUploadPage() {
         >
           <Spinner size={20} />
           <div>
-            <div style={{ fontWeight: 900 }}>
-              {activeItem?.phase || "Processing document..."}
-            </div>
+            <div style={{ fontWeight: 900 }}>{activeItem?.phase || "Processing document..."}</div>
             <div className="muted-text" style={{ marginTop: 4, lineHeight: 1.5 }}>
               Keep this page open. PDFs usually finish quickly; images can take longer because they need OCR before AI extraction.
             </div>
@@ -420,7 +413,7 @@ export default function MyRecordsUploadPage() {
           <div>
             <div className="section-title">{t("documentType")}</div>
             <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("documentTypeDesc")}
+              {t("")}
             </div>
           </div>
 
@@ -555,7 +548,8 @@ export default function MyRecordsUploadPage() {
               >
                 <div style={{ fontWeight: 900, marginBottom: 6 }}>AI extraction note</div>
                 <div className="muted-text" style={{ lineHeight: 1.55 }}>
-                  Bloodwork uploads are read and structured automatically. Images and scanned PDFs can take longer because they require OCR before AI extraction. If a field is unclear, the system should leave it blank instead of guessing.
+                  Bloodwork uploads are read and structured automatically. Images and scanned PDFs can take longer because they require OCR before AI
+                  extraction. If a field is unclear, the system should leave it blank instead of guessing.
                 </div>
               </div>
             </div>
@@ -569,6 +563,7 @@ export default function MyRecordsUploadPage() {
               gridTemplateRows: "auto minmax(0, 1fr) auto",
               gap: 18,
               minWidth: 0,
+              maxHeight: 520,
             }}
           >
             <div>
@@ -586,7 +581,11 @@ export default function MyRecordsUploadPage() {
                 gap: 12,
                 alignContent: "start",
                 overflowY: "auto",
+                overflowX: "hidden",
                 paddingRight: 6,
+                maxHeight: 360,
+                minHeight: 0,
+                scrollbarGutter: "stable",
               }}
             >
               {items.map((item) => (
@@ -710,13 +709,7 @@ export default function MyRecordsUploadPage() {
                         !
                       </span>
                     ) : (
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => removeFile(item.id)}
-                        disabled={uploading}
-                        style={{ padding: "8px 10px" }}
-                      >
+                      <button type="button" className="secondary-btn" onClick={() => removeFile(item.id)} disabled={uploading} style={{ padding: "8px 10px" }}>
                         ×
                       </button>
                     )}
@@ -732,9 +725,9 @@ export default function MyRecordsUploadPage() {
                     background: "var(--panel-2)",
                   }}
                 >
-                  <div style={{ fontWeight: 850 }}>{t("yourUploadListEmpty")}</div>
+                  <div style={{ fontWeight: 850 }}>{t("Upload List Empty")}</div>
                   <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                    {t("uploadListEmptyDesc")}
+                    {t("")}
                   </div>
                 </div>
               )}
@@ -750,12 +743,7 @@ export default function MyRecordsUploadPage() {
                 paddingTop: 18,
               }}
             >
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={clearFiles}
-                disabled={uploading || !items.length}
-              >
+              <button type="button" className="secondary-btn" onClick={clearFiles} disabled={uploading || !items.length}>
                 {t("clear")}
               </button>
 

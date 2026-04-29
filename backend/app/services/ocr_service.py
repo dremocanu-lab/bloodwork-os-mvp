@@ -6,93 +6,78 @@ import pytesseract
 from PIL import Image, ImageEnhance, ImageFilter, ImageOps
 from pytesseract import Output
 
+from app.services.google_document_ai_service import (
+    get_document_ai_debug_config,
+    is_google_document_ai_configured,
+    process_with_google_document_ai,
+)
+
 
 tesseract_cmd = os.getenv("TESSERACT_CMD")
 if tesseract_cmd:
     pytesseract.pytesseract.tesseract_cmd = tesseract_cmd
 
 
-OCR_CONFIGS = [
-    "--oem 3 --psm 6",
-    "--oem 3 --psm 4",
-    "--oem 3 --psm 11",
-]
+def get_ocr_provider() -> str:
+    return (os.getenv("OCR_PROVIDER") or "tesseract").strip().lower()
+
+
+def ocr_failed_response(method: str, warnings: list[str]) -> dict:
+    return {
+        "text": "",
+        "words": [],
+        "method": method,
+        "warnings": [
+            *warnings,
+            "No OCR text could be extracted. Manual review is required.",
+        ],
+    }
 
 
 def preprocess_image_for_ocr(file_path: Path) -> Image.Image:
     image = Image.open(file_path).convert("RGB")
-
     image = ImageOps.grayscale(image)
-
-    # Improve contrast for scanned hospital/lab PDFs.
-    image = ImageEnhance.Contrast(image).enhance(1.6)
+    image = ImageEnhance.Contrast(image).enhance(1.4)
     image = image.filter(ImageFilter.SHARPEN)
 
     width, height = image.size
 
-    if width < 2200:
-        scale = 2200 / max(width, 1)
+    if width < 1800:
+        scale = 1800 / max(width, 1)
         new_size = (int(width * scale), int(height * scale))
         image = image.resize(new_size)
 
     return image
 
 
-def lab_text_score(text: str) -> int:
-    cleaned = (text or "").lower()
-
-    keywords = [
-        "wbc",
-        "rbc",
-        "hgb",
-        "hct",
-        "mcv",
-        "mch",
-        "mchc",
-        "plt",
-        "rdw",
-        "neut",
-        "lymph",
-        "mono",
-        "baso",
-        "hemoglobina",
-        "hematocrit",
-        "leucocite",
-        "eritrocite",
-        "trombocite",
-        "rezultat",
-        "interval",
-        "referinta",
-        "referință",
-    ]
-
-    keyword_score = sum(12 for keyword in keywords if keyword in cleaned)
-    digit_score = min(sum(ch.isdigit() for ch in cleaned), 300)
-    length_score = min(len(cleaned) // 20, 150)
-
-    return keyword_score + digit_score + length_score
-
-
-def safe_image_to_string(image: Image.Image, config: str, lang: str = "ron+eng") -> str:
+def safe_image_to_string(image: Image.Image, lang: str = "ron+eng") -> str:
     try:
-        return pytesseract.image_to_string(image, lang=lang, config=config)
+        return pytesseract.image_to_string(
+            image,
+            lang=lang,
+            config="--oem 3 --psm 6",
+        )
     except Exception:
-        return pytesseract.image_to_string(image, lang="eng", config=config)
+        return pytesseract.image_to_string(
+            image,
+            lang="eng",
+            config="--oem 3 --psm 6",
+        )
 
 
-def safe_image_to_data(image: Image.Image, config: str, page_index: int = 0, lang: str = "ron+eng") -> list[dict]:
+def safe_image_to_data(image: Image.Image, page_index: int = 0, lang: str = "ron+eng") -> list[dict]:
     try:
         data = pytesseract.image_to_data(
             image,
             lang=lang,
-            config=config,
+            config="--oem 3 --psm 6",
             output_type=Output.DICT,
         )
     except Exception:
         data = pytesseract.image_to_data(
             image,
             lang="eng",
-            config=config,
+            config="--oem 3 --psm 6",
             output_type=Output.DICT,
         )
 
@@ -131,27 +116,22 @@ def safe_image_to_data(image: Image.Image, config: str, page_index: int = 0, lan
                 "par_num": int(data.get("par_num", [0])[index]),
                 "line_num": int(data.get("line_num", [0])[index]),
                 "word_num": int(data.get("word_num", [0])[index]),
-                "ocr_config": config,
+                "ocr_config": "tesseract_psm6",
             }
         )
 
     return words
 
 
-def group_words_into_debug_lines(words: list[dict]) -> str:
-    """
-    Rebuild row-like text from OCR word positions.
-    This gives the regex parser another chance when image_to_string is messy.
-    """
+def group_words_into_lines(words: list[dict]) -> str:
     if not words:
         return ""
 
-    grouped: dict[tuple[int, str, int, int, int], list[dict]] = {}
+    grouped: dict[tuple[int, int, int, int], list[dict]] = {}
 
     for word in words:
         key = (
             int(word.get("page", 0)),
-            str(word.get("ocr_config", "")),
             int(word.get("block_num", 0)),
             int(word.get("par_num", 0)),
             int(word.get("line_num", 0)),
@@ -173,84 +153,18 @@ def group_words_into_debug_lines(words: list[dict]) -> str:
     return "\n".join(lines)
 
 
-def extract_text_and_words_from_image_object(image: Image.Image, page_index: int = 0) -> dict:
-    text_candidates = []
-    word_candidates = []
+def extract_tesseract_from_image_object(image: Image.Image, page_index: int = 0) -> dict:
+    text = safe_image_to_string(image)
+    words = safe_image_to_data(image, page_index=page_index)
+    rebuilt_lines = group_words_into_lines(words)
 
-    for config in OCR_CONFIGS:
-        page_text = safe_image_to_string(image, config=config)
-        page_words = safe_image_to_data(image, config=config, page_index=page_index)
-
-        rebuilt_lines = group_words_into_debug_lines(page_words)
-
-        combined_text = page_text
-        if rebuilt_lines:
-            combined_text = f"{page_text}\n\n--- OCR ROWS {config} ---\n{rebuilt_lines}"
-
-        text_candidates.append(
-            {
-                "config": config,
-                "text": combined_text,
-                "score": lab_text_score(combined_text),
-            }
-        )
-
-        word_candidates.append(
-            {
-                "config": config,
-                "words": page_words,
-                "score": lab_text_score(combined_text),
-            }
-        )
-
-    best_text = max(text_candidates, key=lambda item: item["score"]) if text_candidates else {"text": "", "config": ""}
-
-    # Keep words from all configs, because one mode may see rows the other misses.
-    all_words = []
-    seen_word_keys = set()
-
-    for candidate in sorted(word_candidates, key=lambda item: item["score"], reverse=True):
-        for word in candidate["words"]:
-            key = (
-                word.get("page"),
-                word.get("ocr_config"),
-                word.get("text"),
-                word.get("left"),
-                word.get("top"),
-                word.get("width"),
-                word.get("height"),
-            )
-
-            if key in seen_word_keys:
-                continue
-
-            seen_word_keys.add(key)
-            all_words.append(word)
-
-    all_rebuilt_lines = group_words_into_debug_lines(all_words)
-
-    final_text = best_text["text"]
-
-    if all_rebuilt_lines:
-        final_text = f"{final_text}\n\n--- ALL OCR POSITIONAL ROWS ---\n{all_rebuilt_lines}"
+    if rebuilt_lines:
+        text = f"{text}\n\n--- TESSERACT POSITIONAL ROWS ---\n{rebuilt_lines}"
 
     return {
-        "text": final_text.strip(),
-        "words": all_words,
-        "best_config": best_text.get("config"),
+        "text": text.strip(),
+        "words": words,
     }
-
-
-def extract_text_from_image(file_path: Path) -> str:
-    image = preprocess_image_for_ocr(file_path)
-    result = extract_text_and_words_from_image_object(image, page_index=0)
-    return result["text"]
-
-
-def extract_words_from_image(file_path: Path) -> list[dict]:
-    image = preprocess_image_for_ocr(file_path)
-    result = extract_text_and_words_from_image_object(image, page_index=0)
-    return result["words"]
 
 
 def extract_text_from_pdf(file_path: Path) -> str:
@@ -267,32 +181,26 @@ def extract_text_from_pdf(file_path: Path) -> str:
     return "\n".join(text_parts).strip()
 
 
-def extract_text_and_words_from_scanned_pdf(file_path: Path, temp_dir: Path) -> dict:
+def extract_tesseract_from_scanned_pdf(file_path: Path, temp_dir: Path) -> dict:
     text_parts: list[str] = []
     all_words: list[dict] = []
-    best_configs: list[str] = []
 
     pdf_document = fitz.open(file_path)
 
     try:
         for page_index in range(len(pdf_document)):
             page = pdf_document.load_page(page_index)
-
-            # Stronger render for hospital table scans.
-            pix = page.get_pixmap(matrix=fitz.Matrix(4, 4), alpha=False)
+            pix = page.get_pixmap(matrix=fitz.Matrix(3, 3), alpha=False)
 
             temp_image_path = temp_dir / f"temp_ocr_page_{page_index}.png"
             pix.save(str(temp_image_path))
 
             try:
                 image = preprocess_image_for_ocr(temp_image_path)
-                result = extract_text_and_words_from_image_object(image, page_index=page_index)
+                result = extract_tesseract_from_image_object(image, page_index=page_index)
 
                 text_parts.append(result["text"])
                 all_words.extend(result["words"])
-
-                if result.get("best_config"):
-                    best_configs.append(result["best_config"])
             finally:
                 if temp_image_path.exists():
                     temp_image_path.unlink()
@@ -303,7 +211,6 @@ def extract_text_and_words_from_scanned_pdf(file_path: Path, temp_dir: Path) -> 
     return {
         "text": "\n\n".join(text_parts).strip(),
         "words": all_words,
-        "best_configs": best_configs,
     }
 
 
@@ -323,7 +230,7 @@ def looks_like_bad_text(text: str) -> bool:
     return False
 
 
-def extract_text(file_path: Path, filename: str, temp_dir: Path) -> dict:
+def extract_text_with_tesseract(file_path: Path, filename: str, temp_dir: Path) -> dict:
     lower_name = filename.lower()
 
     if lower_name.endswith(".pdf"):
@@ -337,28 +244,24 @@ def extract_text(file_path: Path, filename: str, temp_dir: Path) -> dict:
                 "warnings": [],
             }
 
-        ocr_result = extract_text_and_words_from_scanned_pdf(file_path, temp_dir)
-
-        warning = "PDF text layer was weak or missing, OCR fallback was used."
-        if ocr_result.get("best_configs"):
-            warning += f" OCR configs used: {', '.join(ocr_result['best_configs'])}."
+        ocr_result = extract_tesseract_from_scanned_pdf(file_path, temp_dir)
 
         return {
             "text": ocr_result["text"],
             "words": ocr_result["words"],
-            "method": "pdf_ocr",
-            "warnings": [warning],
+            "method": "tesseract_pdf_ocr",
+            "warnings": ["PDF text layer was weak or missing, Tesseract OCR fallback was used."],
         }
 
     if lower_name.endswith((".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff")):
         image = preprocess_image_for_ocr(file_path)
-        result = extract_text_and_words_from_image_object(image, page_index=0)
+        result = extract_tesseract_from_image_object(image, page_index=0)
 
         return {
             "text": result["text"],
             "words": result["words"],
-            "method": "image_ocr",
-            "warnings": [],
+            "method": "tesseract_image_ocr",
+            "warnings": ["Tesseract image OCR was used."],
         }
 
     return {
@@ -367,6 +270,51 @@ def extract_text(file_path: Path, filename: str, temp_dir: Path) -> dict:
         "method": "unsupported",
         "warnings": ["Unsupported file type for OCR/text extraction."],
     }
+
+
+def extract_text(file_path: Path, filename: str, temp_dir: Path) -> dict:
+    provider = get_ocr_provider()
+
+    if provider == "google_document_ai":
+        if not is_google_document_ai_configured():
+            return ocr_failed_response(
+                method="google_document_ai_not_configured",
+                warnings=[
+                    "OCR_PROVIDER is google_document_ai, but Google Document AI environment variables are missing.",
+                    f"Current config: {get_document_ai_debug_config()}",
+                ],
+            )
+
+        try:
+            return process_with_google_document_ai(file_path=file_path, filename=filename)
+        except Exception as google_error:
+            try:
+                fallback = extract_text_with_tesseract(file_path, filename, temp_dir)
+                fallback["warnings"] = [
+                    f"Google Document AI failed. Error: {str(google_error)}",
+                    *fallback.get("warnings", []),
+                ]
+                return fallback
+            except Exception as tesseract_error:
+                return ocr_failed_response(
+                    method="ocr_failed",
+                    warnings=[
+                        f"Google Document AI failed. Error: {str(google_error)}",
+                        f"Tesseract fallback also failed. Error: {str(tesseract_error)}",
+                        f"Current Google Document AI config: {get_document_ai_debug_config()}",
+                    ],
+                )
+
+    try:
+        return extract_text_with_tesseract(file_path, filename, temp_dir)
+    except Exception as tesseract_error:
+        return ocr_failed_response(
+            method="tesseract_failed",
+            warnings=[
+                f"Tesseract OCR failed. Error: {str(tesseract_error)}",
+                "Set OCR_PROVIDER=google_document_ai and configure Google Document AI, or install Tesseract locally.",
+            ],
+        )
 
 
 def score_ocr_quality(text: str) -> dict:

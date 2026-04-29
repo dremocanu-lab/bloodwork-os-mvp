@@ -59,10 +59,8 @@ def looks_like_unit(text: str | None) -> bool:
 
     return lowered in {
         "fl",
-        "fL".lower(),
         "pg",
         "g/dl",
-        "g/dL".lower(),
         "mg/dl",
         "mmol/l",
         "u/l",
@@ -143,7 +141,6 @@ def group_words_into_rows(words: list[dict]) -> list[list[dict]]:
         except Exception:
             conf = 0
 
-        # Keep low-confidence words too, because arrows/table OCR can be low confidence.
         left = int(float(word.get("left", 0)))
         top = int(float(word.get("top", 0)))
         width = int(float(word.get("width", 0)))
@@ -212,7 +209,6 @@ def possible_test_key_from_row(row_words: list[dict]) -> tuple[str | None, int]:
         if token in KNOWN_TEST_ALIASES:
             return token, idx
 
-        # OCR sometimes separates these into two words.
         if token == "RDW" and idx + 1 < len(texts):
             next_token = normalize_test_token(texts[idx + 1])
             if next_token in {"SD", "CV"}:
@@ -238,10 +234,10 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
     words_after_test = row_words[test_index + 1 :]
 
     numeric_words = []
+
     for word in words_after_test:
         text = clean_word(word.get("text"))
 
-        # Red arrows are sometimes OCR'd as "7" beside the test name.
         if text == "7" and len(numeric_words) == 0:
             continue
 
@@ -259,7 +255,6 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
     low = clean_word(low_word.get("text"))
     high = clean_word(high_word.get("text"))
 
-    # Percent rows often get decimals dropped.
     if test_key.endswith("%"):
         value = fix_decimal_if_obvious(value, low, high)
 
@@ -274,8 +269,8 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
 
     unit = None
 
-    # Unit is usually to the right of the reference range or near the high reference value.
     high_right = high_word["left"] + high_word["width"]
+
     candidate_units = [
         word
         for word in row_words
@@ -286,7 +281,6 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
         unit = clean_word(candidate_units[0].get("text"))
 
     if not unit:
-        # Sometimes the unit is before/around the range in the same right-side cell.
         for word in words_after_test:
             text = clean_word(word.get("text"))
             if looks_like_unit(text):

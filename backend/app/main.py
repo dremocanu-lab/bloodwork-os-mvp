@@ -1260,6 +1260,44 @@ def update_document(
 
     return get_document_payload(db, document, updated_labs, logs, current_user)
 
+@app.delete("/documents/{document_id}")
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.uploaded_by_user_id != current_user.id:
+        raise HTTPException(status_code=403, detail="Only the user who uploaded this document can delete it")
+
+    patient_id = document.patient_id
+    saved_to = document.saved_to
+
+    if saved_to:
+        file_path = Path(saved_to)
+
+        if not file_path.is_absolute():
+            file_path = Path.cwd() / file_path
+
+        try:
+            if file_path.exists() and file_path.is_file():
+                file_path.unlink()
+        except Exception:
+            pass
+
+    db.delete(document)
+    db.commit()
+
+    return {
+        "deleted": True,
+        "document_id": document_id,
+        "patient_id": patient_id,
+    }
+
 
 @app.get("/patients/{patient_id}/bloodwork-trends")
 def get_patient_bloodwork_trends(
