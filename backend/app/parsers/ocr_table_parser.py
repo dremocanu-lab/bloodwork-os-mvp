@@ -13,7 +13,7 @@ from app.parsers.bloodwork_parser import (
 
 ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
 ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
-NULL_RESULT_TOKENS = {"", "-", "--", "---", "—", "–", "___", "____", "nil", "n/a", "na", "null"}
+NULL_RESULT_TOKENS = {"", "-", "--", "---", "----", "-----", "—", "–", "___", "____", "nil", "n/a", "na", "null"}
 
 
 def clean_word(text: str | None) -> str:
@@ -287,6 +287,79 @@ def possible_test_key_from_row(row_words: list[dict]) -> tuple[str | None, int]:
     return None, -1
 
 
+def word_right(word: dict) -> float:
+    return float(word.get("left", 0)) + float(word.get("width", 0))
+
+
+def row_numeric_words_after_test(row_words: list[dict], test_index: int) -> list[dict]:
+    numbers = []
+
+    for word in row_words[test_index + 1 :]:
+        text = clean_word(word.get("text"))
+
+        if is_number(text):
+            numbers.append(word)
+
+    return numbers
+
+
+def has_explicit_nil_before_first_number(row_words: list[dict], test_index: int) -> bool:
+    for word in row_words[test_index + 1 :]:
+        text = clean_word(word.get("text"))
+
+        if not text:
+            continue
+
+        if text in ARROW_HIGH_MARKERS or text in ARROW_LOW_MARKERS:
+            continue
+
+        if is_number(text):
+            return False
+
+        if is_null_result_token(text):
+            return True
+
+        compact = text.strip().lower().replace("−", "-").replace("—", "-").replace("–", "-")
+
+        # OCR sometimes reads empty cells as ----, -----, ____, etc.
+        if re.fullmatch(r"[_\-]{2,}", compact):
+            return True
+
+    return False
+
+
+def row_looks_like_missing_result(row_words: list[dict], test_index: int, numeric_words: list[dict]) -> bool:
+    if not numeric_words:
+        return True
+
+    if has_explicit_nil_before_first_number(row_words, test_index):
+        return True
+
+    test_word = row_words[test_index]
+    test_right = word_right(test_word)
+
+    first_number = numeric_words[0]
+    first_number_left = float(first_number.get("left", 0))
+
+    row_lefts = [float(word.get("left", 0)) for word in row_words]
+    row_rights = [word_right(word) for word in row_words]
+    row_width = max(row_rights) - min(row_lefts) if row_lefts and row_rights else 0
+
+    distance_from_test = first_number_left - test_right
+
+    # If the first number is far to the right, it is probably from the reference range,
+    # not the measured result column. This fixes blank MPV/P-LCR-style rows.
+    if row_width > 0 and distance_from_test > row_width * 0.42:
+        return True
+
+    # If the only numbers after the test name are reference-range numbers,
+    # do not invent a measured value.
+    if len(numeric_words) <= 2:
+        return True
+
+    return False
+
+
 def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
     if not row_words:
         return None
@@ -297,13 +370,6 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
         return None
 
     words_after_test = row_words[test_index + 1 :]
-
-    first_value_token = first_meaningful_after_test(row_words, test_index + 1)
-
-    # Critical: rows such as MPV --- --- 9.0-17.0 must not steal the reference-range
-    # number and call it a measured value. Keep the row, but store value as nil.
-    if is_null_result_token(first_value_token):
-        return build_nil_lab_result(test_key, row_words)
 
     numeric_words = []
 
@@ -316,7 +382,9 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
         if is_number(text):
             numeric_words.append(word)
 
-    if len(numeric_words) < 3:
+    # Critical: rows such as MPV ---- 9.0-17.0 must not steal the reference-range
+    # number and call it a measured value. Keep the row, but store value as nil.
+    if row_looks_like_missing_result(row_words, test_index, numeric_words):
         return build_nil_lab_result(test_key, row_words)
 
     value_word = numeric_words[0]
