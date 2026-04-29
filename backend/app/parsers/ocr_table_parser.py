@@ -13,6 +13,7 @@ from app.parsers.bloodwork_parser import (
 
 ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
 ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
+NULL_RESULT_TOKENS = {"", "-", "--", "---", "—", "–", "___", "____", "nil", "n/a", "na", "null"}
 
 
 def clean_word(text: str | None) -> str:
@@ -33,6 +34,70 @@ def is_number(text: str | None) -> bool:
         return False
 
     return re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", str(text).strip()) is not None
+
+
+def is_null_result_token(text: str | None) -> bool:
+    if text is None:
+        return True
+
+    cleaned = str(text).strip().lower()
+    cleaned = cleaned.replace("−", "-")
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+
+    return cleaned in NULL_RESULT_TOKENS or re.fullmatch(r"-{2,}", cleaned) is not None
+
+
+def first_meaningful_after_test(row_words: list[dict], start_index: int) -> str:
+    for word in row_words[start_index:]:
+        text = clean_word(word.get("text"))
+        if not text:
+            continue
+
+        # Ignore visual arrows/flags when deciding whether a row has a true value.
+        if text in ARROW_HIGH_MARKERS or text in ARROW_LOW_MARKERS:
+            continue
+
+        return text
+
+    return ""
+
+
+def build_nil_lab_result(test_key: str, row_words: list[dict]) -> dict:
+    reference_range = None
+    unit = None
+
+    numeric_words = []
+    for word in row_words:
+        text = clean_word(word.get("text"))
+        if is_number(text):
+            numeric_words.append(text)
+
+    if len(numeric_words) >= 2:
+        reference_range = f"{normalize_decimal(numeric_words[-2])} - {normalize_decimal(numeric_words[-1])}"
+
+    for word in row_words:
+        text = clean_word(word.get("text"))
+        if looks_like_unit(text):
+            unit = normalize_unit(text)
+            break
+
+    if not unit:
+        if test_key.endswith("%"):
+            unit = "%"
+        elif test_key.endswith("#"):
+            unit = "10^3/uL"
+
+    result = build_lab_result(
+        raw_test_name=test_key,
+        value=None,
+        flag=None,
+        reference_range=reference_range,
+        unit=unit,
+        confidence=0.95,
+    )
+    result["value"] = None
+    result["flag"] = None
+    return result
 
 
 def looks_like_unit(text: str | None) -> bool:
@@ -233,6 +298,13 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
 
     words_after_test = row_words[test_index + 1 :]
 
+    first_value_token = first_meaningful_after_test(row_words, test_index + 1)
+
+    # Critical: rows such as MPV --- --- 9.0-17.0 must not steal the reference-range
+    # number and call it a measured value. Keep the row, but store value as nil.
+    if is_null_result_token(first_value_token):
+        return build_nil_lab_result(test_key, row_words)
+
     numeric_words = []
 
     for word in words_after_test:
@@ -245,7 +317,7 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
             numeric_words.append(word)
 
     if len(numeric_words) < 3:
-        return None
+        return build_nil_lab_result(test_key, row_words)
 
     value_word = numeric_words[0]
     low_word = numeric_words[1]

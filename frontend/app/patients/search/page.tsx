@@ -87,6 +87,18 @@ function getInitials(name: string) {
   return parts.map((part) => part[0]?.toUpperCase()).join("");
 }
 
+function PatientIdentityBlock({ patient, labels }: { patient: SearchPatient; labels: Record<string, string> }) {
+  return (
+    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
+      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.cnp}</span>{" "}
+      {valueOrDash(patient.cnp)}
+      <br />
+      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.patientId}</span>{" "}
+      {valueOrDash(patient.patient_identifier)}
+    </div>
+  );
+}
+
 export default function SearchPatientsPage() {
   const router = useRouter();
   const { t, language } = useLanguage();
@@ -108,13 +120,14 @@ export default function SearchPatientsPage() {
         search: "Caută",
         searching: "Se caută...",
         findPatient: "Caută pacient",
-        findPatientDesc: "Caută după nume, CNP sau ID pacient. Rezultatele apar ca listă pentru scanare rapidă.",
-        searchPlaceholder: "Nume, CNP sau ID pacient...",
+        findPatientDesc:
+          "Caută după nume, CNP, dată de naștere sau ID pacient. Rezultatele apar ca listă pentru scanare rapidă.",
+        searchPlaceholder: "Nume, CNP, dată naștere sau ID pacient...",
         results: "Rezultate",
         startWithSearch: "Începe cu o căutare",
-        noPatientsShownUntilSearch: "Introdu un nume, CNP sau ID pacient pentru a vedea rezultatele.",
+        noPatientsShownUntilSearch: "Introdu un nume, CNP, dată de naștere sau ID pacient pentru rezultate.",
         noMatchingPatients: "Nu am găsit pacienți",
-        tryAnotherPatientSearch: "Încearcă alt nume, CNP sau ID.",
+        tryAnotherPatientSearch: "Încearcă alt nume, CNP, dată de naștere sau ID.",
         onePatientFound: "1 pacient găsit",
         patientsFound: "pacienți găsiți",
         searchByNameCnpId: "Caută după nume, CNP sau ID",
@@ -138,7 +151,7 @@ export default function SearchPatientsPage() {
         noDoctorAssignedDepartment: "Fără medic alocat în departamentul tău",
         activeAdmissionColon: "Internare activă:",
         adminSubtitle: "Caută pacienți și gestionează alocările din spitalul și departamentul tău.",
-        doctorSubtitle: "Caută pacienți, deschide fișele la care ai acces sau cere acces.",
+        doctorSubtitle: "Caută pacienți, vezi CNP-ul, deschide fișele la care ai acces sau cere acces.",
         backToMyPatients: "Înapoi la pacienții mei",
       };
     }
@@ -147,13 +160,14 @@ export default function SearchPatientsPage() {
       search: "Search",
       searching: "Searching...",
       findPatient: "Find patient",
-      findPatientDesc: "Search by name, CNP, or patient ID. Results are shown as a compact list for fast scanning.",
-      searchPlaceholder: "Name, CNP, or patient ID...",
+      findPatientDesc:
+        "Search by name, CNP, date of birth, or patient ID. Results are shown as a compact list for fast scanning.",
+      searchPlaceholder: "Name, CNP, date of birth, or patient ID...",
       results: "Results",
       startWithSearch: "Start with a search",
-      noPatientsShownUntilSearch: "Enter a name, CNP, or patient ID to show matching patients.",
+      noPatientsShownUntilSearch: "Enter a name, CNP, date of birth, or patient ID to show matching patients.",
       noMatchingPatients: "No matching patients",
-      tryAnotherPatientSearch: "Try another name, CNP, or patient ID.",
+      tryAnotherPatientSearch: "Try another name, CNP, date of birth, or patient ID.",
       onePatientFound: "1 patient found",
       patientsFound: "patients found",
       searchByNameCnpId: "Search by name, CNP, or ID",
@@ -177,7 +191,7 @@ export default function SearchPatientsPage() {
       noDoctorAssignedDepartment: "No doctor assigned in your department",
       activeAdmissionColon: "Active admission:",
       adminSubtitle: "Search patients and manage assignments within your hospital and department.",
-      doctorSubtitle: "Search patients, open charts you can access, or request access.",
+      doctorSubtitle: "Search patients, see CNP, open charts you can access, or request access.",
       backToMyPatients: "Back to my patients",
     };
   }, [language]);
@@ -196,8 +210,12 @@ export default function SearchPatientsPage() {
   async function fetchAdminAssignments(user: CurrentUser) {
     if (user.role !== "admin") return;
 
-    const response = await api.get<AdminAssignmentRow[]>("/admin/scoped-patient-assignments");
-    setAdminAssignments(response.data);
+    try {
+      const response = await api.get<AdminAssignmentRow[]>("/admin/scoped-patient-assignments");
+      setAdminAssignments(response.data);
+    } catch {
+      setAdminAssignments([]);
+    }
   }
 
   async function searchPatients(nextQuery: string) {
@@ -233,10 +251,11 @@ export default function SearchPatientsPage() {
     }
 
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  function onSubmit(e: FormEvent) {
-    e.preventDefault();
+  function onSubmit(event: FormEvent) {
+    event.preventDefault();
     searchPatients(query);
   }
 
@@ -247,8 +266,11 @@ export default function SearchPatientsPage() {
 
       await api.post("/access-requests", { patient_id: patientId });
 
-      setPatients((prev) =>
-        prev.map((patient) => (patient.id === patientId ? { ...patient, pending_request: true } : patient))
+      setPatients((current) =>
+        current.map((patient) => {
+          if (patient.id !== patientId) return patient;
+          return { ...patient, pending_request: true };
+        })
       );
     } catch (err) {
       setError(getErrorMessage(err, t("failedRequestPatientAccess")));
@@ -272,8 +294,6 @@ export default function SearchPatientsPage() {
     if (patients.length === 1) return labels.onePatientFound;
     return `${patients.length} ${labels.patientsFound}`;
   }, [searchedQuery, patients.length, labels]);
-
-  const subtitle = currentUser?.role === "admin" ? labels.adminSubtitle : labels.doctorSubtitle;
 
   if (loading || !currentUser) {
     return (
@@ -301,6 +321,8 @@ export default function SearchPatientsPage() {
       </main>
     );
   }
+
+  const subtitle = currentUser.role === "admin" ? labels.adminSubtitle : labels.doctorSubtitle;
 
   return (
     <AppShell
@@ -350,7 +372,7 @@ export default function SearchPatientsPage() {
             <input
               className="text-input"
               value={query}
-              onChange={(e) => setQuery(e.target.value)}
+              onChange={(event) => setQuery(event.target.value)}
               placeholder={labels.searchPlaceholder}
             />
 
@@ -440,7 +462,7 @@ export default function SearchPatientsPage() {
               <div>{labels.patient}</div>
               <div>{labels.identifiers}</div>
               <div>{labels.demographics}</div>
-              <div>{currentUser.role === "admin" ? labels.access : labels.access}</div>
+              <div>{labels.access}</div>
               <div style={{ textAlign: "right" }}>{labels.actions}</div>
             </div>
 
@@ -497,23 +519,16 @@ export default function SearchPatientsPage() {
                         >
                           {patient.full_name}
                         </div>
+
                         <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
                           {labels.patientId} {valueOrDash(patient.patient_identifier)}
                         </div>
                       </div>
                     </div>
 
-                    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-                      <span style={{ fontWeight: 850, color: "var(--text)" }}>{labels.cnp}</span>{" "}
-                      {currentUser.role === "admin" || patient.has_access
-                        ? valueOrDash(patient.cnp)
-                        : "Hidden until access"}
-                      <br />
-                      <span style={{ fontWeight: 850, color: "var(--text)" }}>ID</span>{" "}
-                      {valueOrDash(patient.patient_identifier)}
-                    </div>
+                    <PatientIdentityBlock patient={patient} labels={labels} />
 
-                    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+                    <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
                       {t("dob")} {valueOrDash(patient.date_of_birth)}
                       <br />
                       {t("age")} {valueOrDash(patient.age)} · {t("sex")} {valueOrDash(patient.sex)}
@@ -550,6 +565,7 @@ export default function SearchPatientsPage() {
                                 borderRadius: 999,
                                 background: "var(--warn-bg)",
                                 color: "var(--warn-text)",
+                                border: "1px solid var(--warn-border)",
                                 fontWeight: 850,
                                 fontSize: 12,
                               }}
@@ -663,5 +679,4 @@ export default function SearchPatientsPage() {
       </div>
     </AppShell>
   );
-
 }

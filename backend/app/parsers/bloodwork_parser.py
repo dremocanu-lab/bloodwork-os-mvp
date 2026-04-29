@@ -105,6 +105,8 @@ SKIP_LINE_KEYWORDS = [
 ARROW_HIGH_MARKERS = ["↑", "▲", "↗", "⬆", "➚", "7"]
 ARROW_LOW_MARKERS = ["↓", "▼", "↘", "⬇", "➘"]
 
+NULL_RESULT_TOKENS = {"", "-", "--", "---", "—", "–", "___", "____", "nil", "n/a", "na", "null"}
+
 JUNK_TOKENS = {
     "",
     "-",
@@ -464,6 +466,31 @@ def is_number_token(token: str) -> bool:
     return re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", token.strip()) is not None
 
 
+def is_null_result_token(token: str | None) -> bool:
+    if token is None:
+        return True
+
+    cleaned = str(token).strip().lower()
+    cleaned = cleaned.replace("−", "-")
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+
+    return cleaned in NULL_RESULT_TOKENS or re.fullmatch(r"-{2,}", cleaned) is not None
+
+
+def build_nil_result(raw_test_name: str, reference_range: str | None = None, unit: str | None = None, confidence: float = 0.72) -> dict:
+    result = build_lab_result(
+        raw_test_name=raw_test_name,
+        value=None,
+        flag=None,
+        reference_range=reference_range,
+        unit=unit,
+        confidence=confidence,
+    )
+    result["value"] = None
+    result["flag"] = None
+    return result
+
+
 def looks_like_unit(token: str) -> bool:
     cleaned = token.strip()
     if not cleaned:
@@ -516,7 +543,34 @@ def parse_token_stream_rows(text: str) -> list[dict]:
             continue
 
         # Look ahead for the next 3 numbers. They are usually value, low, high.
+        # If the row starts with --- / nil / blank markers, do not steal reference-range
+        # numbers and pretend they are measured values.
         lookahead = tokens[i + 1 : i + 12]
+
+        first_non_arrow_token = None
+        for candidate in lookahead:
+            if candidate in ARROW_HIGH_MARKERS or candidate in ARROW_LOW_MARKERS:
+                continue
+            first_non_arrow_token = candidate
+            break
+
+        if is_null_result_token(first_non_arrow_token):
+            unit = None
+            if test_key.endswith("%"):
+                unit = "%"
+            elif test_key.endswith("#"):
+                unit = "10^3/uL"
+
+            result = build_nil_result(test_key, reference_range=None, unit=unit, confidence=0.76)
+            dedupe_key = result["canonical_name"] or result["display_name"] or test_key
+
+            if dedupe_key not in seen:
+                seen.add(dedupe_key)
+                labs.append(result)
+
+            i += 1
+            continue
+
         number_positions = []
 
         for offset, candidate in enumerate(lookahead):
@@ -526,6 +580,13 @@ def parse_token_stream_rows(text: str) -> list[dict]:
                     break
 
         if len(number_positions) < 3:
+            result = build_nil_result(test_key, reference_range=None, unit=None, confidence=0.68)
+            dedupe_key = result["canonical_name"] or result["display_name"] or test_key
+
+            if dedupe_key not in seen:
+                seen.add(dedupe_key)
+                labs.append(result)
+
             i += 1
             continue
 
@@ -596,10 +657,30 @@ def parse_wrapped_table_rows(text: str) -> list[dict]:
         if name not in KNOWN_TEST_ALIASES:
             continue
 
-        window = " ".join(cleaned_lines[idx + 1 : idx + 6])
+        following_lines = cleaned_lines[idx + 1 : idx + 6]
+        first_following = following_lines[0] if following_lines else ""
+
+        if is_null_result_token(first_following):
+            result = build_nil_result(name, reference_range=None, unit=None, confidence=0.74)
+            dedupe_key = result["canonical_name"] or result["display_name"] or name
+
+            if dedupe_key not in seen:
+                seen.add(dedupe_key)
+                labs.append(result)
+
+            continue
+
+        window = " ".join(following_lines)
         numbers = re.findall(r"[-+]?\d+(?:[.,]\d+)?", window)
 
         if len(numbers) < 3:
+            result = build_nil_result(name, reference_range=None, unit=None, confidence=0.66)
+            dedupe_key = result["canonical_name"] or result["display_name"] or name
+
+            if dedupe_key not in seen:
+                seen.add(dedupe_key)
+                labs.append(result)
+
             continue
 
         value = numbers[0]

@@ -1,6 +1,15 @@
 "use client";
 
-import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useState } from "react";
+import {
+  createContext,
+  ReactNode,
+  useCallback,
+  useContext,
+  useEffect,
+  useMemo,
+  useRef,
+  useState,
+} from "react";
 import { api, getErrorMessage } from "@/lib/api";
 
 export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "error";
@@ -34,7 +43,7 @@ type BackendUploadJob = {
   section: string;
   filename: string;
   content_type?: string | null;
-  status: UploadStatus;
+  status: string;
   progress: number;
   message?: string | null;
   error?: string | null;
@@ -46,6 +55,7 @@ type BackendUploadJob = {
 
 type UploadManagerContextValue = {
   tasks: UploadTask[];
+  visibleTasks: UploadTask[];
   activeCount: number;
   enqueueUploads: (files: File[], destination: UploadDestination) => void;
   clearFinishedUploads: () => void;
@@ -53,6 +63,8 @@ type UploadManagerContextValue = {
 };
 
 const UploadManagerContext = createContext<UploadManagerContextValue | null>(null);
+
+const FINISHED_VISIBLE_MS = 7_000;
 
 function makeLocalTask(file: File, destination: UploadDestination): UploadTask {
   return {
@@ -77,12 +89,27 @@ function statusFromBackend(status: string): UploadStatus {
   return "queued";
 }
 
+function isActive(status: UploadStatus) {
+  return status === "queued" || status === "uploading" || status === "processing";
+}
+
+function shouldShowFinished(task: UploadTask) {
+  if (isActive(task.status)) return true;
+  if (!task.finishedAt) return true;
+
+  const finishedMs = new Date(task.finishedAt).getTime();
+  if (Number.isNaN(finishedMs)) return false;
+
+  return Date.now() - finishedMs < FINISHED_VISIBLE_MS;
+}
+
 export function UploadManagerProvider({ children }: { children: ReactNode }) {
   const [tasks, setTasks] = useState<UploadTask[]>([]);
+  const completedDispatchRef = useRef<Set<number>>(new Set());
 
-  function updateTask(id: string, patch: Partial<UploadTask>) {
+  const updateTask = useCallback((id: string, patch: Partial<UploadTask>) => {
     setTasks((current) => current.map((task) => (task.id === id ? { ...task, ...patch } : task)));
-  }
+  }, []);
 
   const refreshUploadJobs = useCallback(async () => {
     try {
@@ -92,7 +119,20 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
         const next = [...current];
 
         response.data.forEach((job) => {
+          const status = statusFromBackend(job.status);
+          const finishedAt = job.finished_at || undefined;
+
+          const incomingIsOldFinished =
+            !isActive(status) &&
+            finishedAt &&
+            Date.now() - new Date(finishedAt).getTime() > FINISHED_VISIBLE_MS;
+
           const existingIndex = next.findIndex((task) => task.jobId === job.id);
+
+          // Do not re-add old completed/failed jobs forever.
+          if (existingIndex < 0 && incomingIsOldFinished) {
+            return;
+          }
 
           const normalized: UploadTask = {
             id: existingIndex >= 0 ? next[existingIndex].id : `job-${job.id}`,
@@ -102,14 +142,16 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
             section: job.section,
             patientId: job.patient_id,
             patientName: existingIndex >= 0 ? next[existingIndex].patientName : null,
-            status: statusFromBackend(job.status),
+            status,
             progress: job.progress ?? 0,
             message: job.message || "Upload job updated.",
             createdAt: job.created_at,
-            finishedAt: job.finished_at || undefined,
+            finishedAt,
             error: job.error || undefined,
             documentId: job.document_id || null,
           };
+
+          const oldStatus = existingIndex >= 0 ? next[existingIndex].status : undefined;
 
           if (existingIndex >= 0) {
             next[existingIndex] = {
@@ -121,14 +163,34 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
           } else {
             next.push(normalized);
           }
+
+          if (
+            status === "done" &&
+            job.document_id &&
+            oldStatus !== "done" &&
+            !completedDispatchRef.current.has(job.id)
+          ) {
+            completedDispatchRef.current.add(job.id);
+
+            window.dispatchEvent(
+              new CustomEvent("bloodwork-upload-complete", {
+                detail: {
+                  jobId: job.id,
+                  documentId: job.document_id,
+                  patientId: job.patient_id,
+                },
+              })
+            );
+          }
         });
 
         return next
+          .filter(shouldShowFinished)
           .sort((a, b) => (b.createdAt || "").localeCompare(a.createdAt || ""))
-          .slice(0, 40);
+          .slice(0, 30);
       });
     } catch {
-      // Silent: unauthenticated pages should not break.
+      // Silent: logged-out pages or expired tokens should not break the app shell.
     }
   }, []);
 
@@ -138,7 +200,6 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
 
       files.forEach((file) => {
         const localTask = makeLocalTask(file, destination);
-
         setTasks((current) => [localTask, ...current]);
 
         window.setTimeout(async () => {
@@ -195,44 +256,43 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
         }, 50);
       });
     },
-    [refreshUploadJobs]
+    [refreshUploadJobs, updateTask]
   );
 
   useEffect(() => {
     void refreshUploadJobs();
 
-    const interval = window.setInterval(() => {
+    const refreshInterval = window.setInterval(() => {
       void refreshUploadJobs();
     }, 2500);
 
-    return () => window.clearInterval(interval);
+    const cleanupInterval = window.setInterval(() => {
+      setTasks((current) => current.filter(shouldShowFinished));
+    }, 1000);
+
+    return () => {
+      window.clearInterval(refreshInterval);
+      window.clearInterval(cleanupInterval);
+    };
   }, [refreshUploadJobs]);
 
   const clearFinishedUploads = useCallback(() => {
-    setTasks((current) =>
-      current.filter(
-        (task) =>
-          task.status === "queued" ||
-          task.status === "uploading" ||
-          task.status === "processing"
-      )
-    );
+    setTasks((current) => current.filter((task) => isActive(task.status)));
   }, []);
+
+  const visibleTasks = useMemo(() => tasks.filter(shouldShowFinished), [tasks]);
+  const activeCount = useMemo(() => tasks.filter((task) => isActive(task.status)).length, [tasks]);
 
   const value = useMemo(
     () => ({
       tasks,
-      activeCount: tasks.filter(
-        (task) =>
-          task.status === "queued" ||
-          task.status === "uploading" ||
-          task.status === "processing"
-      ).length,
+      visibleTasks,
+      activeCount,
       enqueueUploads,
       clearFinishedUploads,
       refreshUploadJobs,
     }),
-    [tasks, enqueueUploads, clearFinishedUploads, refreshUploadJobs]
+    [tasks, visibleTasks, activeCount, enqueueUploads, clearFinishedUploads, refreshUploadJobs]
   );
 
   return <UploadManagerContext.Provider value={value}>{children}</UploadManagerContext.Provider>;

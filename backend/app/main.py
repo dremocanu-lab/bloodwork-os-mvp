@@ -1,5 +1,6 @@
 import os
 import shutil
+import re
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -247,6 +248,29 @@ def get_best_document_date(document) -> str | None:
         or document.registered_on
         or document.created_at
     )
+
+
+def lab_value_to_float(value) -> float | None:
+    if value is None:
+        return None
+
+    cleaned = str(value).strip().lower()
+    cleaned = cleaned.replace(",", ".")
+    cleaned = cleaned.replace("−", "-")
+    cleaned = cleaned.replace("—", "-").replace("–", "-")
+
+    if cleaned in {"", "-", "--", "---", "nil", "n/a", "na", "null", "none"}:
+        return None
+
+    match = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
+
+    if not match:
+        return None
+
+    try:
+        return float(match.group(0))
+    except Exception:
+        return None
 
 
 def serialize_lab_result(lab):
@@ -1066,6 +1090,126 @@ def get_patients(
         for patient in patients
     ]
 
+@app.get("/my-patients")
+def get_my_patients(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("doctor")),
+):
+    access_links = (
+        db.query(models.DoctorPatientAccess)
+        .filter(models.DoctorPatientAccess.doctor_user_id == current_user.id)
+        .all()
+    )
+
+    patient_ids = [link.patient_id for link in access_links]
+
+    if not patient_ids:
+        return []
+
+    patients = (
+        db.query(models.Patient)
+        .filter(models.Patient.id.in_(patient_ids))
+        .all()
+    )
+
+    results = []
+
+    for patient in patients:
+        active_event = (
+            db.query(models.PatientEvent)
+            .filter(
+                models.PatientEvent.patient_id == patient.id,
+                models.PatientEvent.status == "active",
+            )
+            .order_by(models.PatientEvent.id.desc())
+            .first()
+        )
+
+        latest_event = (
+            db.query(models.PatientEvent)
+            .filter(models.PatientEvent.patient_id == patient.id)
+            .order_by(models.PatientEvent.id.desc())
+            .first()
+        )
+
+        documents_query = (
+            db.query(models.Document)
+            .filter(models.Document.patient_id == patient.id)
+            .order_by(models.Document.id.desc())
+        )
+
+        documents = documents_query.all()
+
+        new_records_count = 0
+        abnormal_count = 0
+        latest_abnormal_labs = []
+
+        for document in documents:
+            reviewed = doctor_reviewed_document(db, current_user.id, document.id)
+
+            if not reviewed:
+                new_records_count += 1
+
+            labs = (
+                db.query(models.LabResult)
+                .filter(models.LabResult.document_id == document.id)
+                .all()
+            )
+
+            abnormal_labs_for_doc = [
+                lab for lab in labs if lab_flag_is_abnormal(lab.flag)
+            ]
+
+            if abnormal_labs_for_doc and not reviewed:
+                abnormal_count += len(abnormal_labs_for_doc)
+
+                for lab in abnormal_labs_for_doc[:3]:
+                    latest_abnormal_labs.append(
+                        {
+                            "id": lab.id,
+                            "display_name": lab.display_name or lab.raw_test_name or lab.canonical_name,
+                            "value": lab.value,
+                            "unit": lab.unit,
+                            "flag": lab.flag,
+                            "reference_range": lab.reference_range,
+                        }
+                    )
+
+            if len(latest_abnormal_labs) >= 3:
+                latest_abnormal_labs = latest_abnormal_labs[:3]
+
+        care_context = "outpatient"
+        care_context_label = "Outpatient follow-up"
+
+        if active_event:
+            care_context = "active_admission"
+            care_context_label = "Active admission"
+        elif latest_event:
+            care_context = "past_admission"
+            care_context_label = "Past admission"
+
+        results.append(
+            {
+                "patient": {
+                    "id": patient.id,
+                    "full_name": patient.full_name,
+                    "date_of_birth": patient.date_of_birth,
+                    "age": patient.age,
+                    "sex": patient.sex,
+                    "cnp": patient.cnp,
+                    "patient_identifier": patient.patient_identifier,
+                },
+                "active_event": serialize_patient_event(active_event) if active_event else None,
+                "care_context": care_context,
+                "care_context_label": care_context_label,
+                "new_records_count": new_records_count,
+                "has_new_records": new_records_count > 0,
+                "abnormal_count": abnormal_count,
+                "latest_abnormal_labs": latest_abnormal_labs,
+            }
+        )
+
+    return results
 
 @app.get("/patients/search")
 def search_patients(
@@ -1450,6 +1594,54 @@ def verify_document(
 
     return get_document_payload(db, document, labs, audit_logs, current_user)
 
+@app.delete("/documents/{document_id}")
+def delete_document(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if current_user.role == "patient":
+        patient = get_patient_for_user(db, current_user.id)
+
+        if not patient or patient.id != document.patient_id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+
+    saved_to = document.saved_to
+
+    db.query(models.NoteDocumentLink).filter(
+        (models.NoteDocumentLink.note_document_id == document.id)
+        | (models.NoteDocumentLink.linked_document_id == document.id)
+    ).delete(synchronize_session=False)
+
+    db.query(models.DoctorDocumentReview).filter(
+        models.DoctorDocumentReview.document_id == document.id
+    ).delete(synchronize_session=False)
+
+    db.query(models.UploadJob).filter(
+        models.UploadJob.document_id == document.id
+    ).update({"document_id": None}, synchronize_session=False)
+
+    db.delete(document)
+    db.commit()
+
+    if saved_to:
+        try:
+            path = Path(saved_to)
+            if path.exists():
+                path.unlink()
+        except Exception:
+            pass
+
+    return {"ok": True, "deleted_document_id": document_id}
+
 
 @app.get("/patients/{patient_id}/bloodwork-trends")
 def get_bloodwork_trends(
@@ -1480,7 +1672,9 @@ def get_bloodwork_trends(
                 continue
 
             try:
-                value = float(str(lab.value).replace(",", "."))
+                value = lab_value_to_float(lab.value)
+            if value is None:
+                continue
             except Exception:
                 continue
 

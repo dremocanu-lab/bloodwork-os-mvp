@@ -4,7 +4,6 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
-import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -90,6 +89,8 @@ type DocumentResponse = {
     verified_at?: string | null;
     last_edited_at?: string | null;
     created_at?: string | null;
+    has_abnormal?: boolean;
+    reviewed_by_current_doctor?: boolean;
     labs: LabRow[];
     audit_logs: AuditLog[];
     linked_documents?: LinkedDocument[];
@@ -123,6 +124,8 @@ const CATEGORY_ORDER = [
 
 const CATEGORY_OPTIONS = CATEGORY_ORDER;
 
+const NIL_VALUES = new Set(["", "-", "--", "---", "—", "–", "n/a", "na", "nil", "null", "none"]);
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
@@ -147,18 +150,48 @@ function Spinner({ size = 18 }: { size?: number }) {
   );
 }
 
+function normalizeNilText(value?: string | number | null) {
+  if (value === null || value === undefined) return "";
+
+  return String(value).trim().toLowerCase().replace("−", "-").replace("—", "-").replace("–", "-");
+}
+
+function isNilValue(value?: string | number | null) {
+  const cleaned = normalizeNilText(value);
+  return NIL_VALUES.has(cleaned) || /^-+$/.test(cleaned);
+}
+
+function displayLabValue(value?: string | number | null) {
+  if (isNilValue(value)) return "nil";
+  return String(value);
+}
+
+function cleanLabValueForSave(value?: string | null) {
+  if (isNilValue(value)) return null;
+  return value?.trim() || null;
+}
+
 function isAbnormalFlag(flag?: string | null) {
   const cleaned = (flag || "").trim().toLowerCase();
+
+  if (!cleaned || cleaned === "normal" || cleaned === "none" || cleaned === "ok") return false;
+
   return ["high", "low", "abnormal", "critical", "borderline"].includes(cleaned);
+}
+
+function isEffectivelyNormalFlag(flag?: string | null) {
+  const cleaned = (flag || "").trim().toLowerCase();
+  return !cleaned || cleaned === "normal" || cleaned === "none" || cleaned === "ok";
 }
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
 
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
+  const parsed = new Date(value);
 
-  return d.toLocaleString(undefined, {
+  if (Number.isNaN(parsed.getTime())) return value;
+
+  return parsed.toLocaleString(undefined, {
     year: "numeric",
     month: "short",
     day: "numeric",
@@ -171,10 +204,21 @@ function bestDisplayName(lab: LabRow | EditableLabRow) {
   return lab.display_name || lab.canonical_name || lab.raw_test_name || "Unnamed test";
 }
 
-function getFlagStyle(flag?: string | null) {
-  const abnormal = isAbnormalFlag(flag);
+function categorySortIndex(category: string) {
+  const index = CATEGORY_ORDER.indexOf(category);
+  return index === -1 ? 999 : index;
+}
 
-  if (!flag || flag === "Normal") {
+function getFlagStyle(flag?: string | null, value?: string | number | null) {
+  if (isNilValue(value)) {
+    return {
+      background: "var(--panel-2)",
+      color: "var(--muted)",
+      borderColor: "var(--border)",
+    };
+  }
+
+  if (isEffectivelyNormalFlag(flag)) {
     return {
       background: "var(--success-bg)",
       color: "var(--success-text)",
@@ -182,7 +226,7 @@ function getFlagStyle(flag?: string | null) {
     };
   }
 
-  if (abnormal) {
+  if (isAbnormalFlag(flag)) {
     return {
       background: "var(--danger-bg)",
       color: "var(--danger-text)",
@@ -197,15 +241,150 @@ function getFlagStyle(flag?: string | null) {
   };
 }
 
-function categorySortIndex(category: string) {
-  const index = CATEGORY_ORDER.indexOf(category);
-  return index === -1 ? 999 : index;
+function DetailField({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | number | null;
+}) {
+  return (
+    <div
+      style={{
+        padding: 14,
+        borderRadius: 18,
+        background: "var(--panel-2)",
+        border: "1px solid var(--border)",
+        minHeight: 68,
+      }}
+    >
+      <div className="muted-text" style={{ fontSize: 12, fontWeight: 850, marginBottom: 7 }}>
+        {label}
+      </div>
+      <div style={{ fontWeight: 900, lineHeight: 1.35, wordBreak: "break-word" }}>
+        {valueOrDash(value)}
+      </div>
+    </div>
+  );
+}
+
+function StatusPill({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "success" | "warn" | "danger";
+}) {
+  const styles =
+    tone === "success"
+      ? {
+          background: "var(--success-bg)",
+          color: "var(--success-text)",
+          borderColor: "var(--success-border)",
+        }
+      : tone === "warn"
+      ? {
+          background: "var(--warn-bg)",
+          color: "var(--warn-text)",
+          borderColor: "var(--warn-border)",
+        }
+      : tone === "danger"
+      ? {
+          background: "var(--danger-bg)",
+          color: "var(--danger-text)",
+          borderColor: "var(--danger-border)",
+        }
+      : {
+          background: "var(--panel-2)",
+          color: "var(--muted)",
+          borderColor: "var(--border)",
+        };
+
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        borderRadius: 999,
+        padding: "7px 11px",
+        border: `1px solid ${styles.borderColor}`,
+        background: styles.background,
+        color: styles.color,
+        fontWeight: 900,
+        fontSize: 12,
+        lineHeight: 1,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function SectionHeader({
+  title,
+  subtitle,
+  right,
+}: {
+  title: string;
+  subtitle?: string;
+  right?: React.ReactNode;
+}) {
+  return (
+    <div
+      style={{
+        display: "flex",
+        justifyContent: "space-between",
+        gap: 16,
+        alignItems: "flex-start",
+        flexWrap: "wrap",
+        marginBottom: 16,
+      }}
+    >
+      <div>
+        <div className="section-title">{title}</div>
+        {subtitle && (
+          <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.55 }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+      {right}
+    </div>
+  );
+}
+
+function TextInput({
+  label,
+  value,
+  onChange,
+  placeholder,
+  disabled,
+}: {
+  label: string;
+  value: string;
+  onChange: (value: string) => void;
+  placeholder?: string;
+  disabled?: boolean;
+}) {
+  return (
+    <label style={{ display: "grid", gap: 8 }}>
+      <span className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
+        {label}
+      </span>
+      <input
+        className="text-input"
+        value={value}
+        onChange={(event) => onChange(event.target.value)}
+        placeholder={placeholder || label}
+        disabled={disabled}
+      />
+    </label>
+  );
 }
 
 export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
-  const { t } = useLanguage();
   const documentId = params?.id as string;
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -246,17 +425,6 @@ export default function DocumentStructuredPage() {
   const [noteTitle, setNoteTitle] = useState("");
   const [noteBody, setNoteBody] = useState("");
 
-  async function fetchData() {
-    const [meResponse, documentResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<DocumentResponse>(`/documents/${documentId}`),
-    ]);
-
-    setCurrentUser(meResponse.data);
-    setDocumentData(documentResponse.data);
-    hydrateForm(documentResponse.data);
-  }
-
   function hydrateForm(next: DocumentResponse) {
     const parsed = next.parsed_data;
 
@@ -286,7 +454,7 @@ export default function DocumentStructuredPage() {
         canonical_name: lab.canonical_name || "",
         display_name: lab.display_name || "",
         category: lab.category || "Alte analize",
-        value: lab.value || "",
+        value: isNilValue(lab.value) ? "" : lab.value || "",
         flag: lab.flag || "",
         reference_range: lab.reference_range || "",
         unit: lab.unit || "",
@@ -297,9 +465,21 @@ export default function DocumentStructuredPage() {
     setNoteBody(parsed.note_body || "");
   }
 
+  async function fetchData() {
+    const [meResponse, documentResponse] = await Promise.all([
+      api.get<CurrentUser>("/auth/me"),
+      api.get<DocumentResponse>(`/documents/${documentId}`),
+    ]);
+
+    setCurrentUser(meResponse.data);
+    setDocumentData(documentResponse.data);
+    hydrateForm(documentResponse.data);
+  }
+
   useEffect(() => {
     async function init() {
       try {
+        setLoading(true);
         setError("");
         await fetchData();
       } catch (err) {
@@ -313,16 +493,21 @@ export default function DocumentStructuredPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
+  const parsed = documentData?.parsed_data;
   const isNote = documentData?.section === "notes";
+
   const canEditStructured = currentUser?.role === "doctor" || currentUser?.role === "admin";
   const canVerify = currentUser?.role === "doctor" || currentUser?.role === "admin";
-  const canEditNote = Boolean(documentData?.can_edit_note);
+  const canEditNote = Boolean(documentData?.can_edit_note) || currentUser?.role === "admin";
   const canDelete =
     Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
     currentUser?.role === "admin";
 
   const abnormalLabs = useMemo(() => {
-    return (documentData?.parsed_data.labs || []).filter((lab) => lab.is_abnormal || isAbnormalFlag(lab.flag));
+    return (documentData?.parsed_data.labs || []).filter((lab) => {
+      if (isNilValue(lab.value)) return false;
+      return lab.is_abnormal || isAbnormalFlag(lab.flag);
+    });
   }, [documentData]);
 
   const orderedGroupedLabs = useMemo(() => {
@@ -353,23 +538,20 @@ export default function DocumentStructuredPage() {
 
       const rawContentType = response.headers["content-type"];
       const contentType =
-        typeof rawContentType === "string" ? rawContentType : documentData.content_type || "application/octet-stream";
+        typeof rawContentType === "string"
+          ? rawContentType
+          : documentData.content_type || "application/octet-stream";
 
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
 
       window.open(fileUrl, "_blank", "noopener,noreferrer");
 
-      setTimeout(() => {
+      window.setTimeout(() => {
         window.URL.revokeObjectURL(fileUrl);
       }, 60_000);
     } catch (err) {
-      setError(
-        getErrorMessage(
-          err,
-          "Could not open original file. If this is an older upload, re-upload it after the persistent disk fix."
-        )
-      );
+      setError(getErrorMessage(err, "Could not open original file."));
     } finally {
       setOpeningOriginal(false);
     }
@@ -404,11 +586,17 @@ export default function DocumentStructuredPage() {
 
       await api.delete(`/documents/${documentData.document_id}`);
 
+      if (currentUser?.role === "patient") {
+        router.push("/my-records");
+        return;
+      }
+
       if (documentData.patient_id) {
         router.push(`/patients/${documentData.patient_id}`);
-      } else {
-        router.push("/my-records");
+        return;
       }
+
+      router.push("/my-records");
     } catch (err) {
       setError(getErrorMessage(err, "Could not delete document."));
       setConfirmDeleteOpen(false);
@@ -475,8 +663,8 @@ export default function DocumentStructuredPage() {
             canonical_name: lab.canonical_name || lab.display_name || lab.raw_test_name || null,
             display_name: lab.display_name || lab.canonical_name || lab.raw_test_name || null,
             category: lab.category || "Alte analize",
-            value: lab.value || null,
-            flag: lab.flag || null,
+            value: cleanLabValueForSave(lab.value || null),
+            flag: isNilValue(lab.value) ? null : lab.flag || null,
             reference_range: lab.reference_range || null,
             unit: lab.unit || null,
           })),
@@ -522,7 +710,7 @@ export default function DocumentStructuredPage() {
     }
   }
 
-  if (loading || !currentUser || !documentData) {
+  if (loading || !currentUser || !documentData || !parsed) {
     return (
       <main
         className="app-page-bg"
@@ -541,21 +729,95 @@ export default function DocumentStructuredPage() {
     );
   }
 
-  const parsed = documentData.parsed_data;
-
   return (
     <AppShell
       user={currentUser}
       title={parsed.report_name || documentData.filename || "Document"}
-      subtitle={`${valueOrDash(parsed.patient_name)} · ${valueOrDash(parsed.report_type)} · ${
-        parsed.is_verified ? "Verified" : "Unverified"
-      }`}
+      subtitle={`${valueOrDash(parsed.patient_name)} · CNP ${valueOrDash(parsed.cnp)} · ${valueOrDash(
+        parsed.report_type
+      )} · ${parsed.is_verified ? "Verified" : "Unverified"}`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.back()}>
           Back
         </button>
       }
     >
+      <style jsx global>{`
+        .document-lab-table {
+          width: 100%;
+          border-collapse: separate;
+          border-spacing: 0;
+        }
+
+        .document-lab-table th {
+          text-align: left;
+          font-size: 12px;
+          color: var(--muted);
+          font-weight: 950;
+          padding: 12px 14px;
+          border-bottom: 1px solid var(--border);
+          background: var(--panel-2);
+        }
+
+        .document-lab-table td {
+          padding: 14px;
+          border-bottom: 1px solid var(--border);
+          vertical-align: middle;
+        }
+
+        .document-lab-table tr:last-child td {
+          border-bottom: 0;
+        }
+
+        .document-lab-table tr.abnormal-row td {
+          background: color-mix(in srgb, var(--danger-bg) 72%, transparent);
+        }
+
+        .document-lab-table tr.nil-row td {
+          opacity: 0.82;
+        }
+
+        .document-edit-grid {
+          display: grid;
+          grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
+          gap: 20px;
+        }
+
+        @media (max-width: 900px) {
+          .document-lab-table,
+          .document-lab-table thead,
+          .document-lab-table tbody,
+          .document-lab-table th,
+          .document-lab-table td,
+          .document-lab-table tr {
+            display: block;
+          }
+
+          .document-lab-table thead {
+            display: none;
+          }
+
+          .document-lab-table tr {
+            border-bottom: 1px solid var(--border);
+            padding: 10px 0;
+          }
+
+          .document-lab-table td {
+            border-bottom: 0;
+            padding: 8px 12px;
+          }
+
+          .document-lab-table td::before {
+            content: attr(data-label);
+            display: block;
+            color: var(--muted);
+            font-size: 11px;
+            font-weight: 900;
+            margin-bottom: 4px;
+          }
+        }
+      `}</style>
+
       {error && (
         <div
           className="soft-card-tight"
@@ -599,14 +861,7 @@ export default function DocumentStructuredPage() {
               admin.
             </div>
 
-            <div
-              className="soft-card-tight"
-              style={{
-                marginTop: 16,
-                padding: 14,
-                background: "var(--panel-2)",
-              }}
-            >
+            <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
               <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 5 }}>
                 Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
@@ -648,52 +903,17 @@ export default function DocumentStructuredPage() {
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <span
-                style={{
-                  display: "inline-flex",
-                  padding: "7px 11px",
-                  borderRadius: 999,
-                  background: parsed.is_verified ? "var(--success-bg)" : "var(--warn-bg)",
-                  color: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)",
-                  border: `1px solid ${parsed.is_verified ? "var(--success-border)" : "var(--warn-border)"}`,
-                  fontWeight: 900,
-                  fontSize: 12,
-                }}
-              >
+              <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
                 {parsed.is_verified ? "Verified" : "Unverified"}
-              </span>
+              </StatusPill>
 
-              <span
-                style={{
-                  display: "inline-flex",
-                  padding: "7px 11px",
-                  borderRadius: 999,
-                  background: "var(--panel-2)",
-                  color: "var(--muted)",
-                  border: "1px solid var(--border)",
-                  fontWeight: 900,
-                  fontSize: 12,
-                }}
-              >
-                {documentData.section}
-              </span>
+              <StatusPill>{documentData.section}</StatusPill>
 
               {!isNote && abnormalLabs.length > 0 && (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    padding: "7px 11px",
-                    borderRadius: 999,
-                    background: "var(--danger-bg)",
-                    color: "var(--danger-text)",
-                    border: "1px solid var(--danger-border)",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  {abnormalLabs.length} abnormal
-                </span>
+                <StatusPill tone="danger">{abnormalLabs.length} abnormal</StatusPill>
               )}
+
+              {isNote && <StatusPill>Clinical note</StatusPill>}
             </div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
@@ -751,9 +971,7 @@ export default function DocumentStructuredPage() {
         <div className="soft-card" style={{ padding: 24 }}>
           {!noteEditMode ? (
             <>
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                {parsed.report_name || "Clinical Note"}
-              </div>
+              <SectionHeader title={parsed.report_name || "Clinical Note"} />
 
               <div
                 className="soft-card-tight"
@@ -772,7 +990,7 @@ export default function DocumentStructuredPage() {
               <input
                 className="text-input"
                 value={noteTitle}
-                onChange={(e) => setNoteTitle(e.target.value)}
+                onChange={(event) => setNoteTitle(event.target.value)}
                 placeholder="Note title"
                 disabled={savingNote}
               />
@@ -780,7 +998,7 @@ export default function DocumentStructuredPage() {
               <textarea
                 className="text-input"
                 value={noteBody}
-                onChange={(e) => setNoteBody(e.target.value)}
+                onChange={(event) => setNoteBody(event.target.value)}
                 rows={16}
                 placeholder="Write clinical note..."
                 disabled={savingNote}
@@ -800,86 +1018,56 @@ export default function DocumentStructuredPage() {
         </div>
       ) : editMode ? (
         <form onSubmit={saveStructuredData} style={{ display: "grid", gap: 24 }}>
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
-              gap: 20,
-            }}
-          >
+          <div className="document-edit-grid">
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                Patient
-              </div>
+              <SectionHeader title="Patient" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <input className="text-input" value={patientName} onChange={(e) => setPatientName(e.target.value)} placeholder="Patient name" />
-                <input className="text-input" value={dateOfBirth} onChange={(e) => setDateOfBirth(e.target.value)} placeholder="Date of birth" />
-                <input className="text-input" value={age} onChange={(e) => setAge(e.target.value)} placeholder="Age" />
-                <input className="text-input" value={sex} onChange={(e) => setSex(e.target.value)} placeholder="Sex" />
-                <input className="text-input" value={cnp} onChange={(e) => setCnp(e.target.value)} placeholder="CNP" />
-                <input
-                  className="text-input"
-                  value={patientIdentifier}
-                  onChange={(e) => setPatientIdentifier(e.target.value)}
-                  placeholder="Patient ID"
-                />
+                <TextInput label="Patient name" value={patientName} onChange={setPatientName} />
+                <TextInput label="Date of birth" value={dateOfBirth} onChange={setDateOfBirth} />
+                <TextInput label="Age" value={age} onChange={setAge} />
+                <TextInput label="Sex" value={sex} onChange={setSex} />
+                <TextInput label="CNP" value={cnp} onChange={setCnp} />
+                <TextInput label="Patient ID" value={patientIdentifier} onChange={setPatientIdentifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                Document details
-              </div>
+              <SectionHeader title="Document details" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <input className="text-input" value={reportName} onChange={(e) => setReportName(e.target.value)} placeholder="Report name" />
-                <input className="text-input" value={reportType} onChange={(e) => setReportType(e.target.value)} placeholder="Report type" />
-                <input className="text-input" value={labName} onChange={(e) => setLabName(e.target.value)} placeholder="Lab" />
-                <input className="text-input" value={sampleType} onChange={(e) => setSampleType(e.target.value)} placeholder="Sample type" />
-                <input
-                  className="text-input"
-                  value={referringDoctor}
-                  onChange={(e) => setReferringDoctor(e.target.value)}
-                  placeholder="Referring doctor"
-                />
-                <input
-                  className="text-input"
-                  value={sourceLanguage}
-                  onChange={(e) => setSourceLanguage(e.target.value)}
-                  placeholder="Source language"
-                />
+                <TextInput label="Report name" value={reportName} onChange={setReportName} />
+                <TextInput label="Report type" value={reportType} onChange={setReportType} />
+                <TextInput label="Lab" value={labName} onChange={setLabName} />
+                <TextInput label="Sample type" value={sampleType} onChange={setSampleType} />
+                <TextInput label="Referring doctor" value={referringDoctor} onChange={setReferringDoctor} />
+                <TextInput label="Source language" value={sourceLanguage} onChange={setSourceLanguage} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                Dates
-              </div>
+              <SectionHeader title="Dates" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <input className="text-input" value={testDate} onChange={(e) => setTestDate(e.target.value)} placeholder="Test date" />
-                <input className="text-input" value={collectedOn} onChange={(e) => setCollectedOn(e.target.value)} placeholder="Collected on" />
-                <input className="text-input" value={reportedOn} onChange={(e) => setReportedOn(e.target.value)} placeholder="Reported on" />
-                <input className="text-input" value={registeredOn} onChange={(e) => setRegisteredOn(e.target.value)} placeholder="Registered on" />
-                <input className="text-input" value={generatedOn} onChange={(e) => setGeneratedOn(e.target.value)} placeholder="Generated on" />
+                <TextInput label="Test date" value={testDate} onChange={setTestDate} />
+                <TextInput label="Collected on" value={collectedOn} onChange={setCollectedOn} />
+                <TextInput label="Reported on" value={reportedOn} onChange={setReportedOn} />
+                <TextInput label="Registered on" value={registeredOn} onChange={setRegisteredOn} />
+                <TextInput label="Generated on" value={generatedOn} onChange={setGeneratedOn} />
               </div>
             </div>
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, alignItems: "center", marginBottom: 16 }}>
-              <div>
-                <div className="section-title">Structured lab rows</div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  Edit categories, values, units, references, and flags.
-                </div>
-              </div>
-
-              <button type="button" className="secondary-btn" onClick={addLabRow}>
-                Add row
-              </button>
-            </div>
+            <SectionHeader
+              title="Structured lab rows"
+              subtitle="Edit categories, values, units, references, and flags. Empty, dash, or nil values are saved as nil and will not be used in trends."
+              right={
+                <button type="button" className="secondary-btn" onClick={addLabRow}>
+                  Add row
+                </button>
+              }
+            />
 
             <div style={{ display: "grid", gap: 12 }}>
               {labs.map((lab, index) => (
@@ -896,18 +1084,22 @@ export default function DocumentStructuredPage() {
                 >
                   <input
                     className="text-input"
-                    value={lab.display_name || lab.raw_test_name || ""}
-                    onChange={(e) => {
-                      updateLab(index, "display_name", e.target.value);
-                      updateLab(index, "raw_test_name", e.target.value);
-                    }}
-                    placeholder="Test"
+                    value={lab.display_name || ""}
+                    onChange={(event) => updateLab(index, "display_name", event.target.value)}
+                    placeholder="Display name"
+                  />
+
+                  <input
+                    className="text-input"
+                    value={lab.raw_test_name || ""}
+                    onChange={(event) => updateLab(index, "raw_test_name", event.target.value)}
+                    placeholder="Raw name"
                   />
 
                   <select
                     className="text-input"
                     value={lab.category || "Alte analize"}
-                    onChange={(e) => updateLab(index, "category", e.target.value)}
+                    onChange={(event) => updateLab(index, "category", event.target.value)}
                   >
                     {CATEGORY_OPTIONS.map((category) => (
                       <option key={category} value={category}>
@@ -916,48 +1108,68 @@ export default function DocumentStructuredPage() {
                     ))}
                   </select>
 
-                  <input className="text-input" value={lab.value || ""} onChange={(e) => updateLab(index, "value", e.target.value)} placeholder="Value" />
-                  <input className="text-input" value={lab.unit || ""} onChange={(e) => updateLab(index, "unit", e.target.value)} placeholder="Unit" />
+                  <input
+                    className="text-input"
+                    value={lab.value || ""}
+                    onChange={(event) => updateLab(index, "value", event.target.value)}
+                    placeholder="Value / nil"
+                  />
+
                   <input
                     className="text-input"
                     value={lab.reference_range || ""}
-                    onChange={(e) => updateLab(index, "reference_range", e.target.value)}
+                    onChange={(event) => updateLab(index, "reference_range", event.target.value)}
                     placeholder="Reference"
                   />
-                  <select className="text-input" value={lab.flag || ""} onChange={(e) => updateLab(index, "flag", e.target.value)}>
-                    <option value="">—</option>
-                    <option value="Normal">Normal</option>
-                    <option value="High">High</option>
-                    <option value="Low">Low</option>
-                    <option value="Abnormal">Abnormal</option>
-                    <option value="Critical">Critical</option>
-                    <option value="Borderline">Borderline</option>
-                  </select>
-                  <button type="button" className="secondary-btn" onClick={() => removeLabRow(index)}>
-                    ×
-                  </button>
+
+                  <input
+                    className="text-input"
+                    value={lab.unit || ""}
+                    onChange={(event) => updateLab(index, "unit", event.target.value)}
+                    placeholder="Unit"
+                  />
+
+                  <div style={{ display: "flex", gap: 8 }}>
+                    <select
+                      className="text-input"
+                      value={lab.flag || ""}
+                      onChange={(event) => updateLab(index, "flag", event.target.value)}
+                      style={{ minWidth: 110 }}
+                    >
+                      <option value="">No flag</option>
+                      <option value="Normal">Normal</option>
+                      <option value="High">High</option>
+                      <option value="Low">Low</option>
+                      <option value="Abnormal">Abnormal</option>
+                    </select>
+
+                    <button type="button" className="secondary-btn" onClick={() => removeLabRow(index)}>
+                      Remove
+                    </button>
+                  </div>
                 </div>
               ))}
 
               {!labs.length && (
                 <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                  No lab rows yet.
+                  <div className="muted-text">No structured lab rows yet.</div>
                 </div>
               )}
             </div>
 
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 18 }}>
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 20 }}>
               <button
                 type="button"
                 className="secondary-btn"
+                disabled={saving}
                 onClick={() => {
                   hydrateForm(documentData);
                   setEditMode(false);
                 }}
-                disabled={saving}
               >
                 Cancel
               </button>
+
               <button type="submit" className="primary-btn" disabled={saving}>
                 {saving ? "Saving..." : "Save structured data"}
               </button>
@@ -965,216 +1177,132 @@ export default function DocumentStructuredPage() {
           </div>
         </form>
       ) : (
-        <>
+        <div style={{ display: "grid", gap: 24 }}>
           <div
             style={{
               display: "grid",
               gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
               gap: 20,
-              marginBottom: 24,
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                Patient
-              </div>
+              <SectionHeader title="Patient" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                {[
-                  ["Name", parsed.patient_name],
-                  ["Date of birth", parsed.date_of_birth],
-                  ["Age", parsed.age],
-                  ["Sex", parsed.sex],
-                  ["CNP", parsed.cnp],
-                  ["Patient ID", parsed.patient_identifier],
-                ].map(([label, value]) => (
-                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
-                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                      {label}
-                    </div>
-                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
-                  </div>
-                ))}
+                <DetailField label="Name" value={parsed.patient_name} />
+                <DetailField label="Date of birth" value={parsed.date_of_birth} />
+                <DetailField label="Age" value={parsed.age} />
+                <DetailField label="Sex" value={parsed.sex} />
+                <DetailField label="CNP" value={parsed.cnp} />
+                <DetailField label="Patient ID" value={parsed.patient_identifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                Document details
-              </div>
+              <SectionHeader title="Document details" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                {[
-                  ["Report name", parsed.report_name],
-                  ["Report type", parsed.report_type],
-                  ["Lab", parsed.lab_name],
-                  ["Sample type", parsed.sample_type],
-                  ["Referring doctor", parsed.referring_doctor],
-                  ["Source language", parsed.source_language],
-                ].map(([label, value]) => (
-                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
-                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                      {label}
-                    </div>
-                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
-                  </div>
-                ))}
+                <DetailField label="Report name" value={parsed.report_name} />
+                <DetailField label="Report type" value={parsed.report_type} />
+                <DetailField label="Lab" value={parsed.lab_name} />
+                <DetailField label="Sample type" value={parsed.sample_type} />
+                <DetailField label="Referring doctor" value={parsed.referring_doctor} />
+                <DetailField label="Source language" value={parsed.source_language} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div className="section-title" style={{ marginBottom: 14 }}>
-                Dates
-              </div>
+              <SectionHeader title="Dates" />
 
               <div style={{ display: "grid", gap: 12 }}>
-                {[
-                  ["Test date", parsed.test_date],
-                  ["Collected on", parsed.collected_on],
-                  ["Reported on", parsed.reported_on],
-                  ["Registered on", parsed.registered_on],
-                  ["Generated on", parsed.generated_on],
-                ].map(([label, value]) => (
-                  <div key={label} className="soft-card-tight" style={{ padding: 14, background: "var(--panel)" }}>
-                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                      {label}
-                    </div>
-                    <div style={{ marginTop: 5, fontWeight: 900 }}>{valueOrDash(value)}</div>
-                  </div>
-                ))}
+                <DetailField label="Test date" value={parsed.test_date} />
+                <DetailField label="Collected on" value={parsed.collected_on} />
+                <DetailField label="Reported on" value={parsed.reported_on} />
+                <DetailField label="Registered on" value={parsed.registered_on} />
+                <DetailField label="Generated on" value={parsed.generated_on} />
               </div>
             </div>
           </div>
 
-          {abnormalLabs.length > 0 && (
-            <div
-              className="soft-card"
-              style={{
-                padding: 24,
-                marginBottom: 24,
-                borderColor: "var(--danger-border)",
-                background: "linear-gradient(135deg, var(--danger-bg), var(--panel))",
-              }}
-            >
-              <div className="section-title" style={{ marginBottom: 12 }}>
-                Abnormal results
-              </div>
-
-              <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-                {abnormalLabs.map((lab, index) => (
-                  <span
-                    key={`abnormal-${lab.id}-${lab.canonical_name || lab.display_name || lab.raw_test_name}-${index}`}
-                    style={{
-                      display: "inline-flex",
-                      alignItems: "center",
-                      gap: 8,
-                      padding: "8px 11px",
-                      borderRadius: 999,
-                      background: "var(--panel)",
-                      color: "var(--danger-text)",
-                      border: "1px solid var(--danger-border)",
-                      fontWeight: 850,
-                      fontSize: 13,
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 8,
-                        height: 8,
-                        borderRadius: 999,
-                        background: "var(--danger-text)",
-                      }}
-                    />
-                    {bestDisplayName(lab)} · {valueOrDash(lab.value)} {valueOrDash(lab.unit)}
-                  </span>
-                ))}
-              </div>
-            </div>
-          )}
-
-          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-            <div className="section-title" style={{ marginBottom: 6 }}>
-              Structured Data
-            </div>
-
-            <div className="muted-text" style={{ marginBottom: 18 }}>
-              {(parsed.labs || []).length} structured lab rows extracted.
-            </div>
+          <div className="soft-card" style={{ padding: 24 }}>
+            <SectionHeader
+              title="Structured Data"
+              subtitle={`${parsed.labs?.length || 0} structured lab rows extracted.`}
+            />
 
             {orderedGroupedLabs.length > 0 ? (
-              <div style={{ display: "grid", gap: 26 }}>
+              <div style={{ display: "grid", gap: 22 }}>
                 {orderedGroupedLabs.map(({ category, rows }) => (
-                  <section key={category}>
+                  <div key={category}>
                     <div
                       style={{
-                        fontSize: 13,
                         fontWeight: 950,
-                        letterSpacing: "0.06em",
-                        textTransform: "uppercase",
-                        color: "var(--muted)",
+                        letterSpacing: "-0.03em",
                         marginBottom: 10,
+                        textTransform: "uppercase",
+                        fontSize: 13,
+                        color: "var(--muted)",
                       }}
                     >
                       {category}
                     </div>
 
                     <div
+                      className="soft-card-tight"
                       style={{
-                        border: "1px solid var(--border)",
-                        borderRadius: 20,
+                        padding: 0,
                         overflow: "hidden",
-                        background: "var(--panel)",
                       }}
                     >
-                      <table style={{ width: "100%", borderCollapse: "collapse" }}>
+                      <table className="document-lab-table">
                         <thead>
-                          <tr style={{ background: "var(--panel-2)" }}>
-                            {["Test", "Value", "Unit", "Reference range", "Flag"].map((header) => (
-                              <th
-                                key={header}
-                                style={{
-                                  padding: 14,
-                                  textAlign: header === "Test" ? "left" : "center",
-                                  fontSize: 12,
-                                  color: "var(--muted)",
-                                  fontWeight: 950,
-                                  borderBottom: "1px solid var(--border)",
-                                }}
-                              >
-                                {header}
-                              </th>
-                            ))}
+                          <tr>
+                            <th style={{ width: "38%" }}>Test</th>
+                            <th>Value</th>
+                            <th>Unit</th>
+                            <th>Reference range</th>
+                            <th>Flag</th>
                           </tr>
                         </thead>
 
                         <tbody>
-                          {rows.map((lab, index) => {
-                            const flagStyle = getFlagStyle(lab.flag);
-                            const abnormal = lab.is_abnormal || isAbnormalFlag(lab.flag);
+                          {rows.map((lab) => {
+                            const nil = isNilValue(lab.value);
+                            const abnormal = !nil && (lab.is_abnormal || isAbnormalFlag(lab.flag));
+                            const flagStyle = getFlagStyle(lab.flag, lab.value);
 
                             return (
                               <tr
-                                key={`${category}-${lab.id}-${lab.canonical_name || lab.display_name || lab.raw_test_name}-${index}`}
-                                style={{
-                                  background: abnormal ? "var(--danger-bg)" : "transparent",
-                                  borderBottom: index === rows.length - 1 ? "none" : "1px solid var(--border)",
-                                }}
+                                key={lab.id}
+                                className={`${abnormal ? "abnormal-row" : ""} ${nil ? "nil-row" : ""}`}
                               >
-                                <td style={{ padding: 14, textAlign: "left" }}>
-                                  <div style={{ display: "flex", gap: 9, alignItems: "center" }}>
+                                <td data-label="Test">
+                                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                     {abnormal && (
                                       <span
                                         style={{
-                                          width: 8,
-                                          height: 8,
+                                          width: 9,
+                                          height: 9,
                                           borderRadius: 999,
                                           background: "var(--danger-text)",
                                           flex: "0 0 auto",
                                         }}
                                       />
                                     )}
+                                    {nil && (
+                                      <span
+                                        style={{
+                                          width: 9,
+                                          height: 9,
+                                          borderRadius: 999,
+                                          background: "var(--muted)",
+                                          flex: "0 0 auto",
+                                        }}
+                                      />
+                                    )}
+
                                     <div>
-                                      <div style={{ fontWeight: 900 }}>{bestDisplayName(lab)}</div>
+                                      <div style={{ fontWeight: 950 }}>{bestDisplayName(lab)}</div>
                                       <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
                                         Raw: {valueOrDash(lab.raw_test_name)}
                                       </div>
@@ -1182,24 +1310,54 @@ export default function DocumentStructuredPage() {
                                   </div>
                                 </td>
 
-                                <td style={{ padding: 14, textAlign: "center", fontWeight: 950 }}>{valueOrDash(lab.value)}</td>
-                                <td style={{ padding: 14, textAlign: "center" }}>{valueOrDash(lab.unit)}</td>
-                                <td style={{ padding: 14, textAlign: "center" }}>{valueOrDash(lab.reference_range)}</td>
-                                <td style={{ padding: 14, textAlign: "center" }}>
-                                  <span
-                                    style={{
-                                      display: "inline-flex",
-                                      padding: "6px 10px",
-                                      borderRadius: 999,
-                                      border: `1px solid ${flagStyle.borderColor}`,
-                                      background: flagStyle.background,
-                                      color: flagStyle.color,
-                                      fontSize: 12,
-                                      fontWeight: 950,
-                                    }}
-                                  >
-                                    {valueOrDash(lab.flag || "Normal")}
+                                <td data-label="Value">
+                                  <span style={{ fontWeight: 950 }}>{displayLabValue(lab.value)}</span>
+                                </td>
+
+                                <td data-label="Unit">
+                                  <span className="muted-text" style={{ fontWeight: 850 }}>
+                                    {valueOrDash(lab.unit)}
                                   </span>
+                                </td>
+
+                                <td data-label="Reference range">
+                                  <span className="muted-text" style={{ fontWeight: 850 }}>
+                                    {valueOrDash(lab.reference_range)}
+                                  </span>
+                                </td>
+
+                                <td data-label="Flag">
+                                  {nil ? (
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        padding: "6px 10px",
+                                        borderRadius: 999,
+                                        border: "1px solid var(--border)",
+                                        background: "var(--panel-2)",
+                                        color: "var(--muted)",
+                                        fontSize: 12,
+                                        fontWeight: 950,
+                                      }}
+                                    >
+                                      nil
+                                    </span>
+                                  ) : (
+                                    <span
+                                      style={{
+                                        display: "inline-flex",
+                                        padding: "6px 10px",
+                                        borderRadius: 999,
+                                        border: `1px solid ${flagStyle.borderColor}`,
+                                        background: flagStyle.background,
+                                        color: flagStyle.color,
+                                        fontSize: 12,
+                                        fontWeight: 950,
+                                      }}
+                                    >
+                                      {valueOrDash(lab.flag || "Normal")}
+                                    </span>
+                                  )}
                                 </td>
                               </tr>
                             );
@@ -1207,13 +1365,13 @@ export default function DocumentStructuredPage() {
                         </tbody>
                       </table>
                     </div>
-                  </section>
+                  </div>
                 ))}
               </div>
             ) : (
-              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
                 <div style={{ fontWeight: 900 }}>No structured lab values found.</div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
+                <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
                   If this was a lab report, re-upload after the OCR/AI extraction backend is deployed.
                 </div>
               </div>
@@ -1221,19 +1379,20 @@ export default function DocumentStructuredPage() {
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
-            <div className="section-title" style={{ marginBottom: 14 }}>
-              Audit trail
-            </div>
+            <SectionHeader title="Audit trail" />
 
             <div style={{ display: "grid", gap: 12 }}>
               {(parsed.audit_logs || []).map((log, index) => (
-                <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 14 }}>
-                  <div style={{ fontWeight: 900 }}>{log.action}</div>
-                  <div className="muted-text" style={{ marginTop: 4 }}>
-                    {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
+                <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 950 }}>{log.action}</div>
+                    <div className="muted-text" style={{ fontSize: 12 }}>
+                      {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
+                    </div>
                   </div>
+
                   {log.details && (
-                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.5 }}>
+                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
                       {log.details}
                     </div>
                   )}
@@ -1242,12 +1401,12 @@ export default function DocumentStructuredPage() {
 
               {!parsed.audit_logs?.length && (
                 <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                  No audit logs yet.
+                  <div className="muted-text">No audit activity yet.</div>
                 </div>
               )}
             </div>
           </div>
-        </>
+        </div>
       )}
     </AppShell>
   );

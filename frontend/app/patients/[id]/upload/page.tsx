@@ -5,7 +5,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
-import { useUploadManager } from "@/components/upload-provider";
+import { UploadStatus, useUploadManager } from "@/components/upload-provider";
 
 type CurrentUser = {
   id: number;
@@ -33,6 +33,17 @@ type UploadItem = {
   file: File;
 };
 
+type UploadRow = {
+  id: string;
+  filename: string;
+  size: number;
+  status: UploadStatus | "selected";
+  progress: number;
+  message: string;
+  error?: string;
+  local: boolean;
+};
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
@@ -57,14 +68,63 @@ function Spinner({ size = 18 }: { size?: number }) {
   );
 }
 
+function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
+  if (status === "done") {
+    return (
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          background: "var(--success-bg)",
+          color: "var(--success-text)",
+          border: "1px solid var(--success-border)",
+          fontWeight: 950,
+          flex: "0 0 auto",
+        }}
+      >
+        ✓
+      </span>
+    );
+  }
+
+  if (status === "error") {
+    return (
+      <span
+        style={{
+          width: 28,
+          height: 28,
+          borderRadius: 999,
+          display: "grid",
+          placeItems: "center",
+          background: "var(--danger-bg)",
+          color: "var(--danger-text)",
+          border: "1px solid var(--danger-border)",
+          fontWeight: 950,
+          flex: "0 0 auto",
+        }}
+      >
+        !
+      </span>
+    );
+  }
+
+  if (status === "selected") return null;
+
+  return <Spinner size={18} />;
+}
+
 function formatFileSize(bytes: number) {
+  if (!bytes) return "";
   if (bytes < 1024) return `${bytes} B`;
   if (bytes < 1024 * 1024) return `${(bytes / 1024).toFixed(1)} KB`;
   return `${(bytes / 1024 / 1024).toFixed(2)} MB`;
 }
 
-function getFileBadge(file: File) {
-  const name = file.name.toLowerCase();
+function getFileBadge(fileOrName: File | string) {
+  const name = typeof fileOrName === "string" ? fileOrName.toLowerCase() : fileOrName.name.toLowerCase();
 
   if (name.endsWith(".pdf")) return "PDF";
   if (name.endsWith(".png")) return "PNG";
@@ -100,7 +160,7 @@ export default function DoctorPatientUploadPage() {
   const params = useParams();
   const router = useRouter();
   const { language } = useLanguage();
-  const { enqueueUploads, tasks, refreshUploadJobs } = useUploadManager();
+  const { enqueueUploads, visibleTasks, refreshUploadJobs } = useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
   const patientId = params?.id as string;
 
@@ -124,18 +184,15 @@ export default function DoctorPatientUploadPage() {
         or: "sau",
         browse: "Alege fișiere",
         uploadSupportText:
-          "PDF-uri, imagini și documente scanate. După ce apeși upload, poți continua să folosești site-ul.",
+          "PDF-uri, imagini și documente scanate. După ce apeși Upload, procesarea continuă în fundal.",
         clear: "Șterge",
-        uploadAndContinue: "Încarcă și continuă",
+        upload: "Încarcă",
+        continue: "Continuă",
         chooseAtLeastOneFile: "Alege cel puțin un fișier.",
         emptyTitle: "Lista este goală",
         emptyDesc: "Alege sau trage fișiere aici pentru a începe.",
         loadingPage: "Se încarcă pagina de upload...",
         failedLoad: "Nu s-a putut încărca pagina.",
-        currentProgress: "Progres uploaduri",
-        backgroundNoticeTitle: "Upload în fundal",
-        backgroundNotice:
-          "Fișierele se procesează în fundal. Progresul apare aici și în clopoțel.",
       };
     }
 
@@ -157,18 +214,15 @@ export default function DoctorPatientUploadPage() {
       or: "or",
       browse: "Browse files",
       uploadSupportText:
-        "PDFs, images, and scanned reports. After you start the upload, you can keep using the site.",
+        "PDFs, images, and scanned reports. After pressing Upload, processing continues in the background.",
       clear: "Clear",
-      uploadAndContinue: "Upload and continue",
+      upload: "Upload",
+      continue: "Continue",
       chooseAtLeastOneFile: "Choose at least one file.",
       emptyTitle: "Your upload list is empty",
       emptyDesc: "Choose or drag files here to begin.",
       loadingPage: "Loading upload page...",
       failedLoad: "Could not load upload page.",
-      currentProgress: "Current upload progress",
-      backgroundNoticeTitle: "Background uploads",
-      backgroundNotice:
-        "Files process in the background. Progress appears here and in the notification bell.",
     };
   }, [language]);
 
@@ -191,13 +245,40 @@ export default function DoctorPatientUploadPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const selectedCount = items.length;
-  const canUpload = selectedCount > 0;
+  const canUpload = items.length > 0;
+
+  const uploadRows = useMemo<UploadRow[]>(() => {
+    const localRows = items.map((item) => ({
+      id: item.id,
+      filename: item.file.name,
+      size: item.file.size,
+      status: "selected" as const,
+      progress: 0,
+      message: getUploadHint(item.file),
+      error: "",
+      local: true,
+    }));
+
+    const taskRows = visibleTasks
+      .filter((task) => String(task.patientId || "") === String(patientId))
+      .map((task) => ({
+        id: task.id,
+        filename: task.filename,
+        size: task.size,
+        status: task.status,
+        progress: task.progress,
+        message: task.message,
+        error: task.error || "",
+        local: false,
+      }));
+
+    return [...localRows, ...taskRows];
+  }, [items, visibleTasks, patientId]);
 
   const selectedSummary = useMemo(() => {
-    if (!selectedCount) return labels.noFilesSelectedYet;
-    return `${selectedCount} ${labels.selected}`;
-  }, [selectedCount, labels]);
+    if (!uploadRows.length) return labels.noFilesSelectedYet;
+    return `${uploadRows.length} ${labels.selected}`;
+  }, [uploadRows.length, labels]);
 
   useEffect(() => {
     async function init() {
@@ -298,7 +379,6 @@ export default function DoctorPatientUploadPage() {
 
     setItems([]);
     setError("");
-    router.push(`/patients/${patientId}`);
   }
 
   if (loading || !currentUser || !profile) {
@@ -348,73 +428,16 @@ export default function DoctorPatientUploadPage() {
         </div>
       )}
 
-      {tasks.length > 0 && (
-        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-          <div className="section-title" style={{ marginBottom: 12 }}>
-            {labels.currentProgress}
-          </div>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            {tasks.slice(0, 8).map((task) => (
-              <div key={task.id} className="soft-card-tight" style={{ padding: 14 }}>
-                <div style={{ display: "flex", justifyContent: "space-between", gap: 12 }}>
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 850,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
-                      {task.filename}
-                    </div>
-                    <div className="muted-text" style={{ marginTop: 5, fontSize: 12 }}>
-                      {task.message}
-                    </div>
-                  </div>
-
-                  <div style={{ fontWeight: 900, fontSize: 12, color: "var(--muted)" }}>
-                    {task.status}
-                  </div>
-                </div>
-
-                {(task.status === "uploading" || task.status === "processing" || task.status === "queued") && (
-                  <div
-                    style={{
-                      marginTop: 10,
-                      height: 7,
-                      borderRadius: 999,
-                      background: "var(--panel-2)",
-                      overflow: "hidden",
-                      border: "1px solid var(--border)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        height: "100%",
-                        width: `${Math.max(task.progress || 5, 5)}%`,
-                        borderRadius: 999,
-                        background: "var(--primary)",
-                        transition: "width 180ms ease",
-                      }}
-                    />
-                  </div>
-                )}
-
-                {task.error && (
-                  <div style={{ marginTop: 8, color: "var(--danger-text)", fontSize: 12 }}>
-                    {task.error}
-                  </div>
-                )}
-              </div>
-            ))}
-          </div>
-        </div>
-      )}
-
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap" }}>
+        <div
+          style={{
+            display: "flex",
+            justifyContent: "space-between",
+            gap: 16,
+            alignItems: "center",
+            flexWrap: "wrap",
+          }}
+        >
           <div>
             <div className="section-title">{labels.documentType}</div>
             <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.55 }}>
@@ -437,42 +460,14 @@ export default function DoctorPatientUploadPage() {
         </div>
       </div>
 
-      <div
-        className="soft-card-tight"
-        style={{
-          marginBottom: 24,
-          padding: 16,
-          background: "var(--panel-2)",
-          display: "flex",
-          gap: 12,
-          alignItems: "flex-start",
-        }}
-      >
+      <div className="soft-card" style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
         <div
           style={{
-            width: 34,
-            height: 34,
-            borderRadius: 999,
             display: "grid",
-            placeItems: "center",
-            background: "var(--panel)",
-            border: "1px solid var(--border)",
-            flex: "0 0 auto",
+            gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 0.9fr)",
+            minHeight: 520,
           }}
         >
-          🔔
-        </div>
-
-        <div>
-          <div style={{ fontWeight: 900 }}>{labels.backgroundNoticeTitle}</div>
-          <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.55 }}>
-            {labels.backgroundNotice}
-          </div>
-        </div>
-      </div>
-
-      <div className="soft-card" style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
-        <div style={{ display: "grid", gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 0.9fr)", minHeight: 520 }}>
           <div
             onDragOver={handleDragOver}
             onDragLeave={handleDragLeave}
@@ -563,11 +558,23 @@ export default function DoctorPatientUploadPage() {
             </div>
 
             <div style={{ display: "grid", gap: 12, alignContent: "start", overflowY: "auto", paddingRight: 6 }}>
-              {items.map((item) => (
+              {uploadRows.map((row) => (
                 <div
-                  key={item.id}
+                  key={row.id}
                   className="soft-card-tight"
-                  style={{ padding: 14, display: "grid", gridTemplateColumns: "54px minmax(0, 1fr) auto", gap: 12, alignItems: "center" }}
+                  style={{
+                    padding: 14,
+                    display: "grid",
+                    gridTemplateColumns: "54px minmax(0, 1fr) auto",
+                    gap: 12,
+                    alignItems: "center",
+                    borderColor:
+                      row.status === "error"
+                        ? "var(--danger-border)"
+                        : row.status === "done"
+                        ? "var(--success-border)"
+                        : "var(--border)",
+                  }}
                 >
                   <div
                     style={{
@@ -583,25 +590,86 @@ export default function DoctorPatientUploadPage() {
                       color: "var(--muted)",
                     }}
                   >
-                    {getFileBadge(item.file)}
+                    {getFileBadge(row.filename)}
                   </div>
 
                   <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 850, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                      {item.file.name}
+                    <div
+                      style={{
+                        fontWeight: 850,
+                        whiteSpace: "nowrap",
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                      }}
+                    >
+                      {row.filename}
                     </div>
+
                     <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                      {formatFileSize(item.file.size)} · {getUploadHint(item.file)}
+                      {row.size ? `${formatFileSize(row.size)} · ` : ""}
+                      {row.message}
                     </div>
+
+                    {row.status !== "selected" && (
+                      <div
+                        style={{
+                          marginTop: 10,
+                          height: 7,
+                          borderRadius: 999,
+                          background: "var(--panel-2)",
+                          overflow: "hidden",
+                          border: "1px solid var(--border)",
+                        }}
+                      >
+                        <div
+                          style={{
+                            height: "100%",
+                            width: `${Math.max(row.progress || 5, 5)}%`,
+                            borderRadius: 999,
+                            background:
+                              row.status === "error"
+                                ? "var(--danger-text)"
+                                : row.status === "done"
+                                ? "var(--success-text)"
+                                : "var(--primary)",
+                            transition: "width 180ms ease",
+                          }}
+                        />
+                      </div>
+                    )}
+
+                    {row.error && (
+                      <div
+                        style={{
+                          marginTop: 8,
+                          color: "var(--danger-text)",
+                          fontSize: 12,
+                          lineHeight: 1.45,
+                          maxHeight: 70,
+                          overflow: "auto",
+                        }}
+                      >
+                        {row.error}
+                      </div>
+                    )}
                   </div>
 
-                  <button type="button" className="secondary-btn" onClick={() => removeFile(item.id)} style={{ padding: "8px 10px" }}>
-                    ×
-                  </button>
+                  {row.local ? (
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      onClick={() => removeFile(row.id)}
+                      style={{ padding: "8px 10px" }}
+                    >
+                      ×
+                    </button>
+                  ) : (
+                    <UploadRowStatus status={row.status} />
+                  )}
                 </div>
               ))}
 
-              {!items.length && (
+              {!uploadRows.length && (
                 <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
                   <div style={{ fontWeight: 850 }}>{labels.emptyTitle}</div>
                   <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
@@ -611,20 +679,40 @@ export default function DoctorPatientUploadPage() {
               )}
             </div>
 
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", borderTop: "1px solid var(--border)", paddingTop: 18 }}>
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "space-between",
+                gap: 12,
+                flexWrap: "wrap",
+                borderTop: "1px solid var(--border)",
+                paddingTop: 18,
+              }}
+            >
               <button type="button" className="secondary-btn" onClick={clearFiles} disabled={!items.length}>
                 {labels.clear}
               </button>
 
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={uploadDocuments}
-                disabled={!canUpload}
-                style={{ padding: "13px 18px", borderRadius: 16, fontWeight: 950 }}
-              >
-                {labels.uploadAndContinue}
-              </button>
+              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+                <button
+                  type="button"
+                  className="primary-btn"
+                  onClick={uploadDocuments}
+                  disabled={!canUpload}
+                  style={{ padding: "13px 18px", borderRadius: 16, fontWeight: 950 }}
+                >
+                  {labels.upload}
+                </button>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => router.push(`/patients/${patientId}`)}
+                  style={{ padding: "13px 18px", borderRadius: 16, fontWeight: 950 }}
+                >
+                  {labels.continue}
+                </button>
+              </div>
             </div>
           </div>
         </div>
