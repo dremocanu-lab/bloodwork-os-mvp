@@ -3,7 +3,7 @@ import shutil
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -20,7 +20,7 @@ models.Base.metadata.create_all(bind=engine)
 
 frontend_origins_raw = os.getenv(
     "FRONTEND_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000",
+    "http://localhost:3000,http://127.0.0.1:3000,https://bloodwork-os-mvp.vercel.app",
 )
 frontend_origins = [origin.strip() for origin in frontend_origins_raw.split(",") if origin.strip()]
 
@@ -71,6 +71,7 @@ def get_current_user(
         raise HTTPException(status_code=401, detail="Invalid token")
 
     user_id = payload.get("sub")
+
     if not user_id:
         raise HTTPException(status_code=401, detail="Invalid token payload")
 
@@ -96,6 +97,20 @@ def require_role(*allowed_roles):
     return dependency
 
 
+def serialize_user(user):
+    if not user:
+        return None
+
+    return {
+        "id": user.id,
+        "email": user.email,
+        "full_name": user.full_name,
+        "role": user.role,
+        "department": user.department,
+        "hospital_name": user.hospital_name,
+    }
+
+
 def add_audit_log(
     db: Session,
     document_id: int,
@@ -111,18 +126,6 @@ def add_audit_log(
         details=details,
     )
     db.add(log)
-
-
-def doctor_has_patient_access(db: Session, doctor_user_id: int, patient_id: int) -> bool:
-    return (
-        db.query(models.DoctorPatientAccess)
-        .filter(
-            models.DoctorPatientAccess.doctor_user_id == doctor_user_id,
-            models.DoctorPatientAccess.patient_id == patient_id,
-        )
-        .first()
-        is not None
-    )
 
 
 def get_patient_for_user(db: Session, user_id: int):
@@ -144,11 +147,24 @@ def ensure_patient_for_user(db: Session, user):
         cnp=None,
         patient_identifier=None,
     )
+
     db.add(patient)
     db.commit()
     db.refresh(patient)
 
     return patient
+
+
+def doctor_has_patient_access(db: Session, doctor_user_id: int, patient_id: int) -> bool:
+    return (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor_user_id,
+            models.DoctorPatientAccess.patient_id == patient_id,
+        )
+        .first()
+        is not None
+    )
 
 
 def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
@@ -163,20 +179,6 @@ def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
         return patient is not None and patient.id == patient_id
 
     return False
-
-
-def serialize_user(user):
-    if not user:
-        return None
-
-    return {
-        "id": user.id,
-        "email": user.email,
-        "full_name": user.full_name,
-        "role": user.role,
-        "department": user.department,
-        "hospital_name": user.hospital_name,
-    }
 
 
 def lab_flag_is_abnormal(flag: str | None) -> bool:
@@ -245,6 +247,20 @@ def get_best_document_date(document) -> str | None:
         or document.registered_on
         or document.created_at
     )
+
+
+def serialize_lab_result(lab):
+    return {
+        "id": lab.id,
+        "raw_test_name": lab.raw_test_name,
+        "canonical_name": lab.canonical_name,
+        "display_name": lab.display_name,
+        "category": lab.category,
+        "value": lab.value,
+        "flag": lab.flag,
+        "reference_range": lab.reference_range,
+        "unit": lab.unit,
+    }
 
 
 def serialize_document_card(db: Session, document, current_user=None) -> dict:
@@ -349,10 +365,7 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         .all()
     )
 
-    doctor_access = [
-        serialize_doctor_access(link)
-        for link in patient.doctor_access_links
-    ]
+    doctor_access = [serialize_doctor_access(link) for link in patient.doctor_access_links]
 
     return {
         "patient": {
@@ -368,62 +381,6 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         "doctor_access": doctor_access,
         "events": [serialize_patient_event(event) for event in events],
     }
-
-
-def resolve_or_create_patient(db: Session, parsed_data: dict, linked_user_id: int | None = None):
-    patient = None
-    patient_name = parsed_data.get("patient_name")
-    patient_dob = parsed_data.get("date_of_birth")
-    patient_age = parsed_data.get("age")
-    patient_sex = parsed_data.get("sex")
-    patient_cnp = parsed_data.get("cnp")
-    patient_identifier = parsed_data.get("patient_identifier")
-
-    def norm(value):
-        return (value or "").strip().lower()
-
-    if linked_user_id:
-        patient = db.query(models.Patient).filter(models.Patient.linked_user_id == linked_user_id).first()
-
-    if not patient and patient_cnp:
-        patient = db.query(models.Patient).filter(models.Patient.cnp == patient_cnp).first()
-
-    if not patient and patient_identifier:
-        patient = db.query(models.Patient).filter(models.Patient.patient_identifier == patient_identifier).first()
-
-    if not patient and patient_name and patient_dob:
-        normalized_name = " ".join(patient_name.split()).strip().lower()
-        all_patients = db.query(models.Patient).all()
-
-        for existing_patient in all_patients:
-            existing_name = " ".join((existing_patient.full_name or "").split()).strip().lower()
-            if existing_name == normalized_name and norm(existing_patient.date_of_birth) == norm(patient_dob):
-                patient = existing_patient
-                break
-
-    if patient and linked_user_id and patient.linked_user_id and patient.linked_user_id != linked_user_id:
-        patient = None
-
-    if not patient and patient_name:
-        patient = models.Patient(
-            linked_user_id=linked_user_id,
-            full_name=patient_name.strip(),
-            date_of_birth=patient_dob,
-            age=patient_age,
-            sex=patient_sex,
-            cnp=patient_cnp,
-            patient_identifier=patient_identifier,
-        )
-        db.add(patient)
-        db.commit()
-        db.refresh(patient)
-
-    if patient and linked_user_id and not patient.linked_user_id:
-        patient.linked_user_id = linked_user_id
-        db.commit()
-        db.refresh(patient)
-
-    return patient
 
 
 def get_document_payload(db: Session, document, labs, audit_logs, current_user=None):
@@ -470,19 +427,7 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
                 if current_user
                 else False
             ),
-            "labs": [
-                {
-                    "raw_test_name": lab.raw_test_name,
-                    "canonical_name": lab.canonical_name,
-                    "display_name": lab.display_name,
-                    "category": lab.category,
-                    "value": lab.value,
-                    "flag": lab.flag,
-                    "reference_range": lab.reference_range,
-                    "unit": lab.unit,
-                }
-                for lab in labs
-            ],
+            "labs": [serialize_lab_result(lab) for lab in labs],
             "audit_logs": [
                 {
                     "action": log.action,
@@ -494,6 +439,203 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
             ],
         },
     }
+
+
+def serialize_upload_job(job) -> dict:
+    return {
+        "id": job.id,
+        "user_id": job.user_id,
+        "patient_id": job.patient_id,
+        "section": job.section,
+        "filename": job.filename,
+        "content_type": job.content_type,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "error": job.error,
+        "document_id": job.document_id,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }
+
+
+def resolve_upload_patient(db: Session, current_user, patient_id: int | None):
+    if current_user.role == "patient":
+        patient = ensure_patient_for_user(db, current_user)
+
+        if patient_id is not None and patient.id != patient_id:
+            raise HTTPException(status_code=403, detail="Patients can only upload to their own profile")
+
+        return patient
+
+    if current_user.role in {"doctor", "admin"}:
+        if patient_id is None:
+            raise HTTPException(status_code=400, detail="patient_id is required for doctor/admin uploads")
+
+        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found")
+
+        if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient.id):
+            raise HTTPException(status_code=403, detail="Doctor does not have access to this patient")
+
+        return patient
+
+    raise HTTPException(status_code=403, detail="Insufficient permissions")
+
+
+def process_upload_job(job_id: int):
+    db = SessionLocal()
+
+    try:
+        job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+
+        if not job:
+            return
+
+        job.status = "processing"
+        job.progress = 10
+        job.message = "Reading and structuring document..."
+        job.started_at = now_iso()
+        db.commit()
+
+        user = db.query(models.User).filter(models.User.id == job.user_id).first()
+        patient = db.query(models.Patient).filter(models.Patient.id == job.patient_id).first()
+
+        if not user or not patient:
+            job.status = "error"
+            job.progress = 100
+            job.message = "Upload failed."
+            job.error = "Upload user or patient no longer exists."
+            job.finished_at = now_iso()
+            db.commit()
+            return
+
+        file_path = Path(job.saved_to)
+
+        pipeline_result = process_uploaded_document(
+            file_path=file_path,
+            filename=job.filename,
+            section=job.section,
+            temp_dir=UPLOAD_DIR,
+        )
+
+        job.progress = 70
+        job.message = "Saving structured record..."
+        db.commit()
+
+        parsed_data = pipeline_result.get("parsed_data") or {}
+        labs = parsed_data.get("labs") or []
+
+        if parsed_data.get("patient_name") and not patient.full_name:
+            patient.full_name = parsed_data.get("patient_name")
+        if parsed_data.get("date_of_birth") and not patient.date_of_birth:
+            patient.date_of_birth = parsed_data.get("date_of_birth")
+        if parsed_data.get("age") and not patient.age:
+            patient.age = parsed_data.get("age")
+        if parsed_data.get("sex") and not patient.sex:
+            patient.sex = parsed_data.get("sex")
+        if parsed_data.get("cnp") and not patient.cnp:
+            patient.cnp = parsed_data.get("cnp")
+        if parsed_data.get("patient_identifier") and not patient.patient_identifier:
+            patient.patient_identifier = parsed_data.get("patient_identifier")
+
+        document = models.Document(
+            patient_id=patient.id,
+            uploaded_by_user_id=user.id,
+            section=job.section,
+            filename=job.filename,
+            content_type=job.content_type,
+            saved_to=job.saved_to,
+            extracted_text=pipeline_result.get("extracted_text") or "",
+            patient_name=parsed_data.get("patient_name") or patient.full_name,
+            date_of_birth=parsed_data.get("date_of_birth") or patient.date_of_birth,
+            age=parsed_data.get("age") or patient.age,
+            sex=parsed_data.get("sex") or patient.sex,
+            cnp=parsed_data.get("cnp") or patient.cnp,
+            patient_identifier=parsed_data.get("patient_identifier") or patient.patient_identifier,
+            lab_name=parsed_data.get("lab_name"),
+            sample_type=parsed_data.get("sample_type"),
+            referring_doctor=parsed_data.get("referring_doctor"),
+            report_name=parsed_data.get("report_name") or job.section.replace("_", " ").title(),
+            report_type=parsed_data.get("report_type") or job.section,
+            source_language=parsed_data.get("source_language"),
+            test_date=parsed_data.get("test_date"),
+            collected_on=parsed_data.get("collected_on"),
+            reported_on=parsed_data.get("reported_on"),
+            registered_on=parsed_data.get("registered_on"),
+            generated_on=parsed_data.get("generated_on"),
+            note_body=parsed_data.get("note_body"),
+            is_verified=0,
+            verified_by=None,
+            verified_at=None,
+            last_edited_at=None,
+            created_at=now_iso(),
+        )
+
+        db.add(document)
+        db.flush()
+
+        for lab in labs:
+            db.add(
+                models.LabResult(
+                    document_id=document.id,
+                    raw_test_name=lab.get("raw_test_name"),
+                    canonical_name=lab.get("canonical_name"),
+                    display_name=lab.get("display_name"),
+                    category=lab.get("category"),
+                    value=lab.get("value"),
+                    flag=lab.get("flag"),
+                    reference_range=lab.get("reference_range"),
+                    unit=lab.get("unit"),
+                )
+            )
+
+        add_audit_log(
+            db=db,
+            document_id=document.id,
+            action="uploaded",
+            actor=user.full_name,
+            details=f"Uploaded {job.filename} to {job.section}",
+        )
+
+        warnings = pipeline_result.get("warnings") or parsed_data.get("warnings") or []
+        for warning in warnings:
+            add_audit_log(
+                db=db,
+                document_id=document.id,
+                action="processing_warning",
+                actor="system",
+                details=str(warning),
+            )
+
+        job.status = "done"
+        job.progress = 100
+        job.message = f"{job.filename} was uploaded."
+        job.document_id = document.id
+        job.finished_at = now_iso()
+
+        db.commit()
+
+    except Exception as error:
+        db.rollback()
+
+        try:
+            job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+            if job:
+                job.status = "error"
+                job.progress = 100
+                job.message = "Upload failed."
+                job.error = str(error)
+                job.finished_at = now_iso()
+                db.commit()
+        except Exception:
+            db.rollback()
+
+    finally:
+        db.close()
 
 
 class SignupRequest(BaseModel):
@@ -593,6 +735,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         raise HTTPException(status_code=400, detail="Invalid role")
 
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
+
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
 
@@ -604,23 +747,23 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         department=payload.department,
         hospital_name=payload.hospital_name,
     )
+
     db.add(user)
     db.commit()
     db.refresh(user)
 
     if payload.role == "patient":
-        resolve_or_create_patient(
-            db,
-            {
-                "patient_name": payload.full_name,
-                "date_of_birth": payload.date_of_birth,
-                "age": payload.age,
-                "sex": payload.sex,
-                "cnp": payload.cnp,
-                "patient_identifier": payload.patient_identifier,
-            },
+        patient = models.Patient(
             linked_user_id=user.id,
+            full_name=payload.full_name,
+            date_of_birth=payload.date_of_birth,
+            age=payload.age,
+            sex=payload.sex,
+            cnp=payload.cnp,
+            patient_identifier=payload.patient_identifier,
         )
+        db.add(patient)
+        db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
 
@@ -706,10 +849,11 @@ def create_assignment(
     current_user=Depends(require_role("admin")),
 ):
     doctor = db.query(models.User).filter(models.User.id == payload.doctor_user_id).first()
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+
     if not doctor or doctor.role != "doctor":
         raise HTTPException(status_code=400, detail="Doctor user not found")
 
-    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
@@ -731,6 +875,7 @@ def create_assignment(
         granted_by_user_id=current_user.id,
         granted_at=now_iso(),
     )
+
     db.add(assignment)
     db.commit()
     db.refresh(assignment)
@@ -778,6 +923,7 @@ def create_access_request(
         status="pending",
         requested_at=now_iso(),
     )
+
     db.add(request)
     db.commit()
     db.refresh(request)
@@ -806,6 +952,7 @@ def get_my_access_requests(
     )
 
     results = []
+
     for req in requests:
         doctor = db.query(models.User).filter(models.User.id == req.doctor_user_id).first()
         results.append(
@@ -1036,32 +1183,112 @@ def get_patient_documents(
     }
 
 
-@app.get("/documents")
-def get_documents(
+@app.post("/upload/background")
+async def create_background_upload(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    section: str = Form("bloodwork"),
+    patient_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    query = db.query(models.Document)
+    if section not in ALLOWED_SECTIONS:
+        raise HTTPException(status_code=400, detail="Invalid document section")
 
-    if current_user.role == "patient":
-        patient = ensure_patient_for_user(db, current_user)
-        query = query.filter(models.Document.patient_id == patient.id)
+    patient = resolve_upload_patient(db, current_user, patient_id)
 
-    elif current_user.role == "doctor":
-        assigned_patient_ids = [
-            link.patient_id
-            for link in db.query(models.DoctorPatientAccess)
-            .filter(models.DoctorPatientAccess.doctor_user_id == current_user.id)
-            .all()
-        ]
+    original_filename = file.filename or "uploaded_document"
+    safe_filename = original_filename.replace("/", "_").replace("\\", "_")
+    saved_filename = f"{int(datetime.now(UTC).timestamp())}_{safe_filename}"
+    saved_path = UPLOAD_DIR / saved_filename
 
-        if not assigned_patient_ids:
-            return []
+    try:
+        with saved_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as save_error:
+        raise HTTPException(status_code=500, detail=f"Could not save uploaded file: {str(save_error)}")
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
 
-        query = query.filter(models.Document.patient_id.in_(assigned_patient_ids))
+    job = models.UploadJob(
+        user_id=current_user.id,
+        patient_id=patient.id,
+        section=section,
+        filename=original_filename,
+        content_type=file.content_type,
+        saved_to=str(saved_path),
+        status="queued",
+        progress=0,
+        message="Queued for processing.",
+        error=None,
+        document_id=None,
+        created_at=now_iso(),
+        started_at=None,
+        finished_at=None,
+    )
 
-    documents = query.order_by(models.Document.id.desc()).all()
-    return [serialize_document_card(db, document, current_user) for document in documents]
+    db.add(job)
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(process_upload_job, job.id)
+
+    return serialize_upload_job(job)
+
+
+@app.post("/upload")
+async def upload_compatibility_route(
+    background_tasks: BackgroundTasks,
+    file: UploadFile = File(...),
+    section: str = Form("bloodwork"),
+    patient_id: int | None = Form(default=None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    return await create_background_upload(
+        background_tasks=background_tasks,
+        file=file,
+        section=section,
+        patient_id=patient_id,
+        db=db,
+        current_user=current_user,
+    )
+
+
+@app.get("/upload-jobs")
+def get_my_upload_jobs(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    jobs = (
+        db.query(models.UploadJob)
+        .filter(models.UploadJob.user_id == current_user.id)
+        .order_by(models.UploadJob.id.desc())
+        .limit(30)
+        .all()
+    )
+
+    return [serialize_upload_job(job) for job in jobs]
+
+
+@app.get("/upload-jobs/{job_id}")
+def get_upload_job(
+    job_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    if job.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    return serialize_upload_job(job)
 
 
 @app.get("/documents/{document_id}")
@@ -1075,22 +1302,17 @@ def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
+    if not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    if current_user.role == "doctor" and document_has_abnormal_labs(db, document.id):
+    if current_user.role == "doctor":
         mark_doctor_reviewed_document(db, current_user.id, document.id)
         db.commit()
 
     labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-    logs = (
-        db.query(models.AuditLog)
-        .filter(models.AuditLog.document_id == document.id)
-        .order_by(models.AuditLog.id.desc())
-        .all()
-    )
+    audit_logs = db.query(models.AuditLog).filter(models.AuditLog.document_id == document.id).all()
 
-    return get_document_payload(db, document, labs, logs, current_user)
+    return get_document_payload(db, document, labs, audit_logs, current_user)
 
 
 @app.get("/documents/{document_id}/file")
@@ -1104,63 +1326,22 @@ def get_document_file(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
+    if not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if not document.saved_to:
-        raise HTTPException(status_code=404, detail="Original file not found")
+        raise HTTPException(status_code=404, detail="File path not found")
 
     file_path = Path(document.saved_to)
 
     if not file_path.exists():
-        raise HTTPException(status_code=404, detail="Original file is no longer available")
+        raise HTTPException(status_code=404, detail="File not found on server")
 
     return FileResponse(
         path=str(file_path),
-        media_type=document.content_type or "application/octet-stream",
         filename=document.filename,
+        media_type=document.content_type or "application/octet-stream",
     )
-
-
-@app.post("/documents/{document_id}/verify")
-def verify_document(
-    document_id: int,
-    payload: VerifyRequest = VerifyRequest(),
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("doctor", "admin")),
-):
-    document = db.query(models.Document).filter(models.Document.id == document_id).first()
-
-    if not document:
-        raise HTTPException(status_code=404, detail="Document not found")
-
-    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    document.is_verified = 1
-    document.verified_by = payload.verifier_name or current_user.full_name
-    document.verified_at = now_iso()
-
-    add_audit_log(
-        db,
-        document_id=document.id,
-        action="verify",
-        actor=payload.verifier_name or current_user.full_name,
-        details="Document marked as verified",
-    )
-
-    db.commit()
-    db.refresh(document)
-
-    labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-    logs = (
-        db.query(models.AuditLog)
-        .filter(models.AuditLog.document_id == document.id)
-        .order_by(models.AuditLog.id.desc())
-        .all()
-    )
-
-    return get_document_payload(db, document, labs, logs, current_user)
 
 
 @app.put("/documents/{document_id}")
@@ -1168,14 +1349,14 @@ def update_document(
     document_id: int,
     payload: DocumentUpdateRequest,
     db: Session = Depends(get_db),
-    current_user=Depends(require_role("doctor", "admin")),
+    current_user=Depends(get_current_user),
 ):
     document = db.query(models.Document).filter(models.Document.id == document_id).first()
 
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if not document.patient_id or not can_access_patient(db, current_user, document.patient_id):
+    if not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     parsed = payload.parsed_data
@@ -1199,70 +1380,45 @@ def update_document(
     document.generated_on = parsed.generated_on
     document.note_body = parsed.note_body
     document.last_edited_at = now_iso()
-    document.is_verified = 0
-    document.verified_by = None
-    document.verified_at = None
 
-    patient = resolve_or_create_patient(
-        db,
-        {
-            "patient_name": parsed.patient_name,
-            "date_of_birth": parsed.date_of_birth,
-            "age": parsed.age,
-            "sex": parsed.sex,
-            "cnp": parsed.cnp,
-            "patient_identifier": parsed.patient_identifier,
-        },
-    )
-
-    if patient:
-        document.patient_id = patient.id
-
-    existing_labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-
-    for lab in existing_labs:
-        db.delete(lab)
-
-    db.commit()
+    db.query(models.LabResult).filter(models.LabResult.document_id == document.id).delete()
 
     for lab in parsed.labs:
-        normalized_lab = models.LabResult(
-            document_id=document.id,
-            raw_test_name=lab.raw_test_name,
-            canonical_name=lab.canonical_name,
-            display_name=lab.display_name,
-            category=lab.category,
-            value=lab.value,
-            flag=lab.flag,
-            reference_range=lab.reference_range,
-            unit=lab.unit,
+        db.add(
+            models.LabResult(
+                document_id=document.id,
+                raw_test_name=lab.raw_test_name,
+                canonical_name=lab.canonical_name,
+                display_name=lab.display_name,
+                category=lab.category,
+                value=lab.value,
+                flag=lab.flag,
+                reference_range=lab.reference_range,
+                unit=lab.unit,
+            )
         )
-        db.add(normalized_lab)
 
     add_audit_log(
-        db,
+        db=db,
         document_id=document.id,
-        action="edit",
+        action="edited",
         actor=payload.editor_name or current_user.full_name,
-        details="Parsed data manually updated",
+        details="Structured fields were manually edited.",
     )
 
     db.commit()
     db.refresh(document)
 
-    updated_labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-    logs = (
-        db.query(models.AuditLog)
-        .filter(models.AuditLog.document_id == document.id)
-        .order_by(models.AuditLog.id.desc())
-        .all()
-    )
+    labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+    audit_logs = db.query(models.AuditLog).filter(models.AuditLog.document_id == document.id).all()
 
-    return get_document_payload(db, document, updated_labs, logs, current_user)
+    return get_document_payload(db, document, labs, audit_logs, current_user)
 
-@app.delete("/documents/{document_id}")
-def delete_document(
+
+@app.post("/documents/{document_id}/verify")
+def verify_document(
     document_id: int,
+    payload: VerifyRequest,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
@@ -1271,103 +1427,81 @@ def delete_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if document.uploaded_by_user_id != current_user.id:
-        raise HTTPException(status_code=403, detail="Only the user who uploaded this document can delete it")
+    if not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
 
-    patient_id = document.patient_id
-    saved_to = document.saved_to
+    document.is_verified = 1
+    document.verified_by = payload.verifier_name or current_user.full_name
+    document.verified_at = now_iso()
 
-    if saved_to:
-        file_path = Path(saved_to)
+    add_audit_log(
+        db=db,
+        document_id=document.id,
+        action="verified",
+        actor=document.verified_by,
+        details="Document was verified.",
+    )
 
-        if not file_path.is_absolute():
-            file_path = Path.cwd() / file_path
-
-        try:
-            if file_path.exists() and file_path.is_file():
-                file_path.unlink()
-        except Exception:
-            pass
-
-    db.delete(document)
     db.commit()
+    db.refresh(document)
 
-    return {
-        "deleted": True,
-        "document_id": document_id,
-        "patient_id": patient_id,
-    }
+    labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
+    audit_logs = db.query(models.AuditLog).filter(models.AuditLog.document_id == document.id).all()
+
+    return get_document_payload(db, document, labs, audit_logs, current_user)
 
 
 @app.get("/patients/{patient_id}/bloodwork-trends")
-def get_patient_bloodwork_trends(
+def get_bloodwork_trends(
     patient_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
 ):
-    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
     if not can_access_patient(db, current_user, patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     documents = (
         db.query(models.Document)
-        .filter(
-            models.Document.patient_id == patient_id,
-            models.Document.section == "bloodwork",
-        )
+        .filter(models.Document.patient_id == patient_id, models.Document.section == "bloodwork")
         .order_by(models.Document.id.asc())
         .all()
     )
 
-    trends_by_test: dict[str, dict] = {}
+    grouped = {}
 
     for document in documents:
         labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-        date_value = get_best_document_date(document) or str(document.id)
+        date = get_best_document_date(document) or document.created_at or ""
 
         for lab in labs:
-            test_key = lab.canonical_name or lab.display_name or lab.raw_test_name
+            key = lab.canonical_name or lab.display_name or lab.raw_test_name
 
-            if not test_key:
+            if not key:
                 continue
-
-            raw_value = lab.value
-            numeric_value = None
 
             try:
-                if raw_value is not None:
-                    numeric_value = float(str(raw_value).replace(",", ".").strip())
+                value = float(str(lab.value).replace(",", "."))
             except Exception:
-                numeric_value = None
-
-            if numeric_value is None:
                 continue
 
-            if test_key not in trends_by_test:
-                trends_by_test[test_key] = {
-                    "test_key": test_key,
-                    "display_name": lab.display_name or lab.raw_test_name or lab.canonical_name or "Unknown test",
+            grouped.setdefault(
+                key,
+                {
+                    "test_key": key,
+                    "display_name": lab.display_name or key,
                     "canonical_name": lab.canonical_name,
                     "category": lab.category,
                     "unit": lab.unit,
-                    "latest": None,
-                    "previous": None,
-                    "delta": None,
                     "points": [],
-                }
+                },
+            )
 
-            value_display = f"{raw_value} {lab.unit or ''}".strip()
-
-            trends_by_test[test_key]["points"].append(
+            grouped[key]["points"].append(
                 {
                     "document_id": document.id,
-                    "date": date_value,
-                    "value": numeric_value,
-                    "value_display": value_display,
+                    "date": date,
+                    "value": value,
+                    "value_display": lab.value,
                     "flag": lab.flag,
                     "report_name": document.report_name,
                     "reference_range": lab.reference_range,
@@ -1376,24 +1510,23 @@ def get_patient_bloodwork_trends(
 
     trends = []
 
-    for trend in trends_by_test.values():
-        points = trend["points"]
-
-        if not points:
-            continue
-
+    for trend in grouped.values():
+        points = sorted(trend["points"], key=lambda point: point["date"] or "")
         latest = points[-1]
         previous = points[-2] if len(points) >= 2 else None
+        delta = latest["value"] - previous["value"] if previous else None
 
-        trend["latest"] = latest
-        trend["previous"] = previous
-        trend["delta"] = round(latest["value"] - previous["value"], 3) if previous else None
+        trends.append(
+            {
+                **trend,
+                "points": points,
+                "latest": latest,
+                "previous": previous,
+                "delta": round(delta, 3) if delta is not None else None,
+            }
+        )
 
-        trends.append(trend)
-
-    trends.sort(key=lambda item: item.get("display_name") or "")
-
-    return trends
+    return sorted(trends, key=lambda trend: trend["display_name"] or "")
 
 
 @app.post("/patient-events")
@@ -1422,6 +1555,7 @@ def create_patient_event(
         admitted_at=payload.admitted_at,
         discharged_at=payload.discharged_at,
         created_by_user_id=current_user.id,
+        discharged_by_user_id=None,
     )
 
     db.add(event)
@@ -1453,141 +1587,3 @@ def discharge_patient_event(
     db.refresh(event)
 
     return serialize_patient_event(event)
-
-
-@app.post("/upload")
-async def upload_file(
-    file: UploadFile = File(...),
-    patient_id: int | None = Form(default=None),
-    section: str = Form(default="bloodwork"),
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    if section not in ALLOWED_SECTIONS:
-        raise HTTPException(status_code=400, detail="Invalid section")
-
-    if current_user.role == "patient":
-        target_patient = ensure_patient_for_user(db, current_user)
-    else:
-        if patient_id is None:
-            raise HTTPException(status_code=400, detail="patient_id is required")
-
-        target_patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-
-        if not target_patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-
-        if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient_id):
-            raise HTTPException(status_code=403, detail="Forbidden")
-
-    safe_filename = f"{int(datetime.now(UTC).timestamp())}_{file.filename}"
-    file_path = UPLOAD_DIR / safe_filename
-
-    with file_path.open("wb") as buffer:
-        shutil.copyfileobj(file.file, buffer)
-
-    if section == "notes":
-        extracted_text = ""
-        parsed_data = {
-            "patient_name": target_patient.full_name,
-            "date_of_birth": target_patient.date_of_birth,
-            "age": target_patient.age,
-            "sex": target_patient.sex,
-            "cnp": target_patient.cnp,
-            "patient_identifier": target_patient.patient_identifier,
-            "report_name": file.filename,
-            "report_type": "Clinical Note",
-            "labs": [],
-        }
-        pipeline_warnings = []
-    else:
-        pipeline_result = process_uploaded_document(
-            file_path=file_path,
-            filename=file.filename,
-            section=section,
-            temp_dir=UPLOAD_DIR,
-        )
-        extracted_text = pipeline_result.get("extracted_text") or ""
-        parsed_data = pipeline_result.get("parsed_data") or {}
-        pipeline_warnings = pipeline_result.get("warnings") or []
-
-    parsed_data["patient_name"] = target_patient.full_name
-    parsed_data["date_of_birth"] = target_patient.date_of_birth
-    parsed_data["age"] = target_patient.age
-    parsed_data["sex"] = target_patient.sex
-    parsed_data["cnp"] = target_patient.cnp
-    parsed_data["patient_identifier"] = target_patient.patient_identifier
-
-    document = models.Document(
-        patient_id=target_patient.id,
-        uploaded_by_user_id=current_user.id,
-        section=section,
-        filename=file.filename,
-        content_type=file.content_type,
-        saved_to=str(file_path),
-        extracted_text=extracted_text,
-        patient_name=parsed_data.get("patient_name"),
-        date_of_birth=parsed_data.get("date_of_birth"),
-        age=parsed_data.get("age"),
-        sex=parsed_data.get("sex"),
-        cnp=parsed_data.get("cnp"),
-        patient_identifier=parsed_data.get("patient_identifier"),
-        lab_name=parsed_data.get("lab_name"),
-        sample_type=parsed_data.get("sample_type"),
-        referring_doctor=parsed_data.get("referring_doctor"),
-        report_name=parsed_data.get("report_name") or file.filename,
-        report_type=parsed_data.get("report_type"),
-        source_language=parsed_data.get("source_language"),
-        test_date=parsed_data.get("test_date"),
-        collected_on=parsed_data.get("collected_on"),
-        reported_on=parsed_data.get("reported_on"),
-        registered_on=parsed_data.get("registered_on"),
-        generated_on=parsed_data.get("generated_on"),
-        note_body=parsed_data.get("note_body"),
-        is_verified=0,
-        last_edited_at=None,
-        created_at=now_iso(),
-    )
-
-    db.add(document)
-    db.commit()
-    db.refresh(document)
-
-    if section == "bloodwork":
-        for lab in parsed_data.get("labs", []):
-            lab_result = models.LabResult(
-                document_id=document.id,
-                raw_test_name=lab.get("raw_test_name"),
-                canonical_name=lab.get("canonical_name"),
-                display_name=lab.get("display_name"),
-                category=lab.get("category"),
-                value=lab.get("value"),
-                flag=lab.get("flag"),
-                reference_range=lab.get("reference_range"),
-                unit=lab.get("unit"),
-            )
-            db.add(lab_result)
-
-    details = f"Document uploaded to section '{section}': {file.filename}"
-    if pipeline_warnings:
-        details += " | Warnings: " + "; ".join(pipeline_warnings[:5])
-
-    add_audit_log(
-        db,
-        document_id=document.id,
-        action="upload",
-        actor=current_user.full_name,
-        details=details,
-    )
-
-    db.commit()
-
-    created_labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-    logs = (
-        db.query(models.AuditLog)
-        .filter(models.AuditLog.document_id == document.id)
-        .order_by(models.AuditLog.id.desc())
-        .all()
-    )
-
-    return get_document_payload(db, document, created_labs, logs, current_user)

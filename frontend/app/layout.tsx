@@ -1,4 +1,5 @@
 import "./globals.css";
+import { UploadManagerProvider } from "@/components/upload-provider";
 
 export const metadata = {
   title: "Bloodwork OS",
@@ -12,7 +13,9 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <body suppressHydrationWarning>{children}</body>
+      <body suppressHydrationWarning>
+        <UploadManagerProvider>{children}</UploadManagerProvider>
+      </body>
     </html>
   );
 }

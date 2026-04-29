@@ -173,6 +173,32 @@ class NoteDocumentLink(Base):
     )
     created_by_user = relationship("User")
 
+class UploadJob(Base):
+    __tablename__ = "upload_jobs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+
+    section = Column(String, nullable=False, index=True)
+    filename = Column(String, nullable=False)
+    content_type = Column(String, nullable=True)
+    saved_to = Column(String, nullable=False)
+
+    status = Column(String, nullable=False, default="queued", index=True)
+    progress = Column(Integer, nullable=False, default=0)
+    message = Column(Text, nullable=True)
+    error = Column(Text, nullable=True)
+
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=True, index=True)
+
+    created_at = Column(String, nullable=False)
+    started_at = Column(String, nullable=True)
+    finished_at = Column(String, nullable=True)
+
+    user = relationship("User")
+    patient = relationship("Patient")
+    document = relationship("Document")
 
 class LabResult(Base):
     __tablename__ = "lab_results"
