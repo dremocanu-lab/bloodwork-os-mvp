@@ -262,7 +262,7 @@ function DetailField({
         {label}
       </div>
       <div style={{ fontWeight: 900, lineHeight: 1.35, wordBreak: "break-word" }}>
-        {valueOrDash(value)}
+        {value === null || value === undefined || value === "" ? "—" : String(value)}
       </div>
     </div>
   );
