@@ -639,15 +639,6 @@ def extract_google_labs(
         f"from {table_count} tables, {line_count} lines, and {word_count} tokens."
     )
 
-    missing_cbc = [
-        key
-        for key in CBC_ORDER
-        if key not in {find_cbc_key_in_lab(row) for row in standardized_labs if find_cbc_key_in_lab(row)}
-    ]
-
-    if 0 < len(missing_cbc) < len(CBC_ORDER):
-        warnings.append(f"Missing CBC rows after Google parser: {', '.join(missing_cbc)}.")
-
     return standardized_labs
 
 
@@ -728,9 +719,6 @@ def process_bloodwork_document(
 
     if not merged_labs:
         warnings.append("No structured lab rows were extracted after Google Document AI and OpenAI vision fallback.")
-
-    if len(merged_labs) < 10:
-        warnings.append("Fewer than 10 structured lab rows were extracted. Manual review is recommended.")
 
     rows_with_values = [row for row in merged_labs if row.get("value") is not None]
     rows_with_refs = [row for row in rows_with_values if row.get("reference_range")]
