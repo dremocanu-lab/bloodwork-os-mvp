@@ -1,4 +1,4 @@
-"use client";
+﻿"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -208,7 +208,7 @@ function compareDatesAscending(a?: string | null, b?: string | null) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "—";
+  if (!value) return "â€”";
 
   const time = parseDateTime(value);
 
@@ -230,11 +230,11 @@ function getYear(value?: string | null) {
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "—";
+  if (!dateOfBirth) return "â€”";
 
   const dob = new Date(dateOfBirth);
 
-  if (Number.isNaN(dob.getTime())) return "—";
+  if (Number.isNaN(dob.getTime())) return "â€”";
 
   const today = new Date();
 
@@ -250,7 +250,7 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "—";
+  if (years < 0) return "â€”";
 
   return `${years}y ${months}m`;
 }
@@ -292,7 +292,6 @@ function getDocumentClinicalDate(doc: DocumentCard) {
     doc.reported_on ||
     doc.registered_on ||
     doc.generated_on ||
-    doc.created_at ||
     ""
   );
 }
@@ -303,8 +302,6 @@ function getDocumentDateLabel(doc: DocumentCard) {
   if (doc.reported_on) return `Reported ${doc.reported_on}`;
   if (doc.registered_on) return `Registered ${doc.registered_on}`;
   if (doc.generated_on) return `Generated ${doc.generated_on}`;
-  if (doc.created_at) return `Uploaded ${formatDate(doc.created_at)}`;
-
   return "No date";
 }
 
@@ -327,7 +324,7 @@ function getUploaderText(doc: DocumentCard) {
     Boolean
   );
 
-  return `Uploaded by ${details.join(" · ")}`;
+  return `Uploaded by ${details.join(" Â· ")}`;
 }
 
 function getRecentTrendPoints(points: TrendPoint[]) {
@@ -859,7 +856,7 @@ export default function PatientChartPage() {
       type: "document",
       date: getDocumentClinicalDate(doc),
       title: getDocumentTitle(doc),
-      subtitle: `${sectionLabel(doc.section)} · ${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
+      subtitle: `${sectionLabel(doc.section)} Â· ${doc.is_verified ? "Verified" : "Unverified"} Â· ${getUploaderText(doc)}`,
       documentId: doc.id,
       section: doc.section,
     }));
@@ -869,7 +866,7 @@ export default function PatientChartPage() {
       type: "event",
       date: event.discharged_at || event.admitted_at || "",
       title: event.title,
-      subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} · Doctor ${valueOrDash(
+      subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} Â· Doctor ${valueOrDash(
         event.doctor_name
       )}`,
       eventId: event.id,
@@ -993,9 +990,9 @@ export default function PatientChartPage() {
     <AppShell
       user={currentUser}
       title={profile.patient.full_name}
-      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · DOB ${valueOrDash(
+      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} Â· DOB ${valueOrDash(
         profile.patient.date_of_birth
-      )} · Age ${calculatedAge} · Sex ${valueOrDash(profile.patient.sex)}`}
+      )} Â· Age ${calculatedAge} Â· Sex ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button className="secondary-btn" onClick={refreshPage}>
@@ -1096,7 +1093,7 @@ export default function PatientChartPage() {
             </div>
 
             <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
-              Patient ID {valueOrDash(profile.patient.patient_identifier)} · CNP {valueOrDash(profile.patient.cnp)}
+              Patient ID {valueOrDash(profile.patient.patient_identifier)} Â· CNP {valueOrDash(profile.patient.cnp)}
             </div>
           </div>
 
@@ -1353,9 +1350,9 @@ export default function PatientChartPage() {
                       </div>
                     ) : (
                       <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
-                        {sectionLabel(doc.section)} · {getDocumentDateLabel(doc)}
-                        {doc.lab_name ? ` · ${doc.lab_name}` : ""}
-                        {doc.sample_type ? ` · ${doc.sample_type}` : ""}
+                        {sectionLabel(doc.section)} Â· {getDocumentDateLabel(doc)}
+                        {doc.lab_name ? ` Â· ${doc.lab_name}` : ""}
+                        {doc.sample_type ? ` Â· ${doc.sample_type}` : ""}
                       </div>
                     )}
                   </div>
@@ -1472,7 +1469,7 @@ export default function PatientChartPage() {
                       </div>
 
                       <div className="muted-text" style={{ marginTop: 5, fontSize: 12 }}>
-                        {trend.category || "Lab result"} · Unit {trend.unit || "—"}
+                        {trend.category || "Lab result"} Â· Unit {trend.unit || "â€”"}
                       </div>
 
                       <div
@@ -1488,7 +1485,7 @@ export default function PatientChartPage() {
                             Latest
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.latest?.value_display || "—"}
+                            {trend.latest?.value_display || "â€”"}
                           </div>
                         </div>
 
@@ -1497,7 +1494,7 @@ export default function PatientChartPage() {
                             Previous
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.previous?.value_display || "—"}
+                            {trend.previous?.value_display || "â€”"}
                           </div>
                         </div>
 
@@ -1507,7 +1504,7 @@ export default function PatientChartPage() {
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
                             {trend.delta === null || trend.delta === undefined
-                              ? "—"
+                              ? "â€”"
                               : `${trend.delta > 0 ? "+" : ""}${trend.delta}`}
                           </div>
                         </div>
@@ -1515,7 +1512,7 @@ export default function PatientChartPage() {
 
                       <div className="muted-text" style={{ marginTop: 10, fontSize: 12 }}>
                         Latest sample:{" "}
-                        {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
+                        {trend.latest ? `${trend.latest.date} Â· Ref ${trend.latest.reference_range || "â€”"}` : "â€”"}
                       </div>
                     </div>
 
@@ -1600,7 +1597,7 @@ export default function PatientChartPage() {
                                     {point.report_name || `Document ${point.document_id}`}
                                   </div>
                                   <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                                    {point.date || "No date"} · Ref {point.reference_range || "—"}
+                                    {point.date || "No date"} Â· Ref {point.reference_range || "â€”"}
                                   </div>
                                 </div>
 
@@ -1646,7 +1643,7 @@ export default function PatientChartPage() {
                 {doctor.doctor_email}
               </div>
               <div className="muted-text" style={{ marginTop: 6 }}>
-                {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                {valueOrDash(doctor.department)} Â· {valueOrDash(doctor.hospital_name)}
               </div>
             </div>
           ))}
