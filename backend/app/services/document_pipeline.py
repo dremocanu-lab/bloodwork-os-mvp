@@ -77,9 +77,7 @@ def normalize_value(value: Any) -> str | None:
     if cleaned is None:
         return None
 
-    lowered = cleaned.lower()
-
-    if lowered in NULL_VALUE_TOKENS:
+    if cleaned.lower() in NULL_VALUE_TOKENS:
         return None
 
     cleaned = cleaned.replace(",", ".")
@@ -123,8 +121,6 @@ def normalize_reference_range(value: Any) -> str | None:
     low_raw = nums[0]
     high_raw = nums[1]
 
-    # In CBC-style reference intervals, a leading minus on the high value is
-    # usually the OCR reading the range separator as part of the number.
     if high_raw.startswith("-") and not low_raw.startswith("-"):
         high_raw = high_raw[1:]
 
@@ -167,37 +163,37 @@ def normalize_unit(value: Any) -> str | None:
     if re.search(r"10\^?12/?l", compact, re.IGNORECASE):
         return "10^12/L"
 
-    if lowered in {"g/dl"}:
+    if lowered == "g/dl":
         return "g/dL"
 
-    if lowered in {"g/l"}:
+    if lowered == "g/l":
         return "g/L"
 
-    if lowered in {"mg/dl"}:
+    if lowered == "mg/dl":
         return "mg/dL"
 
-    if lowered in {"mg/l"}:
+    if lowered == "mg/l":
         return "mg/L"
 
-    if lowered in {"mmol/l"}:
+    if lowered == "mmol/l":
         return "mmol/L"
 
     if lowered in {"umol/l", "µmol/l", "μmol/l"}:
         return "umol/L"
 
-    if lowered in {"uiu/ml", "ui/ml", "uiu/ml"}:
+    if lowered in {"uiu/ml", "ui/ml"}:
         return "uIU/mL"
 
-    if lowered in {"miu/l"}:
+    if lowered == "miu/l":
         return "mIU/L"
 
-    if lowered in {"iu/l"}:
+    if lowered == "iu/l":
         return "IU/L"
 
-    if lowered in {"u/l"}:
+    if lowered == "u/l":
         return "U/L"
 
-    if lowered in {"fl"}:
+    if lowered == "fl":
         return "fL"
 
     if lowered == "pg":
@@ -290,7 +286,6 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
     if value is None:
         flag = None
 
-    # Safety: never show Normal unless a reference range exists.
     if value is not None and not reference_range and flag == "Normal":
         flag = None
 
@@ -362,11 +357,7 @@ def merge_lab_results(*lab_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not key:
                 continue
 
-            if key not in merged_by_key:
-                merged_by_key[key] = row
-                continue
-
-            if lab_quality_score(row) >= lab_quality_score(merged_by_key[key]):
+            if key not in merged_by_key or lab_quality_score(row) >= lab_quality_score(merged_by_key[key]):
                 merged_by_key[key] = row
 
     return [standardize_lab_row_shape(row) for row in merged_by_key.values()]
@@ -379,10 +370,7 @@ def dedupe_warnings(warnings: list[str]) -> list[str]:
     for warning in warnings:
         clean_warning = str(warning).strip()
 
-        if not clean_warning:
-            continue
-
-        if clean_warning in seen:
+        if not clean_warning or clean_warning in seen:
             continue
 
         deduped.append(clean_warning)
@@ -408,10 +396,7 @@ def lab_rows_need_ai_help(labs: list[dict[str, Any]], parsed_data: dict[str, Any
     if not labs:
         return True
 
-    if len(labs) < 10:
-        return True
-
-    if not parsed_data.get("collected_on") and not parsed_data.get("test_date"):
+    if len(labs) < 20:
         return True
 
     rows_with_values = [row for row in labs if row.get("value") is not None]
@@ -421,7 +406,7 @@ def lab_rows_need_ai_help(labs: list[dict[str, Any]], parsed_data: dict[str, Any
 
     rows_with_refs = [row for row in rows_with_values if row.get("reference_range")]
 
-    if len(rows_with_refs) < max(3, int(len(rows_with_values) * 0.60)):
+    if len(rows_with_refs) < max(5, int(len(rows_with_values) * 0.65)):
         return True
 
     return False
@@ -481,27 +466,31 @@ def apply_ai_fallback(
     parsed_data: dict[str, Any],
     current_labs: list[dict[str, Any]],
     warnings: list[str],
+    file_path: Path,
+    filename: str,
 ) -> tuple[dict[str, Any], list[dict[str, Any]]]:
     if organize_labs_with_ai is None:
-        warnings.append("OpenAI organizer fallback is unavailable because the module could not be imported.")
+        warnings.append("OpenAI vision organizer fallback is unavailable because the module could not be imported.")
         return parsed_data, current_labs
 
     ai_result = organize_labs_with_ai(
         extracted_text=extracted_text,
         deterministic_labs=current_labs,
+        file_path=file_path,
+        filename=filename,
     )
 
     if not ai_result.get("ok"):
         if ai_result.get("warning"):
             warnings.append(str(ai_result["warning"]))
         else:
-            warnings.append("OpenAI organizer fallback did not return usable structured data.")
+            warnings.append("OpenAI vision organizer fallback did not return usable structured data.")
         return parsed_data, current_labs
-
-    warnings.append("OpenAI organizer fallback improved or validated Google Document AI extraction.")
 
     ai_metadata = ai_result.get("metadata") or {}
     ai_labs = ai_result.get("labs") or []
+
+    warnings.append(f"OpenAI vision organizer extracted {len(ai_labs)} lab rows.")
 
     parsed_data = merge_metadata(parsed_data, ai_metadata)
 
@@ -517,6 +506,8 @@ def process_bloodwork_document(
     extraction: dict[str, Any],
     extracted_text: str,
     warnings: list[str],
+    file_path: Path,
+    filename: str,
 ) -> dict[str, Any]:
     parsed_data = extract_report_metadata(extracted_text)
     parsed_data["report_type"] = "Bloodwork"
@@ -537,6 +528,8 @@ def process_bloodwork_document(
             parsed_data=parsed_data,
             current_labs=merged_labs,
             warnings=warnings,
+            file_path=file_path,
+            filename=filename,
         )
 
     merged_labs = normalize_lab_rows(merged_labs, context_text=extracted_text)
@@ -545,8 +538,8 @@ def process_bloodwork_document(
     parsed_data["labs"] = merged_labs
     parsed_data["report_name"] = build_category_report_name(parsed_data, merged_labs)
 
-    if not parsed_data.get("collected_on") and not parsed_data.get("test_date"):
-        warnings.append("No clinical collection/test date was extracted. Timeline will show this as undated.")
+    if not merged_labs:
+        warnings.append("No structured lab rows were extracted after Google Document AI and OpenAI vision fallback.")
 
     if len(merged_labs) < 10:
         warnings.append("Fewer than 10 structured lab rows were extracted. Manual review is recommended.")
@@ -580,6 +573,8 @@ def process_uploaded_document(
             extraction=extraction,
             extracted_text=extracted_text,
             warnings=warnings,
+            file_path=file_path,
+            filename=filename,
         )
     else:
         parsed_data = empty_parsed_document(section)
