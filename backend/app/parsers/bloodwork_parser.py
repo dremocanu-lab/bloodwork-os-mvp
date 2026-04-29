@@ -10,22 +10,22 @@ KNOWN_TEST_ALIASES = {
     "HGB": "Hemoglobin",
     "HB": "Hemoglobin",
     "HCT": "Hematocrit",
-    "MCV": "MCV",
-    "MCH": "MCH",
-    "MCHC": "MCHC",
-    "PLT": "Platelets",
-    "RDW-SD": "RDW-SD",
-    "RDWSD": "RDW-SD",
-    "RDW": "RDW",
-    "RDW-CV": "RDW-CV",
-    "RDWCV": "RDW-CV",
-    "PDW": "PDW",
-    "MPV": "MPV",
+    "MCV": "Mean Corpuscular Volume",
+    "MCH": "Mean Corpuscular Hemoglobin",
+    "MCHC": "Mean Corpuscular Hemoglobin Concentration",
+    "PLT": "Platelet Count",
+    "RDW": "Red Cell Distribution Width",
+    "RDW-SD": "Red Cell Distribution Width - SD",
+    "RDWSD": "Red Cell Distribution Width - SD",
+    "RDW-CV": "Red Cell Distribution Width - CV",
+    "RDWCV": "Red Cell Distribution Width - CV",
+    "PDW": "Platelet Distribution Width",
+    "MPV": "Mean Platelet Volume",
     "P-LCR": "P-LCR",
     "PLCR": "P-LCR",
     "PCT": "Plateletcrit",
-    "NRBC#": "NRBC Absolute",
-    "NRBC": "NRBC Absolute",
+    "NRBC#": "Nucleated Red Blood Cells Absolute",
+    "NRBC": "Nucleated Red Blood Cells Absolute",
     "NRBC%": "NRBC Percent",
     "NEUT#": "Neutrophils Absolute",
     "NEUT": "Neutrophils Absolute",
@@ -72,22 +72,19 @@ KNOWN_TEST_ALIASES = {
 }
 
 SKIP_LINE_KEYWORDS = [
-    "denumire",
-    "analiza",
-    "analiză",
+    "denumire analiza",
+    "denumire analiză",
     "rezultat",
-    "interval",
-    "biologic",
-    "referinta",
-    "referință",
+    "interval biologic",
+    "interval de referinta",
+    "interval de referință",
     "citomorfologie",
     "hematograma",
     "hemogram",
     "starea probei",
     "conforma",
     "data validare",
-    "nota",
-    "buletin",
+    "buletin analize",
     "nume",
     "cnp",
     "telefon",
@@ -102,37 +99,44 @@ SKIP_LINE_KEYWORDS = [
     "laborator",
 ]
 
-ARROW_HIGH_MARKERS = ["↑", "▲", "↗", "⬆", "➚", "7"]
-ARROW_LOW_MARKERS = ["↓", "▼", "↘", "⬇", "➘"]
+ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
+ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
 
-NULL_RESULT_TOKENS = {"", "-", "--", "---", "—", "–", "___", "____", "nil", "n/a", "na", "null"}
-
-JUNK_TOKENS = {
+NULL_RESULT_TOKENS = {
     "",
     "-",
+    "--",
+    "---",
+    "----",
+    "-----",
+    "------",
     "—",
     "–",
-    "|",
-    ":",
-    ".",
-    ",",
-    "•",
-    "·",
-    "»",
-    "«",
-    ">",
-    "<",
-    "↑",
-    "↓",
-    "▲",
-    "▼",
-    "↗",
-    "↘",
-    "⬆",
-    "⬇",
-    "➚",
-    "➘",
+    "___",
+    "____",
+    "_____",
+    "nil",
+    "n/a",
+    "na",
+    "null",
 }
+
+BLANK_PRONE_TESTS = {
+    "PDW",
+    "MPV",
+    "P-LCR",
+    "PLCR",
+    "PCT",
+    "NRBC",
+    "NRBC#",
+    "NRBC%",
+}
+
+NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
+NULL_MARKER_RE = re.compile(
+    r"(^|[\s|:;])(?:-{2,}|_{2,}|—+|–+|nil|n/a|na|null)(?=$|[\s|:;])",
+    re.IGNORECASE,
+)
 
 
 def normalize_decimal(value: str | None) -> str | None:
@@ -141,9 +145,23 @@ def normalize_decimal(value: str | None) -> str | None:
 
     cleaned = str(value).strip()
     cleaned = cleaned.replace(",", ".")
+    cleaned = cleaned.replace("−", "-")
+    cleaned = cleaned.replace("—", "-")
+    cleaned = cleaned.replace("–", "-")
+
+    if not cleaned:
+        return None
+
+    if is_null_result_token(cleaned):
+        return None
+
+    cleaned = re.sub(r"[^0-9.+-]", "", cleaned)
 
     if cleaned.startswith("."):
         cleaned = "0" + cleaned
+
+    if cleaned in {"", "+", "-", ".", "+.", "-."}:
+        return None
 
     return cleaned
 
@@ -158,49 +176,25 @@ def to_float(value: str | None) -> float | None:
         return None
 
 
-def fix_missing_decimal_for_percent_or_small_range(value: str | None, low: str | None, high: str | None) -> str | None:
-    """
-    OCR sometimes turns 7.2 into 72 or 4.7 - 12.5 into 47 - 125.
-    This conservative correction only applies when the value is an integer
-    and the reference range strongly suggests a decimal percentage-type field.
-    """
-    if value is None or low is None or high is None:
-        return value
+def is_number_token(token: str | None) -> bool:
+    if token is None:
+        return False
 
-    raw = str(value).strip()
-    low_f = to_float(low)
-    high_f = to_float(high)
+    cleaned = normalize_decimal(token)
+    if cleaned is None:
+        return False
 
-    if not raw.isdigit() or low_f is None or high_f is None:
-        return value
-
-    numeric = float(raw)
-
-    if numeric > high_f and numeric / 10 <= high_f * 1.5:
-        return str(numeric / 10).rstrip("0").rstrip(".")
-
-    return value
+    return NUMBER_RE.fullmatch(cleaned) is not None
 
 
-def infer_flag(value: str | None, reference_range: str | None) -> str:
-    numeric_value = to_float(value)
+def is_null_result_token(token: str | None) -> bool:
+    if token is None:
+        return True
 
-    if numeric_value is None or not reference_range:
-        return "Normal"
+    cleaned = str(token).strip().lower()
+    cleaned = cleaned.replace("−", "-").replace("—", "-").replace("–", "-")
 
-    matches = re.findall(r"[-+]?\d+(?:[.,]\d+)?", str(reference_range))
-
-    if len(matches) >= 2:
-        low = to_float(matches[0])
-        high = to_float(matches[1])
-
-        if low is not None and high is not None:
-            if numeric_value < low:
-                return "Low"
-            if numeric_value > high:
-                return "High"
-
-    return "Normal"
+    return cleaned in NULL_RESULT_TOKENS or re.fullmatch(r"[-_]{2,}", cleaned) is not None
 
 
 def clean_reference_range(reference_range: str | None) -> str | None:
@@ -208,7 +202,7 @@ def clean_reference_range(reference_range: str | None) -> str | None:
         return None
 
     cleaned = str(reference_range)
-    cleaned = cleaned.replace("—", "-").replace("–", "-")
+    cleaned = cleaned.replace("—", "-").replace("–", "-").replace("−", "-")
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
 
     return cleaned or None
@@ -224,49 +218,233 @@ def clean_unit(unit: str | None) -> str | None:
 
     replacements = {
         "103/uL": "10^3/uL",
+        "103/ul": "10^3/uL",
         "10^3/ul": "10^3/uL",
         "10^3/uL": "10^3/uL",
         "106/uL": "10^6/uL",
+        "106/ul": "10^6/uL",
         "10^6/ul": "10^6/uL",
         "10^6/uL": "10^6/uL",
+        "FL": "fL",
+        "fl": "fL",
         "g/dl": "g/dL",
         "g/dL": "g/dL",
-        "FL": "fL",
     }
 
     return replacements.get(cleaned, cleaned) or None
 
 
-def normalize_test_token(token: str) -> str:
-    cleaned = token.strip().upper()
+def looks_like_unit(token: str | None) -> bool:
+    if not token:
+        return False
+
+    cleaned = str(token).strip()
+    lowered = cleaned.lower()
+
+    if cleaned == "%":
+        return True
+
+    if "/" in cleaned or "^" in cleaned:
+        return True
+
+    if re.fullmatch(r"10\^?\d+/?[uµμ]?[lL]?", cleaned):
+        return True
+
+    if re.fullmatch(r"10\d+/?[uµμ]?[lL]?", cleaned):
+        return True
+
+    return lowered in {
+        "fl",
+        "pg",
+        "g/dl",
+        "mg/dl",
+        "mmol/l",
+        "u/l",
+        "/ul",
+        "/µl",
+        "/μl",
+        "%",
+    }
+
+
+def normalize_test_token(token: str | None) -> str:
+    if token is None:
+        return ""
+
+    cleaned = str(token).strip().upper()
     cleaned = cleaned.replace("_", "-")
     cleaned = cleaned.replace(" ", "")
     cleaned = cleaned.replace("＃", "#")
     cleaned = cleaned.replace("％", "%")
-    cleaned = cleaned.replace("S", "S")
+    cleaned = cleaned.replace("–", "-")
+    cleaned = cleaned.replace("—", "-")
+    cleaned = cleaned.replace("−", "-")
+    cleaned = cleaned.replace(".", "")
 
-    # OCR often loses the dash in these.
     if cleaned == "RDWSD":
         return "RDW-SD"
     if cleaned == "RDWCV":
         return "RDW-CV"
     if cleaned == "PLCR":
         return "P-LCR"
+    if cleaned == "P LCR":
+        return "P-LCR"
 
     return cleaned
 
 
 def normalize_raw_test_name(raw_name: str) -> str:
-    cleaned = raw_name.strip()
-    cleaned = cleaned.replace("↑", "").replace("↓", "")
-    cleaned = cleaned.replace("▲", "").replace("▼", "")
-    cleaned = cleaned.replace("↗", "").replace("↘", "")
-    cleaned = cleaned.replace("⬆", "").replace("⬇", "")
-    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    cleaned = str(raw_name or "").strip()
 
+    for marker in list(ARROW_HIGH_MARKERS) + list(ARROW_LOW_MARKERS):
+        cleaned = cleaned.replace(marker, "")
+
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
     upper = normalize_test_token(cleaned)
 
     return KNOWN_TEST_ALIASES.get(upper, cleaned)
+
+
+def infer_flag(value: str | None, reference_range: str | None) -> str | None:
+    numeric_value = to_float(value)
+
+    if numeric_value is None:
+        return None
+
+    if not reference_range:
+        return "Normal"
+
+    matches = NUMBER_RE.findall(str(reference_range))
+
+    if len(matches) >= 2:
+        low = to_float(matches[0])
+        high = to_float(matches[1])
+
+        if low is not None and high is not None:
+            if numeric_value < low:
+                return "Low"
+            if numeric_value > high:
+                return "High"
+
+    return "Normal"
+
+
+def extract_flag_from_line(original_line: str, value: str | None, reference_range: str | None) -> str | None:
+    lowered = f" {str(original_line or '').lower()} "
+
+    if any(marker in original_line for marker in ARROW_HIGH_MARKERS) or " high " in lowered:
+        return "High"
+
+    if any(marker in original_line for marker in ARROW_LOW_MARKERS) or " low " in lowered:
+        return "Low"
+
+    return infer_flag(value, reference_range)
+
+
+def fix_numeric_scale(value: str | None, low: str | None, high: str | None) -> str | None:
+    """
+    Conservative decimal repair.
+
+    Keeps true integers like PLT 395.
+    Repairs OCR values like:
+      547 with ref 3.93-6.08 -> 5.47
+      676 with ref 3.93-6.08 -> 6.76
+      473 with ref 34.1-51.0 -> 47.3
+      207 with ref 25.6-32.2 -> 20.7
+
+    Does not invent a missing digit. If OCR gives only 5.4 and no extra fragment,
+    it stays 5.4. If OCR gives 5.4 7, choose_value_low_high joins it to 5.47.
+    """
+    if value is None:
+        return None
+
+    value_s = normalize_decimal(value)
+    if value_s is None:
+        return None
+
+    value_f = to_float(value_s)
+    low_f = to_float(low)
+    high_f = to_float(high)
+
+    if value_f is None or low_f is None or high_f is None:
+        return value_s
+
+    if low_f > high_f:
+        low_f, high_f = high_f, low_f
+
+    if low_f * 0.45 <= value_f <= high_f * 1.8:
+        return value_s
+
+    raw = value_s.replace(".", "").replace("-", "")
+
+    if not raw.isdigit() or len(raw) < 2:
+        return value_s
+
+    candidates: list[tuple[float, str]] = []
+
+    for divisor in [10, 100, 1000]:
+        candidate = float(raw) / divisor
+
+        if low_f * 0.45 <= candidate <= high_f * 1.8:
+            formatted = f"{candidate:.6f}".rstrip("0").rstrip(".")
+            candidates.append((abs(candidate - ((low_f + high_f) / 2)), formatted))
+
+    if not candidates:
+        return value_s
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def choose_value_low_high(numbers: list[str]) -> tuple[str | None, str | None, str | None, int]:
+    """
+    Returns value, low, high, consumed_count.
+
+    Handles split decimals:
+      ["5.4", "7", "3.93", "6.08"] -> value 5.47, low 3.93, high 6.08
+      ["47", "3", "34.1", "51.0"] -> value 47.3 if plausible
+    """
+    nums = [normalize_decimal(item) for item in numbers if normalize_decimal(item) is not None]
+
+    if len(nums) < 3:
+        return None, None, None, 0
+
+    if len(nums) >= 4:
+        first = nums[0]
+        second = nums[1]
+        third = nums[2]
+        fourth = nums[3]
+
+        if first and "." in first and second and second.isdigit() and len(second) == 1:
+            joined = f"{first}{second}"
+            joined_f = to_float(joined)
+            low_f = to_float(third)
+            high_f = to_float(fourth)
+
+            if joined_f is not None and low_f is not None and high_f is not None:
+                low_ordered = min(low_f, high_f)
+                high_ordered = max(low_f, high_f)
+
+                if low_ordered * 0.45 <= joined_f <= high_ordered * 1.8:
+                    return joined, third, fourth, 4
+
+        if first and first.isdigit() and second and second.isdigit() and len(second) == 1:
+            joined = f"{first}.{second}"
+            joined_f = to_float(joined)
+            low_f = to_float(third)
+            high_f = to_float(fourth)
+
+            if joined_f is not None and low_f is not None and high_f is not None:
+                low_ordered = min(low_f, high_f)
+                high_ordered = max(low_f, high_f)
+
+                if low_ordered * 0.45 <= joined_f <= high_ordered * 1.8:
+                    return joined, third, fourth, 4
+
+    value, low, high = nums[0], nums[1], nums[2]
+    fixed_value = fix_numeric_scale(value, low, high)
+
+    return fixed_value, low, high, 3
 
 
 def build_lab_result(
@@ -280,17 +458,20 @@ def build_lab_result(
     display_candidate = normalize_raw_test_name(raw_test_name)
     normalized = normalize_test_name(display_candidate)
 
+    final_value = normalize_decimal(value)
     final_reference_range = clean_reference_range(reference_range)
     final_unit = clean_unit(unit)
 
-    final_flag = flag or infer_flag(value, final_reference_range)
+    final_flag = flag if final_value is not None else None
+    if final_value is not None and final_flag is None:
+        final_flag = infer_flag(final_value, final_reference_range)
 
     return {
-        "raw_test_name": raw_test_name.strip() if raw_test_name else display_candidate,
+        "raw_test_name": str(raw_test_name or display_candidate).strip(),
         "canonical_name": normalized["canonical_name"],
         "display_name": normalized["display_name"],
         "category": normalized["category"],
-        "value": normalize_decimal(value),
+        "value": final_value,
         "flag": final_flag,
         "reference_range": final_reference_range,
         "unit": final_unit,
@@ -298,186 +479,12 @@ def build_lab_result(
     }
 
 
-def should_skip_line(line: str) -> bool:
-    lowered = line.lower()
-
-    if not lowered.strip():
-        return True
-
-    return any(keyword in lowered for keyword in SKIP_LINE_KEYWORDS)
-
-
-def clean_ocr_text_for_rows(text: str) -> str:
-    cleaned = text or ""
-
-    # Remove visual abnormal arrows as separators. They should not block row parsing.
-    for marker in ARROW_HIGH_MARKERS + ARROW_LOW_MARKERS:
-        cleaned = cleaned.replace(marker, " ")
-
-    cleaned = cleaned.replace("|", " ")
-    cleaned = cleaned.replace("¦", " ")
-    cleaned = cleaned.replace("│", " ")
-    cleaned = cleaned.replace("€", " ")
-    cleaned = cleaned.replace("®", " ")
-    cleaned = cleaned.replace("™", " ")
-
-    # Normalize table-like whitespace.
-    cleaned = re.sub(r"[ \t]+", " ", cleaned)
-
-    return cleaned
-
-
-def extract_flag_from_line(original_line: str, value: str | None, reference_range: str | None) -> str:
-    lowered = f" {original_line.lower()} "
-
-    if any(marker in original_line for marker in ARROW_HIGH_MARKERS[:-1]) or " high " in lowered:
-        return "High"
-
-    if any(marker in original_line for marker in ARROW_LOW_MARKERS) or " low " in lowered:
-        return "Low"
-
-    return infer_flag(value, reference_range)
-
-
-def parse_generic_table_rows(text: str) -> list[dict]:
-    labs: list[dict] = []
-    seen: set[str] = set()
-
-    original_lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
-    cleaned_lines = [clean_ocr_text_for_rows(line).strip() for line in original_lines]
-
-    # Allows junk between name and value:
-    # WBC 18.52 3.98 - 10.00 10^3/ul
-    # WBC arrow 18.52 3.98 - 10.00 10^3/ul
-    row_pattern = re.compile(
-        r"""
-        ^\s*
-        (?P<name>[A-Za-zĂÂÎȘȚăâîșț][A-Za-zĂÂÎȘȚăâîșț0-9#%_\-\/\.]{0,24})
-        (?:\s+[^\d\s]{1,5}){0,3}
-        \s+
-        (?P<value>[-+]?\d+(?:[.,]\d+)?)
-        \s+
-        (?P<low>[-+]?\d+(?:[.,]\d+)?)
-        \s*[-–—]?\s*
-        (?P<high>[-+]?\d+(?:[.,]\d+)?)
-        (?P<tail>.*?)
-        \s*$
-        """,
-        re.IGNORECASE | re.VERBOSE,
-    )
-
-    for idx, line in enumerate(cleaned_lines):
-        original_line = original_lines[idx]
-
-        if should_skip_line(original_line):
-            continue
-
-        line = re.sub(r"\s+", " ", line).strip()
-        match = row_pattern.match(line)
-
-        if not match:
-            continue
-
-        raw_name = match.group("name").strip()
-        raw_name_upper = normalize_test_token(raw_name)
-
-        if raw_name_upper not in KNOWN_TEST_ALIASES:
-            continue
-
-        value = match.group("value")
-        low = match.group("low")
-        high = match.group("high")
-        tail = (match.group("tail") or "").strip()
-
-        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
-        fixed_low = low
-        fixed_high = high
-
-        # If range was OCR'd as 47 - 125 for percent-style tests, make it 4.7 - 12.5.
-        if raw_name_upper.endswith("%") or raw_name_upper in {"MONO", "NEUT", "LYMPH", "BASO", "EO", "EOS", "IG"}:
-            low_f = to_float(low)
-            high_f = to_float(high)
-            if low_f is not None and high_f is not None and high_f > 100:
-                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
-                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
-
-        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
-
-        unit = tail.strip()
-        unit = re.sub(r"^[^\w%µμ\/\^]+", "", unit)
-        unit = unit or None
-
-        if not unit:
-            if raw_name_upper.endswith("%"):
-                unit = "%"
-            elif raw_name_upper.endswith("#"):
-                unit = "10^3/uL"
-
-        flag = extract_flag_from_line(original_line, fixed_value, reference_range)
-
-        result = build_lab_result(
-            raw_test_name=raw_name,
-            value=fixed_value,
-            flag=flag,
-            reference_range=reference_range,
-            unit=unit,
-            confidence=0.9,
-        )
-
-        dedupe_key = result["canonical_name"] or result["display_name"] or raw_name_upper
-
-        if dedupe_key in seen:
-            continue
-
-        seen.add(dedupe_key)
-        labs.append(result)
-
-    return labs
-
-
-def tokenize_ocr_text(text: str) -> list[str]:
-    cleaned = clean_ocr_text_for_rows(text or "")
-
-    # Keep useful symbols inside tokens.
-    cleaned = re.sub(r"([A-Za-zĂÂÎȘȚăâîșț]+)\s+([#%])", r"\1\2", cleaned)
-    cleaned = cleaned.replace("RDW SD", "RDW-SD")
-    cleaned = cleaned.replace("RDW CV", "RDW-CV")
-    cleaned = cleaned.replace("P LCR", "P-LCR")
-
-    tokens = re.findall(
-        r"[A-Za-zĂÂÎȘȚăâîșț]+[#%]?"
-        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
-        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+[#%]?"
-        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
-        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Za-zĂÂÎȘȚăâîșț]+"
-        r"|[A-Za-zĂÂÎȘȚăâîșț]+-[A-Z]+"
-        r"|[A-Z]+-[A-Z]+[#%]?"
-        r"|[-+]?\d+(?:[.,]\d+)?"
-        r"|10\^?\d+/?[uµμ]?[lL]?"
-        r"|[%]"
-        r"|[A-Za-zµμ/%^0-9]+",
-        cleaned,
-    )
-
-    return [token.strip() for token in tokens if token.strip() and token.strip() not in JUNK_TOKENS]
-
-
-def is_number_token(token: str) -> bool:
-    return re.fullmatch(r"[-+]?\d+(?:[.,]\d+)?", token.strip()) is not None
-
-
-def is_null_result_token(token: str | None) -> bool:
-    if token is None:
-        return True
-
-    cleaned = str(token).strip().lower()
-    cleaned = cleaned.replace("−", "-")
-    cleaned = cleaned.replace("—", "-").replace("–", "-")
-
-    return cleaned in NULL_RESULT_TOKENS or re.fullmatch(r"-{2,}", cleaned) is not None
-
-
-def build_nil_result(raw_test_name: str, reference_range: str | None = None, unit: str | None = None, confidence: float = 0.72) -> dict:
+def build_nil_result(
+    raw_test_name: str,
+    reference_range: str | None = None,
+    unit: str | None = None,
+    confidence: float = 0.99,
+) -> dict:
     result = build_lab_result(
         raw_test_name=raw_test_name,
         value=None,
@@ -491,50 +498,334 @@ def build_nil_result(raw_test_name: str, reference_range: str | None = None, uni
     return result
 
 
-def looks_like_unit(token: str) -> bool:
-    cleaned = token.strip()
-    if not cleaned:
+def should_skip_line(line: str) -> bool:
+    lowered = str(line or "").lower()
+
+    if not lowered.strip():
+        return True
+
+    return any(keyword in lowered for keyword in SKIP_LINE_KEYWORDS)
+
+
+def clean_ocr_text_for_rows(text: str) -> str:
+    cleaned = text or ""
+
+    cleaned = cleaned.replace("│", " ")
+    cleaned = cleaned.replace("|", " ")
+    cleaned = cleaned.replace("¦", " ")
+    cleaned = cleaned.replace("€", " ")
+    cleaned = cleaned.replace("®", " ")
+    cleaned = cleaned.replace("™", " ")
+    cleaned = cleaned.replace("µ", "u")
+    cleaned = cleaned.replace("μ", "u")
+
+    cleaned = cleaned.replace("RDW SD", "RDW-SD")
+    cleaned = cleaned.replace("RDW CV", "RDW-CV")
+    cleaned = cleaned.replace("P LCR", "P-LCR")
+
+    cleaned = re.sub(r"[ \t]+", " ", cleaned)
+
+    return cleaned.strip()
+
+
+def token_identity_keys(raw_test_name: str) -> set[str]:
+    key = normalize_test_token(raw_test_name)
+    display = KNOWN_TEST_ALIASES.get(key, raw_test_name)
+    normalized = normalize_test_name(display)
+
+    keys = {
+        key.lower(),
+        str(raw_test_name or "").lower(),
+        str(display or "").lower(),
+        str(normalized.get("canonical_name") or "").lower(),
+        str(normalized.get("display_name") or "").lower(),
+    }
+
+    return {item for item in keys if item}
+
+
+def lab_identity_keys(lab: dict) -> set[str]:
+    keys = set()
+
+    for field in ["raw_test_name", "canonical_name", "display_name"]:
+        value = lab.get(field)
+        if value:
+            keys |= token_identity_keys(str(value))
+
+    return {item for item in keys if item}
+
+
+def find_test_key_in_line(line: str) -> tuple[str | None, int, int]:
+    source = line or ""
+
+    aliases = sorted(KNOWN_TEST_ALIASES.keys(), key=len, reverse=True)
+
+    for alias in aliases:
+        alias_pattern = re.escape(alias).replace(r"\-", r"[-\s]?")
+
+        match = re.search(
+            rf"(?<![A-Za-z0-9]){alias_pattern}(?![A-Za-z0-9])",
+            source,
+            re.IGNORECASE,
+        )
+
+        if match:
+            return normalize_test_token(alias), match.start(), match.end()
+
+    return None, -1, -1
+
+
+def segment_has_null_before_first_number(segment: str) -> bool:
+    if not segment:
         return False
 
-    lowered = cleaned.lower()
+    first_num = NUMBER_RE.search(segment)
+    before_first_num = segment if not first_num else segment[: first_num.start()]
+    before_first_num = before_first_num.replace("−", "-").replace("—", "-").replace("–", "-")
 
-    return (
-        "%" in cleaned
-        or "/" in cleaned
-        or "^" in cleaned
-        or lowered in {"fl", "g/dl", "g/dl", "pg", "u/l", "mg/dl", "mmol/l"}
-        or re.fullmatch(r"10\^?\d+/?[uµμ]?[lL]?", cleaned) is not None
-        or re.fullmatch(r"10\d+/?[uµμ]?[lL]?", cleaned) is not None
+    return NULL_MARKER_RE.search(before_first_num.lower()) is not None
+
+
+def find_explicit_blank_result_test_keys(text: str) -> set[str]:
+    found: set[str] = set()
+
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+    flattened = re.sub(r"\s+", " ", text or "").strip()
+
+    for source in lines + [flattened]:
+        if not source:
+            continue
+
+        source = clean_ocr_text_for_rows(source)
+
+        for alias in sorted(KNOWN_TEST_ALIASES.keys(), key=len, reverse=True):
+            alias_pattern = re.escape(alias).replace(r"\-", r"[-\s]?")
+
+            for match in re.finditer(
+                rf"(?<![A-Za-z0-9]){alias_pattern}(?![A-Za-z0-9])(?P<after>.{{0,120}})",
+                source,
+                re.IGNORECASE,
+            ):
+                after = match.group("after") or ""
+
+                next_positions = []
+
+                for other_alias in KNOWN_TEST_ALIASES.keys():
+                    if other_alias == alias:
+                        continue
+
+                    other_pattern = re.escape(other_alias).replace(r"\-", r"[-\s]?")
+                    other_match = re.search(
+                        rf"(?<![A-Za-z0-9]){other_pattern}(?![A-Za-z0-9])",
+                        after,
+                        re.IGNORECASE,
+                    )
+
+                    if other_match:
+                        next_positions.append(other_match.start())
+
+                if next_positions:
+                    after = after[: min(next_positions)]
+
+                if segment_has_null_before_first_number(after):
+                    found |= token_identity_keys(alias)
+
+    return found
+
+
+def plausible_reference_range(low: str | None, high: str | None) -> bool:
+    low_f = to_float(low)
+    high_f = to_float(high)
+
+    if low_f is None or high_f is None:
+        return False
+
+    if high_f < low_f:
+        return False
+
+    if high_f == low_f:
+        return False
+
+    return True
+
+
+def extract_unit_after_numbers(segment: str, consumed_number_count: int) -> str | None:
+    matches = list(NUMBER_RE.finditer(segment or ""))
+
+    if len(matches) < consumed_number_count:
+        return None
+
+    tail = segment[matches[consumed_number_count - 1].end() :]
+
+    unit_match = re.search(
+        r"(10\^?\d+\s*/?\s*[uµμ]?[lL]|10\d+\s*/?\s*[uµμ]?[lL]|[%]|[A-Za-zµμ]+(?:/[A-Za-zµμ]+)?)",
+        tail,
+    )
+
+    if not unit_match:
+        return None
+
+    unit = unit_match.group(1).strip()
+
+    if looks_like_unit(unit):
+        return unit
+
+    return None
+
+
+def parse_line_for_lab(line: str) -> dict | None:
+    if should_skip_line(line):
+        return None
+
+    cleaned_line = clean_ocr_text_for_rows(line)
+    test_key, _start, end = find_test_key_in_line(cleaned_line)
+
+    if not test_key:
+        return None
+
+    segment = cleaned_line[end:]
+
+    if segment_has_null_before_first_number(segment):
+        numbers = NUMBER_RE.findall(segment)
+        reference_range = None
+
+        if len(numbers) >= 2:
+            low = numbers[-2]
+            high = numbers[-1]
+
+            if plausible_reference_range(low, high):
+                reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
+
+        unit = None
+
+        for token in re.findall(r"[A-Za-zµμ/%^0-9]+", segment):
+            if looks_like_unit(token):
+                unit = token
+                break
+
+        if not unit:
+            if test_key.endswith("%"):
+                unit = "%"
+            elif test_key.endswith("#"):
+                unit = "10^3/uL"
+
+        return build_nil_result(test_key, reference_range=reference_range, unit=unit, confidence=0.99)
+
+    numbers = NUMBER_RE.findall(segment)
+
+    if len(numbers) < 3:
+        if test_key in BLANK_PRONE_TESTS and len(numbers) <= 2:
+            reference_range = None
+
+            if len(numbers) >= 2:
+                low = numbers[-2]
+                high = numbers[-1]
+
+                if plausible_reference_range(low, high):
+                    reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
+
+            return build_nil_result(test_key, reference_range=reference_range, unit=None, confidence=0.92)
+
+        return None
+
+    value, low, high, consumed = choose_value_low_high(numbers)
+
+    if value is None or low is None or high is None:
+        return None
+
+    if not plausible_reference_range(low, high):
+        if test_key in BLANK_PRONE_TESTS:
+            return build_nil_result(test_key, reference_range=None, unit=None, confidence=0.9)
+
+        reference_range = None
+    else:
+        reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
+
+    unit = extract_unit_after_numbers(segment, consumed)
+
+    if not unit:
+        if test_key.endswith("%"):
+            unit = "%"
+        elif test_key.endswith("#"):
+            unit = "10^3/uL"
+
+    flag = extract_flag_from_line(line, value, reference_range)
+
+    return build_lab_result(
+        raw_test_name=test_key,
+        value=value,
+        flag=flag,
+        reference_range=reference_range,
+        unit=unit,
+        confidence=0.88,
     )
 
 
-def parse_token_stream_rows(text: str) -> list[dict]:
-    """
-    Backup parser for OCR text where table rows are badly split.
-    It scans token-by-token:
-    TEST -> value -> low -> high -> optional unit
-    and ignores arrow/junk artifacts.
-    """
+def parse_generic_table_rows(text: str) -> list[dict]:
     labs: list[dict] = []
     seen: set[str] = set()
 
+    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
+
+    for line in lines:
+        parsed = parse_line_for_lab(line)
+
+        if not parsed:
+            continue
+
+        key = parsed.get("canonical_name") or parsed.get("display_name") or parsed.get("raw_test_name")
+
+        if not key:
+            continue
+
+        key = str(key).lower()
+
+        if key in seen:
+            continue
+
+        seen.add(key)
+        labs.append(parsed)
+
+    return labs
+
+
+def tokenize_ocr_text(text: str) -> list[str]:
+    cleaned = clean_ocr_text_for_rows(text or "")
+
+    tokens = re.findall(
+        r"[A-Za-zĂÂÎȘȚăâîșț]+[#%]?"
+        r"|[A-Z]+-[A-Z]+[#%]?"
+        r"|[-+]?\d+(?:[.,]\d+)?"
+        r"|[-_]{2,}"
+        r"|10\^?\d+/?[uµμ]?[lL]?"
+        r"|[%]"
+        r"|[A-Za-zµμ/%^0-9]+",
+        cleaned,
+    )
+
+    return [token.strip() for token in tokens if token.strip()]
+
+
+def parse_token_stream_rows(text: str) -> list[dict]:
+    labs: list[dict] = []
+    seen: set[str] = set()
     tokens = tokenize_ocr_text(text)
 
     i = 0
+
     while i < len(tokens):
         token = tokens[i]
         test_key = normalize_test_token(token)
 
-        # OCR sometimes sees "RDW" "SD" as two tokens.
         if test_key == "RDW" and i + 1 < len(tokens):
-            nxt = normalize_test_token(tokens[i + 1])
-            if nxt in {"SD", "CV"}:
-                test_key = f"RDW-{nxt}"
+            next_token = normalize_test_token(tokens[i + 1])
+            if next_token in {"SD", "CV"}:
+                test_key = f"RDW-{next_token}"
                 i += 1
 
         if test_key == "P" and i + 1 < len(tokens):
-            nxt = normalize_test_token(tokens[i + 1])
-            if nxt == "LCR":
+            next_token = normalize_test_token(tokens[i + 1])
+            if next_token == "LCR":
                 test_key = "P-LCR"
                 i += 1
 
@@ -542,73 +833,73 @@ def parse_token_stream_rows(text: str) -> list[dict]:
             i += 1
             continue
 
-        # Look ahead for the next 3 numbers. They are usually value, low, high.
-        # If the row starts with --- / nil / blank markers, do not steal reference-range
-        # numbers and pretend they are measured values.
-        lookahead = tokens[i + 1 : i + 12]
+        lookahead = tokens[i + 1 : i + 16]
 
-        first_non_arrow_token = None
+        first_meaningful = None
+
         for candidate in lookahead:
             if candidate in ARROW_HIGH_MARKERS or candidate in ARROW_LOW_MARKERS:
                 continue
-            first_non_arrow_token = candidate
+
+            first_meaningful = candidate
             break
 
-        if is_null_result_token(first_non_arrow_token):
-            unit = None
-            if test_key.endswith("%"):
-                unit = "%"
-            elif test_key.endswith("#"):
-                unit = "10^3/uL"
+        if is_null_result_token(first_meaningful):
+            result = build_nil_result(test_key, confidence=0.95)
+            key = result.get("canonical_name") or result.get("display_name") or test_key
+            key = str(key).lower()
 
-            result = build_nil_result(test_key, reference_range=None, unit=unit, confidence=0.76)
-            dedupe_key = result["canonical_name"] or result["display_name"] or test_key
-
-            if dedupe_key not in seen:
-                seen.add(dedupe_key)
+            if key not in seen:
+                seen.add(key)
                 labs.append(result)
 
             i += 1
             continue
 
-        number_positions = []
+        bounded = []
 
-        for offset, candidate in enumerate(lookahead):
-            if is_number_token(candidate):
-                number_positions.append((offset, candidate))
-                if len(number_positions) >= 3:
-                    break
+        for candidate in lookahead:
+            candidate_key = normalize_test_token(candidate)
 
-        if len(number_positions) < 3:
-            result = build_nil_result(test_key, reference_range=None, unit=None, confidence=0.68)
-            dedupe_key = result["canonical_name"] or result["display_name"] or test_key
+            if candidate_key in KNOWN_TEST_ALIASES:
+                break
 
-            if dedupe_key not in seen:
-                seen.add(dedupe_key)
-                labs.append(result)
+            bounded.append(candidate)
+
+        numbers = [candidate for candidate in bounded if is_number_token(candidate)]
+
+        if len(numbers) < 3:
+            if test_key in BLANK_PRONE_TESTS and len(numbers) <= 2:
+                reference_range = None
+
+                if len(numbers) >= 2 and plausible_reference_range(numbers[-2], numbers[-1]):
+                    reference_range = f"{normalize_decimal(numbers[-2])} - {normalize_decimal(numbers[-1])}"
+
+                result = build_nil_result(test_key, reference_range=reference_range, confidence=0.84)
+                key = result.get("canonical_name") or result.get("display_name") or test_key
+                key = str(key).lower()
+
+                if key not in seen:
+                    seen.add(key)
+                    labs.append(result)
 
             i += 1
             continue
 
-        value = number_positions[0][1]
-        low = number_positions[1][1]
-        high = number_positions[2][1]
+        value, low, high, _consumed = choose_value_low_high(numbers)
 
-        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
-        fixed_low = low
-        fixed_high = high
+        if value is None or low is None or high is None:
+            i += 1
+            continue
 
-        if test_key.endswith("%"):
-            low_f = to_float(low)
-            high_f = to_float(high)
-            if low_f is not None and high_f is not None and high_f > 100:
-                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
-                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
+        reference_range = None
+
+        if plausible_reference_range(low, high):
+            reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
 
         unit = None
-        after_numbers_start = number_positions[2][0] + 1
 
-        for candidate in lookahead[after_numbers_start : after_numbers_start + 4]:
+        for candidate in bounded:
             if looks_like_unit(candidate):
                 unit = candidate
                 break
@@ -619,24 +910,23 @@ def parse_token_stream_rows(text: str) -> list[dict]:
             elif test_key.endswith("#"):
                 unit = "10^3/uL"
 
-        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
-
-        local_text = " ".join(lookahead[: after_numbers_start + 4])
-        flag = extract_flag_from_line(local_text, fixed_value, reference_range)
+        local_text = " ".join(bounded)
+        flag = extract_flag_from_line(local_text, value, reference_range)
 
         result = build_lab_result(
             raw_test_name=test_key,
-            value=fixed_value,
+            value=value,
             flag=flag,
             reference_range=reference_range,
             unit=unit,
-            confidence=0.78,
+            confidence=0.7,
         )
 
-        dedupe_key = result["canonical_name"] or result["display_name"] or test_key
+        key = result.get("canonical_name") or result.get("display_name") or test_key
+        key = str(key).lower()
 
-        if dedupe_key not in seen:
-            seen.add(dedupe_key)
+        if key not in seen:
+            seen.add(key)
             labs.append(result)
 
         i += 1
@@ -648,87 +938,62 @@ def parse_wrapped_table_rows(text: str) -> list[dict]:
     labs: list[dict] = []
     seen: set[str] = set()
 
-    lines = [line.strip() for line in (text or "").splitlines() if line.strip()]
-    cleaned_lines = [clean_ocr_text_for_rows(line).strip() for line in lines]
+    lines = [clean_ocr_text_for_rows(line.strip()) for line in (text or "").splitlines() if line.strip()]
 
-    for idx, line in enumerate(cleaned_lines):
-        name = normalize_test_token(line)
+    for idx, line in enumerate(lines):
+        test_key = normalize_test_token(line)
 
-        if name not in KNOWN_TEST_ALIASES:
+        if test_key not in KNOWN_TEST_ALIASES:
             continue
 
-        following_lines = cleaned_lines[idx + 1 : idx + 6]
-        first_following = following_lines[0] if following_lines else ""
+        following = " ".join(lines[idx + 1 : idx + 6])
 
-        if is_null_result_token(first_following):
-            result = build_nil_result(name, reference_range=None, unit=None, confidence=0.74)
-            dedupe_key = result["canonical_name"] or result["display_name"] or name
+        if segment_has_null_before_first_number(following):
+            result = build_nil_result(test_key, confidence=0.9)
+        else:
+            numbers = NUMBER_RE.findall(following)
 
-            if dedupe_key not in seen:
-                seen.add(dedupe_key)
-                labs.append(result)
+            if len(numbers) < 3:
+                continue
 
-            continue
+            value, low, high, _consumed = choose_value_low_high(numbers)
 
-        window = " ".join(following_lines)
-        numbers = re.findall(r"[-+]?\d+(?:[.,]\d+)?", window)
+            if value is None or low is None or high is None:
+                continue
 
-        if len(numbers) < 3:
-            result = build_nil_result(name, reference_range=None, unit=None, confidence=0.66)
-            dedupe_key = result["canonical_name"] or result["display_name"] or name
+            reference_range = None
 
-            if dedupe_key not in seen:
-                seen.add(dedupe_key)
-                labs.append(result)
+            if plausible_reference_range(low, high):
+                reference_range = f"{normalize_decimal(low)} - {normalize_decimal(high)}"
 
-            continue
+            unit = None
 
-        value = numbers[0]
-        low = numbers[1]
-        high = numbers[2]
+            for token in re.findall(r"[A-Za-zµμ/%^0-9]+", following):
+                if looks_like_unit(token):
+                    unit = token
+                    break
 
-        fixed_value = fix_missing_decimal_for_percent_or_small_range(value, low, high)
-        fixed_low = low
-        fixed_high = high
+            if not unit:
+                if test_key.endswith("%"):
+                    unit = "%"
+                elif test_key.endswith("#"):
+                    unit = "10^3/uL"
 
-        if name.endswith("%"):
-            low_f = to_float(low)
-            high_f = to_float(high)
-            if low_f is not None and high_f is not None and high_f > 100:
-                fixed_low = str(low_f / 10).rstrip("0").rstrip(".")
-                fixed_high = str(high_f / 10).rstrip("0").rstrip(".")
+            result = build_lab_result(
+                raw_test_name=test_key,
+                value=value,
+                flag=extract_flag_from_line(following, value, reference_range),
+                reference_range=reference_range,
+                unit=unit,
+                confidence=0.75,
+            )
 
-        unit_match = re.search(
-            r"(10\^?\d+\s*/?\s*[uµμ]?[lL]|10\d+\s*/?\s*[uµμ]?[lL]|[a-zA-Zµμ%\/]+(?:\/[a-zA-Zµμ]+)?)",
-            window,
-        )
-        unit = unit_match.group(1) if unit_match else None
+        key = result.get("canonical_name") or result.get("display_name") or test_key
+        key = str(key).lower()
 
-        if not unit:
-            if name.endswith("%"):
-                unit = "%"
-            elif name.endswith("#"):
-                unit = "10^3/uL"
-
-        reference_range = f"{normalize_decimal(fixed_low)} - {normalize_decimal(fixed_high)}"
-        flag = extract_flag_from_line(window, fixed_value, reference_range)
-
-        result = build_lab_result(
-            raw_test_name=name,
-            value=fixed_value,
-            flag=flag,
-            reference_range=reference_range,
-            unit=unit,
-            confidence=0.72,
-        )
-
-        dedupe_key = result["canonical_name"] or result["display_name"] or name
-
-        if dedupe_key in seen:
-            continue
-
-        seen.add(dedupe_key)
-        labs.append(result)
+        if key not in seen:
+            seen.add(key)
+            labs.append(result)
 
     return labs
 
@@ -738,15 +1003,42 @@ def extract_known_inline_labs(text: str) -> list[dict]:
     seen: set[str] = set()
 
     inline_patterns = [
-        (r"\b(Haemoglobin|Hemoglobin|Hemoglobina|Hemoglobină|HGB|Hb)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Hemoglobin"),
-        (r"\b(Leucocite|Leukocite|WBC|White Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "White Blood Cells"),
-        (r"\b(Eritrocite|RBC|Red Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Red Blood Cell Count"),
-        (r"\b(Hematocrit|Hematocritul|HCT)\b\s*[:\-]?\s*([\d.,]+)\s*(%)?", "Hematocrit"),
-        (r"\b(Platelets|Trombocite|PLT)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Platelets"),
-        (r"\b(Creatinine|Creatinina|Creatinină)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Creatinine"),
-        (r"\b(Glucose|Glucoza|Glicemie|Glicemia)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "Glucose"),
-        (r"\b(TSH)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "TSH"),
-        (r"\b(CRP|Proteina C reactiva|Proteina C reactivă)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?", "CRP"),
+        (
+            r"\b(Haemoglobin|Hemoglobin|Hemoglobina|Hemoglobină|HGB|Hb)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "Hemoglobin",
+        ),
+        (
+            r"\b(Leucocite|Leukocite|WBC|White Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "White Blood Cells",
+        ),
+        (
+            r"\b(Eritrocite|RBC|Red Blood Cells)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "Red Blood Cell Count",
+        ),
+        (
+            r"\b(Hematocrit|Hematocritul|HCT)\b\s*[:\-]?\s*([\d.,]+)\s*(%)?",
+            "Hematocrit",
+        ),
+        (
+            r"\b(Platelets|Trombocite|PLT)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "Platelets",
+        ),
+        (
+            r"\b(Creatinine|Creatinina|Creatinină)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "Creatinine",
+        ),
+        (
+            r"\b(Glucose|Glucoza|Glicemie|Glicemia)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "Glucose",
+        ),
+        (
+            r"\b(TSH)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "TSH",
+        ),
+        (
+            r"\b(CRP|Proteina C reactiva|Proteina C reactivă)\b\s*[:\-]?\s*([\d.,]+)\s*([\w/%µμ^]+)?",
+            "CRP",
+        ),
     ]
 
     for pattern, fallback_name in inline_patterns:
@@ -761,104 +1053,132 @@ def extract_known_inline_labs(text: str) -> list[dict]:
                 flag=None,
                 reference_range=None,
                 unit=unit,
-                confidence=0.6,
+                confidence=0.55,
             )
 
-            dedupe_key = result["canonical_name"] or result["display_name"] or raw_name.lower()
+            key = result.get("canonical_name") or result.get("display_name") or raw_name
+            key = str(key).lower()
 
-            if dedupe_key in seen:
+            if key in seen:
                 continue
 
-            seen.add(dedupe_key)
+            seen.add(key)
             labs.append(result)
 
     return labs
 
 
+def lab_score(lab: dict) -> float:
+    score = float(lab.get("confidence") or 0)
+
+    if lab.get("value") is not None:
+        score += 0.25
+
+    if lab.get("reference_range"):
+        score += 0.12
+
+    if lab.get("unit"):
+        score += 0.06
+
+    if lab.get("value") is None:
+        score += 0.35
+
+    return score
+
+
 def merge_labs(*lab_lists: list[dict]) -> list[dict]:
     merged: list[dict] = []
-    seen: set[str] = set()
 
     for lab_list in lab_lists:
         for lab in lab_list:
-            key = lab.get("canonical_name") or lab.get("display_name") or lab.get("raw_test_name")
+            keys = lab_identity_keys(lab)
 
-            if not key:
+            if not keys:
                 continue
 
-            key = str(key).lower()
-
             existing_index = None
+
             for idx, existing in enumerate(merged):
-                existing_key = existing.get("canonical_name") or existing.get("display_name") or existing.get("raw_test_name")
-                if existing_key and str(existing_key).lower() == key:
+                if lab_identity_keys(existing) & keys:
                     existing_index = idx
                     break
 
             if existing_index is None:
-                seen.add(key)
                 merged.append(lab)
                 continue
 
-            # Prefer higher-confidence rows with reference range and unit.
             existing = merged[existing_index]
-            existing_score = float(existing.get("confidence") or 0)
-            new_score = float(lab.get("confidence") or 0)
 
-            if lab.get("reference_range"):
-                new_score += 0.1
-            if lab.get("unit"):
-                new_score += 0.05
-
-            if existing.get("reference_range"):
-                existing_score += 0.1
-            if existing.get("unit"):
-                existing_score += 0.05
-
-            if new_score > existing_score:
+            if lab_score(lab) > lab_score(existing):
                 merged[existing_index] = lab
 
     return merged
 
 
+def force_nil_for_explicit_blank_rows(labs: list[dict], text: str) -> list[dict]:
+    blank_keys = find_explicit_blank_result_test_keys(text)
+
+    if not blank_keys:
+        return labs
+
+    cleaned = []
+
+    for lab in labs:
+        if lab_identity_keys(lab) & blank_keys:
+            lab = {
+                **lab,
+                "value": None,
+                "flag": None,
+                "confidence": max(float(lab.get("confidence") or 0), 0.99),
+            }
+
+        cleaned.append(lab)
+
+    return cleaned
+
+
+def remove_fake_reference_stolen_values(labs: list[dict]) -> list[dict]:
+    cleaned = []
+
+    for lab in labs:
+        raw_key = normalize_test_token(str(lab.get("raw_test_name") or ""))
+        value = to_float(lab.get("value"))
+        reference_range = lab.get("reference_range")
+        numbers = NUMBER_RE.findall(str(reference_range or ""))
+
+        if raw_key in BLANK_PRONE_TESTS and value is not None and len(numbers) >= 2:
+            low = to_float(numbers[0])
+            high = to_float(numbers[1])
+
+            if low is not None and high is not None:
+                if high < low or (value > 0 and high <= 0):
+                    lab = {
+                        **lab,
+                        "value": None,
+                        "flag": None,
+                        "reference_range": None,
+                        "confidence": 0.99,
+                    }
+
+        cleaned.append(lab)
+
+    return cleaned
+
+
 def parse_bloodwork_text(text: str) -> dict:
     safe_text = text or ""
-
     metadata = extract_report_metadata(safe_text)
 
     table_labs = parse_generic_table_rows(safe_text)
-    token_labs = parse_token_stream_rows(safe_text)
     wrapped_labs = parse_wrapped_table_rows(safe_text)
+    token_labs = parse_token_stream_rows(safe_text)
     inline_labs = extract_known_inline_labs(safe_text)
 
-    labs = merge_labs(table_labs, token_labs, wrapped_labs, inline_labs)
-
-    report_name = metadata.get("report_type") or "Bloodwork Report"
-
-    warnings = []
-    if not labs:
-        warnings.append("No structured lab results were confidently extracted. Manual review is recommended.")
-    elif len(labs) < 10:
-        warnings.append("Only a small number of lab rows were extracted. Manual review is recommended.")
+    labs = merge_labs(table_labs, wrapped_labs, token_labs, inline_labs)
+    labs = force_nil_for_explicit_blank_rows(labs, safe_text)
+    labs = remove_fake_reference_stolen_values(labs)
 
     return {
-        "patient_name": metadata.get("patient_name"),
-        "date_of_birth": metadata.get("date_of_birth"),
-        "age": metadata.get("age"),
-        "sex": metadata.get("sex"),
-        "cnp": metadata.get("cnp"),
-        "patient_identifier": metadata.get("patient_identifier"),
-        "lab_name": metadata.get("lab_name"),
-        "sample_type": metadata.get("sample_type"),
-        "referring_doctor": metadata.get("referring_doctor"),
-        "report_name": report_name,
-        "report_type": metadata.get("report_type") or "Bloodwork",
-        "source_language": metadata.get("source_language"),
-        "test_date": metadata.get("collected_on") or metadata.get("reported_on") or metadata.get("generated_on"),
-        "collected_on": metadata.get("collected_on"),
-        "reported_on": metadata.get("reported_on"),
-        "registered_on": metadata.get("registered_on"),
-        "generated_on": metadata.get("generated_on"),
+        "metadata": metadata,
         "labs": labs,
-        "warnings": warnings,
     }
