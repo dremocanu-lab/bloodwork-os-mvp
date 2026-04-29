@@ -351,7 +351,7 @@ def process_uploaded_document(file_path: Path, filename: str, section: str, temp
         parsed_data.setdefault("labs", [])
         parsed_data.setdefault("warnings", [])
 
-        google_labs = parse_labs_from_google_tables(google_tables)
+        google_labs = parse_labs_from_google_extraction(extraction)
         normalized_google_labs = normalize_lab_rows(google_labs, context_text=extracted_text)
         merged_labs = [standardize_lab_row_shape(row) for row in normalized_google_labs]
 
