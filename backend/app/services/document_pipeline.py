@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.parsers.google_table_parser import parse_labs_from_google_tables
+from app.parsers.google_table_parser import parse_labs_from_google_extraction
 from app.report_fields import extract_report_metadata
 from app.services.lab_catalog import build_report_name_from_categories, normalize_lab_rows
 from app.services.ocr_service import extract_text, score_ocr_quality

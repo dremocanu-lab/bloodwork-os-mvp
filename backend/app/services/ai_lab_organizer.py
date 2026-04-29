@@ -17,7 +17,6 @@ def env_value(name: str) -> str | None:
         return None
 
     value = value.strip()
-
     return value or None
 
 
@@ -37,36 +36,39 @@ def safe_json_loads(value: str) -> dict[str, Any] | None:
     return None
 
 
-def compact_text_for_ai(text: str, max_chars: int = 24000) -> str:
+def compact_text_for_ai(text: str, max_chars: int = 32000) -> str:
     safe = text or ""
 
-    # Prefer Google table/line sections if present.
-    important_markers = [
-        "--- GOOGLE DOCUMENT AI TABLE",
-        "--- GOOGLE DOCUMENT AI LINES ---",
+    markers = [
         "BULETIN ANALIZE MEDICALE",
-        "Hemograma simpla",
         "Citomorfologie",
+        "Hemograma simpla",
+        "Hemograma simplă",
+        "Sysmex",
+        "WBC",
+        "RBC",
+        "HGB",
+        "HCT",
+        "PLT",
         "INTERVAL BIOLOGIC",
-        "INTERVAL BIOLOGIC DE REFERINTA",
+        "--- GOOGLE DOCUMENT AI LINES ---",
+        "--- GOOGLE DOCUMENT AI TABLE",
     ]
 
     chunks: list[str] = []
 
-    for marker in important_markers:
+    for marker in markers:
         index = safe.lower().find(marker.lower())
 
         if index >= 0:
-            chunks.append(safe[max(0, index - 800) : index + 9000])
+            chunks.append(safe[max(0, index - 1500) : index + 14000])
 
     if chunks:
         combined = "\n\n".join(chunks)
     else:
         combined = safe
 
-    combined = combined[:max_chars]
-
-    return combined
+    return combined[:max_chars]
 
 
 def normalize_ai_lab_row(row: dict[str, Any]) -> dict[str, Any]:
@@ -105,10 +107,12 @@ def normalize_ai_lab_row(row: dict[str, Any]) -> dict[str, Any]:
     if value is not None and not reference_range and flag == "Normal":
         flag = None
 
+    name = row.get("raw_test_name") or row.get("test") or row.get("name")
+
     return {
-        "raw_test_name": row.get("raw_test_name") or row.get("test") or row.get("name"),
-        "canonical_name": row.get("canonical_name") or row.get("test") or row.get("name"),
-        "display_name": row.get("display_name") or row.get("test") or row.get("name"),
+        "raw_test_name": name,
+        "canonical_name": row.get("canonical_name") or name,
+        "display_name": row.get("display_name") or row.get("test") or name,
         "category": row.get("category") or "Hematologie",
         "value": value,
         "flag": flag,
@@ -135,21 +139,42 @@ def organize_labs_with_ai(extracted_text: str, deterministic_labs: list[dict[str
     text = compact_text_for_ai(extracted_text)
 
     system_prompt = """
-You are a medical lab report extraction engine.
+You are a strict medical lab table extraction engine.
 
 Extract ONLY facts visible in the supplied OCR text.
 Do not invent values.
 Do not invent reference ranges.
-Do not mark a result Normal unless a reference range is present and the value is inside it.
-If a row has no numeric result, use null.
+Do not use default reference ranges.
 Preserve decimals exactly.
-For Romanian Fundeni CBC reports, the clinical collection date is the line after:
-"Data si ora recoltarii setului de analize".
-Return JSON only.
+If a result cell is blank, --- or nil, return value null.
+If reference range and unit are combined, split them.
+If unsure about a row, include it with confidence below 0.70 rather than guessing.
+Do not mark Normal unless a value and a reference range are both present.
+
+For Fundeni CBC reports, extract the table under:
+Citomorfologie / Hemograma simpla / CBC+DIFF.
+Important columns are:
+DENUMIRE ANALIZA | REZULTAT | INTERVAL BIOLOGIC DE REFERINTA
+
+Return JSON only with:
+{
+  "metadata": {...},
+  "labs": [...]
+}
 """
 
     user_prompt = {
-        "task": "Extract structured lab report data from this OCR text.",
+        "task": "Extract the CBC/lab table rows from this Google Document AI OCR text.",
+        "rules": [
+            "The first column is test name.",
+            "The second column is result.",
+            "The third column is reference range plus unit.",
+            "Never take a number from the reference column as the result.",
+            "For WBC/RBC/HGB/HCT/etc preserve the exact result value shown.",
+            "For rows with --- result, value must be null but reference_range and unit may still be extracted.",
+            "Reference range must be numeric interval only, e.g. 3.98 - 10.00.",
+            "Unit must be separate, e.g. 10^3/uL, 10^6/uL, g/dL, %, fL, pg.",
+        ],
         "required_metadata": [
             "patient_name",
             "age",
@@ -204,7 +229,7 @@ Return JSON only.
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=45) as response:
+        with urllib.request.urlopen(request, timeout=60) as response:
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
