@@ -1644,7 +1644,7 @@ def delete_document(
 
 
 @app.get("/patients/{patient_id}/bloodwork-trends")
-def get_bloodwork_trends(
+def get_patient_bloodwork_trends(
     patient_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
@@ -1654,74 +1654,123 @@ def get_bloodwork_trends(
 
     documents = (
         db.query(models.Document)
-        .filter(models.Document.patient_id == patient_id, models.Document.section == "bloodwork")
+        .filter(
+            models.Document.patient_id == patient_id,
+            models.Document.section == "bloodwork",
+        )
         .order_by(models.Document.id.asc())
         .all()
     )
 
-    grouped = {}
+    document_by_id = {document.id: document for document in documents}
+    document_ids = list(document_by_id.keys())
 
-    for document in documents:
-        labs = db.query(models.LabResult).filter(models.LabResult.document_id == document.id).all()
-        date = get_best_document_date(document) or document.created_at or ""
+    if not document_ids:
+        return []
 
-        for lab in labs:
-            key = lab.canonical_name or lab.display_name or lab.raw_test_name
+    labs = (
+        db.query(models.LabResult)
+        .filter(models.LabResult.document_id.in_(document_ids))
+        .all()
+    )
 
-            if not key:
-                continue
+    trends = {}
 
-            try:
-                value = lab_value_to_float(lab.value)
-            if value is None:
-                continue
-            except Exception:
-                continue
+    for lab in labs:
+        numeric_value = lab_value_to_float(lab.value)
 
-            grouped.setdefault(
-                key,
-                {
-                    "test_key": key,
-                    "display_name": lab.display_name or key,
-                    "canonical_name": lab.canonical_name,
-                    "category": lab.category,
-                    "unit": lab.unit,
-                    "points": [],
-                },
-            )
+        # Missing / nil / --- values must never enter trend graphs.
+        if numeric_value is None:
+            continue
 
-            grouped[key]["points"].append(
-                {
-                    "document_id": document.id,
-                    "date": date,
-                    "value": value,
-                    "value_display": lab.value,
-                    "flag": lab.flag,
-                    "report_name": document.report_name,
-                    "reference_range": lab.reference_range,
-                }
-            )
+        test_key = (
+            lab.canonical_name
+            or lab.display_name
+            or lab.raw_test_name
+            or ""
+        ).strip()
 
-    trends = []
+        if not test_key:
+            continue
 
-    for trend in grouped.values():
-        points = sorted(trend["points"], key=lambda point: point["date"] or "")
-        latest = points[-1]
-        previous = points[-2] if len(points) >= 2 else None
-        delta = latest["value"] - previous["value"] if previous else None
+        document = document_by_id.get(lab.document_id)
 
-        trends.append(
+        if not document:
+            continue
+
+        display_name = lab.display_name or lab.canonical_name or lab.raw_test_name or test_key
+        date = get_best_document_date(document) or ""
+
+        if test_key not in trends:
+            trends[test_key] = {
+                "test_key": test_key,
+                "display_name": display_name,
+                "canonical_name": lab.canonical_name,
+                "category": lab.category,
+                "unit": lab.unit,
+                "points": [],
+            }
+
+        trends[test_key]["points"].append(
             {
-                **trend,
-                "points": points,
-                "latest": latest,
-                "previous": previous,
-                "delta": round(delta, 3) if delta is not None else None,
+                "document_id": document.id,
+                "date": date,
+                "value": numeric_value,
+                "value_display": str(lab.value).strip(),
+                "flag": lab.flag,
+                "report_name": document.report_name or document.filename,
+                "reference_range": lab.reference_range,
             }
         )
 
-    return sorted(trends, key=lambda trend: trend["display_name"] or "")
+    results = []
 
+    for trend in trends.values():
+        points = trend["points"]
+
+        # Sort by clinical date when possible, then document id as a stable fallback.
+        def point_sort_key(point):
+            raw_date = point.get("date") or ""
+
+            try:
+                parsed = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
+                return (parsed.timestamp(), point.get("document_id") or 0)
+            except Exception:
+                return (0, point.get("document_id") or 0)
+
+        points.sort(key=point_sort_key)
+
+        # Only the 5 most recent real numeric points.
+        points = points[-5:]
+
+        if not points:
+            continue
+
+        latest = points[-1]
+        previous = points[-2] if len(points) >= 2 else None
+        delta = None
+
+        if previous:
+            delta = round(latest["value"] - previous["value"], 2)
+
+        trend["points"] = points
+        trend["latest"] = latest
+        trend["previous"] = previous
+        trend["delta"] = delta
+
+        results.append(trend)
+
+    results.sort(
+        key=lambda trend: (
+            0
+            if trend["latest"].get("flag")
+            and str(trend["latest"].get("flag")).strip().lower() not in {"", "normal", "none", "ok"}
+            else 1,
+            trend["display_name"] or "",
+        )
+    )
+
+    return results
 
 @app.post("/patient-events")
 def create_patient_event(
