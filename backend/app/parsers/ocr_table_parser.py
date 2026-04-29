@@ -126,8 +126,7 @@ def word_center_y(word: dict) -> float:
 
 
 def default_unit_for_test(test_key: str) -> str | None:
-    normalized = normalize_test_token(test_key)
-    return DEFAULT_UNITS.get(normalized)
+    return DEFAULT_UNITS.get(normalize_test_token(test_key))
 
 
 def clean_unit_from_text(text: str | None, test_key: str) -> str | None:
@@ -151,12 +150,10 @@ def clean_unit_from_text(text: str | None, test_key: str) -> str | None:
     if re.search(r"10\s*\^?\s*6\s*/?\s*u?l", cleaned, re.IGNORECASE):
         return "10^6/uL"
 
-    # Do not accept bare 100 / 103 / 106 as units. Those are often OCR fragments
-    # from references like 80.0 - 100.0.
     if re.fullmatch(r"\d+", cleaned):
         return default_unit_for_test(test_key)
 
-    if "/" in cleaned and len(cleaned) <= 12:
+    if "/" in cleaned and len(cleaned) <= 16:
         return cleaned
 
     return default_unit_for_test(test_key)
@@ -264,48 +261,31 @@ def possible_test_key_from_row(row_words: list[dict]) -> tuple[str | None, int]:
     return None, -1
 
 
-def detect_result_and_reference_columns(row_words: list[dict], test_index: int) -> tuple[list[dict], list[dict], list[dict]]:
-    """
-    Organize the row as:
-      test name column | result column | reference range column
+def extract_numbers_from_words(words: list[dict]) -> list[str]:
+    numbers = []
 
-    We do not use random token order anymore. We use horizontal position.
-    """
-    test_word = row_words[test_index]
-    test_right = word_right(test_word)
+    for word in words:
+        text = clean_word(word.get("text"))
 
-    after_test = [
-        word
-        for word in row_words[test_index + 1 :]
-        if float(word.get("left", 0)) >= test_right - 3
-    ]
+        if is_number(text):
+            normalized = normalize_decimal(text)
 
-    numeric_words = [
-        {
-            **word,
-            "number_text": normalize_decimal(clean_word(word.get("text"))),
-            "x": word_center_x(word),
-            "left_f": float(word.get("left", 0)),
-            "right_f": word_right(word),
-        }
-        for word in after_test
-        if is_number(clean_word(word.get("text")))
-    ]
+            if normalized is not None:
+                numbers.append(normalized)
 
-    null_words = [word for word in after_test if is_null_marker(clean_word(word.get("text")))]
+    return numbers
 
-    # Merge OCR split decimal fragments inside the same visual column:
-    # 5.4 + 7 -> 5.47
-    # 47 + 3 -> 47.3 only if close together.
-    merged_numbers = []
+
+def merge_split_decimal_numbers(number_words: list[dict]) -> list[dict]:
+    merged = []
     i = 0
 
-    while i < len(numeric_words):
-        current = dict(numeric_words[i])
+    while i < len(number_words):
+        current = dict(number_words[i])
         current_text = str(current["number_text"])
 
-        if i + 1 < len(numeric_words):
-            next_cell = numeric_words[i + 1]
+        if i + 1 < len(number_words):
+            next_cell = number_words[i + 1]
             next_text = str(next_cell["number_text"])
 
             gap = float(next_cell["left_f"]) - float(current["right_f"])
@@ -318,7 +298,7 @@ def detect_result_and_reference_columns(row_words: list[dict], test_index: int) 
                     current["right_f"] = next_cell["right_f"]
                     current["x"] = (float(current["left_f"]) + float(next_cell["right_f"])) / 2
                     i += 2
-                    merged_numbers.append(current)
+                    merged.append(current)
                     continue
 
                 if current_text.isdigit():
@@ -326,24 +306,77 @@ def detect_result_and_reference_columns(row_words: list[dict], test_index: int) 
                     current["right_f"] = next_cell["right_f"]
                     current["x"] = (float(current["left_f"]) + float(next_cell["right_f"])) / 2
                     i += 2
-                    merged_numbers.append(current)
+                    merged.append(current)
                     continue
 
-        merged_numbers.append(current)
+        merged.append(current)
         i += 1
 
-    numeric_words = merged_numbers
+    return merged
 
-    if not numeric_words:
+
+def numeric_words_after_test(row_words: list[dict], test_index: int) -> list[dict]:
+    test_word = row_words[test_index]
+    test_right = word_right(test_word)
+
+    result = []
+
+    for word in row_words[test_index + 1 :]:
+        if float(word.get("left", 0)) < test_right - 3:
+            continue
+
+        text = clean_word(word.get("text"))
+
+        if not is_number(text):
+            continue
+
+        result.append(
+            {
+                **word,
+                "number_text": normalize_decimal(text),
+                "x": word_center_x(word),
+                "left_f": float(word.get("left", 0)),
+                "right_f": word_right(word),
+            }
+        )
+
+    return merge_split_decimal_numbers(result)
+
+
+def split_row_into_result_and_reference(
+    row_words: list[dict],
+    test_index: int,
+) -> tuple[list[dict], list[dict], list[dict]]:
+    """
+    CBC table is visually:
+      test name | result | reference range
+
+    The safest rule:
+      - first numeric cluster after test = result
+      - everything far to the right = reference range cell
+    """
+    numbers = numeric_words_after_test(row_words, test_index)
+    null_words = [word for word in row_words[test_index + 1 :] if is_null_marker(clean_word(word.get("text")))]
+
+    if not numbers:
         return [], [], null_words
 
-    # Most CBC rows have exactly: result number, low reference, high reference.
-    # Use the first number after the test as result and the next two as reference.
-    # This is safer than letting the parser choose arbitrary numbers.
-    result_numbers = numeric_words[:1]
-    reference_numbers = numeric_words[1:3]
+    result_number = numbers[0]
+    result_x = float(result_number.get("x", 0))
 
-    return result_numbers, reference_numbers, null_words
+    # Reference column is usually clearly to the right of the result column.
+    # Use adaptive gap so 150 - 450 and 3.98 - 10.00 are captured as one reference cell.
+    right_numbers = [
+        number
+        for number in numbers[1:]
+        if float(number.get("x", 0)) > result_x + 70
+    ]
+
+    # If OCR is tight and the 70px gap misses it, fall back to next two numbers.
+    if len(right_numbers) < 2 and len(numbers) >= 3:
+        right_numbers = numbers[1:3]
+
+    return [result_number], right_numbers[:2], null_words
 
 
 def get_reference_range(reference_numbers: list[dict]) -> str | None:
@@ -368,10 +401,39 @@ def get_reference_range(reference_numbers: list[dict]) -> str | None:
     return f"{low} - {high}"
 
 
-def detect_unit(row_words: list[dict], test_key: str) -> str | None:
-    row = row_text(row_words)
+def detect_unit(row_words: list[dict], test_key: str, reference_numbers: list[dict]) -> str | None:
+    if reference_numbers:
+        ref_right = max(float(number.get("right_f", 0)) for number in reference_numbers)
 
-    explicit_unit_patterns = [
+        candidate_words = [
+            word
+            for word in row_words
+            if float(word.get("left", 0)) >= ref_right - 4
+        ]
+
+        candidate_text = " ".join(clean_word(word.get("text")) for word in candidate_words)
+
+        explicit_patterns = [
+            r"10\s*\^?\s*3\s*/?\s*u?l",
+            r"10\s*\^?\s*6\s*/?\s*u?l",
+            r"\bg\s*/\s*dL\b",
+            r"\bg\s*/\s*dl\b",
+            r"\bfL\b",
+            r"\bFL\b",
+            r"\bfl\b",
+            r"\bpg\b",
+            r"%",
+        ]
+
+        for pattern in explicit_patterns:
+            match = re.search(pattern, candidate_text, re.IGNORECASE)
+
+            if match:
+                return clean_unit_from_text(match.group(0), test_key)
+
+    full_row = row_text(row_words)
+
+    explicit_patterns = [
         r"10\s*\^?\s*3\s*/?\s*u?l",
         r"10\s*\^?\s*6\s*/?\s*u?l",
         r"\bg\s*/\s*dL\b",
@@ -383,8 +445,8 @@ def detect_unit(row_words: list[dict], test_key: str) -> str | None:
         r"%",
     ]
 
-    for pattern in explicit_unit_patterns:
-        match = re.search(pattern, row, re.IGNORECASE)
+    for pattern in explicit_patterns:
+        match = re.search(pattern, full_row, re.IGNORECASE)
 
         if match:
             return clean_unit_from_text(match.group(0), test_key)
@@ -405,16 +467,10 @@ def detect_flag(row_words: list[dict], value: str | None, reference_range: str |
 
 
 def adjust_value_using_flag_and_reference(
-    test_key: str,
     value: str | None,
     reference_range: str | None,
     flag: str | None,
 ) -> str | None:
-    """
-    Fixes OCR decimal-loss cases that only become obvious when compared to the flag.
-    Example:
-      WBC shown as 1.27 with ↑ and ref 3.98 - 10.00 should be 12.70.
-    """
     if value is None:
         return None
 
@@ -456,19 +512,11 @@ def adjust_value_using_flag_and_reference(
     return value
 
 
-def row_is_true_blank_result(
-    test_key: str,
-    result_numbers: list[dict],
-    reference_numbers: list[dict],
-    null_words: list[dict],
-) -> bool:
+def row_is_true_blank_result(test_key: str, result_numbers: list[dict], null_words: list[dict]) -> bool:
     if null_words and not result_numbers:
         return True
 
     if test_key in BLANK_RESULT_TESTS and not result_numbers:
-        return True
-
-    if test_key in BLANK_RESULT_TESTS and len(result_numbers) == 0 and len(reference_numbers) >= 2:
         return True
 
     return False
@@ -480,11 +528,11 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
     if not test_key:
         return None
 
-    result_numbers, reference_numbers, null_words = detect_result_and_reference_columns(row_words, test_index)
+    result_numbers, reference_numbers, null_words = split_row_into_result_and_reference(row_words, test_index)
     reference_range = get_reference_range(reference_numbers)
-    unit = detect_unit(row_words, test_key)
+    unit = detect_unit(row_words, test_key, reference_numbers)
 
-    if row_is_true_blank_result(test_key, result_numbers, reference_numbers, null_words):
+    if row_is_true_blank_result(test_key, result_numbers, null_words):
         return build_nil_result(
             raw_test_name=test_key,
             reference_range=reference_range,
@@ -502,7 +550,7 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
 
     value = normalize_decimal(str(result_numbers[0].get("number_text")))
     flag = detect_flag(row_words, value, reference_range)
-    value = adjust_value_using_flag_and_reference(test_key, value, reference_range, flag)
+    value = adjust_value_using_flag_and_reference(value, reference_range, flag)
     flag = detect_flag(row_words, value, reference_range)
 
     return build_lab_result(
@@ -511,7 +559,7 @@ def parse_row_by_coordinates(row_words: list[dict]) -> dict | None:
         flag=flag,
         reference_range=reference_range,
         unit=unit,
-        confidence=0.97,
+        confidence=0.98,
     )
 
 

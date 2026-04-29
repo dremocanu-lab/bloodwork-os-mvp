@@ -43,6 +43,20 @@ def clean_spaces(value: str | None) -> str | None:
     return cleaned or None
 
 
+def normalize_ocr_text(text: str | None) -> str:
+    safe = text or ""
+    safe = safe.replace("\r", "\n")
+    safe = safe.replace("ș", "s").replace("Ș", "S")
+    safe = safe.replace("ț", "t").replace("Ț", "T")
+    safe = safe.replace("ă", "a").replace("Ă", "A")
+    safe = safe.replace("â", "a").replace("Â", "A")
+    safe = safe.replace("î", "i").replace("Î", "I")
+    safe = safe.replace("–", "-").replace("—", "-")
+    safe = re.sub(r"[ \t]+", " ", safe)
+
+    return safe
+
+
 def normalize_date_text(value: str | None) -> str | None:
     if not value:
         return None
@@ -67,6 +81,8 @@ def parse_date_to_display(value: str | None) -> str | None:
     if not cleaned:
         return None
 
+    cleaned = re.sub(r"\s+", " ", cleaned).strip()
+
     formats = [
         "%d %b %Y %H:%M",
         "%d %B %Y %H:%M",
@@ -87,13 +103,26 @@ def parse_date_to_display(value: str | None) -> str | None:
     for fmt in formats:
         try:
             parsed = datetime.strptime(cleaned, fmt)
+
             if "%H" in fmt:
                 return parsed.strftime("%d %b %Y %H:%M")
+
             return parsed.strftime("%d %b %Y")
         except Exception:
             pass
 
     return cleaned
+
+
+DATE_CAPTURE = (
+    r"("
+    r"\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}\s+\d{1,2}:\d{2}"
+    r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s+\d{1,2}:\d{2}"
+    r"|\d{4}-\d{1,2}-\d{1,2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2})?"
+    r"|\d{1,2}\s+[A-Za-z]{3,12}\s+\d{4}"
+    r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
+    r")"
+)
 
 
 def first_match(text: str, patterns: list[str], flags: int = re.IGNORECASE | re.MULTILINE) -> str | None:
@@ -103,28 +132,77 @@ def first_match(text: str, patterns: list[str], flags: int = re.IGNORECASE | re.
         if match:
             for group in match.groups():
                 cleaned = clean_spaces(group)
+
                 if cleaned:
                     return cleaned
 
     return None
 
 
-def extract_date_after_label(text: str, labels: list[str]) -> str | None:
-    safe_text = text or ""
+def extract_collection_date(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
 
-    date_pattern = (
-        r"("
-        r"\d{1,2}\s+[A-Za-zăâîșțĂÂÎȘȚ]{3,12}\s+\d{4}\s+\d{1,2}:\d{2}"
-        r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}\s+\d{1,2}:\d{2}"
-        r"|\d{4}-\d{1,2}-\d{1,2}[T\s]\d{1,2}:\d{2}(?::\d{2})?(?:[+-]\d{2}:?\d{2})?"
-        r"|\d{1,2}\s+[A-Za-zăâîșțĂÂÎȘȚ]{3,12}\s+\d{4}"
-        r"|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}"
-        r")"
+    patterns = [
+        rf"Data\s+si\s+ora\s+recoltarii\s+setului\s+de\s+analize\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Data\s+si\s+ora\s+recoltarii\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Data\s+recoltarii\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Data\s+si\s+ora\s+recoltarii.*?{DATE_CAPTURE}",
+        rf"recoltarii\s+setului\s+de\s+analize\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Collected(?:\s+on)?\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Collection\s+date\s*[:\-]?\s*{DATE_CAPTURE}",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, safe, re.IGNORECASE | re.DOTALL)
+
+        if match:
+            return parse_date_to_display(match.group(1))
+
+    # Fundeni backup: the page almost always has the date near the title line.
+    match = re.search(
+        rf"BULETIN\s+ANALIZE\s+MEDICALE.*?{DATE_CAPTURE}",
+        safe,
+        re.IGNORECASE | re.DOTALL,
     )
 
-    for label in labels:
-        pattern = rf"{label}\s*[:\-–—]?\s*(?:setului\s+de\s+analize\s*[:\-–—]?\s*)?{date_pattern}"
-        match = re.search(pattern, safe_text, re.IGNORECASE | re.MULTILINE)
+    if match:
+        return parse_date_to_display(match.group(1))
+
+    return None
+
+
+def extract_reported_date(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
+    patterns = [
+        rf"Data\s+validare\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Data\s+validarii\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Data\s+si\s+ora\s+validarii\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Reported(?:\s+on)?\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Validated(?:\s+on)?\s*[:\-]?\s*{DATE_CAPTURE}",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, safe, re.IGNORECASE | re.DOTALL)
+
+        if match:
+            return parse_date_to_display(match.group(1))
+
+    return None
+
+
+def extract_registered_date(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
+    patterns = [
+        rf"Data\s+si\s+ora\s+sosirii\s+in\s+laborator\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"sosirii\s+in\s+laborator\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Registered(?:\s+on)?\s*[:\-]?\s*{DATE_CAPTURE}",
+        rf"Received(?:\s+on)?\s*[:\-]?\s*{DATE_CAPTURE}",
+    ]
+
+    for pattern in patterns:
+        match = re.search(pattern, safe, re.IGNORECASE | re.DOTALL)
 
         if match:
             return parse_date_to_display(match.group(1))
@@ -133,19 +211,23 @@ def extract_date_after_label(text: str, labels: list[str]) -> str | None:
 
 
 def extract_patient_name(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
-            r"\bNume\s*[:\-]?\s*([A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚa-zăâîșț .'-]{2,80})",
-            r"\bPacient\s*[:\-]?\s*([A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚa-zăâîșț .'-]{2,80})",
+            r"\bNume\s*[:\-]?\s*([A-Z][A-Z .'-]{2,80})",
+            r"\bPacient\s*[:\-]?\s*([A-Z][A-Z .'-]{2,80})",
             r"\bName\s*[:\-]?\s*([A-Z][A-Za-z .'-]{2,80})",
         ],
     )
 
 
 def extract_cnp(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
             r"\bCNP\s*[:\-]?\s*(\d{13})",
             r"\bCod\s+numeric\s+personal\s*[:\-]?\s*(\d{13})",
@@ -154,8 +236,10 @@ def extract_cnp(text: str) -> str | None:
 
 
 def extract_patient_identifier(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
             r"\bCod\s+pacient\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
             r"\bID\s+pacient\s*[:\-]?\s*([A-Za-z0-9\-_/]{4,40})",
@@ -166,10 +250,12 @@ def extract_patient_identifier(text: str) -> str | None:
 
 
 def extract_age(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     raw = first_match(
-        text,
+        safe,
         [
-            r"\bV[âa]rsta\s*[:\-]?\s*([0-9]{1,3}\s*(?:ani|an|years?|y)?(?:\s*(?:si|și)?\s*[0-9]{1,2}\s*(?:luni|months?))?)",
+            r"\bVarsta\s*[:\-]?\s*([0-9]{1,3}\s*(?:ani|an|years?|y)?(?:\s*(?:si)?\s*[0-9]{1,2}\s*(?:luni|months?))?)",
             r"\bAge\s*[:\-]?\s*([0-9]{1,3}\s*(?:years?|y)?(?:\s*[0-9]{1,2}\s*months?)?)",
         ],
     )
@@ -178,8 +264,10 @@ def extract_age(text: str) -> str | None:
 
 
 def extract_sex(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     raw = first_match(
-        text,
+        safe,
         [
             r"\bSex\s*[:\-]?\s*(Masculin|Feminin|Male|Female|M|F)\b",
             r"\bGen\s*[:\-]?\s*(Masculin|Feminin|Male|Female|M|F)\b",
@@ -201,8 +289,10 @@ def extract_sex(text: str) -> str | None:
 
 
 def extract_lab_name(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
             r"(Institutul\s+Clinic\s+Fundeni)",
             r"(Laborator(?:ul)?\s+de\s+Analize[^\n]{0,80})",
@@ -214,22 +304,25 @@ def extract_lab_name(text: str) -> str | None:
 
 
 def extract_referring_doctor(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
-            r"\bMedic\s*[:\-]?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
-            r"\bDoctor\s*[:\-]?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
-            r"\bDr\.?\s*([A-ZĂÂÎȘȚa-zăâîșț .'-]{3,80})",
+            r"\bMedic\s*[:\-]?\s*([A-Z][A-Za-z .'-]{3,80})",
+            r"\bDoctor\s*[:\-]?\s*([A-Z][A-Za-z .'-]{3,80})",
+            r"\bDr\.?\s*([A-Z][A-Za-z .'-]{3,80})",
         ],
     )
 
 
 def extract_sample_type(text: str) -> str | None:
+    safe = normalize_ocr_text(text)
+
     return first_match(
-        text,
+        safe,
         [
-            r"\bTip\s+proba\s*[:\-]?\s*([A-Za-zĂÂÎȘȚăâîșț0-9 .'-]{2,60})",
-            r"\bTip\s+prob[ăa]\s*[:\-]?\s*([A-Za-zĂÂÎȘȚăâîșț0-9 .'-]{2,60})",
+            r"\bTip\s+proba\s*[:\-]?\s*([A-Za-z0-9 .'-]{2,60})",
             r"\bSample\s+type\s*[:\-]?\s*([A-Za-z0-9 .'-]{2,60})",
             r"\bCod\s+proba\s*[:\-]?\s*([A-Za-z0-9\-_/]{2,40})",
         ],
@@ -237,13 +330,13 @@ def extract_sample_type(text: str) -> str | None:
 
 
 def extract_report_name(text: str, collected_on: str | None = None) -> str:
-    lowered = (text or "").lower()
+    lowered = normalize_ocr_text(text).lower()
 
     if "hematologie" in lowered or "hemograma" in lowered or "hemogram" in lowered or "citomorfologie" in lowered:
         base = "Hematologie"
     elif "biochimie" in lowered:
         base = "Biochimie"
-    elif "urina" in lowered or "urină" in lowered:
+    elif "urina" in lowered:
         base = "Urinalysis"
     else:
         base = "Analize medicale"
@@ -255,16 +348,13 @@ def extract_report_name(text: str, collected_on: str | None = None) -> str:
 
 
 def extract_source_language(text: str) -> str:
-    lowered = (text or "").lower()
+    lowered = normalize_ocr_text(text).lower()
 
     romanian_markers = [
         "buletin analize",
         "recoltarii",
-        "recoltării",
         "varsta",
-        "vârsta",
         "sectie",
-        "secție",
         "medic",
         "interval biologic",
     ]
@@ -278,54 +368,12 @@ def extract_source_language(text: str) -> str:
 def extract_report_metadata(text: str) -> dict:
     safe_text = text or ""
 
-    collected_on = extract_date_after_label(
-        safe_text,
-        [
-            r"Data\s+si\s+ora\s+recoltarii",
-            r"Data\s+și\s+ora\s+recoltării",
-            r"Data\s+recoltarii",
-            r"Data\s+recoltării",
-            r"Recoltat(?:ă|a)?\s+la",
-            r"Collected(?:\s+on)?",
-            r"Collection\s+date",
-        ],
-    )
-
-    reported_on = extract_date_after_label(
-        safe_text,
-        [
-            r"Data\s+validare",
-            r"Data\s+validarii",
-            r"Data\s+validării",
-            r"Data\s+si\s+ora\s+validarii",
-            r"Data\s+și\s+ora\s+validării",
-            r"Reported(?:\s+on)?",
-            r"Validated(?:\s+on)?",
-        ],
-    )
-
-    registered_on = extract_date_after_label(
-        safe_text,
-        [
-            r"Data\s+si\s+ora\s+sosirii\s+in\s+laborator",
-            r"Data\s+și\s+ora\s+sosirii\s+în\s+laborator",
-            r"Sosit(?:ă|a)?\s+in\s+laborator",
-            r"Registered(?:\s+on)?",
-            r"Received(?:\s+on)?",
-        ],
-    )
-
-    generated_on = extract_date_after_label(
-        safe_text,
-        [
-            r"Generated(?:\s+on)?",
-            r"Printed(?:\s+on)?",
-            r"Printat(?:\s+la)?",
-        ],
-    )
+    collected_on = extract_collection_date(safe_text)
+    reported_on = extract_reported_date(safe_text)
+    registered_on = extract_registered_date(safe_text)
+    generated_on = None
 
     test_date = collected_on or reported_on or registered_on or generated_on
-
     report_name = extract_report_name(safe_text, collected_on or test_date)
 
     return {
