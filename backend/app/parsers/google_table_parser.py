@@ -48,6 +48,13 @@ CBC_ORDER = [
     "IG%",
 ]
 
+NO_REFERENCE_KEYS = {
+    "NRBC#",
+    "NRBC%",
+    "IG#",
+    "IG%",
+}
+
 DIFFERENTIAL_PREFIXES = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "BASO", "IG"]
 
 CBC_KEY_RE = re.compile(
