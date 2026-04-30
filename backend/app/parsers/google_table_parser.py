@@ -214,11 +214,12 @@ def norm_key(value: str) -> str:
     raw = raw.replace("_", "-")
     raw = raw.replace("–", "-").replace("—", "-")
 
-    # OCR sometimes reads MONO as M0NO / MON0.
-    # Only fix MONO-like tokens so we don't corrupt real numeric values.
-    if raw.startswith(("M0N", "MON0", "M0NO")):
-        raw = raw.replace("0", "O")
-
+    # OCR sometimes reads MONO as M0NO / MON0 / M0N0.
+    # Only correct short MONO-like CBC keys so numeric values are not affected.
+    mono_candidate = raw.replace("#", "").replace("%", "")
+    if re.fullmatch(r"M[O0]N[O0]", mono_candidate):
+    
+    raw = raw.replace("0", "O")
     raw = raw.replace("RDWSD", "RDW-SD")
     raw = raw.replace("RDWCV", "RDW-CV")
     raw = raw.replace("PLCR", "P-LCR")
@@ -368,21 +369,17 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
         return None
 
     # 3.9810-00 -> 3.98 - 10.00
-    # 3.9310-00 -> 3.93 - 10.00
     match = re.search(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
     if match:
-        low = f"{match.group(1)}.{match.group(2)}"
-        high = f"{match.group(3)}.{match.group(4)}"
-        return low, high
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     # 3.936-08 -> 3.93 - 6.08
     # 1.183-74 -> 1.18 - 3.74
     # 0.244-82 -> 0.24 - 4.82
+    # 0.010-08 -> 0.01 - 0.08
     match = re.search(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
     if match:
-        low = f"{match.group(1)}.{match.group(2)}"
-        high = f"{match.group(3)}.{match.group(4)}"
-        return low, high
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     # 34.151-0 -> 34.1 - 51.0
     # 35.146-3 -> 35.1 - 46.3
@@ -390,17 +387,30 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     # 19.353-1 -> 19.3 - 53.1
     match = re.search(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
-        low = f"{match.group(1)}.{match.group(2)}"
-        high = f"{match.group(3)}.{match.group(4)}"
-        return low, high
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     return None
 
 
 def repair_malformed_reference_range(reference_range: str | None, source_text: Any = "") -> str | None:
-    raw = norm(source_text)
+    """
+    Conservative, general OCR repair for fused lab reference ranges.
 
-    raw_repaired = split_fused_range_token(raw)
+    It repairs only when the original source text contains a clear fused numeric
+    pattern created by OCR/table extraction, such as:
+      3.9810-00  -> 3.98 - 10.00
+      1.183-74   -> 1.18 - 3.74
+      34.151-0   -> 34.1 - 51.0
+      0.010-08   -> 0.01 - 0.08
+
+    It does not blindly rewrite plausible-looking ranges because different labs
+    can legitimately use different reference intervals.
+    """
+    raw = norm(source_text).replace(",", ".")
+    raw = raw.replace("–", "-").replace("—", "-").replace("−", "-")
+    raw_compact = re.sub(r"\s+", "", raw)
+
+    raw_repaired = split_fused_range_token(raw_compact)
     if raw_repaired:
         return format_range(raw_repaired[0], raw_repaired[1])
 
@@ -410,10 +420,8 @@ def repair_malformed_reference_range(reference_range: str | None, source_text: A
     text = norm(reference_range).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
 
-    # 0 - 34.151 -> 34.1 - 51.0
-    # 3 - 35.146 -> 35.1 - 46.3
-    # 4 - 11.614 -> 11.6 - 14.4
-    # 1 - 19.353 -> 19.3 - 53.1
+    # These repairs are only for outputs that still visibly contain a fused
+    # high-side token, not for normal plausible ranges.
     match = re.fullmatch(r"(\d)\s*-\s*(\d{1,3})\.(\d)(\d{2})", text)
     if match:
         trailing_decimal = match.group(1)
@@ -423,28 +431,14 @@ def repair_malformed_reference_range(reference_range: str | None, source_text: A
 
         low = f"{low_whole}.{low_decimal}"
         high = f"{high_whole}.{trailing_decimal}"
-
         return format_range(low, high)
 
-    # General stolen-decimal repair:
-    # 3.9 - 8.10 -> 3.98 - 10.00
-    # This is not WBC-specific. It catches the second low decimal digit
-    # being pulled into the high-side number.
-    match = re.fullmatch(r"(\d{1,3})\.(\d)\s*-\s*(\d)\.(\d{2})", text)
-    if match:
-        low_whole = match.group(1)
-        low_first_decimal = match.group(2)
-        stolen_low_second_decimal = match.group(3)
-        high_digits = match.group(4)
-
-        if high_digits in {"10", "00"}:
-            low = f"{low_whole}.{low_first_decimal}{stolen_low_second_decimal}"
-
-            if high_digits == "10":
-                return format_range(low, "10.00")
-
-            if high_digits == "00":
-                return format_range(low, "0.00")
+    # Only safe when source_text confirms the lost digit pattern.
+    # Do NOT generally convert all "3.9 - 8.10" unless raw text carried the fuse.
+    if raw and raw != text:
+        fused = split_fused_range_token(raw_compact)
+        if fused:
+            return format_range(fused[0], fused[1])
 
     return reference_range
 
@@ -685,6 +679,9 @@ def make_lab_row(
             confidence=confidence,
         )
 
+        # Force final flag to match the final repaired reference range.
+        row["flag"] = infer_flag(value, reference_range)
+
     display_name = CBC_DISPLAY_NAMES.get(key)
 
     if display_name:
@@ -694,7 +691,6 @@ def make_lab_row(
         row["category"] = "Hematologie"
 
     return row
-
 
 def row_is_plausible(row: dict[str, Any]) -> bool:
     key = detect_key(row.get("raw_test_name"))
@@ -1246,13 +1242,6 @@ def add_missing_text_backfill(
     return candidates
 
 def cbc_key_regex(target_key: str, strict_symbol: bool = False) -> str:
-    """
-    Build a regex that works for CBC keys with #/% and OCR variants.
-
-    Important:
-    NRBC# can work while MONO# fails because MONO is often read as M0NO/MON0
-    or loses its symbol in OCR/table extraction.
-    """
     key = norm_key(target_key)
 
     suffix = ""
