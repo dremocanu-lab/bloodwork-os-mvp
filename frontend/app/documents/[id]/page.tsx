@@ -179,9 +179,17 @@ function isAbnormalFlag(flag?: string | null) {
   return ["high", "low", "abnormal", "critical", "borderline"].includes(cleaned);
 }
 
+function hasDisplayableFlag(flag?: string | null) {
+  const cleaned = (flag || "").trim().toLowerCase();
+
+  if (!cleaned) return false;
+
+  return !["none", "null", "undefined", "-", "—"].includes(cleaned);
+}
+
 function isEffectivelyNormalFlag(flag?: string | null) {
   const cleaned = (flag || "").trim().toLowerCase();
-  return !cleaned || cleaned === "normal" || cleaned === "none" || cleaned === "ok";
+  return cleaned === "normal" || cleaned === "ok";
 }
 
 function formatDate(value?: string | null) {
@@ -211,6 +219,14 @@ function categorySortIndex(category: string) {
 
 function getFlagStyle(flag?: string | null, value?: string | number | null) {
   if (isNilValue(value)) {
+    return {
+      background: "var(--panel-2)",
+      color: "var(--muted)",
+      borderColor: "var(--border)",
+    };
+  }
+
+  if (!hasDisplayableFlag(flag)) {
     return {
       background: "var(--panel-2)",
       color: "var(--muted)",
@@ -664,7 +680,7 @@ export default function DocumentStructuredPage() {
             display_name: lab.display_name || lab.canonical_name || lab.raw_test_name || null,
             category: lab.category || "Alte analize",
             value: cleanLabValueForSave(lab.value || null),
-            flag: isNilValue(lab.value) ? null : lab.flag || null,
+            flag: isNilValue(lab.value) || !lab.reference_range?.trim() ? null : lab.flag || null,
             reference_range: lab.reference_range || null,
             unit: lab.unit || null,
           })),
@@ -1355,7 +1371,7 @@ export default function DocumentStructuredPage() {
                                         fontWeight: 950,
                                       }}
                                     >
-                                      {valueOrDash(lab.flag || "Normal")}
+                                      {isNilValue(lab.value) ? "nil" : hasDisplayableFlag(lab.flag) ? lab.flag : "—"}
                                     </span>
                                   )}
                                 </td>
