@@ -1,4 +1,4 @@
-import "./globals.css";
+﻿import "./globals.css";
 import { UploadManagerProvider } from "@/components/upload-provider";
 
 export const metadata = {

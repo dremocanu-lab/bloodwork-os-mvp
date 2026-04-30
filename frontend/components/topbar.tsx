@@ -1,4 +1,4 @@
-type TopbarUser = {
+﻿type TopbarUser = {
   full_name: string;
   role: "patient" | "doctor" | "admin";
 };

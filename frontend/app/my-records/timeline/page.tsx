@@ -271,7 +271,7 @@ function YearDropdown({
             fontWeight: 950,
           }}
         >
-          –¾
+          ▼
         </span>
       </div>
     </label>
@@ -578,4 +578,5 @@ export default function MyRecordsTimelinePage() {
     </AppShell>
   );
 }
+
 

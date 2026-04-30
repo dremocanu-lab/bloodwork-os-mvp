@@ -1,4 +1,4 @@
-export default function StatCard({
+﻿export default function StatCard({
   label,
   value,
   accent = "violet",

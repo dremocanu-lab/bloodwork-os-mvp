@@ -670,7 +670,7 @@ function SelectFilter({
             fontWeight: 950,
           }}
         >
-          –¾
+          ▼
         </span>
       </div>
     </label>
@@ -1537,4 +1537,5 @@ export default function MyRecordsPage() {
     </AppShell>
   );
 }
+
 
