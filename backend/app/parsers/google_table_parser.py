@@ -833,6 +833,16 @@ def parse_labs_from_ordered_lines(lines: list[str]) -> list[dict]:
 
     return labs
 
+def parse_labs_from_extraction_lines(extraction: dict[str, Any]) -> list[dict]:
+    lines = collect_lines_from_extraction(extraction, "lines_text")
+
+    if not lines:
+        lines = collect_lines_from_extraction(extraction, "plain_text")
+
+    if not lines:
+        lines = collect_lines_from_extraction(extraction, "text")
+
+    return parse_labs_from_ordered_lines(lines)
 
 def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, Any]) -> list[dict]:
     lines = collect_lines_from_extraction(extraction, "lines_text")
