@@ -179,17 +179,17 @@ function isAbnormalFlag(flag?: string | null) {
   return ["high", "low", "abnormal", "critical", "borderline"].includes(cleaned);
 }
 
+function isEffectivelyNormalFlag(flag?: string | null) {
+  const cleaned = (flag || "").trim().toLowerCase();
+  return cleaned === "normal" || cleaned === "ok";
+}
+
 function hasDisplayableFlag(flag?: string | null) {
   const cleaned = (flag || "").trim().toLowerCase();
 
   if (!cleaned) return false;
 
   return !["none", "null", "undefined", "-", "—"].includes(cleaned);
-}
-
-function isEffectivelyNormalFlag(flag?: string | null) {
-  const cleaned = (flag || "").trim().toLowerCase();
-  return cleaned === "normal" || cleaned === "ok";
 }
 
 function formatDate(value?: string | null) {
