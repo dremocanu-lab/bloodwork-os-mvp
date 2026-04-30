@@ -213,6 +213,12 @@ def norm_key(value: str) -> str:
     raw = raw.replace(" ", "")
     raw = raw.replace("_", "-")
     raw = raw.replace("–", "-").replace("—", "-")
+
+    # OCR sometimes reads MONO as M0NO / MON0.
+    # Only fix MONO-like tokens so we don't corrupt real numeric values.
+    if raw.startswith(("M0N", "MON0", "M0NO")):
+        raw = raw.replace("0", "O")
+
     raw = raw.replace("RDWSD", "RDW-SD")
     raw = raw.replace("RDWCV", "RDW-CV")
     raw = raw.replace("PLCR", "P-LCR")
@@ -420,25 +426,27 @@ def repair_malformed_reference_range(reference_range: str | None, source_text: A
 
         return format_range(low, high)
 
+    # General stolen-decimal repair:
     # 3.9 - 8.10 -> 3.98 - 10.00
-    # General correction for a stolen decimal digit, not WBC-specific.
-    match = re.fullmatch(r"(\d{1,3})\.(\d)\s*-\s*(\d)\.(10|00)", text)
+    # This is not WBC-specific. It catches the second low decimal digit
+    # being pulled into the high-side number.
+    match = re.fullmatch(r"(\d{1,3})\.(\d)\s*-\s*(\d)\.(\d{2})", text)
     if match:
         low_whole = match.group(1)
         low_first_decimal = match.group(2)
-        low_second_decimal = match.group(3)
-        high = match.group(4)
+        stolen_low_second_decimal = match.group(3)
+        high_digits = match.group(4)
 
-        low = f"{low_whole}.{low_first_decimal}{low_second_decimal}"
+        if high_digits in {"10", "00"}:
+            low = f"{low_whole}.{low_first_decimal}{stolen_low_second_decimal}"
 
-        if high == "10":
-            return format_range(low, "10.00")
+            if high_digits == "10":
+                return format_range(low, "10.00")
 
-        if high == "00":
-            return format_range(low, "0.00")
+            if high_digits == "00":
+                return format_range(low, "0.00")
 
     return reference_range
-
 
 def extract_reference_range(value: Any) -> str | None:
     raw_text = norm(value).replace(",", ".")
@@ -1237,6 +1245,87 @@ def add_missing_text_backfill(
 
     return candidates
 
+def cbc_key_regex(target_key: str, strict_symbol: bool = False) -> str:
+    """
+    Build a regex that works for CBC keys with #/% and OCR variants.
+
+    Important:
+    NRBC# can work while MONO# fails because MONO is often read as M0NO/MON0
+    or loses its symbol in OCR/table extraction.
+    """
+    key = norm_key(target_key)
+
+    suffix = ""
+    base = key
+
+    if key.endswith("#"):
+        base = key[:-1]
+        suffix = r"\s*(?:#|＃)" if strict_symbol else r"\s*(?:#|＃)?"
+    elif key.endswith("%"):
+        base = key[:-1]
+        suffix = r"\s*(?:%|％)" if strict_symbol else r"\s*(?:%|％)?"
+
+    if base == "MONO":
+        base_pattern = r"M[O0]N[O0]"
+    else:
+        base_pattern = re.escape(base).replace(r"\-", r"[\s\-]?")
+
+    return rf"(?<![A-Z0-9]){base_pattern}{suffix}(?![A-Z0-9#%])"
+
+
+def text_contains_cbc_key(text: str, target_key: str) -> bool:
+    cleaned = norm(text).upper()
+
+    return (
+        re.search(cbc_key_regex(target_key, strict_symbol=True), cleaned, re.IGNORECASE) is not None
+        or re.search(cbc_key_regex(target_key, strict_symbol=False), cleaned, re.IGNORECASE) is not None
+    )
+
+
+def extract_cbc_row_from_text(text: str, target_key: str) -> dict | None:
+    clean = norm(text)
+    upper = clean.upper()
+
+    match = re.search(cbc_key_regex(target_key, strict_symbol=True), upper, re.IGNORECASE)
+
+    if not match:
+        match = re.search(cbc_key_regex(target_key, strict_symbol=False), upper, re.IGNORECASE)
+
+    if not match:
+        return None
+
+    tail = clean[match.end() : match.end() + 180]
+    tail = norm(tail)
+
+    if not tail:
+        return None
+
+    tokens = tail.split()
+
+    result_text = ""
+    reference_text = ""
+
+    for index, token in enumerate(tokens):
+        if cell_has_only_one_result_number(token) or is_null_value(token):
+            result_text = token
+            reference_text = " ".join(tokens[index + 1 :])
+            break
+
+    if not result_text:
+        return None
+
+    parsed = make_lab_row(
+        key=target_key,
+        result_text=result_text,
+        reference_text=reference_text,
+        unit_text=reference_text,
+        confidence=0.72,
+    )
+
+    if parsed and row_is_plausible(parsed):
+        return parsed
+
+    return None
 
 def force_backfill_missing_cbc_from_plain_text(
     candidates: list[dict],
@@ -1255,6 +1344,7 @@ def force_backfill_missing_cbc_from_plain_text(
         ]
     )
 
+    # First try clean line-by-line extraction.
     for line in combined_text.splitlines():
         clean_line = norm(line)
 
@@ -1264,36 +1354,32 @@ def force_backfill_missing_cbc_from_plain_text(
             if normalized_target in existing_keys:
                 continue
 
-            if not re.search(rf"\b{re.escape(target_key)}\b", clean_line, re.IGNORECASE):
+            if not text_contains_cbc_key(clean_line, target_key):
                 continue
 
-            parts = clean_line.split()
-            result_text = ""
-            reference_text = ""
-
-            for index, part in enumerate(parts):
-                if norm_key(part) == target_key:
-                    for result_index, possible_result in enumerate(parts[index + 1 :], start=index + 1):
-                        if cell_has_only_one_result_number(possible_result) or is_null_value(possible_result):
-                            result_text = possible_result
-                            reference_text = " ".join(parts[result_index + 1 :])
-                            break
-                    break
-
-            if not result_text:
-                continue
-
-            parsed = make_lab_row(
-                key=target_key,
-                result_text=result_text,
-                reference_text=reference_text,
-                unit_text=reference_text,
-                confidence=0.7,
-            )
+            parsed = extract_cbc_row_from_text(clean_line, target_key)
 
             if parsed and row_is_plausible(parsed):
                 candidates.append(parsed)
                 existing_keys.add(normalized_target)
+
+    # Then try whole-document text in case Google merged the table into one block.
+    compact_text = norm(combined_text)
+
+    for target_key in CBC_ORDER:
+        normalized_target = norm_key(target_key).lower()
+
+        if normalized_target in existing_keys:
+            continue
+
+        if not text_contains_cbc_key(compact_text, target_key):
+            continue
+
+        parsed = extract_cbc_row_from_text(compact_text, target_key)
+
+        if parsed and row_is_plausible(parsed):
+            candidates.append(parsed)
+            existing_keys.add(normalized_target)
 
     return candidates
 
