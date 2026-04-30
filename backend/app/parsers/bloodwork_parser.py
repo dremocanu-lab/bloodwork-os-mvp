@@ -1,3 +1,5 @@
+# backend/app/parsers/bloodwork_parser.py
+
 from __future__ import annotations
 
 import re
@@ -136,6 +138,9 @@ DEFAULT_CBC_UNITS = {
     "EO#": "10^3/uL",
     "EO": "10^3/uL",
     "EO%": "%",
+    "EOS#": "10^3/uL",
+    "EOS": "10^3/uL",
+    "EOS%": "%",
     "BASO#": "10^3/uL",
     "BASO": "10^3/uL",
     "BASO%": "%",
@@ -159,6 +164,7 @@ NULL_RESULT_TOKENS = {
     "na",
     "null",
     "none",
+    "absent",
 }
 
 ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
@@ -176,10 +182,85 @@ def clean_text(value: Any) -> str:
     cleaned = cleaned.replace("\u00a0", " ")
     cleaned = cleaned.replace("µ", "u").replace("μ", "u")
     cleaned = cleaned.replace("−", "-").replace("–", "-").replace("—", "-")
+    cleaned = cleaned.replace("＃", "#").replace("％", "%")
+    cleaned = cleaned.replace("︱", "|")
     cleaned = cleaned.replace("|", " ")
+    cleaned = cleaned.replace("Â", "")
+    cleaned = cleaned.replace("â€", "")
+    cleaned = cleaned.replace("�", "")
+
+    # Greek uppercase letters often appear in MONO on Romanian lab PDFs.
+    cleaned = cleaned.replace("Μ", "M")
+    cleaned = cleaned.replace("Ο", "O")
+    cleaned = cleaned.replace("Ν", "N")
+    cleaned = cleaned.replace("ΜΟΝΟ", "MONO")
+
     cleaned = re.sub(r"\s+", " ", cleaned).strip()
+    return cleaned
+
+
+def normalize_test_token(value: Any) -> str:
+    cleaned = clean_text(value).upper()
+    cleaned = cleaned.replace("_", "-")
+    cleaned = cleaned.replace(" ", "")
+    cleaned = cleaned.replace(".", "")
+    cleaned = cleaned.replace("＃", "#").replace("％", "%")
+
+    # OCR confusions inside known CBC tokens only.
+    cleaned = cleaned.replace("M0N0", "MONO")
+    cleaned = cleaned.replace("M0NO", "MONO")
+    cleaned = cleaned.replace("MON0", "MONO")
+    cleaned = cleaned.replace("ΜΟΝΟ", "MONO")
+
+    if cleaned == "RDWSD":
+        return "RDW-SD"
+
+    if cleaned == "RDWCV":
+        return "RDW-CV"
+
+    if cleaned in {"PLCR", "P-LCR%"}:
+        return "P-LCR"
+
+    differential_prefixes = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "EOS", "BASO", "IG"]
+
+    for prefix in differential_prefixes:
+        if cleaned in {prefix, f"{prefix}#", f"{prefix}%"}:
+            if prefix == "EOS":
+                return cleaned.replace("EOS", "EO")
+            return cleaned
+
+        if cleaned.startswith(prefix):
+            normalized_prefix = "EO" if prefix == "EOS" else prefix
+
+            if "#" in cleaned:
+                return f"{normalized_prefix}#"
+
+            if "%" in cleaned:
+                return f"{normalized_prefix}%"
 
     return cleaned
+
+
+def detect_test_key(value: Any) -> str | None:
+    text = clean_text(value)
+
+    if not text:
+        return None
+
+    compact = normalize_test_token(text)
+
+    if compact in KNOWN_TEST_ALIASES:
+        return compact
+
+    parts = re.split(r"[\s:;|/]+", text)
+
+    for part in parts:
+        token = normalize_test_token(part)
+
+        if token in KNOWN_TEST_ALIASES:
+            return token
+
+    return None
 
 
 def normalize_decimal(value: Any) -> str | None:
@@ -209,8 +290,6 @@ def normalize_reference_number(value: Any) -> str | None:
     if cleaned is None:
         return None
 
-    # CBC reference ranges in these reports are non-negative.
-    # OCR sometimes attaches the separator dash to the upper number.
     if cleaned.startswith("-"):
         cleaned = cleaned[1:]
 
@@ -239,60 +318,12 @@ def is_null_result(value: Any) -> bool:
     return re.fullmatch(r"[-_]{2,}", cleaned) is not None
 
 
-def normalize_test_token(value: Any) -> str:
-    cleaned = clean_text(value).upper()
-    cleaned = cleaned.replace("_", "-")
-    cleaned = cleaned.replace(" ", "")
-    cleaned = cleaned.replace(".", "")
-    cleaned = cleaned.replace("＃", "#")
-    cleaned = cleaned.replace("％", "%")
-
-    if cleaned == "RDWSD":
-        return "RDW-SD"
-
-    if cleaned == "RDWCV":
-        return "RDW-CV"
-
-    if cleaned == "PLCR":
-        return "P-LCR"
-
-    if cleaned == "P-LCR%":
-        return "P-LCR"
-
-    return cleaned
-
-
-def detect_test_key(value: Any) -> str | None:
-    text = clean_text(value)
-
-    if not text:
-        return None
-
-    parts = re.split(r"[\s|:;]+", text)
-
-    for part in parts:
-        token = normalize_test_token(part)
-
-        if token in KNOWN_TEST_ALIASES:
-            return token
-
-    compact = normalize_test_token(text)
-
-    for alias in sorted(KNOWN_TEST_ALIASES.keys(), key=len, reverse=True):
-        pattern = re.escape(alias).replace(r"\-", r"[-\s]?")
-
-        if re.search(rf"(?<![A-Z0-9]){pattern}(?![A-Z0-9])", compact, re.IGNORECASE):
-            return normalize_test_token(alias)
-
-    return None
-
-
 def clean_unit(unit: Any, test_key: str | None = None) -> str | None:
     cleaned = clean_text(unit)
 
     if not cleaned:
         if test_key:
-            return DEFAULT_CBC_UNITS.get(test_key)
+            return DEFAULT_CBC_UNITS.get(normalize_test_token(test_key))
         return None
 
     compact = cleaned.replace(" ", "")
@@ -307,8 +338,35 @@ def clean_unit(unit: Any, test_key: str | None = None) -> str | None:
     if lower == "pg":
         return "pg"
 
-    if lower in {"g/dl"}:
+    if lower == "g/dl":
         return "g/dL"
+
+    if lower == "g/l":
+        return "g/L"
+
+    if lower == "mg/dl":
+        return "mg/dL"
+
+    if lower == "mg/l":
+        return "mg/L"
+
+    if lower == "mmol/l":
+        return "mmol/L"
+
+    if lower in {"umol/l", "µmol/l", "μmol/l"}:
+        return "umol/L"
+
+    if lower in {"uiu/ml", "ui/ml", "uiu/ml"}:
+        return "uIU/mL"
+
+    if lower == "miu/l":
+        return "mIU/L"
+
+    if lower == "iu/l":
+        return "IU/L"
+
+    if lower == "u/l":
+        return "U/L"
 
     if re.search(r"10\^?3/?u?l", compact, re.IGNORECASE):
         return "10^3/uL"
@@ -316,11 +374,17 @@ def clean_unit(unit: Any, test_key: str | None = None) -> str | None:
     if re.search(r"10\^?6/?u?l", compact, re.IGNORECASE):
         return "10^6/uL"
 
+    if re.search(r"10\^?9/?l", compact, re.IGNORECASE):
+        return "10^9/L"
+
+    if re.search(r"10\^?12/?l", compact, re.IGNORECASE):
+        return "10^12/L"
+
     if "/" in compact and len(compact) <= 18:
         return compact
 
     if test_key:
-        return DEFAULT_CBC_UNITS.get(test_key)
+        return DEFAULT_CBC_UNITS.get(normalize_test_token(test_key))
 
     return cleaned
 
@@ -329,12 +393,20 @@ def extract_unit_from_reference(reference_cell: Any, test_key: str | None = None
     text = clean_text(reference_cell)
 
     unit_patterns = [
-        r"10\s*\^?\s*3\s*/?\s*u?L",
-        r"10\s*\^?\s*6\s*/?\s*u?L",
         r"10\s*\^?\s*3\s*/?\s*u?l",
         r"10\s*\^?\s*6\s*/?\s*u?l",
+        r"10\s*\^?\s*9\s*/?\s*l",
+        r"10\s*\^?\s*12\s*/?\s*l",
         r"g\s*/\s*dL",
         r"g\s*/\s*dl",
+        r"mg\s*/\s*dL",
+        r"mg\s*/\s*dl",
+        r"mmol\s*/\s*L",
+        r"umol\s*/\s*L",
+        r"uIU\s*/\s*mL",
+        r"mIU\s*/\s*L",
+        r"IU\s*/\s*L",
+        r"U\s*/\s*L",
         r"fL",
         r"FL",
         r"fl",
@@ -351,31 +423,74 @@ def extract_unit_from_reference(reference_cell: Any, test_key: str | None = None
     return clean_unit(None, test_key)
 
 
+def remove_units(value: Any) -> str:
+    text = clean_text(value)
+
+    unit_patterns = [
+        r"10\s*\^?\s*3\s*/?\s*u?l",
+        r"10\s*\^?\s*6\s*/?\s*u?l",
+        r"10\s*\^?\s*9\s*/?\s*l",
+        r"10\s*\^?\s*12\s*/?\s*l",
+        r"g\s*/\s*dL",
+        r"g\s*/\s*dl",
+        r"g\s*/\s*L",
+        r"mg\s*/\s*dL",
+        r"mg\s*/\s*dl",
+        r"mg\s*/\s*L",
+        r"mmol\s*/\s*L",
+        r"umol\s*/\s*L",
+        r"uIU\s*/\s*mL",
+        r"mIU\s*/\s*L",
+        r"IU\s*/\s*L",
+        r"U\s*/\s*L",
+        r"\bfL\b",
+        r"\bFL\b",
+        r"\bfl\b",
+        r"\bpg\b",
+        r"%",
+    ]
+
+    for pattern in unit_patterns:
+        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
+
+    return re.sub(r"\s+", " ", text).strip()
+
+
 def split_fused_reference_range(text: Any) -> tuple[str, str] | None:
     """
-    Repairs common OCR-fused reference ranges:
-      3.936-08  -> 3.93 - 6.08
-      34.151-0  -> 34.1 - 51.0
-      11.217-5  -> 11.2 - 17.5
-      35.146-3  -> 35.1 - 46.3
-      11.614-4  -> 11.6 - 14.4
-      0.010-08  -> 0.01 - 0.08
+    Repairs OCR-fused reference ranges only when the dash is actually missing.
+
+    Examples:
+      3.936.08   -> 3.93 - 6.08
+      34.151.0   -> 34.1 - 51.0
+      11.217.5   -> 11.2 - 17.5
+      35.146.3   -> 35.1 - 46.3
+      11.614.4   -> 11.6 - 14.4
+      19.353.1   -> 19.3 - 53.1
+      1.566.13   -> 1.56 - 6.13
+      0.240.82   -> 0.24 - 0.82
+      0.040.54   -> 0.04 - 0.54
+      0.010.08   -> 0.01 - 0.08
     """
-    compact = clean_text(text).replace(" ", "")
+    compact = remove_units(text)
+    compact = compact.replace(" ", "")
     compact = compact.replace(",", ".")
     compact = compact.replace("−", "-").replace("–", "-").replace("—", "-")
 
-    # Case: 3.936-08 -> 3.93 and 6.08
-    match = re.search(r"(?<!\d)(\d{1,3})\.(\d{1,3})(\d)-(\d{1,3})(?!\d)", compact)
+    if not compact:
+        return None
 
+    # Do not repair already valid explicit ranges. This was the bug.
+    if "-" in compact:
+        return None
+
+    # 3.936.08 -> 3.93 - 6.08
+    # 1.566.13 -> 1.56 - 6.13
+    # 0.240.82 -> 0.24 - 0.82
+    match = re.fullmatch(r"(\d{1,2})\.(\d{2})(\d{1,2})\.(\d{2})", compact)
     if match:
-        whole = match.group(1)
-        low_decimals = match.group(2)
-        high_first_digit = match.group(3)
-        high_rest = match.group(4)
-
-        low = f"{whole}.{low_decimals}"
-        high = f"{high_first_digit}.{high_rest}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
 
         low_f = to_float(low)
         high_f = to_float(high)
@@ -383,9 +498,11 @@ def split_fused_reference_range(text: Any) -> tuple[str, str] | None:
         if low_f is not None and high_f is not None and high_f > low_f:
             return low, high
 
-    # Case: 34.151-0 -> 34.1 and 51.0
-    match = re.search(r"(?<!\d)(\d{1,3})\.(\d)(\d{2})-(\d)(?!\d)", compact)
-
+    # 34.151.0 -> 34.1 - 51.0
+    # 35.146.3 -> 35.1 - 46.3
+    # 11.614.4 -> 11.6 - 14.4
+    # 19.353.1 -> 19.3 - 53.1
+    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})\.(\d)", compact)
     if match:
         low = f"{match.group(1)}.{match.group(2)}"
         high = f"{match.group(3)}.{match.group(4)}"
@@ -405,19 +522,17 @@ def extract_reference_range(value: Any) -> str | None:
     if not text:
         return None
 
-    fused = split_fused_reference_range(text)
+    text_without_units = remove_units(text)
+    text_without_units = text_without_units.replace(",", ".")
+    text_without_units = text_without_units.replace("−", "-").replace("–", "-").replace("—", "-")
 
-    if fused:
-        low, high = fused
-        return f"{low} - {high}"
+    if not text_without_units:
+        return None
 
-    text = text.replace(",", ".")
-    text = text.replace("−", "-").replace("–", "-").replace("—", "-")
-
-    # Explicit normal range.
+    # First trust normal explicit ranges.
     explicit = re.search(
         r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
-        text,
+        text_without_units,
     )
 
     if explicit:
@@ -434,9 +549,24 @@ def extract_reference_range(value: Any) -> str | None:
 
                 return f"{low} - {high}"
 
-    nums = NUMBER_RE.findall(text)
+    # Then repair truly fused ranges.
+    for token in text_without_units.split():
+        fused = split_fused_reference_range(token)
 
-    cleaned_nums = []
+        if fused:
+            return f"{fused[0]} - {fused[1]}"
+
+    fused = split_fused_reference_range(text_without_units)
+
+    if fused:
+        return f"{fused[0]} - {fused[1]}"
+
+    # Last fallback: two numbers in the same cell, but avoid dates/metadata.
+    if re.search(r"\b(19|20)\d{2}\b", text_without_units):
+        return None
+
+    nums = NUMBER_RE.findall(text_without_units)
+    cleaned_nums: list[str] = []
 
     for num in nums:
         cleaned = normalize_reference_number(num)
@@ -468,6 +598,9 @@ def extract_first_number(value: Any) -> str | None:
     if is_null_result(text):
         return None
 
+    if extract_reference_range(text):
+        return None
+
     match = NUMBER_RE.search(text)
 
     if not match:
@@ -482,7 +615,7 @@ def infer_flag(value: Any, reference_range: Any) -> str | None:
     if numeric is None:
         return None
 
-    reference = clean_text(reference_range)
+    reference = extract_reference_range(reference_range)
 
     if not reference:
         return None
@@ -511,18 +644,19 @@ def infer_flag(value: Any, reference_range: Any) -> str | None:
 
 
 def detect_explicit_flag(row_text: str) -> str | None:
-    lowered = f" {clean_text(row_text).lower()} "
+    cleaned = clean_text(row_text)
+    lowered = f" {cleaned.lower()} "
 
-    if any(marker in row_text for marker in ARROW_HIGH_MARKERS):
+    if any(marker in cleaned for marker in ARROW_HIGH_MARKERS):
         return "High"
 
-    if any(marker in row_text for marker in ARROW_LOW_MARKERS):
+    if any(marker in cleaned for marker in ARROW_LOW_MARKERS):
         return "Low"
 
-    if " high " in lowered or " crescut " in lowered:
+    if " high " in lowered or " crescut " in lowered or " mare " in lowered:
         return "High"
 
-    if " low " in lowered or " scazut " in lowered:
+    if " low " in lowered or " scazut " in lowered or " scăzut " in lowered or " mic " in lowered:
         return "Low"
 
     return None
@@ -552,16 +686,15 @@ def build_lab_result(
         if flag:
             lowered = str(flag).strip().lower()
 
-            if lowered in {"high", "h", "crescut"}:
+            if lowered in {"high", "h", "crescut", "mare"}:
                 explicit_flag = "High"
-            elif lowered in {"low", "l", "scazut"}:
+            elif lowered in {"low", "l", "scazut", "scăzut", "mic"}:
                 explicit_flag = "Low"
             elif lowered == "normal":
                 explicit_flag = "Normal"
 
         final_flag = explicit_flag or infer_flag(final_value, final_reference)
 
-        # Safety rule.
         if not final_reference and final_flag == "Normal":
             final_flag = None
 
@@ -660,7 +793,7 @@ def parse_google_table_row(line: str) -> dict | None:
     reference_range = None
     unit = None
 
-    for cell in after[value_cell_index + 1 :]:
+    for cell in after:
         maybe_range = extract_reference_range(cell)
 
         if maybe_range:
@@ -669,8 +802,8 @@ def parse_google_table_row(line: str) -> dict | None:
             break
 
     if not unit:
-        for cell in after[value_cell_index + 1 :]:
-            maybe_unit = clean_unit(cell, test_key)
+        for cell in after:
+            maybe_unit = extract_unit_from_reference(cell, test_key)
 
             if maybe_unit:
                 unit = maybe_unit
@@ -704,12 +837,12 @@ def parse_google_document_ai_tables(text: str) -> list[dict]:
         if not parsed:
             continue
 
-        key = parsed.get("canonical_name") or parsed.get("display_name") or parsed.get("raw_test_name")
+        key = parsed.get("raw_test_name") or parsed.get("canonical_name") or parsed.get("display_name")
 
         if not key:
             continue
 
-        key = str(key).lower()
+        key = normalize_test_token(key).lower()
 
         if key in seen:
             continue
@@ -760,7 +893,6 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
             continue
 
         tail = match.group("tail") or ""
-
         cut = len(tail)
 
         for other_key in CBC_ORDER:
@@ -768,51 +900,36 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
                 continue
 
             other_pattern = compact_alias_pattern(other_key)
-            other_match = re.search(rf"(?<![A-Za-z0-9]){other_pattern}(?![A-Za-z0-9])", tail, re.IGNORECASE)
+            other_match = re.search(
+                rf"(?<![A-Za-z0-9]){other_pattern}(?![A-Za-z0-9])",
+                tail,
+                re.IGNORECASE,
+            )
 
             if other_match:
                 cut = min(cut, other_match.start())
 
         tail = tail[:cut]
-
         explicit_flag = detect_explicit_flag(tail)
 
         if re.search(r"(^|\s)(?:-{2,}|_{2,}|nil|n/a|null)(\s|$)", tail, re.IGNORECASE):
-            labs.append(
-                build_nil_result(
-                    raw_test_name=test_key,
-                    reference_range=extract_reference_range(tail),
-                    unit=extract_unit_from_reference(tail, test_key),
-                    confidence=0.78,
-                )
+            row = build_nil_result(
+                raw_test_name=test_key,
+                reference_range=extract_reference_range(tail),
+                unit=extract_unit_from_reference(tail, test_key),
+                confidence=0.78,
             )
+            labs.append(row)
+            seen.add(test_key.lower())
             continue
 
-        numbers = NUMBER_RE.findall(tail)
+        nums = NUMBER_RE.findall(tail)
 
-        if not numbers:
+        if not nums:
             continue
 
-        value = normalize_decimal(numbers[0])
-        reference_range = None
-
-        fused_reference = split_fused_reference_range(tail)
-
-        if fused_reference:
-            reference_range = f"{fused_reference[0]} - {fused_reference[1]}"
-        elif len(numbers) >= 3:
-            low = normalize_reference_number(numbers[1])
-            high = normalize_reference_number(numbers[2])
-
-            if low and high:
-                low_f = to_float(low)
-                high_f = to_float(high)
-
-                if low_f is not None and high_f is not None and low_f != high_f:
-                    if high_f < low_f:
-                        low, high = high, low
-                    reference_range = f"{low} - {high}"
-
+        value = normalize_decimal(nums[0])
+        reference_range = extract_reference_range(tail)
         unit = extract_unit_from_reference(tail, test_key)
 
         row = build_lab_result(
@@ -824,7 +941,7 @@ def parse_flat_known_cbc_rows(text: str) -> list[dict]:
             confidence=0.72 if reference_range else 0.55,
         )
 
-        key = str(row.get("canonical_name") or row.get("raw_test_name")).lower()
+        key = normalize_test_token(row.get("raw_test_name")).lower()
 
         if key in seen:
             continue
@@ -858,7 +975,12 @@ def dedupe_labs(lab_lists: list[list[dict]]) -> list[dict]:
 
     for labs in lab_lists:
         for row in labs:
-            key = str(row.get("canonical_name") or row.get("display_name") or row.get("raw_test_name") or "").lower()
+            key = normalize_test_token(
+                row.get("raw_test_name")
+                or row.get("canonical_name")
+                or row.get("display_name")
+                or ""
+            ).lower()
 
             if not key:
                 continue
@@ -866,7 +988,16 @@ def dedupe_labs(lab_lists: list[list[dict]]) -> list[dict]:
             if key not in merged or score(row) >= score(merged[key]):
                 merged[key] = row
 
-    return list(merged.values())
+    ordered: list[dict] = []
+
+    for key in CBC_ORDER:
+        normalized = normalize_test_token(key).lower()
+
+        if normalized in merged:
+            ordered.append(merged.pop(normalized))
+
+    ordered.extend(merged.values())
+    return ordered
 
 
 def parse_bloodwork_text(text: str) -> dict:

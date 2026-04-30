@@ -1,3 +1,5 @@
+# backend/app/parsers/google_table_parser.py
+
 from __future__ import annotations
 
 import re
@@ -5,99 +7,29 @@ from statistics import median
 from typing import Any
 
 from app.parsers.bloodwork_parser import (
+    CBC_ORDER,
+    DEFAULT_CBC_UNITS,
     KNOWN_TEST_ALIASES,
     build_lab_result,
     build_nil_result,
     clean_text,
+    clean_unit,
+    extract_reference_range,
+    extract_unit_from_reference,
     infer_flag,
+    is_null_result,
     normalize_decimal,
     normalize_test_token,
+    remove_units,
 )
 
-
 NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
-
-CBC_ORDER = [
-    "WBC",
-    "RBC",
-    "HGB",
-    "HCT",
-    "MCV",
-    "MCH",
-    "MCHC",
-    "PLT",
-    "RDW-SD",
-    "RDW-CV",
-    "PDW",
-    "MPV",
-    "P-LCR",
-    "PCT",
-    "NRBC#",
-    "NRBC%",
-    "NEUT#",
-    "NEUT%",
-    "LYMPH#",
-    "LYMPH%",
-    "MONO#",
-    "MONO%",
-    "EO#",
-    "EO%",
-    "BASO#",
-    "BASO%",
-    "IG#",
-    "IG%",
-]
-
 CBC_ORDER_SET = set(CBC_ORDER)
 
 CBC_KEY_RE = re.compile(
-    r"^(WBC|RBC|HGB|HCT|MCV|MCHC|MCH|PLT|RDW[\s\-]?SD|RDW[\s\-]?CV|PDW|MPV|P[\s\-]?LCR|PCT|NRBC[#%]?|NEUT[#%]?|LYMPH[#%]?|MONO[#%]?|EO[#%]?|BASO[#%]?|IG[#%]?)$",
+    r"^(WBC|RBC|HGB|HCT|MCV|MCHC|MCH|PLT|RDW[\s\-]?SD|RDW[\s\-]?CV|PDW|MPV|P[\s\-]?LCR|PCT|NRBC[#%]?|NEUT[#%]?|LYMPH[#%]?|MONO[#%]?|EO[#%]?|EOS[#%]?|BASO[#%]?|IG[#%]?)$",
     re.IGNORECASE,
 )
-
-UNIT_PATTERNS: list[tuple[str, str]] = [
-    (r"10\s*\^\s*3\s*/\s*u?l", "10^3/uL"),
-    (r"10\s*\^\s*6\s*/\s*u?l", "10^6/uL"),
-    (r"10\s*\^\s*9\s*/\s*l", "10^9/L"),
-    (r"10\s*\^\s*12\s*/\s*l", "10^12/L"),
-    (r"10\s*[\^]?\s*3\s*/?\s*u?l", "10^3/uL"),
-    (r"10\s*[\^]?\s*6\s*/?\s*u?l", "10^6/uL"),
-    (r"10\s*[\^]?\s*9\s*/?\s*l", "10^9/L"),
-    (r"10\s*[\^]?\s*12\s*/?\s*l", "10^12/L"),
-    (r"\bg\s*/\s*dL\b", "g/dL"),
-    (r"\bg\s*/\s*dl\b", "g/dL"),
-    (r"\bg\s*/\s*L\b", "g/L"),
-    (r"\bmg\s*/\s*dL\b", "mg/dL"),
-    (r"\bmg\s*/\s*dl\b", "mg/dL"),
-    (r"\bmg\s*/\s*L\b", "mg/L"),
-    (r"\bmmol\s*/\s*L\b", "mmol/L"),
-    (r"\bumol\s*/\s*L\b", "umol/L"),
-    (r"\buIU\s*/\s*mL\b", "uIU/mL"),
-    (r"\bmIU\s*/\s*L\b", "mIU/L"),
-    (r"\bIU\s*/\s*L\b", "IU/L"),
-    (r"\bU\s*/\s*L\b", "U/L"),
-    (r"\bfL\b", "fL"),
-    (r"\bFL\b", "fL"),
-    (r"\bfl\b", "fL"),
-    (r"\bpg\b", "pg"),
-    (r"%", "%"),
-]
-
-NULL_TEXT = {
-    "",
-    "-",
-    "--",
-    "---",
-    "----",
-    "—",
-    "–",
-    "nil",
-    "n/a",
-    "na",
-    "null",
-    "none",
-    "absent",
-}
 
 HEADER_HINTS_TEST = {
     "denumire",
@@ -136,61 +68,11 @@ HEADER_HINTS_UNIT = {
 
 
 def norm(value: Any) -> str:
-    text = clean_text(value)
-    text = text.replace("\ufeff", "")
-    text = text.replace("\u00a0", " ")
-
-    # OCR / encoding cleanup
-    text = text.replace("µ", "u").replace("μ", "u")
-    text = text.replace("−", "-").replace("–", "-").replace("—", "-")
-    text = text.replace("＃", "#").replace("％", "%")
-    text = text.replace("Â", "")
-    text = text.replace("â€", "")
-
-    # Greek letters that Google sometimes uses in MONO.
-    text = text.replace("Μ", "M").replace("Ο", "O").replace("Ν", "N")
-    text = text.replace("μ", "u").replace("ο", "o").replace("ν", "v")
-
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+    return clean_text(value)
 
 
 def norm_key(value: str) -> str:
-    raw = norm(value).upper()
-    raw = raw.replace("＃", "#").replace("％", "%")
-    raw = raw.replace(" ", "")
-    raw = raw.replace("_", "-")
-    raw = raw.replace("–", "-").replace("—", "-")
-
-    # OCR confusion only inside possible test-name tokens.
-    raw = raw.replace("M0N0", "MONO")
-    raw = raw.replace("MON0", "MONO")
-    raw = raw.replace("M0NO", "MONO")
-    raw = raw.replace("ΜΟΝΟ", "MONO")
-
-    raw = raw.replace("RDWSD", "RDW-SD")
-    raw = raw.replace("RDWCV", "RDW-CV")
-    raw = raw.replace("PLCR", "P-LCR")
-    raw = raw.replace("P.LCR", "P-LCR")
-
-    differential_prefixes = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "BASO", "IG"]
-
-    for prefix in differential_prefixes:
-        if raw in {prefix, f"{prefix}#", f"{prefix}%"}:
-            return raw
-
-        if raw.startswith(prefix):
-            if "#" in raw:
-                return f"{prefix}#"
-            if "%" in raw:
-                return f"{prefix}%"
-
-    key = normalize_test_token(raw)
-    key = key.replace("RDWSD", "RDW-SD")
-    key = key.replace("RDWCV", "RDW-CV")
-    key = key.replace("PLCR", "P-LCR")
-    key = key.replace("P LCR", "P-LCR")
-    return key
+    return normalize_test_token(value)
 
 
 def detect_key(value: Any) -> str | None:
@@ -242,37 +124,15 @@ def clean_number(value: Any) -> str | None:
     if cleaned.startswith("+"):
         cleaned = cleaned[1:]
 
-    if cleaned.lower() in NULL_TEXT:
-        return None
-
-    return cleaned
+    return cleaned or None
 
 
 def is_null_value(value: Any) -> bool:
-    return norm(value).lower() in NULL_TEXT
+    return is_null_result(value)
 
 
-def extract_unit(value: Any) -> str | None:
-    text = norm(value)
-
-    if not text:
-        return None
-
-    for pattern, unit in UNIT_PATTERNS:
-        if re.search(pattern, text, re.IGNORECASE):
-            return unit
-
-    return None
-
-
-def remove_units(value: Any) -> str:
-    text = norm(value)
-
-    for pattern, _unit in UNIT_PATTERNS:
-        text = re.sub(pattern, " ", text, flags=re.IGNORECASE)
-
-    text = re.sub(r"\s+", " ", text)
-    return text.strip()
+def extract_unit(value: Any, key: str | None = None) -> str | None:
+    return extract_unit_from_reference(value, key)
 
 
 def is_unit_only(value: Any) -> bool:
@@ -281,155 +141,43 @@ def is_unit_only(value: Any) -> bool:
     if not text:
         return False
 
-    if not extract_unit(text):
+    unit = extract_unit(text)
+
+    if not unit:
         return False
 
-    without_unit = remove_units(text)
-    without_unit = without_unit.replace("^", "")
-    without_unit = re.sub(r"[\s/]+", "", without_unit)
+    stripped = remove_units(text)
+    stripped = stripped.replace("^", "")
+    stripped = re.sub(r"[\s/]+", "", stripped)
 
-    return without_unit == ""
+    return stripped == ""
 
 
-def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
+def split_reference_and_unit(value: Any, key: str | None = None) -> tuple[str | None, str | None]:
     text = norm(value)
 
     if not text:
         return None, None
 
-    unit = extract_unit(text)
-    reference_text = remove_units(text)
-    reference_range = extract_reference_range(reference_text)
+    reference_range = extract_reference_range(text)
+    unit = extract_unit_from_reference(text, key)
 
     return reference_range, unit
-
-
-def format_range(low: Any, high: Any) -> str | None:
-    low_clean = clean_number(low)
-    high_clean = clean_number(high)
-
-    if low_clean is None or high_clean is None:
-        return None
-
-    try:
-        low_float = float(low_clean)
-        high_float = float(high_clean)
-    except Exception:
-        return None
-
-    if high_float < low_float:
-        low_clean, high_clean = high_clean, low_clean
-
-    return f"{low_clean} - {high_clean}"
-
-
-def split_fused_range_token(token: str) -> tuple[str, str] | None:
-    """
-    Repairs OCR-fused reference ranges where Google/Document AI lost the dash.
-
-    Examples:
-    - 3.936.08   -> 3.93 - 6.08
-    - 34.151.0   -> 34.1 - 51.0
-    - 35.146.3   -> 35.1 - 46.3
-    - 11.614.4   -> 11.6 - 14.4
-    - 19.353.1   -> 19.3 - 53.1
-    - 1.566.13   -> 1.56 - 6.13
-    - 0.240.82   -> 0.24 - 0.82
-    - 0.010.08   -> 0.01 - 0.08
-    - 0.040.54   -> 0.04 - 0.54
-    """
-    compact = norm(token)
-    compact = compact.replace(" ", "")
-    compact = compact.replace(",", ".")
-    compact = compact.replace("–", "-").replace("—", "-").replace("−", "-")
-
-    # Do not repair already valid explicit ranges.
-    if "-" in compact:
-        return None
-
-    # Pattern: 3.936.08 -> 3.93 - 6.08
-    # Also: 1.566.13 -> 1.56 - 6.13
-    # Also: 0.240.82 -> 0.24 - 0.82
-    match = re.fullmatch(r"(\d{1,2})\.(\d{2})(\d{1,2})\.(\d{2})", compact)
-    if match:
-        low = f"{match.group(1)}.{match.group(2)}"
-        high = f"{match.group(3)}.{match.group(4)}"
-        return low, high
-
-    # Pattern: 34.151.0 -> 34.1 - 51.0
-    # Also: 35.146.3 -> 35.1 - 46.3
-    # Also: 19.353.1 -> 19.3 - 53.1
-    # Also: 11.614.4 -> 11.6 - 14.4
-    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})\.(\d)", compact)
-    if match:
-        low = f"{match.group(1)}.{match.group(2)}"
-        high = f"{match.group(3)}.{match.group(4)}"
-        return low, high
-
-    return None
-
-
-def extract_reference_range(value: Any) -> str | None:
-    text = remove_units(value)
-    text = norm(text)
-    text = text.replace(",", ".")
-    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
-
-    if not text:
-        return None
-
-    # First: trust real explicit ranges before any repair.
-    explicit = re.search(
-        r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
-        text,
-    )
-
-    if explicit:
-        low = explicit.group(1)
-        high = explicit.group(2)
-
-        if high.startswith("-") and not low.startswith("-"):
-            high = high[1:]
-
-        return format_range(low, high)
-
-    # Second: repair OCR-fused ranges.
-    for token in text.split():
-        fused = split_fused_range_token(token)
-
-        if fused:
-            return format_range(fused[0], fused[1])
-
-    # Third: repair cases where the whole text is fused.
-    fused = split_fused_range_token(text)
-
-    if fused:
-        return format_range(fused[0], fused[1])
-
-    # Last fallback: only use two numbers if it really looks like a range,
-    # not random document dates or unrelated values.
-    found = numbers(text)
-
-    if len(found) >= 2:
-        # Avoid accidentally turning dates like "14 Jun 2023" into "14 - 2023".
-        if re.search(r"\b(19|20)\d{2}\b", text):
-            return None
-
-        return format_range(found[0], found[1])
-
-    return None
 
 
 def extract_result(value: Any) -> str | None:
     text = norm(value)
 
+    if not text:
+        return None
+
     if is_null_value(text):
         return None
 
-    if extract_reference_range(text):
+    if is_unit_only(text):
         return None
 
-    if is_unit_only(text):
+    if extract_reference_range(text):
         return None
 
     found = numbers(text)
@@ -458,8 +206,7 @@ def line_is_result(value: Any) -> bool:
     if extract_reference_range(text):
         return False
 
-    found = numbers(text)
-    return len(found) == 1
+    return len(numbers(text)) == 1
 
 
 def cell_has_only_one_result_number(value: Any) -> bool:
@@ -564,17 +311,20 @@ def make_lab_row(
     unit_text: str | None,
     confidence: float,
 ) -> dict | None:
+    key = norm_key(key)
+
     value = extract_result(result_text or "")
 
-    reference_range, unit_from_reference = split_reference_and_unit(reference_text or "")
-    _reference_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "")
+    reference_range, unit_from_reference = split_reference_and_unit(reference_text or "", key)
+    _reference_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "", key)
 
     unit = (
         unit_from_unit_cell
         or unit_from_reference
-        or extract_unit(unit_text or "")
-        or extract_unit(reference_text or "")
-        or extract_unit(result_text or "")
+        or extract_unit(unit_text or "", key)
+        or extract_unit(reference_text or "", key)
+        or extract_unit(result_text or "", key)
+        or DEFAULT_CBC_UNITS.get(key)
     )
 
     if value is None:
@@ -584,7 +334,7 @@ def make_lab_row(
             unit=unit,
             confidence=confidence,
         )
-        decorate_cbc_row(row)
+        row["raw_test_name"] = key
         return row
 
     flag = infer_flag(value, reference_range) if reference_range else None
@@ -597,16 +347,8 @@ def make_lab_row(
         unit=unit,
         confidence=confidence,
     )
-    decorate_cbc_row(row)
+    row["raw_test_name"] = key
     return row
-
-
-def decorate_cbc_row(row: dict) -> None:
-    key = norm_key(str(row.get("raw_test_name") or ""))
-
-    if key in CBC_ORDER_SET:
-        row["raw_test_name"] = key
-        row.setdefault("category", "Hematologie")
 
 
 def lab_key(row: dict) -> str:
@@ -631,6 +373,9 @@ def quality_score(row: dict) -> float:
 
     if row.get("unit"):
         score += 0.2
+
+    if row.get("flag") in {"High", "Low"}:
+        score += 0.1
 
     return score
 
@@ -658,25 +403,34 @@ def is_metadata_line(line: str) -> bool:
         "citomorfologie",
         "starea probei",
         "denumire analiza",
+        "denumire analiză",
         "rezultat",
         "interval biologic",
         "referinta",
+        "referință",
         "hemograma simpla",
+        "hemogramă simplă",
         "tip proba",
+        "tip probă",
         "validat",
         "parafa",
         "data validare",
         "telefon",
         "pacient",
         "sectie",
+        "secție",
         "medic",
         "cnp",
         "sex",
         "urgenta",
+        "urgență",
         "varsta",
+        "vârsta",
         "foaie",
         "observatie",
+        "observație",
         "afisat",
+        "afișat",
         "codificare",
         "nota",
         "neverificat",
@@ -696,12 +450,14 @@ def find_cbc_window(lines: list[str]) -> list[str]:
 
     for index, line in enumerate(lines):
         lowered = line.lower()
-        if "hemograma simpla" in lowered or "cbc" in lowered:
+
+        if "hemograma simpla" in lowered or "hemogramă simplă" in lowered or "cbc" in lowered:
             start_index = index
             break
 
     for index in range(start_index, len(lines)):
         lowered = lines[index].lower()
+
         if "validat de" in lowered or "citomorfologie (manual" in lowered:
             end_index = index
             break
@@ -709,15 +465,40 @@ def find_cbc_window(lines: list[str]) -> list[str]:
     return lines[start_index:end_index]
 
 
-def parse_cbc_from_lines(lines_text: str) -> list[dict]:
-    lines = [norm(line) for line in (lines_text or "").splitlines()]
-    lines = [line for line in lines if line]
-    cbc_lines = find_cbc_window(lines)
+def collect_lines_from_extraction(extraction: dict[str, Any], key: str) -> list[str]:
+    value = extraction.get(key)
+
+    if isinstance(value, str):
+        return [norm(line) for line in value.splitlines() if norm(line)]
+
+    if isinstance(value, list):
+        lines: list[str] = []
+
+        for item in value:
+            if isinstance(item, str):
+                text = norm(item)
+            elif isinstance(item, dict):
+                text = norm(item.get("text") or item.get("layout_text") or "")
+            else:
+                text = norm(item)
+
+            if text:
+                lines.append(text)
+
+        return lines
+
+    return []
+
+
+def parse_cbc_from_ordered_lines(lines: list[str], confidence: float) -> list[dict]:
+    clean_lines = [norm(line) for line in lines if norm(line)]
+    cbc_lines = find_cbc_window(clean_lines)
 
     key_positions: list[tuple[int, str]] = []
 
     for index, line in enumerate(cbc_lines):
         key = detect_key(line)
+
         if key and key in CBC_ORDER_SET:
             key_positions.append((index, key))
 
@@ -725,8 +506,6 @@ def parse_cbc_from_lines(lines_text: str) -> list[dict]:
         return []
 
     labs: list[dict] = []
-    pending_reference_text: str | None = None
-    pending_unit_text: str | None = None
 
     for position_index, (key_index, key) in enumerate(key_positions):
         next_key_index = (
@@ -738,13 +517,8 @@ def parse_cbc_from_lines(lines_text: str) -> list[dict]:
         segment = cbc_lines[key_index + 1 : next_key_index]
 
         result_text: str | None = None
-        reference_text: str | None = pending_reference_text
-        unit_text: str | None = pending_unit_text
-        trailing_reference_text: str | None = None
-        trailing_unit_text: str | None = None
-
-        pending_reference_text = None
-        pending_unit_text = None
+        reference_text: str | None = None
+        unit_text: str | None = None
 
         for candidate in segment:
             candidate = norm(candidate)
@@ -758,46 +532,72 @@ def parse_cbc_from_lines(lines_text: str) -> list[dict]:
             if is_metadata_line(candidate):
                 continue
 
-            candidate_reference, candidate_unit = split_reference_and_unit(candidate)
+            candidate_reference, candidate_unit = split_reference_and_unit(candidate, key)
+
+            if candidate_reference and reference_text is None:
+                reference_text = candidate
 
             if candidate_unit and unit_text is None:
                 unit_text = candidate
 
-            if candidate_reference:
-                if reference_text is None:
-                    reference_text = candidate
-                elif result_text is not None:
-                    # This is likely the next row's reference appearing before the next key.
-                    trailing_reference_text = candidate
-                    trailing_unit_text = candidate
-                continue
-
             if result_text is None and line_is_result(candidate):
                 result_text = candidate
-                continue
-
-            if is_unit_only(candidate) and unit_text is None:
-                unit_text = candidate
 
         parsed = make_lab_row(
             key=key,
             result_text=result_text,
             reference_text=reference_text,
             unit_text=unit_text,
-            confidence=1.25,
+            confidence=confidence,
         )
 
         if parsed:
             labs.append(parsed)
 
-        pending_reference_text = trailing_reference_text
-        pending_unit_text = trailing_unit_text
-
     labs_by_key: dict[str, dict] = {}
 
     for row in labs:
         key = lab_key(row)
+
         if key:
+            labs_by_key[key] = row
+
+    return order_labs(labs_by_key)
+
+
+def parse_labs_from_text_lines(text: str) -> list[dict]:
+    lines = [norm(line) for line in (text or "").splitlines() if norm(line)]
+
+    if not lines:
+        return []
+
+    return parse_cbc_from_ordered_lines(lines, confidence=0.95)
+
+
+def parse_labs_from_extraction_lines(extraction: dict[str, Any]) -> list[dict]:
+    candidates: list[dict] = []
+
+    # Prefer Document AI line order. It usually preserves row structure better than plain_text.
+    for key, confidence in [
+        ("lines_text", 1.25),
+        ("lines", 1.15),
+        ("plain_text", 0.90),
+        ("text", 0.85),
+    ]:
+        lines = collect_lines_from_extraction(extraction, key)
+
+        if lines:
+            candidates.extend(parse_cbc_from_ordered_lines(lines, confidence=confidence))
+
+    labs_by_key: dict[str, dict] = {}
+
+    for row in candidates:
+        key = lab_key(row)
+
+        if not key:
+            continue
+
+        if key not in labs_by_key or quality_score(row) > quality_score(labs_by_key[key]):
             labs_by_key[key] = row
 
     return order_labs(labs_by_key)
@@ -959,7 +759,7 @@ def parse_token_row_dynamic(row: list[dict[str, Any]], bands: dict[str, float]) 
 
     if not reference_text:
         for value in cells.values():
-            reference_range, _unit = split_reference_and_unit(value)
+            reference_range, _unit = split_reference_and_unit(value, key)
 
             if reference_range:
                 reference_text = value
@@ -974,7 +774,7 @@ def parse_token_row_dynamic(row: list[dict[str, Any]], bands: dict[str, float]) 
 
     if not unit_text:
         for value in cells.values():
-            _reference_range, unit = split_reference_and_unit(value)
+            _reference_range, unit = split_reference_and_unit(value, key)
 
             if unit:
                 unit_text = value
@@ -1034,7 +834,7 @@ def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
     chosen: dict[str, int] = {}
     used: set[int] = set()
 
-    for role in ["test", "reference", "result", "unit"]:
+    for role in ["test", "result", "reference", "unit"]:
         ranked = sorted(
             range(column_count),
             key=lambda index: scores[role][index],
@@ -1092,7 +892,7 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict
 
         if not reference_text:
             for cell in row:
-                reference_range, _unit = split_reference_and_unit(cell)
+                reference_range, _unit = split_reference_and_unit(cell, key)
 
                 if reference_range:
                     reference_text = cell
@@ -1100,7 +900,7 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict
 
         if not unit_text:
             for cell in row:
-                _reference_range, unit = split_reference_and_unit(cell)
+                _reference_range, unit = split_reference_and_unit(cell, key)
 
                 if unit:
                     unit_text = cell
@@ -1111,7 +911,7 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict
             result_text=result_text,
             reference_text=reference_text,
             unit_text=unit_text,
-            confidence=0.85,
+            confidence=0.99,
         )
 
         if parsed:
@@ -1134,98 +934,28 @@ def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
     return labs
 
 
-def parse_labs_from_text_lines(text: str) -> list[dict]:
-    lines = [norm(line) for line in (text or "").splitlines()]
-    labs: list[dict] = []
+def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
+    candidates: list[dict] = []
 
-    for index, line in enumerate(lines):
-        key = detect_key(line)
+    candidates.extend(parse_labs_from_google_tables(extraction.get("tables") or []))
 
-        if not key:
-            continue
+    # This is now the preferred path for Fundeni-style CBC PDFs.
+    candidates.extend(parse_labs_from_extraction_lines(extraction))
 
-        if key in CBC_ORDER_SET:
-            # CBC is handled by parse_cbc_from_lines.
-            continue
+    # Fallbacks only. Lower confidence means good line parsing wins during dedupe.
+    candidates.extend(parse_labs_from_token_coordinates(extraction.get("words") or []))
+    candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
+    candidates.extend(parse_labs_from_text_lines(extraction.get("text") or ""))
 
-        segment = lines[index + 1 : index + 5]
-
-        result_text: str | None = None
-        reference_text: str | None = None
-        unit_text: str | None = None
-
-        for candidate in segment:
-            if detect_key(candidate):
-                break
-
-            if is_metadata_line(candidate):
-                continue
-
-            reference_range, unit = split_reference_and_unit(candidate)
-
-            if reference_range and reference_text is None:
-                reference_text = candidate
-
-            if unit and unit_text is None:
-                unit_text = candidate
-
-            if result_text is None and line_is_result(candidate):
-                result_text = candidate
-
-        if result_text is None and reference_text is None:
-            continue
-
-        parsed = make_lab_row(
-            key=key,
-            result_text=result_text,
-            reference_text=reference_text,
-            unit_text=unit_text,
-            confidence=0.60,
-        )
-
-        if parsed:
-            labs.append(parsed)
-
-    return labs
-
-
-def merge_labs(primary: list[dict], fallback: list[dict]) -> list[dict]:
     labs_by_key: dict[str, dict] = {}
 
-    for row in primary:
+    for row in candidates:
         key = lab_key(row)
 
         if not key:
             continue
 
-        labs_by_key[key] = row
-
-    for row in fallback:
-        key = lab_key(row)
-
-        if not key:
-            continue
-
-        if key in labs_by_key:
-            # CBC line parser owns CBC rows. Do not overwrite them.
-            if norm_key(str(row.get("raw_test_name") or "")) in CBC_ORDER_SET:
-                continue
-
-            if quality_score(row) > quality_score(labs_by_key[key]):
-                labs_by_key[key] = row
-        else:
+        if key not in labs_by_key or quality_score(row) > quality_score(labs_by_key[key]):
             labs_by_key[key] = row
 
     return order_labs(labs_by_key)
-
-
-def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
-    cbc_labs = parse_cbc_from_lines(extraction.get("lines_text") or "")
-
-    fallback_candidates: list[dict] = []
-    fallback_candidates.extend(parse_labs_from_google_tables(extraction.get("tables") or []))
-    fallback_candidates.extend(parse_labs_from_token_coordinates(extraction.get("words") or []))
-    fallback_candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
-    fallback_candidates.extend(parse_labs_from_text_lines(extraction.get("lines_text") or ""))
-
-    return merge_labs(cbc_labs, fallback_candidates)
