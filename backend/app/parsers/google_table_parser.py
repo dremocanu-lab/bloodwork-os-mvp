@@ -218,8 +218,8 @@ def norm_key(value: str) -> str:
     # Only correct short MONO-like CBC keys so numeric values are not affected.
     mono_candidate = raw.replace("#", "").replace("%", "")
     if re.fullmatch(r"M[O0]N[O0]", mono_candidate):
-    
-    raw = raw.replace("0", "O")
+        raw = raw.replace("0", "O")
+
     raw = raw.replace("RDWSD", "RDW-SD")
     raw = raw.replace("RDWCV", "RDW-CV")
     raw = raw.replace("PLCR", "P-LCR")
