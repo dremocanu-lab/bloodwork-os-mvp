@@ -351,6 +351,12 @@ def format_range(low: Any, high: Any) -> str | None:
 
 def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = norm(token).replace(" ", "").replace(",", ".")
+    compact = re.sub(r"[^0-9.\-]", "", compact)
+
+    # 3.9810-00 -> 3.98 - 10.00
+    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
+    if match:
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     # 3.936-08 -> 3.93 - 6.08
     match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
@@ -358,6 +364,9 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     # 34.151-0 -> 34.1 - 51.0
+    # 35.146-3 -> 35.1 - 46.3
+    # 11.614-4 -> 11.6 - 14.4
+    # 19.353-1 -> 19.3 - 53.1
     match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
@@ -366,14 +375,26 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
 
 
 def extract_reference_range(value: Any) -> str | None:
-    text = remove_units(value).replace(",", ".")
+    raw_text = norm(value).replace(",", ".")
+    raw_text = raw_text.replace("–", "-").replace("—", "-").replace("−", "-")
+
+    text = remove_units(raw_text).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
 
-    for token in text.split():
-        fused = split_fused_range_token(token)
+    # Important: OCR may split fused ranges into weird fragments like:
+    # "34.151 - 0 %" or "35.146 - 3 FL".
+    # Compact first, repair before normal regex parsing.
+    compact_for_repair = re.sub(r"[^0-9.\-]", "", text)
 
-        if fused:
-            return format_range(fused[0], fused[1])
+    repaired = split_fused_range_token(compact_for_repair)
+    if repaired:
+        return format_range(repaired[0], repaired[1])
+
+    for token in text.split():
+        repaired = split_fused_range_token(token)
+
+        if repaired:
+            return format_range(repaired[0], repaired[1])
 
     explicit = re.search(
         r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
@@ -391,8 +412,21 @@ def extract_reference_range(value: Any) -> str | None:
 
     found = numbers(text)
 
-    if len(found) >= 2:
-        return format_range(found[0], found[1])
+    # Remove OCR leftovers from units such as 10^3/uL becoming standalone "10" or "3".
+    filtered: list[str] = []
+
+    for item in found:
+        if item in {"10", "3", "6", "9", "12"} and re.search(
+            r"10\s*[\^]?\s*(3|6|9|12)",
+            raw_text,
+            re.IGNORECASE,
+        ):
+            continue
+
+        filtered.append(item)
+
+    if len(filtered) >= 2:
+        return format_range(filtered[0], filtered[1])
 
     return None
 
@@ -1077,6 +1111,40 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
     ordered.extend(labs_by_key.values())
     return ordered
 
+def add_missing_text_backfill(
+    candidates: list[dict],
+    extraction: dict[str, Any],
+) -> list[dict]:
+    """
+    Text fallback should not override table/token results.
+    It should only fill missing CBC rows like MONO# and MONO%.
+    """
+    existing_keys = {
+        lab_key(row)
+        for row in candidates
+        if row_is_plausible(row) and lab_key(row)
+    }
+
+    text_candidates: list[dict] = []
+    text_candidates.extend(parse_labs_from_text_lines(extraction.get("lines_text") or ""))
+    text_candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
+
+    for row in text_candidates:
+        if not row_is_plausible(row):
+            continue
+
+        key = lab_key(row)
+
+        if not key:
+            continue
+
+        if key in existing_keys:
+            continue
+
+        candidates.append(row)
+        existing_keys.add(key)
+
+    return candidates
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     table_candidates = parse_labs_from_google_tables(extraction.get("tables") or [])
@@ -1086,8 +1154,10 @@ def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     candidates.extend(table_candidates)
     candidates.extend(token_candidates)
 
-    # Plain-text fallback is dangerous because it can create fake rows from OCR fragments.
-    # Only use it if Google table/token parsing got almost nothing.
+    # Use text only to backfill missing rows, not to override good table/token rows.
+    candidates = add_missing_text_backfill(candidates, extraction)
+
+    # If Google table/token parsing got almost nothing, then allow full text fallback.
     if len(candidates) < 4:
         candidates.extend(parse_labs_from_text_lines(extraction.get("lines_text") or ""))
         candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
