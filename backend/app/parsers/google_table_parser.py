@@ -324,92 +324,63 @@ def format_range(low: Any, high: Any) -> str | None:
 
 
 def split_fused_range_token(token: str) -> tuple[str, str] | None:
-    compact = norm(token).replace(" ", "").replace(",", ".")
-    compact = re.sub(r"[^0-9.\-]", "", compact)
+    """
+    Repairs OCR-fused reference ranges where Google/Document AI lost the dash.
 
-    if not compact:
+    Examples:
+    - 3.936.08   -> 3.93 - 6.08
+    - 34.151.0   -> 34.1 - 51.0
+    - 35.146.3   -> 35.1 - 46.3
+    - 11.614.4   -> 11.6 - 14.4
+    - 19.353.1   -> 19.3 - 53.1
+    - 1.566.13   -> 1.56 - 6.13
+    - 0.240.82   -> 0.24 - 0.82
+    - 0.010.08   -> 0.01 - 0.08
+    - 0.040.54   -> 0.04 - 0.54
+    """
+    compact = norm(token)
+    compact = compact.replace(" ", "")
+    compact = compact.replace(",", ".")
+    compact = compact.replace("–", "-").replace("—", "-").replace("−", "-")
+
+    # Do not repair already valid explicit ranges.
+    if "-" in compact:
         return None
 
-    # Fullmatch only. Never use search here.
-    # search() corrupts valid ranges like 3.98-10.00 into 3.9 - 8.10.
-
-    # 3.936.08 -> 3.93 - 6.08
-    # 1.566.13 -> 1.56 - 6.13
-    # 1.183.74 -> 1.18 - 3.74
-    # 0.240.82 -> 0.24 - 0.82
-    # 0.040.54 -> 0.04 - 0.54
-    # 0.010.08 -> 0.01 - 0.08
-    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)\.(\d{2})", compact)
+    # Pattern: 3.936.08 -> 3.93 - 6.08
+    # Also: 1.566.13 -> 1.56 - 6.13
+    # Also: 0.240.82 -> 0.24 - 0.82
+    match = re.fullmatch(r"(\d{1,2})\.(\d{2})(\d{1,2})\.(\d{2})", compact)
     if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
-    # 34.151.0 -> 34.1 - 51.0
-    # 35.146.3 -> 35.1 - 46.3
-    # 11.614.4 -> 11.6 - 14.4
-    # 19.353.1 -> 19.3 - 53.1
+    # Pattern: 34.151.0 -> 34.1 - 51.0
+    # Also: 35.146.3 -> 35.1 - 46.3
+    # Also: 19.353.1 -> 19.3 - 53.1
+    # Also: 11.614.4 -> 11.6 - 14.4
     match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})\.(\d)", compact)
     if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
-
-    # 3.936-08 -> 3.93 - 6.08
-    # 1.566-13 -> 1.56 - 6.13
-    # 1.183-74 -> 1.18 - 3.74
-    # 0.240-82 -> 0.24 - 0.82
-    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
-
-    # 34.151-0 -> 34.1 - 51.0
-    # 35.146-3 -> 35.1 - 46.3
-    # 11.614-4 -> 11.6 - 14.4
-    # 19.353-1 -> 19.3 - 53.1
-    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
     return None
 
 
 def extract_reference_range(value: Any) -> str | None:
-    text = remove_units(value).replace(",", ".")
+    text = remove_units(value)
+    text = norm(text)
+    text = text.replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
-    text = re.sub(r"\s+", " ", text).strip()
 
     if not text:
         return None
 
-    lowered = text.lower()
-
-    # Never parse report metadata or dates as ranges.
-    if re.search(r"\b(19|20)\d{2}\b", text):
-        return None
-
-    if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", lowered):
-        return None
-
-    if any(
-        marker in lowered
-        for marker in [
-            "validat",
-            "parafa",
-            "data",
-            "ora",
-            "medic",
-            "cnp",
-            "pacient",
-            "telefon",
-            "fundeni",
-            "buletin",
-            "analize",
-            "observatie",
-            "sectie",
-        ]
-    ):
-        return None
-
-    # Normal explicit range first.
-    explicit = re.fullmatch(
-        r"\s*(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)\s*",
+    # First: trust real explicit ranges before any repair.
+    explicit = re.search(
+        r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
         text,
     )
 
@@ -422,12 +393,30 @@ def extract_reference_range(value: Any) -> str | None:
 
         return format_range(low, high)
 
-    # Then OCR-fused ranges.
+    # Second: repair OCR-fused ranges.
+    for token in text.split():
+        fused = split_fused_range_token(token)
+
+        if fused:
+            return format_range(fused[0], fused[1])
+
+    # Third: repair cases where the whole text is fused.
     fused = split_fused_range_token(text)
+
     if fused:
         return format_range(fused[0], fused[1])
 
-    # Important: no generic "any two numbers" fallback.
+    # Last fallback: only use two numbers if it really looks like a range,
+    # not random document dates or unrelated values.
+    found = numbers(text)
+
+    if len(found) >= 2:
+        # Avoid accidentally turning dates like "14 Jun 2023" into "14 - 2023".
+        if re.search(r"\b(19|20)\d{2}\b", text):
+            return None
+
+        return format_range(found[0], found[1])
+
     return None
 
 
