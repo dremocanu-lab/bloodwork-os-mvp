@@ -112,6 +112,13 @@ DEFAULT_CBC_UNITS: dict[str, str] = {
     "IG%": "%",
 }
 
+NO_REFERENCE_KEYS = {
+    "NRBC#",
+    "NRBC%",
+    "IG#",
+    "IG%",
+}
+
 NULL_TEXT = {
     "",
     "-",
@@ -680,6 +687,9 @@ def make_lab_row(
     reference_range, unit_from_reference = split_reference_and_unit(reference_text or "", key)
     _unit_ref_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "", key)
 
+    if key in NO_REFERENCE_KEYS:
+        reference_range = None
+
     unit = (
         unit_from_unit_cell
         or unit_from_reference
@@ -697,7 +707,7 @@ def make_lab_row(
             confidence=confidence,
         )
 
-    flag = infer_lab_flag(value, reference_range)
+    flag = infer_lab_flag(value, reference_range) if reference_range else None
 
     return build_lab_result(
         raw_test_name=key,
@@ -824,15 +834,6 @@ def parse_labs_from_ordered_lines(lines: list[str]) -> list[dict]:
     return labs
 
 
-def parse_labs_from_extraction_lines(extraction: dict[str, Any]) -> list[dict]:
-    lines = collect_lines_from_extraction(extraction, "lines_text")
-
-    if not lines:
-        lines = collect_lines_from_extraction(extraction, "plain_text")
-
-    return parse_labs_from_ordered_lines(lines)
-
-
 def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, Any]) -> list[dict]:
     lines = collect_lines_from_extraction(extraction, "lines_text")
 
@@ -850,9 +851,18 @@ def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, 
         if not key:
             continue
 
-        normalized = norm_key(key).lower()
+        key = norm_key(key)
+        normalized = key.lower()
 
         if normalized not in labs_by_key:
+            continue
+
+        if key in NO_REFERENCE_KEYS:
+            current = dict(labs_by_key[normalized])
+            current["reference_range"] = None
+            current["flag"] = None
+            current["unit"] = current.get("unit") or DEFAULT_CBC_UNITS.get(key)
+            labs_by_key[normalized] = current
             continue
 
         current = labs_by_key[normalized]
@@ -876,6 +886,9 @@ def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, 
         if line_is_result(candidate):
             continue
 
+        if is_header_or_stop_line(candidate):
+            continue
+
         reference_range, unit = split_reference_and_unit(candidate, key)
 
         if not reference_range:
@@ -884,11 +897,20 @@ def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, 
         repaired = dict(current)
         repaired["reference_range"] = reference_range
         repaired["unit"] = repaired.get("unit") or unit or DEFAULT_CBC_UNITS.get(key)
-        repaired["flag"] = infer_lab_flag(repaired.get("value"), reference_range)
+        repaired["flag"] = infer_lab_flag(repaired.get("value"), reference_range) if repaired.get("value") else None
         labs_by_key[normalized] = repaired
 
-    return order_labs(labs_by_key)
+    for no_ref_key in NO_REFERENCE_KEYS:
+        normalized = norm_key(no_ref_key).lower()
 
+        if normalized in labs_by_key:
+            cleaned = dict(labs_by_key[normalized])
+            cleaned["reference_range"] = None
+            cleaned["flag"] = None
+            cleaned["unit"] = cleaned.get("unit") or DEFAULT_CBC_UNITS.get(no_ref_key)
+            labs_by_key[normalized] = cleaned
+
+    return order_labs(labs_by_key)
 
 def token_center(token: dict[str, Any]) -> tuple[float, float]:
     left = float(token.get("left") or 0)
