@@ -208,7 +208,29 @@ def norm(value: Any) -> str:
 
 
 def norm_key(value: str) -> str:
-    key = normalize_test_token(value)
+    raw = norm(value).upper()
+    raw = raw.replace("＃", "#").replace("％", "%")
+    raw = raw.replace(" ", "")
+    raw = raw.replace("_", "-")
+    raw = raw.replace("–", "-").replace("—", "-")
+    raw = raw.replace("RDWSD", "RDW-SD")
+    raw = raw.replace("RDWCV", "RDW-CV")
+    raw = raw.replace("PLCR", "P-LCR")
+    raw = raw.replace("P.LCR", "P-LCR")
+
+    differential_prefixes = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "BASO", "IG"]
+
+    for prefix in differential_prefixes:
+        if raw in {prefix, f"{prefix}#", f"{prefix}%"}:
+            return raw
+
+        if raw.startswith(prefix):
+            if "#" in raw:
+                return f"{prefix}#"
+            if "%" in raw:
+                return f"{prefix}%"
+
+    key = normalize_test_token(raw)
     key = key.replace("RDWSD", "RDW-SD")
     key = key.replace("RDWCV", "RDW-CV")
     key = key.replace("PLCR", "P-LCR")
@@ -227,6 +249,9 @@ def detect_key(value: Any) -> str | None:
     if compact in KNOWN_TEST_ALIASES:
         return compact
 
+    if compact in CBC_ORDER:
+        return compact
+
     if CBC_KEY_RE.fullmatch(text):
         return norm_key(text)
 
@@ -236,6 +261,9 @@ def detect_key(value: Any) -> str | None:
         compact_part = norm_key(part)
 
         if compact_part in KNOWN_TEST_ALIASES:
+            return compact_part
+
+        if compact_part in CBC_ORDER:
             return compact_part
 
         if CBC_KEY_RE.fullmatch(part):
@@ -307,19 +335,6 @@ def remove_units(value: Any) -> str:
     return text.strip()
 
 
-def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
-    text = norm(value)
-
-    if not text:
-        return None, None
-
-    unit = extract_unit(text)
-    reference_text = remove_units(text)
-    reference_range = extract_reference_range(reference_text)
-
-    return reference_range, unit
-
-
 def format_range(low: Any, high: Any) -> str | None:
     low_clean = clean_number(low)
     high_clean = clean_number(high)
@@ -343,15 +358,25 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = norm(token).replace(" ", "").replace(",", ".")
     compact = re.sub(r"[^0-9.\-]", "", compact)
 
+    if not compact or "-" not in compact or "." not in compact:
+        return None
+
     # 3.9810-00 -> 3.98 - 10.00
+    # 3.9310-00 -> 3.93 - 10.00
     match = re.search(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
     if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
     # 3.936-08 -> 3.93 - 6.08
+    # 1.183-74 -> 1.18 - 3.74
+    # 0.244-82 -> 0.24 - 4.82
     match = re.search(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
     if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
     # 34.151-0 -> 34.1 - 51.0
     # 35.146-3 -> 35.1 - 46.3
@@ -359,21 +384,14 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     # 19.353-1 -> 19.3 - 53.1
     match = re.search(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+        low = f"{match.group(1)}.{match.group(2)}"
+        high = f"{match.group(3)}.{match.group(4)}"
+        return low, high
 
     return None
 
 
 def repair_malformed_reference_range(reference_range: str | None, source_text: Any = "") -> str | None:
-    """
-    Repairs OCR-split references after they were already incorrectly normalized.
-
-    Examples:
-    0 - 34.151 -> 34.1 - 51.0
-    3 - 35.146 -> 35.1 - 46.3
-    4 - 11.614 -> 11.6 - 14.4
-    1 - 19.353 -> 19.3 - 53.1
-    """
     raw = norm(source_text)
 
     raw_repaired = split_fused_range_token(raw)
@@ -386,6 +404,10 @@ def repair_malformed_reference_range(reference_range: str | None, source_text: A
     text = norm(reference_range).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
 
+    # 0 - 34.151 -> 34.1 - 51.0
+    # 3 - 35.146 -> 35.1 - 46.3
+    # 4 - 11.614 -> 11.6 - 14.4
+    # 1 - 19.353 -> 19.3 - 53.1
     match = re.fullmatch(r"(\d)\s*-\s*(\d{1,3})\.(\d)(\d{2})", text)
     if match:
         trailing_decimal = match.group(1)
@@ -398,9 +420,22 @@ def repair_malformed_reference_range(reference_range: str | None, source_text: A
 
         return format_range(low, high)
 
-    # Very specific fused WBC artifact.
-    if text == "3.9 - 8.10":
-        return "3.98 - 10.00"
+    # 3.9 - 8.10 -> 3.98 - 10.00
+    # General correction for a stolen decimal digit, not WBC-specific.
+    match = re.fullmatch(r"(\d{1,3})\.(\d)\s*-\s*(\d)\.(10|00)", text)
+    if match:
+        low_whole = match.group(1)
+        low_first_decimal = match.group(2)
+        low_second_decimal = match.group(3)
+        high = match.group(4)
+
+        low = f"{low_whole}.{low_first_decimal}{low_second_decimal}"
+
+        if high == "10":
+            return format_range(low, "10.00")
+
+        if high == "00":
+            return format_range(low, "0.00")
 
     return reference_range
 
@@ -418,6 +453,7 @@ def extract_reference_range(value: Any) -> str | None:
 
     compact_for_repair = re.sub(r"[^0-9.\-]", "", text)
     compact_repaired = split_fused_range_token(compact_for_repair)
+
     if compact_repaired:
         return format_range(compact_repaired[0], compact_repaired[1])
 
@@ -460,23 +496,34 @@ def extract_reference_range(value: Any) -> str | None:
     return None
 
 
+def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
+    text = norm(value)
+
+    if not text:
+        return None, None
+
+    unit = extract_unit(text)
+    reference_text = remove_units(text)
+    reference_range = extract_reference_range(reference_text)
+    reference_range = repair_malformed_reference_range(reference_range, text)
+
+    return reference_range, unit
+
+
 def extract_result(value: Any) -> str | None:
     text = norm(value)
 
     if is_null_value(text):
         return None
 
-    # Unit-only cells should never become fake values.
     if extract_unit(text) and len(numbers(remove_units(text))) == 0:
         return None
 
-    # Reference-range cells should never become values.
     if extract_reference_range(text):
         return None
 
     found = numbers(text)
 
-    # A real result cell should have exactly one numeric value.
     if len(found) != 1:
         return None
 
@@ -595,6 +642,7 @@ def make_lab_row(
     unit_text: str | None,
     confidence: float,
 ) -> dict | None:
+    key = norm_key(key)
     value = extract_result(result_text or "")
 
     reference_range, unit_from_reference = split_reference_and_unit(reference_text or "")
@@ -649,7 +697,6 @@ def row_is_plausible(row: dict[str, Any]) -> bool:
     value = row.get("value")
     unit = row.get("unit")
 
-    # Nil rows are allowed. Example: PDW/MPV/P-LCR/PCT may have dashes.
     if value is None:
         return True
 
@@ -660,12 +707,9 @@ def row_is_plausible(row: dict[str, Any]) -> bool:
 
     expected = EXPECTED_UNITS.get(key)
 
-    # Unit sanity. This is not defaulting lab ranges;
-    # it only rejects physically impossible mappings.
     if unit and expected and unit not in expected:
         return False
 
-    # Hard bug guard seen in screenshots: RBC became NRBC#.
     if key == "RBC" and unit in {"10^3/uL", "10^9/L"}:
         return False
 
@@ -675,8 +719,6 @@ def row_is_plausible(row: dict[str, Any]) -> bool:
     if key.endswith("#") and unit == "%":
         return False
 
-    # Broad value plausibility gates to catch shifted rows.
-    # These are intentionally wide and not lab reference defaults.
     plausible_value_ranges = {
         "WBC": (0.1, 300),
         "RBC": (0.1, 15),
@@ -966,7 +1008,6 @@ def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
             if scores[role][index] <= 0:
                 continue
 
-            # Unit is allowed to share the reference column.
             if role != "unit" and index in used:
                 continue
 
@@ -1063,15 +1104,13 @@ def parse_labs_from_text_lines(text: str) -> list[dict]:
         line = norm(line)
         parts = line.split()
 
-        if len(parts) < 3:
+        if len(parts) < 2:
             continue
 
         key = None
         key_index = -1
 
-        # OCR sometimes puts arrow/noise before the analyte code.
-        # Scan the first few tokens instead of only parts[0].
-        for index, part in enumerate(parts[:5]):
+        for index, part in enumerate(parts[:8]):
             detected = detect_key(part)
 
             if detected:
@@ -1086,12 +1125,25 @@ def parse_labs_from_text_lines(text: str) -> list[dict]:
         reference_text = ""
         unit_text = ""
 
-        for part_index, part in enumerate(parts[key_index + 1 :], start=key_index + 1):
+        remaining = parts[key_index + 1 :]
+
+        for offset, part in enumerate(remaining):
+            part_index = key_index + 1 + offset
+
             if cell_has_only_one_result_number(part) or is_null_value(part):
                 result_text = part
                 reference_text = " ".join(parts[part_index + 1 :])
                 unit_text = reference_text
                 break
+
+        if not result_text:
+            joined_remaining = " ".join(remaining)
+            result = extract_result(joined_remaining)
+
+            if result is not None:
+                result_text = result
+                reference_text = joined_remaining
+                unit_text = joined_remaining
 
         if not result_text:
             continue
@@ -1158,10 +1210,6 @@ def add_missing_text_backfill(
     candidates: list[dict],
     extraction: dict[str, Any],
 ) -> list[dict]:
-    """
-    Text fallback should not override table/token results.
-    It should only fill missing CBC rows like MONO# and MONO%.
-    """
     existing_keys = {
         lab_key(row)
         for row in candidates
@@ -1190,6 +1238,66 @@ def add_missing_text_backfill(
     return candidates
 
 
+def force_backfill_missing_cbc_from_plain_text(
+    candidates: list[dict],
+    extraction: dict[str, Any],
+) -> list[dict]:
+    existing_keys = {
+        lab_key(row)
+        for row in candidates
+        if row_is_plausible(row) and lab_key(row)
+    }
+
+    combined_text = "\n".join(
+        [
+            extraction.get("lines_text") or "",
+            extraction.get("plain_text") or "",
+        ]
+    )
+
+    for line in combined_text.splitlines():
+        clean_line = norm(line)
+
+        for target_key in CBC_ORDER:
+            normalized_target = norm_key(target_key).lower()
+
+            if normalized_target in existing_keys:
+                continue
+
+            if not re.search(rf"\b{re.escape(target_key)}\b", clean_line, re.IGNORECASE):
+                continue
+
+            parts = clean_line.split()
+            result_text = ""
+            reference_text = ""
+
+            for index, part in enumerate(parts):
+                if norm_key(part) == target_key:
+                    for result_index, possible_result in enumerate(parts[index + 1 :], start=index + 1):
+                        if cell_has_only_one_result_number(possible_result) or is_null_value(possible_result):
+                            result_text = possible_result
+                            reference_text = " ".join(parts[result_index + 1 :])
+                            break
+                    break
+
+            if not result_text:
+                continue
+
+            parsed = make_lab_row(
+                key=target_key,
+                result_text=result_text,
+                reference_text=reference_text,
+                unit_text=reference_text,
+                confidence=0.7,
+            )
+
+            if parsed and row_is_plausible(parsed):
+                candidates.append(parsed)
+                existing_keys.add(normalized_target)
+
+    return candidates
+
+
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     table_candidates = parse_labs_from_google_tables(extraction.get("tables") or [])
     token_candidates = parse_labs_from_token_coordinates(extraction.get("words") or [])
@@ -1198,10 +1306,9 @@ def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     candidates.extend(table_candidates)
     candidates.extend(token_candidates)
 
-    # Use text only to backfill missing rows, not to override good table/token rows.
     candidates = add_missing_text_backfill(candidates, extraction)
+    candidates = force_backfill_missing_cbc_from_plain_text(candidates, extraction)
 
-    # If Google table/token parsing got almost nothing, then allow full text fallback.
     if len(candidates) < 4:
         candidates.extend(parse_labs_from_text_lines(extraction.get("lines_text") or ""))
         candidates.extend(parse_labs_from_text_lines(extraction.get("plain_text") or ""))
