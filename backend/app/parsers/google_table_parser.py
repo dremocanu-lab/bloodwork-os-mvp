@@ -351,32 +351,15 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     if not compact:
         return None
 
-    # 3.9810-00 -> 3.98 - 10.00
-    match = re.search(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
-
-    # 3.936-08 -> 3.93 - 6.08
-    # 1.183-74 -> 1.18 - 3.74
-    # 0.240-82 -> 0.24 - 0.82
-    # 0.010-08 -> 0.01 - 0.08
-    match = re.search(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
-
-    # 34.151-0 -> 34.1 - 51.0
-    # 35.146-3 -> 35.1 - 46.3
-    # 11.614-4 -> 11.6 - 14.4
-    # 19.353-1 -> 19.3 - 53.1
-    match = re.search(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
-    if match:
-        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+    # IMPORTANT:
+    # Use fullmatch only. Search was corrupting valid ranges like:
+    # 3.98-10.00 -> 3.9 - 8.10
 
     # 3.936.08 -> 3.93 - 6.08
     # 1.183.74 -> 1.18 - 3.74
     # 0.240.82 -> 0.24 - 0.82
     # 0.010.08 -> 0.01 - 0.08
-    match = re.search(r"(\d{1,3})\.(\d{2})(\d)\.(\d{2})", compact)
+    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)\.(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
@@ -384,7 +367,23 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     # 35.146.3 -> 35.1 - 46.3
     # 11.614.4 -> 11.6 - 14.4
     # 19.353.1 -> 19.3 - 53.1
-    match = re.search(r"(\d{1,3})\.(\d)(\d{2})\.(\d)", compact)
+    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})\.(\d)", compact)
+    if match:
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+
+    # 3.936-08 -> 3.93 - 6.08
+    # 1.183-74 -> 1.18 - 3.74
+    # 0.240-82 -> 0.24 - 0.82
+    # 0.010-08 -> 0.01 - 0.08
+    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
+    if match:
+        return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
+
+    # 34.151-0 -> 34.1 - 51.0
+    # 35.146-3 -> 35.1 - 46.3
+    # 11.614-4 -> 11.6 - 14.4
+    # 19.353-1 -> 19.3 - 53.1
+    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
@@ -394,13 +393,22 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
 def extract_reference_range(value: Any) -> str | None:
     text = remove_units(value).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+    text = re.sub(r"\s+", " ", text).strip()
 
-    fused = split_fused_range_token(text)
-    if fused:
-        return format_range(fused[0], fused[1])
+    if not text:
+        return None
 
-    explicit = re.search(
-        r"(?<!\d)(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)(?!\d)",
+    # Never parse dates or report metadata as lab reference ranges.
+    if re.search(r"\b(19|20)\d{2}\b", text):
+        return None
+
+    if re.search(r"\b(jan|feb|mar|apr|may|jun|jul|aug|sep|oct|nov|dec)\b", text, re.IGNORECASE):
+        return None
+
+    # Correct normal explicit ranges first.
+    # This prevents 3.98-10.00 from becoming 3.9 - 8.10.
+    explicit = re.fullmatch(
+        r"\s*(-?\d{1,4}(?:\.\d+)?)\s*-\s*(-?\d{1,4}(?:\.\d+)?)\s*",
         text,
     )
 
@@ -413,11 +421,13 @@ def extract_reference_range(value: Any) -> str | None:
 
         return format_range(low, high)
 
-    found = numbers(text)
+    # Then repair fused OCR ranges.
+    fused = split_fused_range_token(text)
+    if fused:
+        return format_range(fused[0], fused[1])
 
-    if len(found) >= 2:
-        return format_range(found[0], found[1])
-
+    # Do not fall back to "any two numbers".
+    # That is what created garbage like IG% reference 14 - 2023.
     return None
 
 
@@ -987,68 +997,105 @@ def parse_cbc_from_lines(lines_text: str) -> list[dict]:
     lines = [norm(line) for line in (lines_text or "").splitlines()]
     lines = [line for line in lines if line]
 
-    labs: list[dict] = []
+    # Keep only the automatic CBC area.
+    start_index = 0
+    end_index = len(lines)
 
     for index, line in enumerate(lines):
+        lowered = line.lower()
+        if "hemograma simpla" in lowered or "cbc" in lowered:
+            start_index = index
+            break
+
+    for index in range(start_index, len(lines)):
+        lowered = lines[index].lower()
+        if "validat de" in lowered or "citomorfologie (manual" in lowered:
+            end_index = index
+            break
+
+    cbc_lines = lines[start_index:end_index]
+
+    key_positions: list[tuple[int, str]] = []
+
+    for index, line in enumerate(cbc_lines):
         key = detect_key(line)
+        if key and key in CBC_ORDER_SET:
+            key_positions.append((index, key))
 
-        if not key or key not in CBC_ORDER_SET:
-            continue
+    if not key_positions:
+        return []
 
-        previous_window = lines[max(0, index - 2) : index]
-        forward_window = lines[index + 1 : index + 6]
+    labs: list[dict] = []
+    pending_reference_text: str | None = None
+    pending_unit_text: str | None = None
+
+    for position_index, (key_index, key) in enumerate(key_positions):
+        next_key_index = (
+            key_positions[position_index + 1][0]
+            if position_index + 1 < len(key_positions)
+            else len(cbc_lines)
+        )
+
+        segment = cbc_lines[key_index + 1 : next_key_index]
 
         result_text: str | None = None
         reference_text: str | None = None
         unit_text: str | None = None
+        trailing_reference_text: str | None = None
+        trailing_unit_text: str | None = None
 
-        # Prefer reference after the key.
-        for candidate in forward_window:
+        for candidate in segment:
             if detect_key(candidate):
                 break
 
-            reference_range, unit = split_reference_and_unit(candidate)
+            candidate_reference, candidate_unit = split_reference_and_unit(candidate)
 
-            if reference_range and reference_text is None:
-                reference_text = candidate
-
-            if unit and unit_text is None:
+            if candidate_unit and unit_text is None:
                 unit_text = candidate
 
-        # Some rows, especially PLT in Document AI lines, can have reference before the key.
-        if reference_text is None:
-            for candidate in reversed(previous_window):
-                if detect_key(candidate):
-                    break
+            if candidate_reference and reference_text is None:
+                reference_text = candidate
+                continue
 
-                reference_range, unit = split_reference_and_unit(candidate)
-
-                if reference_range:
-                    reference_text = candidate
-
-                    if unit_text is None:
-                        unit_text = candidate
-
-                    break
-
-        for candidate in forward_window:
-            if detect_key(candidate):
-                break
-
-            if line_is_result(candidate):
+            if result_text is None and line_is_result(candidate):
                 result_text = candidate
-                break
+                continue
+
+            # Sometimes Document AI places the next row's reference before the next key.
+            # Example:
+            # RDW-CV
+            # 11.614.4%
+            # 21.2
+            # 9.0-17.0 FL
+            # PDW
+            if result_text is not None:
+                extra_reference, extra_unit = split_reference_and_unit(candidate)
+
+                if extra_reference:
+                    trailing_reference_text = candidate
+
+                if extra_unit:
+                    trailing_unit_text = candidate
+
+        if reference_text is None and pending_reference_text is not None:
+            reference_text = pending_reference_text
+
+        if unit_text is None and pending_unit_text is not None:
+            unit_text = pending_unit_text
 
         parsed = make_lab_row(
             key=key,
             result_text=result_text,
             reference_text=reference_text,
             unit_text=unit_text,
-            confidence=1.05,
+            confidence=1.20,
         )
 
         if parsed and row_is_plausible(parsed):
             labs.append(parsed)
+
+        pending_reference_text = trailing_reference_text
+        pending_unit_text = trailing_unit_text
 
     return labs
 
@@ -1208,24 +1255,27 @@ def correct_cbc_references_from_lines(
 
         line_row = by_key[key]
 
-        if line_row.get("reference_range"):
-            row["reference_range"] = line_row.get("reference_range")
+        # For CBC rows, line parser owns the final reference.
+        # This matters because NRBC#, NRBC%, IG#, IG% may legitimately have no range.
+        row["reference_range"] = line_row.get("reference_range")
 
         if line_row.get("unit"):
             row["unit"] = line_row.get("unit")
 
-        if line_row.get("value") is not None and row.get("value") is None:
+        if line_row.get("value") is not None:
             row["value"] = line_row.get("value")
 
         value = row.get("value")
+        reference_range = row.get("reference_range")
 
-        if value is not None:
-            row["flag"] = infer_flag(str(value), row.get("reference_range"))
+        if value is not None and reference_range:
+            row["flag"] = infer_flag(str(value), reference_range)
+        else:
+            row["flag"] = None
 
         decorate_cbc_row(row)
 
     return labs
-
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     candidates: list[dict] = []
