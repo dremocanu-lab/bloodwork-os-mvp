@@ -228,7 +228,7 @@ function getYearFromDate(value?: string | null) {
 function formatAxisDate(value?: string | null) {
   const time = parseDateTime(value);
 
-  if (!time) return value || "â€”";
+  if (!time) return value || "€”";
 
   return new Date(time).toLocaleDateString(undefined, {
     day: "2-digit",
@@ -245,10 +245,10 @@ function formatAxisNumber(value: number) {
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "â€”";
+  if (!dateOfBirth) return "€”";
 
   const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return "â€”";
+  if (Number.isNaN(dob.getTime())) return "€”";
 
   const today = new Date();
 
@@ -264,7 +264,7 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "â€”";
+  if (years < 0) return "€”";
 
   if (years === 0) {
     return `${months} ${months === 1 ? "month" : "months"}`;
@@ -311,7 +311,7 @@ function uploaderSubtitle(doc: DocumentCard) {
 
   const details = [uploader.full_name, uploader.department, uploader.hospital_name].filter(Boolean);
 
-  return `Uploaded by ${details.join(" Â· ")}`;
+  return `Uploaded by ${details.join(" · ")}`;
 }
 
 function getTrendPriority(trend: BloodworkTrend) {
@@ -654,7 +654,7 @@ function SelectFilter({
           <option value="">All</option>
           {options.map((option) => (
             <option key={option} value={option}>
-              {calendarLike ? `ðŸ“… ${option}` : option}
+              {calendarLike ? `📅 ${option}` : option}
             </option>
           ))}
         </select>
@@ -670,7 +670,7 @@ function SelectFilter({
             fontWeight: 950,
           }}
         >
-          â–¾
+          –¾
         </span>
       </div>
     </label>
@@ -903,9 +903,9 @@ export default function MyRecordsPage() {
       type: "document",
       date: getDocumentClinicalDate(doc),
       title: valueOrDash(doc.report_name || doc.filename),
-      subtitle: `${getDocumentDateLabel(doc)} Â· ${sectionLabels[doc.section] || doc.section} Â· ${uploaderSubtitle(
+      subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabels[doc.section] || doc.section} · ${uploaderSubtitle(
         doc
-      )} Â· ${doc.is_verified ? t("verified") : t("unverified")}`,
+      )} · ${doc.is_verified ? t("verified") : t("unverified")}`,
       documentId: doc.id,
     }));
 
@@ -914,7 +914,7 @@ export default function MyRecordsPage() {
       type: "event",
       date: getEventDate(event),
       title: event.title,
-      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} Â· ${t(
+      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
         "doctor"
       )} ${valueOrDash(event.doctor_name)}`,
       eventId: event.id,
@@ -984,7 +984,7 @@ export default function MyRecordsPage() {
     <AppShell
       user={currentUser}
       title={t("myRecords")}
-      subtitle={`${t("dob")} ${valueOrDash(profile.patient.date_of_birth)} Â· ${t("age")} ${calculatedAge} Â· ${t(
+      subtitle={`${t("dob")} ${valueOrDash(profile.patient.date_of_birth)} · ${t("age")} ${calculatedAge} · ${t(
         "sex"
       )} ${valueOrDash(profile.patient.sex)}`}
     >
@@ -1082,7 +1082,7 @@ export default function MyRecordsPage() {
                   {doctor.doctor_email}
                 </div>
                 <div className="muted-text" style={{ marginTop: 6 }}>
-                  {valueOrDash(doctor.department)} Â· {valueOrDash(doctor.hospital_name)}
+                  {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
                 </div>
               </div>
             ))}
@@ -1104,7 +1104,7 @@ export default function MyRecordsPage() {
                   {valueOrDash(request.doctor_email)}
                 </div>
                 <div className="muted-text" style={{ marginTop: 6 }}>
-                  {valueOrDash(request.doctor_department)} Â· {valueOrDash(request.doctor_hospital_name)}
+                  {valueOrDash(request.doctor_department)} · {valueOrDash(request.doctor_hospital_name)}
                 </div>
                 <div className="muted-text" style={{ marginTop: 6 }}>
                   {t("status")}: {request.status}
@@ -1267,10 +1267,10 @@ export default function MyRecordsPage() {
                   </div>
 
                   <div className="muted-text" style={{ marginTop: 10 }}>
-                    {valueOrDash(doc.report_type)} Â· {getDocumentDateLabel(doc)}
+                    {valueOrDash(doc.report_type)} · {getDocumentDateLabel(doc)}
                   </div>
                   <div className="muted-text" style={{ marginTop: 6 }}>
-                    {valueOrDash(doc.lab_name)} Â· {valueOrDash(doc.sample_type)}
+                    {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)}
                   </div>
                 </div>
 
@@ -1354,7 +1354,7 @@ export default function MyRecordsPage() {
                     <div>
                       <div style={{ fontWeight: 800, fontSize: 18 }}>{trend.display_name}</div>
                       <div className="muted-text" style={{ marginTop: 4 }}>
-                        {valueOrDash(trend.category)} Â· {t("unit")} {valueOrDash(trend.unit)}
+                        {valueOrDash(trend.category)} · {t("unit")} {valueOrDash(trend.unit)}
                       </div>
 
                       <div
@@ -1379,7 +1379,7 @@ export default function MyRecordsPage() {
                             {t("previous")}
                           </div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
-                            {trend.previous ? valueOrDash(trend.previous.value_display) : "â€”"}
+                            {trend.previous ? valueOrDash(trend.previous.value_display) : "€”"}
                           </div>
                         </div>
 
@@ -1389,7 +1389,7 @@ export default function MyRecordsPage() {
                           </div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
                             {trend.delta === null || trend.delta === undefined
-                              ? "â€”"
+                              ? "€”"
                               : trend.delta > 0
                               ? `+${trend.delta}`
                               : `${trend.delta}`}
@@ -1398,7 +1398,7 @@ export default function MyRecordsPage() {
                       </div>
 
                       <div className="muted-text" style={{ marginTop: 10 }}>
-                        {t("latestSample")}: {valueOrDash(trend.latest?.date)} Â· {t("ref")}{" "}
+                        {t("latestSample")}: {valueOrDash(trend.latest?.date)} · {t("ref")}{" "}
                         {valueOrDash(trend.latest?.reference_range)}
                       </div>
                     </div>
@@ -1514,7 +1514,7 @@ export default function MyRecordsPage() {
                                 {valueOrDash(point.report_name || `Report ${point.document_id}`)}
                               </div>
                               <div className="muted-text" style={{ marginTop: 4 }}>
-                                {valueOrDash(point.date)} Â· Ref {valueOrDash(point.reference_range)}
+                                {valueOrDash(point.date)} · Ref {valueOrDash(point.reference_range)}
                               </div>
                             </div>
 
@@ -1537,3 +1537,4 @@ export default function MyRecordsPage() {
     </AppShell>
   );
 }
+

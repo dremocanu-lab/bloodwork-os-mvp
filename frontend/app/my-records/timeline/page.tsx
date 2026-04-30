@@ -144,10 +144,10 @@ function compareDatesDescending(a: string, b: string) {
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "â€”";
+  if (!dateOfBirth) return "€”";
 
   const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return "â€”";
+  if (Number.isNaN(dob.getTime())) return "€”";
 
   const today = new Date();
 
@@ -163,7 +163,7 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "â€”";
+  if (years < 0) return "€”";
 
   return `${years} ${years === 1 ? "year" : "years"} ${months} ${
     months === 1 ? "month" : "months"
@@ -208,7 +208,7 @@ function uploaderSubtitle(doc: DocumentCard) {
 
   const details = [uploader.full_name, uploader.department, uploader.hospital_name].filter(Boolean);
 
-  return `Uploaded by ${details.join(" Â· ")}`;
+  return `Uploaded by ${details.join(" · ")}`;
 }
 
 function YearDropdown({
@@ -271,7 +271,7 @@ function YearDropdown({
             fontWeight: 950,
           }}
         >
-          â–¾
+          –¾
         </span>
       </div>
     </label>
@@ -310,7 +310,7 @@ function ReportTypeMultiFilter({
                 fontSize: 13,
               }}
             >
-              {active ? "âœ“ " : ""}
+              {active ? "œ“ " : ""}
               {option.label}
             </button>
           );
@@ -396,9 +396,9 @@ export default function MyRecordsTimelinePage() {
       type: "document",
       date: getDocumentClinicalDate(doc),
       title: valueOrDash(doc.report_name || doc.filename),
-      subtitle: `${getDocumentDateLabel(doc)} Â· ${sectionLabels[doc.section] || doc.section} Â· ${uploaderSubtitle(
+      subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabels[doc.section] || doc.section} · ${uploaderSubtitle(
         doc
-      )} Â· ${doc.is_verified ? t("verified") : t("unverified")}`,
+      )} · ${doc.is_verified ? t("verified") : t("unverified")}`,
       documentId: doc.id,
       section: doc.section,
     }));
@@ -408,7 +408,7 @@ export default function MyRecordsTimelinePage() {
       type: "event",
       date: getEventDate(event),
       title: event.title,
-      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} Â· ${t(
+      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
         "doctor"
       )} ${valueOrDash(event.doctor_name)}`,
       eventId: event.id,
@@ -462,9 +462,9 @@ export default function MyRecordsTimelinePage() {
     <AppShell
       user={currentUser}
       title="Full Timeline"
-      subtitle={`${valueOrDash(profile.patient.full_name)} Â· DOB ${valueOrDash(
+      subtitle={`${valueOrDash(profile.patient.full_name)} · DOB ${valueOrDash(
         profile.patient.date_of_birth
-      )} Â· Age ${calculatedAge} Â· Sex ${valueOrDash(profile.patient.sex)}`}
+      )} · Age ${calculatedAge} · Sex ${valueOrDash(profile.patient.sex)}`}
     >
       {error && (
         <div
@@ -578,3 +578,4 @@ export default function MyRecordsTimelinePage() {
     </AppShell>
   );
 }
+
