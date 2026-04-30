@@ -95,7 +95,7 @@ export default function RoleSignupPage() {
 
       if (role === "patient") {
         payload.date_of_birth = dateOfBirth || null;
-        payload.sex = sex || null;
+        payload.sex = sex;
         payload.cnp = cnp || null;
         payload.patient_identifier = patientIdentifier || null;
       }
@@ -257,8 +257,11 @@ export default function RoleSignupPage() {
                       className="auth-input"
                       value={sex}
                       onChange={(e) => setSex(e.target.value)}
+                      required
                     >
-                      <option value="">{t("optional")}</option>
+                      <option value="" disabled>
+                        Select sex
+                      </option>
                       <option value="Male">Male</option>
                       <option value="Female">Female</option>
                     </select>
