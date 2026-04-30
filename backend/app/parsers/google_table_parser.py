@@ -1299,6 +1299,23 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
     ordered.extend(labs_by_key.values())
     return ordered
 
+def final_clean_google_cbc_rows(labs: list[dict]) -> list[dict]:
+    cleaned: list[dict] = []
+
+    for row in labs:
+        row = dict(row)
+        key = norm_key(row.get("raw_test_name") or "")
+
+        # These rows commonly have a unit only in Fundeni/Sysmex output.
+        # Do not allow nearby platelet ranges or footer dates to become references.
+        if key in {"NRBC#", "NRBC%", "IG#", "IG%"}:
+            row["reference_range"] = None
+            row["flag"] = None
+            row["unit"] = row.get("unit") or DEFAULT_CBC_UNITS.get(key)
+
+        cleaned.append(row)
+
+    return cleaned
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     line_labs = parse_labs_from_extraction_lines(extraction)
