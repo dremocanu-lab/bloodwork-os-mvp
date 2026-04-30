@@ -680,7 +680,9 @@ def build_lab_result(
 
     final_flag = None
 
-    if final_value is not None:
+    final_flag = None
+
+    if final_value is not None and final_reference:
         explicit_flag = None
 
         if flag:
@@ -694,9 +696,6 @@ def build_lab_result(
                 explicit_flag = "Normal"
 
         final_flag = explicit_flag or infer_flag(final_value, final_reference)
-
-        if not final_reference and final_flag == "Normal":
-            final_flag = None
 
     return {
         "raw_test_name": test_key or clean_text(raw_test_name),
