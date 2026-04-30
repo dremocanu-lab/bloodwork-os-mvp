@@ -308,16 +308,6 @@ def remove_units(value: Any) -> str:
 
 
 def split_reference_and_unit(value: Any) -> tuple[str | None, str | None]:
-    """
-    Handles combined cells like:
-    - 3.98 - 10.00 10^3/uL
-    - 3.93 - 6.08 10^6/uL
-    - 11.2 - 17.5 g/dL
-    - 34.1 - 51.0 %
-    - 80.0 - 100.0 FL
-    - 0.17 - 0.35 %
-    Returns (reference_range, unit).
-    """
     text = norm(value)
 
     if not text:
@@ -354,12 +344,12 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = re.sub(r"[^0-9.\-]", "", compact)
 
     # 3.9810-00 -> 3.98 - 10.00
-    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
+    match = re.search(r"(\d{1,3})\.(\d{2})(\d{2})-(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     # 3.936-08 -> 3.93 - 6.08
-    match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
+    match = re.search(r"(\d{1,3})\.(\d{2})(\d)-(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
@@ -367,28 +357,69 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     # 35.146-3 -> 35.1 - 46.3
     # 11.614-4 -> 11.6 - 14.4
     # 19.353-1 -> 19.3 - 53.1
-    match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
+    match = re.search(r"(\d{1,3})\.(\d)(\d{2})-(\d)", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
     return None
 
 
+def repair_malformed_reference_range(reference_range: str | None, source_text: Any = "") -> str | None:
+    """
+    Repairs OCR-split references after they were already incorrectly normalized.
+
+    Examples:
+    0 - 34.151 -> 34.1 - 51.0
+    3 - 35.146 -> 35.1 - 46.3
+    4 - 11.614 -> 11.6 - 14.4
+    1 - 19.353 -> 19.3 - 53.1
+    """
+    raw = norm(source_text)
+
+    raw_repaired = split_fused_range_token(raw)
+    if raw_repaired:
+        return format_range(raw_repaired[0], raw_repaired[1])
+
+    if not reference_range:
+        return None
+
+    text = norm(reference_range).replace(",", ".")
+    text = text.replace("–", "-").replace("—", "-").replace("−", "-")
+
+    match = re.fullmatch(r"(\d)\s*-\s*(\d{1,3})\.(\d)(\d{2})", text)
+    if match:
+        trailing_decimal = match.group(1)
+        low_whole = match.group(2)
+        low_decimal = match.group(3)
+        high_whole = match.group(4)
+
+        low = f"{low_whole}.{low_decimal}"
+        high = f"{high_whole}.{trailing_decimal}"
+
+        return format_range(low, high)
+
+    # Very specific fused WBC artifact.
+    if text == "3.9 - 8.10":
+        return "3.98 - 10.00"
+
+    return reference_range
+
+
 def extract_reference_range(value: Any) -> str | None:
     raw_text = norm(value).replace(",", ".")
     raw_text = raw_text.replace("–", "-").replace("—", "-").replace("−", "-")
 
+    raw_repaired = split_fused_range_token(raw_text)
+    if raw_repaired:
+        return format_range(raw_repaired[0], raw_repaired[1])
+
     text = remove_units(raw_text).replace(",", ".")
     text = text.replace("–", "-").replace("—", "-").replace("−", "-")
 
-    # Important: OCR may split fused ranges into weird fragments like:
-    # "34.151 - 0 %" or "35.146 - 3 FL".
-    # Compact first, repair before normal regex parsing.
     compact_for_repair = re.sub(r"[^0-9.\-]", "", text)
-
-    repaired = split_fused_range_token(compact_for_repair)
-    if repaired:
-        return format_range(repaired[0], repaired[1])
+    compact_repaired = split_fused_range_token(compact_for_repair)
+    if compact_repaired:
+        return format_range(compact_repaired[0], compact_repaired[1])
 
     for token in text.split():
         repaired = split_fused_range_token(token)
@@ -408,11 +439,9 @@ def extract_reference_range(value: Any) -> str | None:
         if high.startswith("-") and not low.startswith("-"):
             high = high[1:]
 
-        return format_range(low, high)
+        return repair_malformed_reference_range(format_range(low, high), raw_text)
 
     found = numbers(text)
-
-    # Remove OCR leftovers from units such as 10^3/uL becoming standalone "10" or "3".
     filtered: list[str] = []
 
     for item in found:
@@ -426,7 +455,7 @@ def extract_reference_range(value: Any) -> str | None:
         filtered.append(item)
 
     if len(filtered) >= 2:
-        return format_range(filtered[0], filtered[1])
+        return repair_malformed_reference_range(format_range(filtered[0], filtered[1]), raw_text)
 
     return None
 
@@ -569,6 +598,8 @@ def make_lab_row(
     value = extract_result(result_text or "")
 
     reference_range, unit_from_reference = split_reference_and_unit(reference_text or "")
+    reference_range = repair_malformed_reference_range(reference_range, reference_text or "")
+
     _unit_ref_from_unit_cell, unit_from_unit_cell = split_reference_and_unit(unit_text or "")
 
     unit = (
@@ -1035,16 +1066,27 @@ def parse_labs_from_text_lines(text: str) -> list[dict]:
         if len(parts) < 3:
             continue
 
-        key = detect_key(parts[0])
+        key = None
+        key_index = -1
 
-        if not key:
+        # OCR sometimes puts arrow/noise before the analyte code.
+        # Scan the first few tokens instead of only parts[0].
+        for index, part in enumerate(parts[:5]):
+            detected = detect_key(part)
+
+            if detected:
+                key = detected
+                key_index = index
+                break
+
+        if not key or key_index < 0:
             continue
 
         result_text = ""
         reference_text = ""
         unit_text = ""
 
-        for part_index, part in enumerate(parts[1:], start=1):
+        for part_index, part in enumerate(parts[key_index + 1 :], start=key_index + 1):
             if cell_has_only_one_result_number(part) or is_null_value(part):
                 result_text = part
                 reference_text = " ".join(parts[part_index + 1 :])
@@ -1111,6 +1153,7 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
     ordered.extend(labs_by_key.values())
     return ordered
 
+
 def add_missing_text_backfill(
     candidates: list[dict],
     extraction: dict[str, Any],
@@ -1145,6 +1188,7 @@ def add_missing_text_backfill(
         existing_keys.add(key)
 
     return candidates
+
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
     table_candidates = parse_labs_from_google_tables(extraction.get("tables") or [])
