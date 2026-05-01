@@ -6,6 +6,8 @@ import os
 from pathlib import Path
 from typing import Any
 
+import fitz
+
 from google.api_core.client_options import ClientOptions
 from google.cloud import documentai
 from google.oauth2 import service_account
@@ -419,37 +421,60 @@ def render_tokens_as_text(words: list[dict[str, Any]]) -> str:
 
     return " ".join(word["text"] for word in ordered if word.get("text")).strip()
 
+def should_render_pdf_for_google(file_path: Path, mime_type: str) -> bool:
+    if mime_type != "application/pdf":
+        return False
 
-def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str, Any]:
-    project_id = get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID")
-    location = get_env_value("GOOGLE_DOCUMENT_AI_LOCATION") or "eu"
-    processor_id = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID")
-    processor_version = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION")
+    if file_path.suffix.lower() != ".pdf":
+        return False
 
-    if not project_id or not processor_id:
-        raise RuntimeError("Google Document AI is not configured. Missing project ID or processor ID.")
+    value = get_env_value("GOOGLE_DOCUMENT_AI_RENDER_PDFS")
 
-    client = get_document_ai_client(location)
+    if value is None:
+        return True
 
-    if processor_version:
-        name = client.processor_version_path(
-            project_id,
-            location,
-            processor_id,
-            processor_version,
-        )
-    else:
-        name = client.processor_path(
-            project_id,
-            location,
-            processor_id,
-        )
+    return value.lower() not in {"0", "false", "no", "off"}
 
-    mime_type = guess_mime_type(file_path, filename)
 
-    with file_path.open("rb") as file:
-        file_content = file.read()
+def get_render_dpi() -> int:
+    raw_value = get_env_value("GOOGLE_DOCUMENT_AI_RENDER_DPI")
 
+    if not raw_value:
+        return 350
+
+    try:
+        dpi = int(raw_value)
+    except Exception:
+        return 350
+
+    return max(200, min(dpi, 450))
+
+
+def render_pdf_pages_to_png_bytes(file_path: Path, dpi: int) -> list[bytes]:
+    rendered_pages: list[bytes] = []
+
+    zoom = dpi / 72.0
+    matrix = fitz.Matrix(zoom, zoom)
+
+    with fitz.open(str(file_path)) as pdf:
+        for page in pdf:
+            pixmap = page.get_pixmap(
+                matrix=matrix,
+                alpha=False,
+                colorspace=fitz.csRGB,
+            )
+
+            rendered_pages.append(pixmap.tobytes("png"))
+
+    return rendered_pages
+
+
+def process_single_google_document(
+    client,
+    name: str,
+    file_content: bytes,
+    mime_type: str,
+):
     raw_document = documentai.RawDocument(
         content=file_content,
         mime_type=mime_type,
@@ -476,8 +501,16 @@ def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str,
         )
 
     result = client.process_document(request=request)
-    document = result.document
+    return result.document
 
+
+def extraction_from_google_document(
+    document,
+    method: str,
+    mime_type: str,
+    warnings: list[str] | None = None,
+    debug_extra: dict[str, Any] | None = None,
+) -> dict[str, Any]:
     plain_text = clean_block_text(document.text or "")
     tables = extract_tables_from_document(document)
     lines = extract_lines_from_document(document)
@@ -515,13 +548,236 @@ def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str,
         "tables": tables,
         "lines": lines,
         "words": words,
-        "method": "google_document_ai",
-        "warnings": ["Google Document AI extraction was used."],
+        "method": method,
+        "warnings": warnings or ["Google Document AI extraction was used."],
         "debug": {
             "table_count": len(tables),
             "line_count": len(lines),
             "token_count": len(words),
             "mime_type": mime_type,
             "config": get_document_ai_debug_config(),
+            **(debug_extra or {}),
         },
     }
+
+
+def shift_extraction_page_indexes(extraction: dict[str, Any], page_offset: int) -> dict[str, Any]:
+    if page_offset <= 0:
+        return extraction
+
+    for table in extraction.get("tables") or []:
+        table["page"] = int(table.get("page") or 0) + page_offset
+
+    for line in extraction.get("lines") or []:
+        line["page"] = int(line.get("page") or 0) + page_offset
+
+    for word in extraction.get("words") or []:
+        word["page"] = int(word.get("page") or 0) + page_offset
+
+    return extraction
+
+
+def combine_google_page_extractions(
+    page_extractions: list[dict[str, Any]],
+    original_mime_type: str,
+    dpi: int,
+) -> dict[str, Any]:
+    plain_parts: list[str] = []
+    line_parts: list[str] = []
+    table_parts: list[str] = []
+    token_parts: list[str] = []
+    tables: list[dict[str, Any]] = []
+    lines: list[dict[str, Any]] = []
+    words: list[dict[str, Any]] = []
+
+    warnings: list[str] = [
+        f"Google Document AI extraction was used after rendering PDF pages at {dpi} DPI."
+    ]
+
+    for page_number, extraction in enumerate(page_extractions, start=1):
+        plain_text = extraction.get("plain_text") or ""
+        lines_text = extraction.get("lines_text") or ""
+        table_text = extraction.get("table_text") or ""
+        tokens_text = extraction.get("tokens_text") or ""
+
+        if plain_text:
+            plain_parts.append(f"--- RENDERED PAGE {page_number} ---")
+            plain_parts.append(plain_text)
+
+        if lines_text:
+            line_parts.append(f"--- RENDERED PAGE {page_number} ---")
+            line_parts.append(lines_text)
+
+        if table_text:
+            table_parts.append(f"--- RENDERED PAGE {page_number} ---")
+            table_parts.append(table_text)
+
+        if tokens_text:
+            token_parts.append(f"--- RENDERED PAGE {page_number} ---")
+            token_parts.append(tokens_text)
+
+        tables.extend(extraction.get("tables") or [])
+        lines.extend(extraction.get("lines") or [])
+        words.extend(extraction.get("words") or [])
+
+    plain_text = "\n".join(plain_parts).strip()
+    lines_text = "\n".join(line_parts).strip()
+    table_text = "\n".join(table_parts).strip()
+    tokens_text = "\n".join(token_parts).strip()
+
+    combined_parts: list[str] = []
+
+    if plain_text:
+        combined_parts.append("--- GOOGLE DOCUMENT AI PLAIN TEXT ---")
+        combined_parts.append(plain_text)
+
+    if lines_text:
+        combined_parts.append("--- GOOGLE DOCUMENT AI LINES ---")
+        combined_parts.append(lines_text)
+
+    if table_text:
+        combined_parts.append(table_text)
+
+    if tokens_text:
+        combined_parts.append("--- GOOGLE DOCUMENT AI TOKENS ---")
+        combined_parts.append(tokens_text)
+
+    combined_text = "\n".join(combined_parts).strip()
+
+    return {
+        "text": combined_text,
+        "plain_text": plain_text,
+        "lines_text": lines_text,
+        "table_text": table_text,
+        "tokens_text": tokens_text,
+        "tables": tables,
+        "lines": lines,
+        "words": words,
+        "method": "google_document_ai_rendered_pdf",
+        "warnings": warnings,
+        "debug": {
+            "table_count": len(tables),
+            "line_count": len(lines),
+            "token_count": len(words),
+            "mime_type": original_mime_type,
+            "rendered_pdf": True,
+            "render_dpi": dpi,
+            "rendered_pages": len(page_extractions),
+            "config": get_document_ai_debug_config(),
+        },
+    }
+
+def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str, Any]:
+    project_id = get_env_value("GOOGLE_DOCUMENT_AI_PROJECT_ID")
+    location = get_env_value("GOOGLE_DOCUMENT_AI_LOCATION") or "eu"
+    processor_id = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_ID")
+    processor_version = get_env_value("GOOGLE_DOCUMENT_AI_PROCESSOR_VERSION")
+
+    if not project_id or not processor_id:
+        raise RuntimeError("Google Document AI is not configured. Missing project ID or processor ID.")
+
+    client = get_document_ai_client(location)
+
+    if processor_version:
+        name = client.processor_version_path(
+            project_id,
+            location,
+            processor_id,
+            processor_version,
+        )
+    else:
+        name = client.processor_path(
+            project_id,
+            location,
+            processor_id,
+        )
+
+    mime_type = guess_mime_type(file_path, filename)
+
+    if should_render_pdf_for_google(file_path, mime_type):
+        dpi = get_render_dpi()
+
+        try:
+            rendered_pages = render_pdf_pages_to_png_bytes(file_path, dpi=dpi)
+            page_extractions: list[dict[str, Any]] = []
+
+            for page_offset, rendered_content in enumerate(rendered_pages):
+                document = process_single_google_document(
+                    client=client,
+                    name=name,
+                    file_content=rendered_content,
+                    mime_type="image/png",
+                )
+
+                extraction = extraction_from_google_document(
+                    document=document,
+                    method="google_document_ai_rendered_pdf_page",
+                    mime_type="image/png",
+                    warnings=[
+                        f"Google Document AI extraction was used on rendered PDF page {page_offset + 1}."
+                    ],
+                    debug_extra={
+                        "rendered_pdf": True,
+                        "render_dpi": dpi,
+                        "rendered_page_number": page_offset + 1,
+                    },
+                )
+
+                extraction = shift_extraction_page_indexes(extraction, page_offset)
+                page_extractions.append(extraction)
+
+            if page_extractions:
+                return combine_google_page_extractions(
+                    page_extractions=page_extractions,
+                    original_mime_type=mime_type,
+                    dpi=dpi,
+                )
+
+        except Exception as error:
+            with file_path.open("rb") as file:
+                file_content = file.read()
+
+            document = process_single_google_document(
+                client=client,
+                name=name,
+                file_content=file_content,
+                mime_type=mime_type,
+            )
+
+            return extraction_from_google_document(
+                document=document,
+                method="google_document_ai",
+                mime_type=mime_type,
+                warnings=[
+                    "Google Document AI extraction was used.",
+                    (
+                        "PDF high-resolution rendering failed; Google Document AI used the original file. "
+                        f"Error: {error}"
+                    ),
+                ],
+                debug_extra={
+                    "rendered_pdf": False,
+                    "render_failed": True,
+                    "render_error": str(error),
+                },
+            )
+
+    with file_path.open("rb") as file:
+        file_content = file.read()
+
+    document = process_single_google_document(
+        client=client,
+        name=name,
+        file_content=file_content,
+        mime_type=mime_type,
+    )
+
+    return extraction_from_google_document(
+        document=document,
+        method="google_document_ai",
+        mime_type=mime_type,
+        warnings=["Google Document AI extraction was used."],
+        debug_extra={
+            "rendered_pdf": False,
+        },
+    )
