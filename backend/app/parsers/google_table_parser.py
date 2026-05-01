@@ -1274,15 +1274,11 @@ def nearby_lines_until_key(
 def nearest_result_around_key(lines: list[str], index: int) -> str | None:
     candidates: list[tuple[float, str]] = []
 
-    # Forward first because common clean order is key, value, reference.
+    # Only look forward for result values.
+    # Looking backward can steal the previous test's result when the current row is blank.
     for distance, line in nearby_lines_until_key(lines, index, direction=1, limit=5):
         if line_is_result(line) or is_null_value(line):
             candidates.append((distance, line))
-
-    # Also look backward because Document AI often emits value, key, reference.
-    for distance, line in nearby_lines_until_key(lines, index, direction=-1, limit=5):
-        if line_is_result(line) or is_null_value(line):
-            candidates.append((distance + 0.15, line))
 
     if not candidates:
         return None
