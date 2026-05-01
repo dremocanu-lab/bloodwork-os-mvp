@@ -48,14 +48,14 @@ CBC_ORDER = [
     "IG%",
 ]
 
+DIFFERENTIAL_PREFIXES = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "BASO", "IG"]
+
 NO_REFERENCE_KEYS = {
     "NRBC#",
     "NRBC%",
     "IG#",
     "IG%",
 }
-
-DIFFERENTIAL_PREFIXES = ["NRBC", "NEUT", "LYMPH", "MONO", "EO", "BASO", "IG"]
 
 CBC_KEY_RE = re.compile(
     r"^(WBC|RBC|HGB|HCT|MCV|MCHC|MCH|PLT|RDW[\s\-]?SD|RDW[\s\-]?CV|PDW|MPV|P[\s\-]?LCR|PCT|NRBC[#%]?|NEUT[#%]?|LYMPH[#%]?|MONO[#%]?|EO[#%]?|BASO[#%]?|IG[#%]?)$",
@@ -119,13 +119,6 @@ DEFAULT_CBC_UNITS: dict[str, str] = {
     "IG%": "%",
 }
 
-NO_REFERENCE_KEYS = {
-    "NRBC#",
-    "NRBC%",
-    "IG#",
-    "IG%",
-}
-
 NULL_TEXT = {
     "",
     "-",
@@ -151,6 +144,7 @@ HEADER_HINTS_TEST = {
     "parametru",
     "investigatie",
     "investigație",
+    "investigation",
 }
 
 HEADER_HINTS_RESULT = {
@@ -168,6 +162,7 @@ HEADER_HINTS_REFERENCE = {
     "ref",
     "biologic",
     "biologică",
+    "range",
 }
 
 HEADER_HINTS_UNIT = {
@@ -175,6 +170,13 @@ HEADER_HINTS_UNIT = {
     "unitate",
     "um",
     "u/m",
+}
+
+HEADER_HINTS_FLAG = {
+    "flag",
+    "status",
+    "abnormal",
+    "interpretare",
 }
 
 STOP_LINE_HINTS = {
@@ -186,19 +188,27 @@ STOP_LINE_HINTS = {
     "data validare",
     "parafa",
     "pagina",
-    "biletin",
     "buletin",
+    "biletin",
     "fundeni",
     "telefon",
     "nume:",
     "cnp:",
     "medic:",
     "sectie:",
+    "secție:",
     "sex:",
     "varsta:",
+    "vârsta:",
     "cod pacient",
     "nr.reg",
     "cod proba",
+    "afisat de",
+    "afișat de",
+    "data eliberarii",
+    "data eliberării",
+    "http",
+    "192.168",
 }
 
 
@@ -231,8 +241,10 @@ def norm(value: Any) -> str:
     text = text.replace("µ", "u").replace("μ", "u")
     text = text.replace("−", "-").replace("–", "-").replace("—", "-")
     text = text.replace("＃", "#").replace("％", "%")
-    text = text.replace("Â", "")
-    text = text.replace("â€", "")
+    text = text.replace("Â·", "·").replace("Â", "")
+    text = text.replace("â€™", "'").replace("â€˜", "'")
+    text = text.replace("â€œ", '"').replace("â€�", '"')
+    text = text.replace("â€“", "-").replace("â€”", "-")
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
@@ -249,13 +261,10 @@ def norm_key(value: str) -> str:
     raw = raw.replace("RDWSD", "RDW-SD")
     raw = raw.replace("RDWCV", "RDW-CV")
     raw = raw.replace("PLCR", "P-LCR")
-    raw = raw.replace("P-LCR", "P-LCR")
+    raw = raw.replace("P.LCR", "P-LCR")
 
     if raw in {"-LCR", "LCR"}:
         return "P-LCR"
-
-    if raw in {"P", "P-"}:
-        return raw
 
     for prefix in DIFFERENTIAL_PREFIXES:
         if raw in {prefix, f"{prefix}#", f"{prefix}%"}:
@@ -309,18 +318,6 @@ def detect_key(value: Any) -> str | None:
     return None
 
 
-def is_header_or_stop_line(value: Any) -> bool:
-    lowered = norm(value).lower()
-
-    if not lowered:
-        return True
-
-    if lowered in {"denumire analiza", "rezultat", "interval biologic de referinta/um"}:
-        return True
-
-    return any(hint in lowered for hint in STOP_LINE_HINTS)
-
-
 def numbers(value: Any) -> list[str]:
     return NUMBER_RE.findall(norm(value).replace(",", "."))
 
@@ -348,6 +345,18 @@ def clean_number(value: Any) -> str | None:
         cleaned = found[0].replace(",", ".")
 
     return cleaned
+
+
+def safe_float(value: Any) -> float | None:
+    cleaned = clean_number(value)
+
+    if cleaned is None:
+        return None
+
+    try:
+        return float(cleaned)
+    except Exception:
+        return None
 
 
 def is_null_value(value: Any) -> bool:
@@ -416,20 +425,19 @@ def split_fused_range_token(token: str) -> tuple[str, str] | None:
     compact = remove_units(compact)
     compact = compact.replace(" ", "").replace(",", ".")
 
-    if "-" in compact:
+    if not compact or "-" in compact:
         return None
 
     # 3.936.08 -> 3.93 - 6.08
     # 1.566.13 -> 1.56 - 6.13
     # 0.240.82 -> 0.24 - 0.82
-    # 0.010.08 -> 0.01 - 0.08
     match = re.fullmatch(r"(\d{1,3})\.(\d{2})(\d{1,3})\.(\d{2})", compact)
     if match:
         return f"{match.group(1)}.{match.group(2)}", f"{match.group(3)}.{match.group(4)}"
 
+    # 11.217.5 -> 11.2 - 17.5
     # 34.151.0 -> 34.1 - 51.0
     # 35.146.3 -> 35.1 - 46.3
-    # 11.614.4 -> 11.6 - 14.4
     # 19.353.1 -> 19.3 - 53.1
     match = re.fullmatch(r"(\d{1,3})\.(\d)(\d{1,3})\.(\d)", compact)
     if match:
@@ -479,7 +487,11 @@ def extract_reference_range(value: Any) -> str | None:
     return None
 
 
-def split_reference_and_unit(value: Any, key: str | None = None) -> tuple[str | None, str | None]:
+def split_reference_and_unit(
+    value: Any,
+    key: str | None = None,
+    allow_default_unit: bool = False,
+) -> tuple[str | None, str | None]:
     text = norm(value)
 
     if not text:
@@ -488,8 +500,8 @@ def split_reference_and_unit(value: Any, key: str | None = None) -> tuple[str | 
     unit = extract_unit(text)
     reference_range = extract_reference_range(text)
 
-    if key and not unit:
-        unit = DEFAULT_CBC_UNITS.get(key)
+    if allow_default_unit and key and not unit:
+        unit = DEFAULT_CBC_UNITS.get(norm_key(key))
 
     return reference_range, unit
 
@@ -503,25 +515,21 @@ def extract_result(value: Any) -> str | None:
     if extract_reference_range(text):
         return None
 
-    found = numbers(text)
+    stripped = remove_units(text)
 
-    if not found:
+    if not stripped:
+        return None
+
+    found = numbers(stripped)
+
+    if len(found) != 1:
         return None
 
     return clean_number(found[0])
 
 
 def line_is_result(value: Any) -> bool:
-    text = remove_units(value)
-    found = numbers(text)
-
-    if len(found) != 1:
-        return False
-
-    if extract_reference_range(value):
-        return False
-
-    return True
+    return extract_result(value) is not None
 
 
 def line_is_reference(value: Any) -> bool:
@@ -537,22 +545,34 @@ def line_is_unit_only(value: Any) -> bool:
     if extract_reference_range(text):
         return False
 
-    if extract_result(text):
+    stripped = remove_units(text)
+
+    if numbers(stripped):
         return False
 
     return extract_unit(text) is not None
 
 
-def safe_float(value: Any) -> float | None:
-    cleaned = clean_number(value)
+def is_header_or_stop_line(value: Any) -> bool:
+    lowered = norm(value).lower()
 
-    if cleaned is None:
-        return None
+    if not lowered:
+        return True
 
-    try:
-        return float(cleaned)
-    except Exception:
-        return None
+    exact_headers = {
+        "denumire analiza",
+        "denumire analiză",
+        "rezultat",
+        "interval biologic de referinta/um",
+        "interval biologic de referință/um",
+        "unitate",
+        "um",
+    }
+
+    if lowered in exact_headers:
+        return True
+
+    return any(hint in lowered for hint in STOP_LINE_HINTS)
 
 
 def infer_lab_flag(value: Any, reference_range: Any) -> str | None:
@@ -589,6 +609,56 @@ def infer_lab_flag(value: Any, reference_range: Any) -> str | None:
     return "Normal"
 
 
+def units_compatible(expected: str | None, actual: str | None) -> bool:
+    if not expected or not actual:
+        return True
+
+    expected_norm = expected.lower().replace(" ", "")
+    actual_norm = actual.lower().replace(" ", "")
+
+    aliases = {
+        "10^3/ul": {"10^3/ul", "10^9/l"},
+        "10^6/ul": {"10^6/ul", "10^12/l"},
+        "fl": {"fl"},
+        "pg": {"pg"},
+        "%": {"%"},
+        "g/dl": {"g/dl", "g/l"},
+    }
+
+    if expected_norm in aliases:
+        return actual_norm in aliases[expected_norm]
+
+    return expected_norm == actual_norm
+
+
+def reference_compatible_with_key(key: str, reference_text: Any) -> bool:
+    key = norm_key(key)
+
+    if key in NO_REFERENCE_KEYS:
+        return False
+
+    reference_range, unit = split_reference_and_unit(reference_text, key)
+
+    if not reference_range:
+        return False
+
+    expected_unit = DEFAULT_CBC_UNITS.get(key)
+
+    if unit and expected_unit and not units_compatible(expected_unit, unit):
+        return False
+
+    if key.endswith("%") and unit and unit != "%":
+        return False
+
+    if key.endswith("#") and unit == "%":
+        return False
+
+    if expected_unit != "%" and unit == "%":
+        return False
+
+    return True
+
+
 def score_test_cell(value: Any) -> float:
     text = norm(value)
     lowered = text.lower()
@@ -596,13 +666,13 @@ def score_test_cell(value: Any) -> float:
     score = 0.0
 
     if detect_key(text):
-        score += 10.0
+        score += 12.0
 
     for hint in HEADER_HINTS_TEST:
         if hint in lowered:
-            score += 3.0
+            score += 5.0
 
-    if any(char.isalpha() for char in text) and len(numbers(text)) == 0:
+    if any(char.isalpha() for char in text) and not numbers(text):
         score += 1.0
 
     return score
@@ -618,20 +688,20 @@ def score_result_cell(value: Any) -> float:
         score += 2.0
 
     if line_is_result(text):
-        score += 6.0
+        score += 7.0
 
     for hint in HEADER_HINTS_RESULT:
         if hint in lowered:
-            score += 3.0
+            score += 5.0
 
     if extract_reference_range(text):
-        score -= 5.0
+        score -= 7.0
 
-    if extract_unit(text):
-        score -= 1.5
+    if line_is_unit_only(text):
+        score -= 4.0
 
     if detect_key(text):
-        score -= 5.0
+        score -= 8.0
 
     return score
 
@@ -645,17 +715,17 @@ def score_reference_cell(value: Any) -> float:
     reference_range, unit = split_reference_and_unit(text)
 
     if reference_range:
-        score += 8.0
+        score += 9.0
 
     if unit:
         score += 1.5
 
     for hint in HEADER_HINTS_REFERENCE:
         if hint in lowered:
-            score += 3.0
+            score += 5.0
 
     if detect_key(text):
-        score -= 5.0
+        score -= 8.0
 
     return score
 
@@ -669,14 +739,33 @@ def score_unit_cell(value: Any) -> float:
     score = 0.0
 
     if unit:
-        score += 6.0
+        score += 7.0
 
     for hint in HEADER_HINTS_UNIT:
         if hint in lowered:
-            score += 3.0
+            score += 5.0
 
     if reference_range:
-        score -= 1.0
+        score -= 2.0
+
+    if detect_key(text):
+        score -= 6.0
+
+    return score
+
+
+def score_flag_cell(value: Any) -> float:
+    text = norm(value)
+    lowered = text.lower()
+
+    score = 0.0
+
+    for hint in HEADER_HINTS_FLAG:
+        if hint in lowered:
+            score += 5.0
+
+    if lowered in {"h", "high", "l", "low", "normal", "crescut", "scazut", "scăzut"}:
+        score += 5.0
 
     return score
 
@@ -687,6 +776,7 @@ def make_lab_row(
     reference_text: str | None,
     unit_text: str | None,
     confidence: float,
+    flag_text: str | None = None,
 ) -> dict | None:
     key = norm_key(key)
     value = extract_result(result_text or "")
@@ -696,6 +786,9 @@ def make_lab_row(
 
     if key in NO_REFERENCE_KEYS:
         reference_range = None
+    elif reference_text and not reference_compatible_with_key(key, reference_text):
+        reference_range = None
+        unit_from_reference = None
 
     unit = (
         unit_from_unit_cell
@@ -714,7 +807,19 @@ def make_lab_row(
             confidence=confidence,
         )
 
-    flag = infer_lab_flag(value, reference_range) if reference_range else None
+    explicit_flag = None
+
+    if flag_text:
+        lowered = norm(flag_text).lower()
+
+        if lowered in {"high", "h", "crescut", "mare"}:
+            explicit_flag = "High"
+        elif lowered in {"low", "l", "scazut", "scăzut", "mic"}:
+            explicit_flag = "Low"
+        elif lowered in {"normal", "ok"}:
+            explicit_flag = "Normal"
+
+    flag = explicit_flag or (infer_lab_flag(value, reference_range) if reference_range else None)
 
     return build_lab_result(
         raw_test_name=key,
@@ -764,187 +869,164 @@ def collect_lines_from_extraction(extraction: dict[str, Any], field: str) -> lis
     return collect_lines_from_blob(extracted_text)
 
 
-def first_result_in_segment(segment: list[str]) -> str | None:
-    for line in segment:
-        if line_is_result(line) or is_null_value(line):
-            return line
-
-    return None
+def table_row_to_cells(row: dict[str, Any]) -> list[str]:
+    cells = row.get("cells", []) or []
+    return [norm(cell.get("text") or "") for cell in cells]
 
 
-def first_reference_in_segment(segment: list[str], key: str) -> str | None:
-    for line in segment:
-        reference_range, _unit = split_reference_and_unit(line, key)
+def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
+    column_count = max((len(row) for row in rows), default=0)
 
-        if reference_range:
-            return line
+    scores: dict[str, list[float]] = {
+        "test": [0.0] * column_count,
+        "result": [0.0] * column_count,
+        "reference": [0.0] * column_count,
+        "unit": [0.0] * column_count,
+        "flag": [0.0] * column_count,
+    }
 
-    return None
+    for row in rows:
+        for index in range(column_count):
+            value = row[index] if index < len(row) else ""
+
+            scores["test"][index] += score_test_cell(value)
+            scores["result"][index] += score_result_cell(value)
+            scores["reference"][index] += score_reference_cell(value)
+            scores["unit"][index] += score_unit_cell(value)
+            scores["flag"][index] += score_flag_cell(value)
+
+    chosen: dict[str, int] = {}
+    used: set[int] = set()
+
+    for role in ["test", "result", "reference", "unit", "flag"]:
+        ranked = sorted(
+            range(column_count),
+            key=lambda index: scores[role][index],
+            reverse=True,
+        )
+
+        for index in ranked:
+            if scores[role][index] <= 0:
+                continue
+
+            if role not in {"unit", "flag"} and index in used:
+                continue
+
+            chosen[role] = index
+
+            if role not in {"unit", "flag"}:
+                used.add(index)
+
+            break
+
+    return chosen
 
 
-def first_unit_in_segment(segment: list[str], key: str) -> str | None:
-    for line in segment:
-        _reference_range, unit = split_reference_and_unit(line, key)
+def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]], confidence: float = 0.99) -> list[dict]:
+    rows = [[norm(cell) for cell in row] for row in table_rows]
+    rows = [row for row in rows if any(row)]
 
-        if unit:
-            return line
+    if not rows:
+        return []
 
-    return None
+    columns = infer_columns_from_table_rows(rows)
 
+    if "test" not in columns:
+        return []
 
-def parse_labs_from_ordered_lines(lines: list[str]) -> list[dict]:
     labs: list[dict] = []
 
-    index = 0
-
-    while index < len(lines):
-        line = lines[index]
-        key = detect_key(line)
+    for row in rows:
+        test_text = row[columns["test"]] if columns["test"] < len(row) else ""
+        key = detect_key(test_text)
 
         if not key:
-            index += 1
+            joined = " ".join(row)
+            key = detect_key(joined)
+
+        if not key:
             continue
 
-        segment: list[str] = []
-        lookahead = index + 1
+        if is_header_or_stop_line(test_text):
+            continue
 
-        while lookahead < len(lines):
-            next_line = lines[lookahead]
-            next_key = detect_key(next_line)
+        result_text = row[columns["result"]] if "result" in columns and columns["result"] < len(row) else ""
+        reference_text = row[columns["reference"]] if "reference" in columns and columns["reference"] < len(row) else ""
+        unit_text = row[columns["unit"]] if "unit" in columns and columns["unit"] < len(row) else ""
+        flag_text = row[columns["flag"]] if "flag" in columns and columns["flag"] < len(row) else ""
 
-            if next_key:
-                break
+        if not result_text:
+            for cell in row:
+                if line_is_result(cell) or is_null_value(cell):
+                    if not detect_key(cell) and not extract_reference_range(cell):
+                        result_text = cell
+                        break
 
-            if is_header_or_stop_line(next_line):
-                break
+        if not reference_text and key not in NO_REFERENCE_KEYS:
+            for cell in row:
+                if reference_compatible_with_key(key, cell):
+                    reference_text = cell
+                    break
 
-            segment.append(next_line)
-            lookahead += 1
+        if not unit_text:
+            for cell in row:
+                _reference_range, unit = split_reference_and_unit(cell, key)
 
-        result_text = first_result_in_segment(segment)
-        reference_text = first_reference_in_segment(segment, key)
-        unit_text = first_unit_in_segment(segment, key)
+                if unit:
+                    unit_text = cell
+                    break
 
         parsed = make_lab_row(
             key=key,
             result_text=result_text,
             reference_text=reference_text,
             unit_text=unit_text,
-            confidence=0.995,
+            confidence=confidence,
+            flag_text=flag_text,
         )
 
         if parsed:
             labs.append(parsed)
 
-        index = lookahead
+    return labs
+
+
+def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
+    labs: list[dict] = []
+
+    for table in tables or []:
+        table_rows: list[list[str]] = []
+
+        for row in table.get("rows", []) or []:
+            table_rows.append(table_row_to_cells(row))
+
+        labs.extend(parse_labs_from_table_rows_dynamic(table_rows, confidence=0.995))
 
     return labs
 
-def parse_labs_from_extraction_lines(extraction: dict[str, Any]) -> list[dict]:
-    lines = collect_lines_from_extraction(extraction, "lines_text")
-
-    if not lines:
-        lines = collect_lines_from_extraction(extraction, "plain_text")
-
-    if not lines:
-        lines = collect_lines_from_extraction(extraction, "text")
-
-    return parse_labs_from_ordered_lines(lines)
-
-def repair_immediate_shifted_references(labs: list[dict], extraction: dict[str, Any]) -> list[dict]:
-    lines = collect_lines_from_extraction(extraction, "lines_text")
-
-    if not lines:
-        lines = collect_lines_from_extraction(extraction, "plain_text")
-
-    if not lines:
-        return labs
-
-    labs_by_key = {lab_key(row): row for row in labs if lab_key(row)}
-
-    for index, line in enumerate(lines):
-        key = detect_key(line)
-
-        if not key:
-            continue
-
-        key = norm_key(key)
-        normalized = key.lower()
-
-        if normalized not in labs_by_key:
-            continue
-
-        if key in NO_REFERENCE_KEYS:
-            current = dict(labs_by_key[normalized])
-            current["reference_range"] = None
-            current["flag"] = None
-            current["unit"] = current.get("unit") or DEFAULT_CBC_UNITS.get(key)
-            labs_by_key[normalized] = current
-            continue
-
-        current = labs_by_key[normalized]
-
-        if current.get("reference_range"):
-            continue
-
-        previous_index = index - 1
-
-        while previous_index >= 0 and not norm(lines[previous_index]):
-            previous_index -= 1
-
-        if previous_index < 0:
-            continue
-
-        candidate = lines[previous_index]
-
-        if detect_key(candidate):
-            continue
-
-        if line_is_result(candidate):
-            continue
-
-        if is_header_or_stop_line(candidate):
-            continue
-
-        reference_range, unit = split_reference_and_unit(candidate, key)
-
-        if not reference_range:
-            continue
-
-        repaired = dict(current)
-        repaired["reference_range"] = reference_range
-        repaired["unit"] = repaired.get("unit") or unit or DEFAULT_CBC_UNITS.get(key)
-        repaired["flag"] = infer_lab_flag(repaired.get("value"), reference_range) if repaired.get("value") else None
-        labs_by_key[normalized] = repaired
-
-    for no_ref_key in NO_REFERENCE_KEYS:
-        normalized = norm_key(no_ref_key).lower()
-
-        if normalized in labs_by_key:
-            cleaned = dict(labs_by_key[normalized])
-            cleaned["reference_range"] = None
-            cleaned["flag"] = None
-            cleaned["unit"] = cleaned.get("unit") or DEFAULT_CBC_UNITS.get(no_ref_key)
-            labs_by_key[normalized] = cleaned
-
-    return order_labs(labs_by_key)
 
 def token_center(token: dict[str, Any]) -> tuple[float, float]:
-    left = float(token.get("left") or 0)
-    top = float(token.get("top") or 0)
+    left = float(token.get("left") or token.get("x") or 0)
+    top = float(token.get("top") or token.get("y") or 0)
     width = float(token.get("width") or 0)
     height = float(token.get("height") or 0)
 
     return left + width / 2, top + height / 2
 
 
+def token_has_geometry(token: dict[str, Any]) -> bool:
+    return any(token.get(name) is not None for name in ["left", "top", "x", "y"])
+
+
 def group_tokens_into_rows(tokens: list[dict[str, Any]]) -> list[list[dict[str, Any]]]:
+    usable = [token for token in tokens or [] if token_has_geometry(token) and norm(token.get("text"))]
+
     ordered = sorted(
-        tokens,
+        usable,
         key=lambda token: (
             int(token.get("page") or 0),
-            float(token.get("top") or 0),
-            float(token.get("left") or 0),
+            float(token.get("top") or token.get("y") or 0),
+            float(token.get("left") or token.get("x") or 0),
         ),
     )
 
@@ -974,50 +1056,73 @@ def group_tokens_into_rows(tokens: list[dict[str, Any]]) -> list[list[dict[str, 
             rows.append([token])
 
     for row in rows:
-        row.sort(key=lambda token: float(token.get("left") or 0))
+        row.sort(key=lambda token: float(token.get("left") or token.get("x") or 0))
 
     return rows
 
 
 def infer_column_bands_from_token_rows(rows: list[list[dict[str, Any]]]) -> dict[str, float] | None:
-    test_xs: list[float] = []
-    result_xs: list[float] = []
-    reference_xs: list[float] = []
-    unit_xs: list[float] = []
+    xs: dict[str, list[float]] = {
+        "test": [],
+        "result": [],
+        "reference": [],
+        "unit": [],
+        "flag": [],
+    }
 
     for row in rows:
         for token in row:
             text = norm(token.get("text"))
+            lowered = text.lower()
             cx, _cy = token_center(token)
 
             if detect_key(text):
-                test_xs.append(cx)
+                xs["test"].append(cx)
                 continue
+
+            if line_is_result(text):
+                xs["result"].append(cx)
 
             reference_range, unit = split_reference_and_unit(text)
 
             if reference_range:
-                reference_xs.append(cx)
+                xs["reference"].append(cx)
 
             if unit:
-                unit_xs.append(cx)
+                xs["unit"].append(cx)
 
-            if line_is_result(text):
-                result_xs.append(cx)
+            for hint in HEADER_HINTS_TEST:
+                if hint in lowered:
+                    xs["test"].append(cx)
 
-    if not test_xs:
+            for hint in HEADER_HINTS_RESULT:
+                if hint in lowered:
+                    xs["result"].append(cx)
+
+            for hint in HEADER_HINTS_REFERENCE:
+                if hint in lowered:
+                    xs["reference"].append(cx)
+
+            for hint in HEADER_HINTS_UNIT:
+                if hint in lowered:
+                    xs["unit"].append(cx)
+
+            for hint in HEADER_HINTS_FLAG:
+                if hint in lowered:
+                    xs["flag"].append(cx)
+
+    if not xs["test"]:
         return None
 
-    bands: dict[str, float] = {"test": median(test_xs)}
+    bands: dict[str, float] = {"test": median(xs["test"])}
 
-    if result_xs:
-        bands["result"] = median(result_xs)
+    for role in ["result", "reference", "unit", "flag"]:
+        if xs[role]:
+            bands[role] = median(xs[role])
 
-    if reference_xs:
-        bands["reference"] = median(reference_xs)
-
-    if unit_xs:
-        bands["unit"] = median(unit_xs)
+    if "result" not in bands and "reference" in bands:
+        non_test_reference_distance = abs(bands["reference"] - bands["test"])
+        bands["result"] = bands["test"] + (non_test_reference_distance / 2)
 
     return bands
 
@@ -1032,6 +1137,7 @@ def row_tokens_to_dynamic_cells(row: list[dict[str, Any]], bands: dict[str, floa
         "result": [],
         "reference": [],
         "unit": [],
+        "flag": [],
         "other": [],
     }
 
@@ -1048,15 +1154,24 @@ def row_tokens_to_dynamic_cells(row: list[dict[str, Any]], bands: dict[str, floa
 
     cells: dict[str, str] = {}
 
-    for name, tokens in buckets.items():
-        tokens.sort(key=lambda token: float(token.get("left") or 0))
-        cells[name] = " ".join(norm(token.get("text")) for token in tokens if norm(token.get("text"))).strip()
+    for name, bucket_tokens in buckets.items():
+        bucket_tokens.sort(key=lambda token: float(token.get("left") or token.get("x") or 0))
+        cells[name] = " ".join(norm(token.get("text")) for token in bucket_tokens if norm(token.get("text"))).strip()
 
     return cells
 
 
 def parse_token_row_dynamic(row: list[dict[str, Any]], bands: dict[str, float]) -> dict | None:
     cells = row_tokens_to_dynamic_cells(row, bands)
+    joined = " ".join(value for value in cells.values() if value)
+
+    if not joined:
+        return None
+
+    lowered = joined.lower()
+
+    if "hemograma" in lowered or "denumire" in lowered or "rezultat" in lowered:
+        return None
 
     key = detect_key(cells.get("test") or "")
 
@@ -1069,31 +1184,28 @@ def parse_token_row_dynamic(row: list[dict[str, Any]], bands: dict[str, float]) 
                 break
 
     if not key:
-        return None
+        key = detect_key(joined)
 
-    joined = " ".join(cells.values()).lower()
-
-    if "hemograma" in joined or "denumire" in joined or "rezultat" in joined:
+    if not key:
         return None
 
     result_text = cells.get("result") or ""
     reference_text = cells.get("reference") or ""
     unit_text = cells.get("unit") or ""
-
-    if not reference_text:
-        for value in cells.values():
-            reference_range, _unit = split_reference_and_unit(value, key)
-
-            if reference_range:
-                reference_text = value
-                break
+    flag_text = cells.get("flag") or ""
 
     if not result_text:
         for value in cells.values():
             if line_is_result(value) or is_null_value(value):
-                if not extract_reference_range(value) and not detect_key(value):
+                if not detect_key(value) and not extract_reference_range(value):
                     result_text = value
                     break
+
+    if not reference_text and key not in NO_REFERENCE_KEYS:
+        for value in cells.values():
+            if reference_compatible_with_key(key, value):
+                reference_text = value
+                break
 
     if not unit_text:
         for value in cells.values():
@@ -1108,7 +1220,8 @@ def parse_token_row_dynamic(row: list[dict[str, Any]], bands: dict[str, float]) 
         result_text=result_text,
         reference_text=reference_text,
         unit_text=unit_text,
-        confidence=0.75,
+        confidence=0.965,
+        flag_text=flag_text,
     )
 
 
@@ -1130,111 +1243,121 @@ def parse_labs_from_token_coordinates(words: list[dict[str, Any]]) -> list[dict]
     return labs
 
 
-def table_row_to_cells(row: dict[str, Any]) -> list[str]:
-    cells = row.get("cells", []) or []
-    return [norm(cell.get("text") or "") for cell in cells]
+def nearby_lines_until_key(
+    lines: list[str],
+    index: int,
+    direction: int,
+    limit: int = 5,
+) -> list[tuple[int, str]]:
+    found: list[tuple[int, str]] = []
+    cursor = index + direction
+    distance = 1
 
+    while 0 <= cursor < len(lines) and distance <= limit:
+        line = lines[cursor]
 
-def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
-    column_count = max((len(row) for row in rows), default=0)
-
-    scores: dict[str, list[float]] = {
-        "test": [0.0] * column_count,
-        "result": [0.0] * column_count,
-        "reference": [0.0] * column_count,
-        "unit": [0.0] * column_count,
-    }
-
-    for row in rows:
-        for index in range(column_count):
-            value = row[index] if index < len(row) else ""
-
-            scores["test"][index] += score_test_cell(value)
-            scores["result"][index] += score_result_cell(value)
-            scores["reference"][index] += score_reference_cell(value)
-            scores["unit"][index] += score_unit_cell(value)
-
-    chosen: dict[str, int] = {}
-    used: set[int] = set()
-
-    for role in ["test", "reference", "result", "unit"]:
-        ranked = sorted(
-            range(column_count),
-            key=lambda index: scores[role][index],
-            reverse=True,
-        )
-
-        for index in ranked:
-            if scores[role][index] <= 0:
-                continue
-
-            if role != "unit" and index in used:
-                continue
-
-            chosen[role] = index
-
-            if role != "unit":
-                used.add(index)
-
+        if detect_key(line):
             break
 
-    return chosen
+        if is_header_or_stop_line(line):
+            cursor += direction
+            distance += 1
+            continue
+
+        found.append((distance, line))
+        cursor += direction
+        distance += 1
+
+    return found
 
 
-def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict]:
-    rows = [[norm(cell) for cell in row] for row in table_rows]
-    rows = [row for row in rows if any(row)]
+def nearest_result_around_key(lines: list[str], index: int) -> str | None:
+    candidates: list[tuple[float, str]] = []
 
-    if not rows:
-        return []
+    # Forward first because common clean order is key, value, reference.
+    for distance, line in nearby_lines_until_key(lines, index, direction=1, limit=5):
+        if line_is_result(line) or is_null_value(line):
+            candidates.append((distance, line))
 
-    columns = infer_columns_from_table_rows(rows)
+    # Also look backward because Document AI often emits value, key, reference.
+    for distance, line in nearby_lines_until_key(lines, index, direction=-1, limit=5):
+        if line_is_result(line) or is_null_value(line):
+            candidates.append((distance + 0.15, line))
 
-    if "test" not in columns:
-        return []
+    if not candidates:
+        return None
 
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def nearest_reference_around_key(lines: list[str], index: int, key: str) -> str | None:
+    if norm_key(key) in NO_REFERENCE_KEYS:
+        return None
+
+    candidates: list[tuple[float, str]] = []
+
+    # Backward gets a slight preference because Fundeni/Hippocrate often emits:
+    # reference, key, value.
+    for distance, line in nearby_lines_until_key(lines, index, direction=-1, limit=5):
+        if reference_compatible_with_key(key, line):
+            candidates.append((distance, line))
+
+    for distance, line in nearby_lines_until_key(lines, index, direction=1, limit=5):
+        if reference_compatible_with_key(key, line):
+            candidates.append((distance + 0.25, line))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def nearest_unit_around_key(lines: list[str], index: int, key: str) -> str | None:
+    candidates: list[tuple[float, str]] = []
+
+    for distance, line in nearby_lines_until_key(lines, index, direction=-1, limit=5):
+        _reference_range, unit = split_reference_and_unit(line, key)
+
+        if unit:
+            candidates.append((distance, line))
+
+    for distance, line in nearby_lines_until_key(lines, index, direction=1, limit=5):
+        _reference_range, unit = split_reference_and_unit(line, key)
+
+        if unit:
+            candidates.append((distance + 0.15, line))
+
+    if not candidates:
+        return None
+
+    candidates.sort(key=lambda item: item[0])
+    return candidates[0][1]
+
+
+def parse_labs_from_ordered_lines(lines: list[str], confidence: float = 0.935) -> list[dict]:
     labs: list[dict] = []
 
-    for row in rows:
-        test_text = row[columns["test"]] if columns["test"] < len(row) else ""
-        key = detect_key(test_text)
+    for index, line in enumerate(lines):
+        key = detect_key(line)
 
         if not key:
             continue
 
-        result_text = row[columns["result"]] if "result" in columns and columns["result"] < len(row) else ""
-        reference_text = row[columns["reference"]] if "reference" in columns and columns["reference"] < len(row) else ""
-        unit_text = row[columns["unit"]] if "unit" in columns and columns["unit"] < len(row) else ""
+        if is_header_or_stop_line(line):
+            continue
 
-        if not result_text:
-            for cell in row:
-                if line_is_result(cell) or is_null_value(cell):
-                    if not detect_key(cell) and not extract_reference_range(cell):
-                        result_text = cell
-                        break
-
-        if not reference_text:
-            for cell in row:
-                reference_range, _unit = split_reference_and_unit(cell, key)
-
-                if reference_range:
-                    reference_text = cell
-                    break
-
-        if not unit_text:
-            for cell in row:
-                _reference_range, unit = split_reference_and_unit(cell, key)
-
-                if unit:
-                    unit_text = cell
-                    break
+        result_text = nearest_result_around_key(lines, index)
+        reference_text = nearest_reference_around_key(lines, index, key)
+        unit_text = nearest_unit_around_key(lines, index, key)
 
         parsed = make_lab_row(
             key=key,
             result_text=result_text,
             reference_text=reference_text,
             unit_text=unit_text,
-            confidence=0.85,
+            confidence=confidence,
         )
 
         if parsed:
@@ -1243,22 +1366,20 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]]) -> list[dict
     return labs
 
 
-def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
-    labs: list[dict] = []
+def parse_labs_from_extraction_lines(extraction: dict[str, Any]) -> list[dict]:
+    lines = collect_lines_from_extraction(extraction, "lines_text")
 
-    for table in tables or []:
-        table_rows: list[list[str]] = []
+    if not lines:
+        lines = collect_lines_from_extraction(extraction, "plain_text")
 
-        for row in table.get("rows", []) or []:
-            table_rows.append(table_row_to_cells(row))
+    if not lines:
+        lines = collect_lines_from_extraction(extraction, "text")
 
-        labs.extend(parse_labs_from_table_rows_dynamic(table_rows))
-
-    return labs
+    return parse_labs_from_ordered_lines(lines, confidence=0.935)
 
 
 def parse_labs_from_text_lines(text: str) -> list[dict]:
-    return parse_labs_from_ordered_lines(collect_lines_from_blob(text or ""))
+    return parse_labs_from_ordered_lines(collect_lines_from_blob(text or ""), confidence=0.70)
 
 
 def lab_key(row: dict) -> str:
@@ -1272,19 +1393,59 @@ def lab_key(row: dict) -> str:
     return norm_key(str(key)).lower()
 
 
+def row_reference_compatible(row: dict) -> bool:
+    key = norm_key(str(row.get("raw_test_name") or ""))
+
+    if not key:
+        return False
+
+    reference_range = row.get("reference_range")
+
+    if key in NO_REFERENCE_KEYS:
+        return reference_range is None
+
+    if not reference_range:
+        return True
+
+    unit = row.get("unit")
+    expected = DEFAULT_CBC_UNITS.get(key)
+
+    return units_compatible(expected, unit)
+
+
 def quality_score(row: dict) -> float:
     score = float(row.get("confidence") or 0)
 
     if row.get("value") is not None:
-        score += 0.5
+        score += 0.8
 
     if row.get("reference_range"):
-        score += 0.4
+        score += 0.55
 
     if row.get("unit"):
         score += 0.2
 
+    if row_reference_compatible(row):
+        score += 0.25
+    else:
+        score -= 1.0
+
     return score
+
+
+def clean_final_row(row: dict) -> dict:
+    cleaned = dict(row)
+    key = norm_key(str(cleaned.get("raw_test_name") or ""))
+
+    if key in NO_REFERENCE_KEYS:
+        cleaned["reference_range"] = None
+        cleaned["flag"] = None
+        cleaned["unit"] = cleaned.get("unit") or DEFAULT_CBC_UNITS.get(key)
+
+    if not cleaned.get("reference_range"):
+        cleaned["flag"] = None
+
+    return cleaned
 
 
 def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
@@ -1299,54 +1460,48 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
     ordered.extend(labs_by_key.values())
     return ordered
 
-def final_clean_google_cbc_rows(labs: list[dict]) -> list[dict]:
-    cleaned: list[dict] = []
 
-    for row in labs:
-        row = dict(row)
-        key = norm_key(row.get("raw_test_name") or "")
+def merge_lab_candidates(candidate_groups: list[list[dict]]) -> list[dict]:
+    labs_by_key: dict[str, dict] = {}
 
-        # These rows commonly have a unit only in Fundeni/Sysmex output.
-        # Do not allow nearby platelet ranges or footer dates to become references.
-        if key in {"NRBC#", "NRBC%", "IG#", "IG%"}:
-            row["reference_range"] = None
-            row["flag"] = None
-            row["unit"] = row.get("unit") or DEFAULT_CBC_UNITS.get(key)
+    for group in candidate_groups:
+        for row in group:
+            key = lab_key(row)
 
-        cleaned.append(row)
+            if not key:
+                continue
 
-    return cleaned
+            cleaned = clean_final_row(row)
+
+            if key not in labs_by_key:
+                labs_by_key[key] = cleaned
+                continue
+
+            if quality_score(cleaned) > quality_score(labs_by_key[key]):
+                labs_by_key[key] = cleaned
+
+    return order_labs(labs_by_key)
+
 
 def parse_labs_from_google_extraction(extraction: dict[str, Any]) -> list[dict]:
-    line_labs = parse_labs_from_extraction_lines(extraction)
     table_labs = parse_labs_from_google_tables(extraction.get("tables") or [])
 
-    # Fallback only. These fill missing rows but should not beat the ordered line parser.
+    # Main fallback for scanned / weird PDFs: rebuild the visual table from word coordinates.
     token_labs = parse_labs_from_token_coordinates(extraction.get("words") or [])
+
+    # Safer text fallback: looks both before and after each detected test key.
+    line_labs = parse_labs_from_extraction_lines(extraction)
+
+    # Lowest-confidence fallbacks.
     plain_labs = parse_labs_from_text_lines(extraction.get("plain_text") or "")
     text_labs = parse_labs_from_text_lines(extraction.get("text") or "")
 
-    labs_by_key: dict[str, dict] = {}
-
-    for source in [plain_labs, text_labs, token_labs]:
-        for row in source:
-            key = lab_key(row)
-
-            if key and key not in labs_by_key:
-                labs_by_key[key] = row
-
-    for row in table_labs:
-        key = lab_key(row)
-
-        if key:
-            labs_by_key[key] = row
-
-    # Source of truth for Google Document AI CBC text.
-    for row in line_labs:
-        key = lab_key(row)
-
-        if key:
-            labs_by_key[key] = row
-
-    ordered = order_labs(labs_by_key)
-    return repair_immediate_shifted_references(ordered, extraction)
+    return merge_lab_candidates(
+        [
+            plain_labs,
+            text_labs,
+            line_labs,
+            token_labs,
+            table_labs,
+        ]
+    )
