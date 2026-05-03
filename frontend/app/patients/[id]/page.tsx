@@ -87,6 +87,7 @@ type PatientProfileResponse = {
   sections: {
     notes?: DocumentCard[];
     bloodwork?: DocumentCard[];
+    discharge_summary?: DocumentCard[];
     medications?: DocumentCard[];
     scans?: DocumentCard[];
     hospitalizations?: DocumentCard[];
@@ -134,6 +135,7 @@ const TREND_POINT_LIMIT = 5;
 
 const SECTION_ORDER = [
   "bloodwork",
+  "discharge_summary",
   "medications",
   "scans",
   "hospitalizations",
@@ -208,7 +210,7 @@ function compareDatesAscending(a?: string | null, b?: string | null) {
 }
 
 function formatDate(value?: string | null) {
-  if (!value) return "€”";
+  if (!value) return "—";
 
   const time = parseDateTime(value);
 
@@ -230,11 +232,11 @@ function getYear(value?: string | null) {
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "€”";
+  if (!dateOfBirth) return "—";
 
   const dob = new Date(dateOfBirth);
 
-  if (Number.isNaN(dob.getTime())) return "€”";
+  if (Number.isNaN(dob.getTime())) return "—";
 
   const today = new Date();
 
@@ -250,7 +252,7 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "€”";
+  if (years < 0) return "—";
 
   return `${years}y ${months}m`;
 }
@@ -261,6 +263,7 @@ function normalizeProfile(profile: PatientProfileResponse): PatientProfileRespon
     sections: {
       notes: profile.sections.notes || [],
       bloodwork: profile.sections.bloodwork || [],
+      discharge_summary: profile.sections.discharge_summary || [],
       medications: profile.sections.medications || [],
       scans: profile.sections.scans || [],
       hospitalizations: profile.sections.hospitalizations || [],
@@ -278,6 +281,7 @@ function getSectionDocuments(profile: PatientProfileResponse | null, section: Se
 
 function sectionLabel(section: string) {
   if (section === "bloodwork") return "Bloodwork";
+  if (section === "discharge_summary") return "Discharge summaries";
   if (section === "medications") return "Medications";
   if (section === "scans") return "Scans";
   if (section === "hospitalizations") return "Hospitalizations";
@@ -1269,6 +1273,7 @@ export default function PatientChartPage() {
         <div style={{ display: "grid", gap: 14 }}>
           {visibleDocuments.map((doc) => {
             const isNote = doc.section === "notes";
+            const isDischargeSummary = doc.section === "discharge_summary";
             const abnormal = hasAbnormal(doc);
             const reviewNeeded = needsDoctorReview(doc);
             const editableNote = canEditNote(doc);
@@ -1351,8 +1356,9 @@ export default function PatientChartPage() {
                     ) : (
                       <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
                         {sectionLabel(doc.section)} · {getDocumentDateLabel(doc)}
-                        {doc.lab_name ? ` · ${doc.lab_name}` : ""}
-                        {doc.sample_type ? ` · ${doc.sample_type}` : ""}
+                        {!isDischargeSummary && doc.lab_name ? ` · ${doc.lab_name}` : ""}
+                        {!isDischargeSummary && doc.sample_type ? ` · ${doc.sample_type}` : ""}
+                        {isDischargeSummary ? " · Narrative discharge record" : ""}
                       </div>
                     )}
                   </div>
@@ -1469,7 +1475,7 @@ export default function PatientChartPage() {
                       </div>
 
                       <div className="muted-text" style={{ marginTop: 5, fontSize: 12 }}>
-                        {trend.category || "Lab result"} · Unit {trend.unit || "€”"}
+                        {trend.category || "Lab result"} · Unit {trend.unit || "—"}
                       </div>
 
                       <div
@@ -1485,7 +1491,7 @@ export default function PatientChartPage() {
                             Latest
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.latest?.value_display || "€”"}
+                            {trend.latest?.value_display || "—"}
                           </div>
                         </div>
 
@@ -1494,7 +1500,7 @@ export default function PatientChartPage() {
                             Previous
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.previous?.value_display || "€”"}
+                            {trend.previous?.value_display || "—"}
                           </div>
                         </div>
 
@@ -1504,7 +1510,7 @@ export default function PatientChartPage() {
                           </div>
                           <div style={{ fontWeight: 950, marginTop: 4 }}>
                             {trend.delta === null || trend.delta === undefined
-                              ? "€”"
+                              ? "—"
                               : `${trend.delta > 0 ? "+" : ""}${trend.delta}`}
                           </div>
                         </div>
@@ -1512,7 +1518,7 @@ export default function PatientChartPage() {
 
                       <div className="muted-text" style={{ marginTop: 10, fontSize: 12 }}>
                         Latest sample:{" "}
-                        {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "€”"}` : "€”"}
+                        {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
                       </div>
                     </div>
 
@@ -1597,7 +1603,7 @@ export default function PatientChartPage() {
                                     {point.report_name || `Document ${point.document_id}`}
                                   </div>
                                   <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                                    {point.date || "No date"} · Ref {point.reference_range || "€”"}
+                                    {point.date || "No date"} · Ref {point.reference_range || "—"}
                                   </div>
                                 </div>
 
@@ -1654,5 +1660,3 @@ export default function PatientChartPage() {
     </AppShell>
   );
 }
-
-

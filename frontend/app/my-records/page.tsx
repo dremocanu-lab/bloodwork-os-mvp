@@ -94,6 +94,7 @@ type MyProfileResponse = {
   };
   sections: {
     bloodwork: DocumentCard[];
+    discharge_summary: DocumentCard[];
     medications: DocumentCard[];
     scans: DocumentCard[];
     hospitalizations: DocumentCard[];
@@ -137,6 +138,7 @@ type TimelineItem = {
 
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
   "bloodwork",
+  "discharge_summary",
   "medications",
   "scans",
   "hospitalizations",
@@ -228,7 +230,7 @@ function getYearFromDate(value?: string | null) {
 function formatAxisDate(value?: string | null) {
   const time = parseDateTime(value);
 
-  if (!time) return value || "€”";
+  if (!time) return value || "—";
 
   return new Date(time).toLocaleDateString(undefined, {
     day: "2-digit",
@@ -245,10 +247,10 @@ function formatAxisNumber(value: number) {
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "€”";
+  if (!dateOfBirth) return "—";
 
   const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return "€”";
+  if (Number.isNaN(dob.getTime())) return "—";
 
   const today = new Date();
 
@@ -264,7 +266,7 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "€”";
+  if (years < 0) return "—";
 
   if (years === 0) {
     return `${months} ${months === 1 ? "month" : "months"}`;
@@ -273,6 +275,22 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
   return `${years} ${years === 1 ? "year" : "years"} ${months} ${
     months === 1 ? "month" : "months"
   }`;
+}
+
+function normalizeProfile(profile: MyProfileResponse): MyProfileResponse {
+  return {
+    ...profile,
+    sections: {
+      bloodwork: profile.sections.bloodwork || [],
+      discharge_summary: profile.sections.discharge_summary || [],
+      medications: profile.sections.medications || [],
+      scans: profile.sections.scans || [],
+      hospitalizations: profile.sections.hospitalizations || [],
+      other: profile.sections.other || [],
+    },
+    doctor_access: profile.doctor_access || [],
+    events: profile.events || [],
+  };
 }
 
 function getDocumentClinicalDate(doc: DocumentCard) {
@@ -684,6 +702,7 @@ export default function MyRecordsPage() {
 
   const sectionLabels: Record<string, string> = {
     bloodwork: t("bloodwork"),
+    discharge_summary: "Discharge summaries",
     medications: "Medications",
     scans: t("scans"),
     hospitalizations: "Hospitalizations",
@@ -694,7 +713,8 @@ export default function MyRecordsPage() {
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [trends, setTrends] = useState<BloodworkTrend[]>([]);
-  const [activeSection, setActiveSection] = useState<keyof MyProfileResponse["sections"]>("bloodwork");
+  const [activeSection, setActiveSection] =
+    useState<keyof MyProfileResponse["sections"]>("bloodwork");
 
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [hospitalFilter, setHospitalFilter] = useState("");
@@ -721,8 +741,9 @@ export default function MyRecordsPage() {
 
   async function fetchProfile() {
     const response = await api.get<MyProfileResponse>("/my/profile");
-    setProfile(response.data);
-    return response.data;
+    const normalized = normalizeProfile(response.data);
+    setProfile(normalized);
+    return normalized;
   }
 
   async function fetchRequests() {
@@ -850,7 +871,7 @@ export default function MyRecordsPage() {
   const allDocuments = useMemo(() => {
     if (!profile) return [];
 
-    return SECTION_ORDER.flatMap((section) => profile.sections[section]).sort((a, b) =>
+    return SECTION_ORDER.flatMap((section) => profile.sections[section] || []).sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
   }, [profile]);
@@ -858,7 +879,7 @@ export default function MyRecordsPage() {
   const docsForActiveSection = useMemo(() => {
     if (!profile) return [];
 
-    return [...profile.sections[activeSection]].sort((a, b) =>
+    return [...(profile.sections[activeSection] || [])].sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
   }, [profile, activeSection]);
@@ -1270,7 +1291,9 @@ export default function MyRecordsPage() {
                     {valueOrDash(doc.report_type)} · {getDocumentDateLabel(doc)}
                   </div>
                   <div className="muted-text" style={{ marginTop: 6 }}>
-                    {valueOrDash(doc.lab_name)} · {valueOrDash(doc.sample_type)}
+                    {doc.section === "discharge_summary"
+                      ? "Narrative discharge record"
+                      : `${valueOrDash(doc.lab_name)} · ${valueOrDash(doc.sample_type)}`}
                   </div>
                 </div>
 
@@ -1379,7 +1402,7 @@ export default function MyRecordsPage() {
                             {t("previous")}
                           </div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
-                            {trend.previous ? valueOrDash(trend.previous.value_display) : "€”"}
+                            {trend.previous ? valueOrDash(trend.previous.value_display) : "—"}
                           </div>
                         </div>
 
@@ -1389,7 +1412,7 @@ export default function MyRecordsPage() {
                           </div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
                             {trend.delta === null || trend.delta === undefined
-                              ? "€”"
+                              ? "—"
                               : trend.delta > 0
                               ? `+${trend.delta}`
                               : `${trend.delta}`}
@@ -1537,5 +1560,3 @@ export default function MyRecordsPage() {
     </AppShell>
   );
 }
-
-
