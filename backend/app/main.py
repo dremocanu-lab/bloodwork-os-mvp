@@ -39,6 +39,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_SECTIONS = {
     "notes",
     "bloodwork",
+    "discharge_summary"
     "medications",
     "scans",
     "hospitalizations",
@@ -372,6 +373,7 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
     grouped_documents = {
         "notes": [],
         "bloodwork": [],
+        "discharge_summary": [],
         "medications": [],
         "scans": [],
         "hospitalizations": [],
