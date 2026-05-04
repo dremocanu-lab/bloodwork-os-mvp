@@ -144,10 +144,6 @@ function getUploadHint(file: File) {
   return "File · will be saved to your records";
 }
 
-function isActiveUpload(status: UploadStatus | "selected") {
-  return status === "queued" || status === "uploading" || status === "processing";
-}
-
 export default function MyRecordsUploadPage() {
   const router = useRouter();
   const { language } = useLanguage();
@@ -163,6 +159,7 @@ export default function MyRecordsUploadPage() {
         documentType: "Tip document",
         documentTypeDesc: "Alege secțiunea unde vor fi organizate fișierele.",
         bloodwork: "Analize",
+        dischargeSummary: "Fișă de externare",
         medications: "Medicație",
         scans: "Scanări",
         hospitalizations: "Spitalizări",
@@ -192,6 +189,7 @@ export default function MyRecordsUploadPage() {
       documentType: "Document type",
       documentTypeDesc: "Choose where these files should be organized in your record.",
       bloodwork: "Bloodwork",
+      dischargeSummary: "Discharge summary",
       medications: "Medications",
       scans: "Scans",
       hospitalizations: "Hospitalizations",
@@ -217,6 +215,7 @@ export default function MyRecordsUploadPage() {
   const sections = useMemo(
     () => [
       { value: "bloodwork", label: labels.bloodwork },
+      { value: "discharge_summary", label: labels.dischargeSummary },
       { value: "medications", label: labels.medications },
       { value: "scans", label: labels.scans },
       { value: "hospitalizations", label: labels.hospitalizations },

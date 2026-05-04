@@ -173,6 +173,7 @@ export default function DoctorPatientUploadPage() {
         documentType: "Tip document",
         documentTypeDesc: "Alege secțiunea unde va fi organizat documentul în fișa pacientului.",
         bloodwork: "Analize",
+        dischargeSummary: "Fișă de externare",
         scans: "Scanări",
         medications: "Medicație",
         hospitalizations: "Spitalizări",
@@ -203,6 +204,7 @@ export default function DoctorPatientUploadPage() {
       documentType: "Document type",
       documentTypeDesc: "Choose where this document should be organized in the patient chart.",
       bloodwork: "Bloodwork",
+      dischargeSummary: "Discharge summary",
       scans: "Scans",
       medications: "Medications",
       hospitalizations: "Hospitalizations",
@@ -229,6 +231,7 @@ export default function DoctorPatientUploadPage() {
   const sections = useMemo(
     () => [
       { value: "bloodwork", label: labels.bloodwork },
+      { value: "discharge_summary", label: labels.dischargeSummary },
       { value: "scans", label: labels.scans },
       { value: "medications", label: labels.medications },
       { value: "hospitalizations", label: labels.hospitalizations },
