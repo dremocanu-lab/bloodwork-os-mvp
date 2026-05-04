@@ -110,6 +110,19 @@ type EditableLabRow = {
   unit?: string | null;
 };
 
+type DischargeSection = {
+  key: string;
+  title: string;
+  original_titles?: string[];
+  body: string;
+  confidence?: number;
+};
+
+type DischargeNotePayload = {
+  document_type?: string;
+  sections?: DischargeSection[];
+};
+
 const CATEGORY_ORDER = [
   "Hematologie",
   "Coagulare",
@@ -398,6 +411,27 @@ function TextInput({
   );
 }
 
+function parseDischargePayload(noteBody?: string | null): DischargeNotePayload | null {
+  if (!noteBody) return null;
+
+  try {
+    const parsed = JSON.parse(noteBody);
+
+    if (
+      parsed &&
+      typeof parsed === "object" &&
+      parsed.document_type === "discharge_summary" &&
+      Array.isArray(parsed.sections)
+    ) {
+      return parsed;
+    }
+
+    return null;
+  } catch {
+    return null;
+  }
+}
+
 export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
@@ -511,6 +545,11 @@ export default function DocumentStructuredPage() {
 
   const parsed = documentData?.parsed_data;
   const isNote = documentData?.section === "notes";
+  const dischargePayload = parseDischargePayload(parsed?.note_body);
+  const isDischargeSummary =
+    documentData?.section === "discharge_summary" ||
+    parsed?.report_type === "Discharge summary" ||
+    Boolean(dischargePayload);
 
   const canEditStructured = currentUser?.role === "doctor" || currentUser?.role === "admin";
   const canVerify = currentUser?.role === "doctor" || currentUser?.role === "admin";
@@ -925,11 +964,13 @@ export default function DocumentStructuredPage() {
 
               <StatusPill>{documentData.section}</StatusPill>
 
-              {!isNote && abnormalLabs.length > 0 && (
+              {!isNote && !isDischargeSummary && abnormalLabs.length > 0 && (
                 <StatusPill tone="danger">{abnormalLabs.length} abnormal</StatusPill>
               )}
 
               {isNote && <StatusPill>Clinical note</StatusPill>}
+
+              {isDischargeSummary && <StatusPill>Discharge summary</StatusPill>}
             </div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
@@ -951,7 +992,7 @@ export default function DocumentStructuredPage() {
               </button>
             )}
 
-            {!isNote && canEditStructured && (
+            {!isNote && !isDischargeSummary && canEditStructured && (
               <button className={editMode ? "secondary-btn" : "primary-btn"} onClick={() => setEditMode((prev) => !prev)}>
                 {editMode ? "Cancel edit" : "Edit structured data"}
               </button>
@@ -1031,6 +1072,149 @@ export default function DocumentStructuredPage() {
               </div>
             </form>
           )}
+        </div>
+      ) : isDischargeSummary ? (
+        <div style={{ display: "grid", gap: 24 }}>
+          <div
+            style={{
+              display: "grid",
+              gridTemplateColumns: "repeat(auto-fit, minmax(320px, 1fr))",
+              gap: 20,
+            }}
+          >
+            <div className="soft-card" style={{ padding: 24 }}>
+              <SectionHeader title="Patient" />
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <DetailField label="Name" value={parsed.patient_name} />
+                <DetailField label="Date of birth" value={parsed.date_of_birth} />
+                <DetailField label="Age" value={parsed.age} />
+                <DetailField label="Sex" value={parsed.sex} />
+                <DetailField label="CNP" value={parsed.cnp} />
+                <DetailField label="Patient ID" value={parsed.patient_identifier} />
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <SectionHeader title="Document details" />
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <DetailField label="Report name" value={parsed.report_name} />
+                <DetailField label="Report type" value={parsed.report_type} />
+                <DetailField label="Hospital / lab" value={parsed.lab_name} />
+                <DetailField label="Referring doctor" value={parsed.referring_doctor} />
+                <DetailField label="Source language" value={parsed.source_language} />
+              </div>
+            </div>
+
+            <div className="soft-card" style={{ padding: 24 }}>
+              <SectionHeader title="Dates" />
+
+              <div style={{ display: "grid", gap: 12 }}>
+                <DetailField label="Collected / admission" value={parsed.collected_on} />
+                <DetailField label="Reported / discharge" value={parsed.reported_on} />
+                <DetailField label="Registered on" value={parsed.registered_on} />
+                <DetailField label="Generated on" value={parsed.generated_on} />
+              </div>
+            </div>
+          </div>
+
+          <div className="soft-card" style={{ padding: 22 }}>
+            <SectionHeader
+              title="Structured discharge summary"
+              subtitle="Text copied verbatim from the original document and organized into broad clinical buckets."
+            />
+
+            {dischargePayload?.sections?.length ? (
+              <div style={{ display: "grid", gap: 14 }}>
+                {dischargePayload.sections.map((section, index) => (
+                  <div
+                    key={`${section.key}-${index}`}
+                    className="soft-card-tight"
+                    style={{
+                      padding: 18,
+                      background: "var(--panel-2)",
+                      borderRadius: 22,
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        justifyContent: "space-between",
+                        gap: 12,
+                        alignItems: "flex-start",
+                        flexWrap: "wrap",
+                        marginBottom: 10,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 950, fontSize: 17, letterSpacing: "-0.03em" }}>
+                          {section.title || "Clinical section"}
+                        </div>
+
+                        {section.original_titles?.length ? (
+                          <div className="muted-text" style={{ marginTop: 5, fontSize: 12, fontWeight: 800 }}>
+                            Original heading: {section.original_titles.join(" · ")}
+                          </div>
+                        ) : null}
+                      </div>
+
+                      {section.confidence ? (
+                        <StatusPill>{Math.round(section.confidence * 100)}% match</StatusPill>
+                      ) : null}
+                    </div>
+
+                    <div
+                      style={{
+                        whiteSpace: "pre-wrap",
+                        lineHeight: 1.65,
+                        color: "var(--foreground)",
+                        fontWeight: 650,
+                      }}
+                    >
+                      {section.body}
+                    </div>
+                  </div>
+                ))}
+              </div>
+            ) : (
+              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+                <div style={{ fontWeight: 900 }}>No structured discharge sections found.</div>
+                <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
+                  Re-upload after the discharge summary parser is deployed, or open the original document.
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div className="soft-card" style={{ padding: 24 }}>
+            <SectionHeader title="Audit trail" />
+
+            <div style={{ display: "grid", gap: 12 }}>
+              {(parsed.audit_logs || []).map((log, index) => (
+                <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
+                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+                    <div style={{ fontWeight: 950 }}>{log.action}</div>
+                    <div className="muted-text" style={{ fontSize: 12 }}>
+                      {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
+                    </div>
+                  </div>
+
+                  {log.details && (
+                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
+                      {log.details}
+                    </div>
+                  )}
+                </div>
+              ))}
+
+              {!parsed.audit_logs?.length && (
+                <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                  <div className="muted-text">No audit activity yet.</div>
+                </div>
+              )}
+            </div>
+          </div>
         </div>
       ) : editMode ? (
         <form onSubmit={saveStructuredData} style={{ display: "grid", gap: 24 }}>
@@ -1371,7 +1555,7 @@ export default function DocumentStructuredPage() {
                                         fontWeight: 950,
                                       }}
                                     >
-                                      {isNilValue(lab.value) ? "nil" : hasDisplayableFlag(lab.flag) ? lab.flag : "—"}
+                                      {hasDisplayableFlag(lab.flag) ? lab.flag : "—"}
                                     </span>
                                   )}
                                 </td>
