@@ -8,7 +8,7 @@ from typing import Any
 from app.report_fields import extract_report_metadata
 
 
-def clean_discharge_text(value: Any) -> str:
+def clean_text(value: Any) -> str:
     if value is None:
         return ""
 
@@ -16,92 +16,76 @@ def clean_discharge_text(value: Any) -> str:
     text = unicodedata.normalize("NFKC", text)
     text = text.replace("\ufeff", "")
     text = text.replace("\u00a0", " ")
-    text = text.replace("Â·", "·").replace("Â", "")
+    text = text.replace("Â", "")
     text = text.replace("â€™", "'")
     text = text.replace("â€œ", '"').replace("â€\x9d", '"')
-    text = text.replace("â€“", "–").replace("â€”", "—")
     text = text.replace("−", "-").replace("–", "-").replace("—", "-")
     text = re.sub(r"[ \t]+", " ", text)
     text = re.sub(r"\n{3,}", "\n\n", text)
     return text.strip()
 
 
-def normalize_for_matching(value: Any) -> str:
-    text = clean_discharge_text(value).lower()
+def normalize(value: Any) -> str:
+    text = clean_text(value).lower()
     text = unicodedata.normalize("NFKD", text)
     text = "".join(char for char in text if not unicodedata.combining(char))
-    text = text.replace("ș", "s").replace("ț", "t").replace("ă", "a").replace("â", "a").replace("î", "i")
+    text = text.replace("ș", "s").replace("ț", "t")
+    text = text.replace("ă", "a").replace("â", "a").replace("î", "i")
     text = re.sub(r"[^a-z0-9%#./:+ -]+", " ", text)
     text = re.sub(r"\s+", " ", text)
     return text.strip()
 
 
-def get_best_ocr_text(extraction: dict[str, Any] | str) -> str:
-    if isinstance(extraction, str):
-        return clean_discharge_text(extraction)
+def extract_best_text(extraction_or_text: dict[str, Any] | str) -> str:
+    if isinstance(extraction_or_text, str):
+        return clean_text(extraction_or_text)
 
-    for field in ["plain_text", "text", "extracted_text", "debug_text"]:
-        value = extraction.get(field)
+    for key in ["plain_text", "lines_text", "text", "extracted_text", "debug_text"]:
+        value = extraction_or_text.get(key)
         if isinstance(value, str) and value.strip():
             text = value
             break
     else:
-        text = ""
+        return ""
 
     if "--- GOOGLE DOCUMENT AI PLAIN TEXT ---" in text:
         text = text.split("--- GOOGLE DOCUMENT AI PLAIN TEXT ---", 1)[1]
-        next_marker = re.search(r"\n--- GOOGLE DOCUMENT AI [A-Z ]+ ---", text)
-        if next_marker:
-            text = text[: next_marker.start()]
+        marker = re.search(r"\n--- GOOGLE DOCUMENT AI [A-Z ]+ ---", text)
+        if marker:
+            text = text[: marker.start()]
 
-    return clean_discharge_text(text)
-
-
-DISCHARGE_HINTS = [
-    "fisa de externare",
-    "fișa de externare",
-    "bilet de iesire",
-    "bilet de ieșire",
-    "scrisoare medicala",
-    "scrisoare medicală",
-    "externare",
-    "epicriza",
-    "epicriză",
-    "data externarii",
-    "data externării",
-    "diagnostic la externare",
-    "diagnostic externare",
-    "recomandari la externare",
-    "recomandări la externare",
-    "tratament recomandat",
-    "discharge summary",
-    "discharge diagnosis",
-    "hospital course",
-    "discharge medication",
-]
+    return clean_text(text)
 
 
-def detect_discharge_document(extraction: dict[str, Any] | str) -> bool:
-    text = normalize_for_matching(get_best_ocr_text(extraction))
-    score = 0
-
-    for hint in DISCHARGE_HINTS:
-        if normalize_for_matching(hint) in text:
-            score += 1
-
-    return score >= 2
-
-
-SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
-    (
-        "diagnoses",
-        "Diagnoses / Diagnostic",
-        [
+SECTION_BUCKETS: list[dict[str, Any]] = [
+    {
+        "key": "patient_admission_info",
+        "title": "Patient and admission information",
+        "aliases": [
+            "date pacient",
+            "datele pacientului",
+            "foaie de observatie",
+            "foaie observatie",
+            "sectia",
+            "sectie",
+            "medic curant",
+            "data internarii",
+            "data internare",
+            "data externarii",
+            "data externare",
+            "admission information",
+        ],
+    },
+    {
+        "key": "diagnoses",
+        "title": "Diagnoses / Diagnostic",
+        "aliases": [
             "diagnostic",
             "diagnostic principal",
             "diagnostic secundar",
-            "diagnostic externare",
+            "diagnostic la internare",
             "diagnostic la externare",
+            "diagnostic externare",
             "diagnostice",
             "cod diagnostic",
             "icd",
@@ -110,15 +94,17 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "final diagnosis",
             "diagnoses",
         ],
-    ),
-    (
-        "epicriza",
-        "Epicriză / Clinical course",
-        [
+    },
+    {
+        "key": "epicriza",
+        "title": "Epicriză / Clinical course",
+        "aliases": [
             "epicriza",
             "epicriză",
             "evolutie",
             "evoluție",
+            "evolutia",
+            "evoluția",
             "istoric",
             "anamneza",
             "anamneză",
@@ -128,22 +114,24 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "motivul internării",
             "pacientul se interneaza",
             "pacientul se internează",
-            "hospital course",
             "clinical course",
+            "hospital course",
             "medical summary",
             "summary",
         ],
-    ),
-    (
-        "investigations",
-        "Investigations / Results",
-        [
+    },
+    {
+        "key": "investigations",
+        "title": "Investigations / Results",
+        "aliases": [
             "investigatii",
             "investigații",
             "explorari paraclinice",
             "explorări paraclinice",
+            "examene paraclinice",
             "paraclinic",
             "analize",
+            "rezultate analize",
             "biologie",
             "hematologie",
             "biochimie",
@@ -165,11 +153,11 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "laboratory",
             "results",
         ],
-    ),
-    (
-        "treatment_in_hospital",
-        "Treatment during admission",
-        [
+    },
+    {
+        "key": "treatment_in_hospital",
+        "title": "Treatment during admission",
+        "aliases": [
             "tratament administrat",
             "tratamentul administrat",
             "tratament in spital",
@@ -185,11 +173,11 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "hospital treatment",
             "treatment during admission",
         ],
-    ),
-    (
-        "recommended_treatment",
-        "Recommended treatment / Discharge medication",
-        [
+    },
+    {
+        "key": "recommended_treatment",
+        "title": "Recommended treatment / Discharge medication",
+        "aliases": [
             "tratament recomandat",
             "tratamentul recomandat",
             "tratament la externare",
@@ -206,11 +194,11 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "recommended treatment",
             "medication plan",
         ],
-    ),
-    (
-        "recommendations",
-        "Recommendations / Follow-up",
-        [
+    },
+    {
+        "key": "recommendations",
+        "title": "Recommendations / Follow-up",
+        "aliases": [
             "recomandari",
             "recomandări",
             "indicatii",
@@ -230,11 +218,11 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "monitoring",
             "plan",
         ],
-    ),
-    (
-        "discharge_status",
-        "Discharge status",
-        [
+    },
+    {
+        "key": "discharge_status",
+        "title": "Discharge status",
+        "aliases": [
             "stare la externare",
             "starea la externare",
             "status la externare",
@@ -246,70 +234,113 @@ SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
             "discharge status",
             "condition at discharge",
         ],
-    ),
+    },
 ]
 
 
-CANONICAL_TITLES = {key: title for key, title, _aliases in SECTION_DEFINITIONS}
+ORDERED_KEYS = [
+    "patient_admission_info",
+    "diagnoses",
+    "epicriza",
+    "investigations",
+    "treatment_in_hospital",
+    "recommended_treatment",
+    "recommendations",
+    "discharge_status",
+    "other",
+]
 
 
-def match_section_header(line: str) -> tuple[str, str] | None:
-    raw = clean_discharge_text(line)
-    normalized = normalize_for_matching(raw)
+def canonical_title(key: str) -> str:
+    for bucket in SECTION_BUCKETS:
+        if bucket["key"] == key:
+            return bucket["title"]
+    return "Other clinical text"
 
-    if not normalized:
+
+def looks_like_heading(line: str) -> bool:
+    raw = clean_text(line)
+    norm = normalize(raw)
+
+    if not norm:
+        return False
+
+    if len(norm) > 130 and ":" not in norm:
+        return False
+
+    if raw.isupper() and len(raw) <= 120:
+        return True
+
+    if ":" in raw and len(raw.split(":", 1)[0]) <= 90:
+        return True
+
+    return False
+
+
+def match_heading(line: str) -> tuple[str, str, str] | None:
+    raw = clean_text(line)
+    norm = normalize(raw)
+
+    if not norm or not looks_like_heading(raw):
         return None
 
-    # Avoid classifying long clinical paragraphs as headers.
-    if len(normalized) > 110 and ":" not in normalized:
-        return None
+    heading_part = raw.split(":", 1)[0].strip()
+    heading_norm = normalize(heading_part)
 
-    for key, title, aliases in SECTION_DEFINITIONS:
-        for alias in aliases:
-            alias_norm = normalize_for_matching(alias)
+    for bucket in SECTION_BUCKETS:
+        for alias in bucket["aliases"]:
+            alias_norm = normalize(alias)
 
-            if normalized == alias_norm:
-                return key, raw
+            if not alias_norm:
+                continue
 
-            if normalized.startswith(alias_norm + ":"):
-                return key, raw
+            if heading_norm == alias_norm:
+                return bucket["key"], bucket["title"], raw
 
-            if normalized.startswith(alias_norm + " -"):
-                return key, raw
+            if heading_norm.startswith(alias_norm):
+                return bucket["key"], bucket["title"], raw
 
-            if normalized.startswith(alias_norm + " "):
-                # Allows headers like "Diagnostic externare:"
-                if len(normalized) <= len(alias_norm) + 45:
-                    return key, raw
+            if norm.startswith(alias_norm + ":"):
+                return bucket["key"], bucket["title"], raw
+
+            if norm.startswith(alias_norm + " -"):
+                return bucket["key"], bucket["title"], raw
 
     return None
 
 
-def classify_body_without_header(body: str) -> tuple[str, str, float]:
-    normalized = normalize_for_matching(body)
+def classify_unheaded_text(body: str) -> tuple[str, str, float]:
+    norm = normalize(body)
 
-    if not normalized:
+    if not norm:
         return "other", "Other clinical text", 0.2
 
     scores: dict[str, int] = {}
 
-    for key, _title, aliases in SECTION_DEFINITIONS:
+    for bucket in SECTION_BUCKETS:
         score = 0
-        for alias in aliases:
-            alias_norm = normalize_for_matching(alias)
-            if alias_norm and alias_norm in normalized:
+
+        for alias in bucket["aliases"]:
+            alias_norm = normalize(alias)
+            if alias_norm and alias_norm in norm:
                 score += 1
 
-        scores[key] = score
+        scores[bucket["key"]] = score
 
-    if re.search(r"\b(ct|rmn|irm|ecografie|radiografie|ecg|ekg|analize|hemoglobina|leucocite|trombocite)\b", normalized):
-        scores["investigations"] = scores.get("investigations", 0) + 2
+    if re.search(r"\b(diagnostic|diagnostice|icd|drg)\b", norm):
+        scores["diagnoses"] = scores.get("diagnoses", 0) + 3
 
-    if re.search(r"\b(se recomanda|control|monitorizare|regim|revine|indicatii|indicatii)\b", normalized):
-        scores["recommendations"] = scores.get("recommendations", 0) + 2
+    if re.search(r"\b(epicriza|evolutie|anamneza|internarii|pacientul)\b", norm):
+        scores["epicriza"] = scores.get("epicriza", 0) + 3
 
-    if re.search(r"\b(rp|comprimate|capsule|mg|ml|x\s*\d|dimineata|seara|tratament)\b", normalized):
-        scores["recommended_treatment"] = scores.get("recommended_treatment", 0) + 1
+    if re.search(r"\b(ct|rmn|irm|rx|ecografie|ecg|ekg|analize|hemoglobina|leucocite|trombocite)\b", norm):
+        scores["investigations"] = scores.get("investigations", 0) + 3
+
+    if re.search(r"\b(se recomanda|control|monitorizare|regim|revine|indicatii)\b", norm):
+        scores["recommendations"] = scores.get("recommendations", 0) + 3
+
+    if re.search(r"\b(rp|comprimate|capsule|mg|ml|x\s*\d|dimineata|seara|tratament)\b", norm):
+        scores["recommended_treatment"] = scores.get("recommended_treatment", 0) + 2
 
     best_key = max(scores, key=lambda key: scores[key])
     best_score = scores.get(best_key, 0)
@@ -317,11 +348,12 @@ def classify_body_without_header(body: str) -> tuple[str, str, float]:
     if best_score <= 0:
         return "other", "Other clinical text", 0.35
 
-    return best_key, CANONICAL_TITLES.get(best_key, "Other clinical text"), min(0.85, 0.45 + best_score * 0.12)
+    return best_key, canonical_title(best_key), min(0.9, 0.45 + best_score * 0.12)
 
 
 def split_into_sections(text: str) -> list[dict[str, Any]]:
-    lines = [clean_discharge_text(line) for line in text.splitlines()]
+    cleaned = clean_text(text)
+    lines = [clean_text(line) for line in cleaned.splitlines()]
     lines = [line for line in lines if line]
 
     sections: list[dict[str, Any]] = []
@@ -343,25 +375,25 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
             current_lines = []
             return
 
-        if current_key is None:
-            classified_key, classified_title, confidence = classify_body_without_header(body)
-            sections.append(
-                {
-                    "key": classified_key,
-                    "title": classified_title,
-                    "original_title": None,
-                    "body": body,
-                    "confidence": confidence,
-                }
-            )
-        else:
+        if current_key:
             sections.append(
                 {
                     "key": current_key,
-                    "title": current_title or CANONICAL_TITLES.get(current_key, current_key),
+                    "title": current_title or canonical_title(current_key),
                     "original_title": current_original_title,
                     "body": body,
                     "confidence": 0.92,
+                }
+            )
+        else:
+            key, title, confidence = classify_unheaded_text(body)
+            sections.append(
+                {
+                    "key": key,
+                    "title": title,
+                    "original_title": None,
+                    "body": body,
+                    "confidence": confidence,
                 }
             )
 
@@ -371,55 +403,57 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
         current_lines = []
 
     for line in lines:
-        matched = match_section_header(line)
+        matched = match_heading(line)
 
         if matched:
             flush()
-            current_key, current_original_title = matched
-            current_title = CANONICAL_TITLES.get(current_key, current_original_title)
 
-            # If the header has text after a colon, keep that text in the section body.
+            current_key, current_title, current_original_title = matched
+
             if ":" in line:
                 after_colon = line.split(":", 1)[1].strip()
                 if after_colon:
                     current_lines.append(after_colon)
+
             continue
 
         current_lines.append(line)
 
     flush()
 
-    if not sections and text.strip():
+    if not sections and cleaned:
         sections.append(
             {
                 "key": "other",
-                "title": "Other clinical text",
+                "title": "Full discharge text",
                 "original_title": None,
-                "body": text.strip(),
+                "body": cleaned,
                 "confidence": 0.25,
             }
         )
 
-    return merge_duplicate_sections(sections)
+    merged = merge_sections(sections)
+
+    if not merged and cleaned:
+        merged = [
+            {
+                "key": "other",
+                "title": "Full discharge text",
+                "original_titles": [],
+                "body": cleaned,
+                "confidence": 0.25,
+            }
+        ]
+
+    return merged
 
 
-def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    ordered_keys = [
-        "diagnoses",
-        "epicriza",
-        "investigations",
-        "treatment_in_hospital",
-        "recommended_treatment",
-        "recommendations",
-        "discharge_status",
-        "other",
-    ]
-
+def merge_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
 
     for section in sections:
         key = section.get("key") or "other"
-        body = clean_discharge_text(section.get("body"))
+        body = clean_text(section.get("body"))
 
         if not body:
             continue
@@ -427,7 +461,7 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
         if key not in grouped:
             grouped[key] = {
                 "key": key,
-                "title": section.get("title") or CANONICAL_TITLES.get(key, "Other clinical text"),
+                "title": section.get("title") or canonical_title(key),
                 "original_titles": [],
                 "body": body,
                 "confidence": float(section.get("confidence") or 0.5),
@@ -445,7 +479,7 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
 
     ordered: list[dict[str, Any]] = []
 
-    for key in ordered_keys:
+    for key in ORDERED_KEYS:
         if key in grouped:
             ordered.append(grouped.pop(key))
 
@@ -454,7 +488,7 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
 
 
 def extract_discharge_dates(text: str) -> dict[str, str | None]:
-    clean = clean_discharge_text(text)
+    cleaned = clean_text(text)
 
     admission = None
     discharge = None
@@ -472,15 +506,15 @@ def extract_discharge_dates(text: str) -> dict[str, str | None]:
     ]
 
     for pattern in admission_patterns:
-        match = re.search(pattern, clean, flags=re.IGNORECASE)
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
         if match:
-            admission = clean_discharge_text(match.group(1))[:80]
+            admission = clean_text(match.group(1))[:100]
             break
 
     for pattern in discharge_patterns:
-        match = re.search(pattern, clean, flags=re.IGNORECASE)
+        match = re.search(pattern, cleaned, flags=re.IGNORECASE)
         if match:
-            discharge = clean_discharge_text(match.group(1))[:80]
+            discharge = clean_text(match.group(1))[:100]
             break
 
     return {
@@ -489,14 +523,18 @@ def extract_discharge_dates(text: str) -> dict[str, str | None]:
     }
 
 
-def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]:
-    text = get_best_ocr_text(extraction)
+def parse_discharge_summary(extraction_or_text: dict[str, Any] | str) -> dict[str, Any]:
+    text = extract_best_text(extraction_or_text)
     metadata = extract_report_metadata(text)
-    date_metadata = extract_discharge_dates(text)
+    dates = extract_discharge_dates(text)
     sections = split_into_sections(text)
 
-    patient_name = metadata.get("patient_name")
-    report_date = date_metadata.get("discharge_date") or metadata.get("generated_on") or metadata.get("reported_on")
+    report_date = (
+        dates.get("discharge_date")
+        or metadata.get("generated_on")
+        or metadata.get("reported_on")
+        or metadata.get("registered_on")
+    )
 
     report_name = "Fișă de externare"
     if report_date:
@@ -508,7 +546,7 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
     }
 
     return {
-        "patient_name": patient_name,
+        "patient_name": metadata.get("patient_name"),
         "date_of_birth": metadata.get("date_of_birth"),
         "age": metadata.get("age"),
         "sex": metadata.get("sex"),
@@ -521,15 +559,13 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
         "report_type": "Discharge summary",
         "source_language": metadata.get("source_language") or "ro",
         "test_date": None,
-        "collected_on": date_metadata.get("admission_date"),
-        "reported_on": date_metadata.get("discharge_date"),
+        "collected_on": dates.get("admission_date"),
+        "reported_on": dates.get("discharge_date"),
         "registered_on": metadata.get("registered_on"),
         "generated_on": metadata.get("generated_on"),
-        "admission_date": date_metadata.get("admission_date"),
-        "discharge_date": date_metadata.get("discharge_date"),
         "note_body": json.dumps(note_payload, ensure_ascii=False),
         "labs": [],
         "warnings": [
-            f"Discharge parser created {len(sections)} structured narrative sections."
+            f"New discharge summary parser created {len(sections)} narrative sections."
         ],
     }

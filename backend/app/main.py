@@ -14,6 +14,7 @@ from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
 from app.db import SessionLocal, engine
 from app.services.document_pipeline import process_uploaded_document
+from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 
 app = FastAPI()
 
@@ -541,12 +542,19 @@ def process_upload_job(job_id: int):
 
         file_path = Path(job.saved_to)
 
-        pipeline_result = process_uploaded_document(
-            file_path=file_path,
-            filename=job.filename,
-            section=job.section,
-            temp_dir=UPLOAD_DIR,
-        )
+        if job.section == "discharge_summary":
+            pipeline_result = process_uploaded_discharge_summary(
+                file_path=file_path,
+                filename=job.filename,
+                temp_dir=UPLOAD_DIR,
+            )
+        else:
+            pipeline_result = process_uploaded_document(
+                file_path=file_path,
+                filename=job.filename,
+                section=job.section,
+                temp_dir=UPLOAD_DIR,
+            )
 
         job.progress = 70
         job.message = "Saving structured record..."
