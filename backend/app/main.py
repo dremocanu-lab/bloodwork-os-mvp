@@ -39,7 +39,7 @@ UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
 ALLOWED_SECTIONS = {
     "notes",
     "bloodwork",
-    "discharge_summary"
+    "discharge_summary",
     "medications",
     "scans",
     "hospitalizations",
