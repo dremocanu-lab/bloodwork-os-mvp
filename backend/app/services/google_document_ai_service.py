@@ -430,6 +430,8 @@ def process_single_google_document(
         mime_type=mime_type,
     )
 
+    process_options = None
+
     try:
         process_options = documentai.ProcessOptions(
             ocr_config=documentai.OcrConfig(
@@ -438,17 +440,23 @@ def process_single_google_document(
                 enable_symbol=False,
             )
         )
-
-        request = documentai.ProcessRequest(
-            name=name,
-            raw_document=raw_document,
-            process_options=process_options,
-        )
     except Exception:
-        request = documentai.ProcessRequest(
-            name=name,
-            raw_document=raw_document,
-        )
+        process_options = None
+
+    request_kwargs = {
+        "name": name,
+        "raw_document": raw_document,
+        "imageless_mode": True,
+    }
+
+    if process_options is not None:
+        request_kwargs["process_options"] = process_options
+
+    try:
+        request = documentai.ProcessRequest(**request_kwargs)
+    except TypeError:
+        request_kwargs.pop("imageless_mode", None)
+        request = documentai.ProcessRequest(**request_kwargs)
 
     result = client.process_document(request=request)
     return result.document
@@ -556,5 +564,6 @@ def process_with_google_document_ai(file_path: Path, filename: str) -> dict[str,
         debug_extra={
             "rendered_pdf": False,
             "raw_file_used": True,
+            "imageless_mode_requested": True,
         },
     )
