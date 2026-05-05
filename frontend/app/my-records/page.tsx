@@ -1316,7 +1316,7 @@ export default function MyRecordsPage() {
         <ClinicalTimeline
           items={myTimeline}
           maxItems={10}
-          onOpenDocument={(documentId, item) => openTimelineDocument(documentId, item)}
+          onOpenDocument={openTimelineDocument}
           onSeeFullTimeline={() => router.push("/my-records/timeline")}
           showSeeFullTimeline
           emptyText={t("noTimelineActivity")}
