@@ -6,6 +6,7 @@ import unicodedata
 from typing import Any
 
 from app.report_fields import extract_report_metadata
+from app.services.discharge_epicriza_formatter import format_epicriza_section, normalize_epicriza_whitespace
 
 
 def clean_discharge_text(value: Any) -> str:
@@ -639,6 +640,8 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
     for section in sections:
         key = section.get("key") or "other"
         body = clean_discharge_text(section.get("body"))
+        if key == "epicriza":
+            body = normalize_epicriza_whitespace(body)
 
         if not body:
             continue
@@ -814,9 +817,17 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
     if report_date:
         report_name = f"Fișă de externare {report_date}"
 
+    formatted_epicriza = None
+
+    for section in sections:
+        if section.get("key") == "epicriza":
+            formatted_epicriza = format_epicriza_section(section.get("body") or "")
+            break
+
     note_payload = {
         "document_type": "discharge_summary",
         "sections": sections,
+        "formatted_epicriza": formatted_epicriza,
     }
 
     return {

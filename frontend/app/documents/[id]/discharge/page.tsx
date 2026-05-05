@@ -618,6 +618,12 @@ export default function DischargeStructuredPage() {
             documentData.uploaded_by?.full_name
           )}`}
         />
+
+        <StatBubble
+          label="Doctor"
+          value={parsed.referring_doctor}
+          note="Referring / responsible doctor"
+        />
       </div>
 
       <div
@@ -627,7 +633,10 @@ export default function DischargeStructuredPage() {
           display: "grid",
           gridTemplateColumns: "minmax(250px, 0.34fr) minmax(0, 1fr)",
           gap: 18,
-          alignItems: "start",
+          alignItems: "stretch",
+          height: "calc(100vh - 280px)",
+          minHeight: 620,
+          overflow: "hidden",
         }}
       >
         <aside
@@ -635,10 +644,8 @@ export default function DischargeStructuredPage() {
           style={{
             padding: 12,
             background: "var(--panel-2)",
-            position: "sticky",
-            top: 18,
-            maxHeight: "calc(100vh - 120px)",
-            overflow: "auto",
+            height: "100%",
+            overflowY: "auto",
           }}
         >
           <div
@@ -725,9 +732,13 @@ export default function DischargeStructuredPage() {
           className="soft-card-tight"
           style={{
             padding: 24,
-            minHeight: 560,
             background: "var(--panel)",
             borderRadius: 26,
+            height: "100%",
+            minHeight: 0,
+            display: "grid",
+            gridTemplateRows: "minmax(0, 1fr)",
+            overflow: "hidden",
           }}
         >
           {activeSectionKey === "overview" && (
@@ -854,7 +865,8 @@ export default function DischargeStructuredPage() {
                   whiteSpace: "pre-wrap",
                   lineHeight: 1.8,
                   fontWeight: 650,
-                  minHeight: 260,
+                  minHeight: 0,
+                  overflowY: "auto"
                 }}
               >
                 {activeSection.body || "No text extracted for this section."}
