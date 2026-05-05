@@ -293,6 +293,8 @@ export default function DischargeStructuredPage() {
   const [activeSectionKey, setActiveSectionKey] = useState("full_summary");
   const [loading, setLoading] = useState(true);
   const [openingOriginal, setOpeningOriginal] = useState(false);
+  const [deleting, setDeleting] = useState(false);
+  const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [error, setError] = useState("");
 
   async function fetchData() {
@@ -358,6 +360,9 @@ export default function DischargeStructuredPage() {
   }, [sections]);
 
   const activeSection = navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
+  const canDelete =
+    Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
+    currentUser?.role === "admin";
 
   async function openOriginal() {
     if (!documentData) return;
@@ -388,6 +393,34 @@ export default function DischargeStructuredPage() {
       setError(getErrorMessage(err, "Could not open original file."));
     } finally {
       setOpeningOriginal(false);
+    }
+  }
+
+  async function deleteDocument() {
+    if (!documentData) return;
+
+    try {
+      setDeleting(true);
+      setError("");
+
+      await api.delete(`/documents/${documentData.document_id}`);
+
+      if (currentUser?.role === "patient") {
+        router.push("/my-records");
+        return;
+      }
+
+      if (documentData.patient_id) {
+        router.push(`/patients/${documentData.patient_id}`);
+        return;
+      }
+
+      router.push("/my-records");
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not delete discharge summary."));
+      setConfirmDeleteOpen(false);
+    } finally {
+      setDeleting(false);
     }
   }
 
@@ -427,12 +460,91 @@ export default function DischargeStructuredPage() {
             {openingOriginal ? "Opening..." : "Open original"}
           </button>
 
+          {canDelete && (
+            <button
+              onClick={() => setConfirmDeleteOpen(true)}
+              style={{
+                border: "1px solid var(--danger-border)",
+                background: "var(--danger-bg)",
+                color: "var(--danger-text)",
+                borderRadius: 14,
+                padding: "11px 15px",
+                fontWeight: 950,
+                cursor: "pointer",
+              }}
+            >
+              Delete
+            </button>
+          )}
+
           <button className="secondary-btn" onClick={() => router.back()}>
             Back
           </button>
         </div>
       }
     >
+
+        {confirmDeleteOpen && (
+                <div
+                style={{
+                    position: "fixed",
+                    inset: 0,
+                    zIndex: 1000,
+                    background: "rgba(15, 23, 42, 0.42)",
+                    display: "grid",
+                    placeItems: "center",
+                    padding: 20,
+                    backdropFilter: "blur(10px)",
+                }}
+                >
+                <div
+                    className="soft-card"
+                    style={{
+                    width: "min(520px, 100%)",
+                    padding: 24,
+                    boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
+                    }}
+                >
+                    <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
+                    Delete this discharge summary?
+                    </div>
+
+                    <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
+                    This removes the discharge summary from the patient files and timeline. This can only be done by the uploader or an admin.
+                    </div>
+
+                    <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
+                    <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
+                    <div className="muted-text" style={{ marginTop: 5 }}>
+                        Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
+                    </div>
+                    </div>
+
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+                    <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+                        Cancel
+                    </button>
+
+                    <button
+                        onClick={deleteDocument}
+                        disabled={deleting}
+                        style={{
+                        border: "1px solid var(--danger-border)",
+                        background: "var(--danger-bg)",
+                        color: "var(--danger-text)",
+                        borderRadius: 14,
+                        padding: "11px 15px",
+                        fontWeight: 950,
+                        cursor: deleting ? "not-allowed" : "pointer",
+                        }}
+                    >
+                        {deleting ? "Deleting..." : "Delete summary"}
+                    </button>
+                    </div>
+                </div>
+                </div>
+            )}
+
       {error && (
         <div
           className="soft-card-tight"
