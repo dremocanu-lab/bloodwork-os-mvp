@@ -32,7 +32,6 @@ type DocumentCard = {
   report_type?: string | null;
   lab_name?: string | null;
   sample_type?: string | null;
-  referring_doctor?: string | null;
   test_date?: string | null;
   collected_on?: string | null;
   reported_on?: string | null;
@@ -46,12 +45,8 @@ type DocumentCard = {
 
 type PatientEvent = {
   id: number;
-  patient_id: number;
-  doctor_user_id: number;
-  event_type: string;
   status: string;
   title: string;
-  description?: string | null;
   hospital_name?: string | null;
   department?: string | null;
   admitted_at: string;
@@ -70,14 +65,15 @@ type MyProfileResponse = {
     patient_identifier?: string | null;
   };
   sections: {
-    bloodwork: DocumentCard[];
-    medications: DocumentCard[];
-    scans: DocumentCard[];
-    hospitalizations: DocumentCard[];
-    other: DocumentCard[];
+    bloodwork?: DocumentCard[];
+    discharge_summary?: DocumentCard[];
+    medications?: DocumentCard[];
+    scans?: DocumentCard[];
+    hospitalizations?: DocumentCard[];
+    other?: DocumentCard[];
   };
-  doctor_access: unknown[];
-  events: PatientEvent[];
+  events?: PatientEvent[];
+  doctor_access?: unknown[];
 };
 
 type TimelineItem = {
@@ -89,27 +85,23 @@ type TimelineItem = {
   documentId?: number;
   eventId?: number;
   section?: string;
+  children?: TimelineItem[];
 };
 
-const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
+type AdmissionTimelineItem = TimelineItem & {
+  admissionStart?: string | null;
+  admissionEnd?: string | null;
+  parentRank: number;
+};
+
+const SECTION_ORDER = [
   "bloodwork",
+  "discharge_summary",
   "medications",
   "scans",
   "hospitalizations",
   "other",
-];
-
-const REPORT_TYPE_OPTIONS: Array<{
-  key: keyof MyProfileResponse["sections"] | "events";
-  label: string;
-}> = [
-  { key: "bloodwork", label: "Bloodwork" },
-  { key: "scans", label: "Scans" },
-  { key: "medications", label: "Medications" },
-  { key: "hospitalizations", label: "Hospitalizations" },
-  { key: "other", label: "Other" },
-  { key: "events", label: "Care events" },
-];
+] as const;
 
 function parseDateTime(value?: string | null) {
   if (!value) return 0;
@@ -119,22 +111,25 @@ function parseDateTime(value?: string | null) {
 
   if (!Number.isNaN(direct)) return direct;
 
-  const match = normalized.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
+  const match = normalized.match(
+    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
+  );
 
-  if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
-    const yearRaw = Number(match[3]);
-    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
-    const parsed = new Date(year, month - 1, day).getTime();
+  if (!match) return 0;
 
-    if (!Number.isNaN(parsed)) return parsed;
-  }
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const rawYear = Number(match[3]);
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  const hour = match[4] ? Number(match[4]) : 0;
+  const minute = match[5] ? Number(match[5]) : 0;
 
-  return 0;
+  const parsed = new Date(year, month - 1, day, hour, minute).getTime();
+
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function compareDatesDescending(a: string, b: string) {
+function compareDatesDescending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
 
@@ -143,11 +138,21 @@ function compareDatesDescending(a: string, b: string) {
   return (b || "").localeCompare(a || "");
 }
 
+function compareDatesAscending(a?: string | null, b?: string | null) {
+  const aTime = parseDateTime(a);
+  const bTime = parseDateTime(b);
+
+  if (aTime || bTime) return aTime - bTime;
+
+  return (a || "").localeCompare(b || "");
+}
+
 function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "€”";
+  if (!dateOfBirth) return "—";
 
   const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return "€”";
+
+  if (Number.isNaN(dob.getTime())) return "—";
 
   const today = new Date();
 
@@ -163,11 +168,34 @@ function calculateAgeFromDob(dateOfBirth?: string | null) {
     months += 12;
   }
 
-  if (years < 0) return "€”";
+  if (years < 0) return "—";
 
-  return `${years} ${years === 1 ? "year" : "years"} ${months} ${
-    months === 1 ? "month" : "months"
-  }`;
+  return `${years}y ${months}m`;
+}
+
+function normalizeProfile(profile: MyProfileResponse): MyProfileResponse {
+  return {
+    ...profile,
+    sections: {
+      bloodwork: profile.sections.bloodwork || [],
+      discharge_summary: profile.sections.discharge_summary || [],
+      medications: profile.sections.medications || [],
+      scans: profile.sections.scans || [],
+      hospitalizations: profile.sections.hospitalizations || [],
+      other: profile.sections.other || [],
+    },
+    events: profile.events || [],
+    doctor_access: profile.doctor_access || [],
+  };
+}
+
+function sectionLabel(section: string) {
+  if (section === "bloodwork") return "Bloodwork";
+  if (section === "discharge_summary") return "Discharge summary";
+  if (section === "medications") return "Medications";
+  if (section === "scans") return "Scans";
+  if (section === "hospitalizations") return "Hospitalization";
+  return "Other";
 }
 
 function getDocumentClinicalDate(doc: DocumentCard) {
@@ -177,6 +205,7 @@ function getDocumentClinicalDate(doc: DocumentCard) {
     doc.reported_on ||
     doc.registered_on ||
     doc.generated_on ||
+    doc.created_at ||
     ""
   );
 }
@@ -187,152 +216,144 @@ function getDocumentDateLabel(doc: DocumentCard) {
   if (doc.reported_on) return `Reported ${doc.reported_on}`;
   if (doc.registered_on) return `Registered ${doc.registered_on}`;
   if (doc.generated_on) return `Generated ${doc.generated_on}`;
+  if (doc.created_at) return `Uploaded ${doc.created_at}`;
   return "No date";
 }
 
-function getEventDate(event: PatientEvent) {
-  return event.discharged_at || event.admitted_at || "";
+function getDocumentTitle(doc: DocumentCard) {
+  return doc.report_name || doc.filename || `Document ${doc.id}`;
 }
 
-function getYearFromDate(value?: string | null) {
-  const time = parseDateTime(value);
-  if (!time) return "";
+function getUploaderText(doc: DocumentCard) {
+  if (!doc.uploaded_by) return "Uploaded by unknown user";
 
-  return String(new Date(time).getFullYear());
-}
-
-function uploaderSubtitle(doc: DocumentCard) {
-  const uploader = doc.uploaded_by;
-
-  if (!uploader) return "Uploaded by unknown user";
-
-  const details = [uploader.full_name, uploader.department, uploader.hospital_name].filter(Boolean);
+  const details = [doc.uploaded_by.full_name, doc.uploaded_by.department, doc.uploaded_by.hospital_name].filter(
+    Boolean
+  );
 
   return `Uploaded by ${details.join(" · ")}`;
 }
 
-function YearDropdown({
-  value,
-  years,
-  onChange,
-}: {
-  value: string;
-  years: string[];
-  onChange: (value: string) => void;
-}) {
+function isDischargeDocument(doc: DocumentCard) {
   return (
-    <label style={{ display: "grid", gap: 8, minWidth: 210 }}>
-      <span className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
-        Year
-      </span>
-
-      <div style={{ position: "relative" }}>
-        <select
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className="text-input"
-          style={{
-            appearance: "none",
-            width: "100%",
-            borderRadius: 18,
-            padding: "14px 44px 14px 16px",
-            fontWeight: 950,
-            letterSpacing: "-0.02em",
-            cursor: "pointer",
-            background:
-              "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-            border: "1px solid color-mix(in srgb, var(--primary) 24%, var(--border))",
-            color: "var(--foreground)",
-            boxShadow: "0 14px 34px rgba(15, 23, 42, 0.08)",
-          }}
-        >
-          <option value="">All years</option>
-          {years.map((year) => (
-            <option key={year} value={year}>
-              {year}
-            </option>
-          ))}
-        </select>
-
-        <span
-          style={{
-            position: "absolute",
-            right: 14,
-            top: "50%",
-            transform: "translateY(-50%)",
-            pointerEvents: "none",
-            width: 28,
-            height: 28,
-            borderRadius: 10,
-            display: "grid",
-            placeItems: "center",
-            background: "color-mix(in srgb, var(--primary) 12%, transparent)",
-            color: "var(--primary)",
-            fontWeight: 950,
-          }}
-        >
-          ▼
-        </span>
-      </div>
-    </label>
+    doc.section === "discharge_summary" ||
+    doc.report_type === "Discharge summary" ||
+    doc.report_type === "discharge_summary"
   );
 }
 
-function ReportTypeMultiFilter({
-  selectedTypes,
-  onToggle,
-  onClear,
-}: {
-  selectedTypes: string[];
-  onToggle: (type: string) => void;
-  onClear: () => void;
-}) {
-  return (
-    <div style={{ display: "grid", gap: 8 }}>
-      <div className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
-        Report types
-      </div>
+function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {
+  const dateTime = parseDateTime(date);
+  const startTime = parseDateTime(start);
+  const endTime = parseDateTime(end);
 
-      <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-        {REPORT_TYPE_OPTIONS.map((option) => {
-          const active = selectedTypes.includes(option.key);
+  if (!dateTime || !startTime) return false;
 
-          return (
-            <button
-              key={option.key}
-              type="button"
-              onClick={() => onToggle(option.key)}
-              className={active ? "primary-btn" : "secondary-btn"}
-              style={{
-                borderRadius: 999,
-                padding: "10px 13px",
-                fontWeight: 900,
-                fontSize: 13,
-              }}
-            >
-              {active ? "œ“ " : ""}
-              {option.label}
-            </button>
-          );
-        })}
+  if (!endTime) return dateTime >= startTime;
 
-        {selectedTypes.length > 0 && (
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={onClear}
-            style={{
-              borderRadius: 999,
-              padding: "10px 13px",
-              fontWeight: 900,
-              fontSize: 13,
-            }}
-          >
-            Clear
-          </button>
-        )}
-      </div>
-    </div>
+  return dateTime >= startTime && dateTime <= endTime;
+}
+
+function buildTimelineItems(
+  documents: DocumentCard[],
+  events: PatientEvent[],
+  t: (key: string) => string
+): TimelineItem[] {
+  const sortedDocuments = [...documents].sort((a, b) =>
+    compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
+  );
+
+  const usedDocumentIds = new Set<number>();
+
+  const dischargeParents: AdmissionTimelineItem[] = sortedDocuments
+    .filter((doc) => isDischargeDocument(doc))
+    .map((doc) => ({
+      id: `discharge-${doc.id}`,
+      type: "document",
+      date: doc.reported_on || doc.collected_on || getDocumentClinicalDate(doc),
+      title: getDocumentTitle(doc),
+      subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${
+        doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""
+      } · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
+        doc.is_verified ? t("verified") : t("unverified")
+      }`,
+      documentId: doc.id,
+      section: doc.section,
+      children: [],
+      admissionStart: doc.collected_on,
+      admissionEnd: doc.reported_on,
+      parentRank: 1,
+    }));
+
+  const eventParents: AdmissionTimelineItem[] = events.map((event) => ({
+    id: `event-${event.id}`,
+    type: "event",
+    date: event.discharged_at || event.admitted_at || "",
+    title: event.title || "Hospitalization",
+    subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${
+      event.doctor_name ? `Doctor ${event.doctor_name}` : "Doctor unknown"
+    } · ${valueOrDash(event.department)} · ${valueOrDash(event.hospital_name)}`,
+    eventId: event.id,
+    section: "care_events",
+    children: [],
+    admissionStart: event.admitted_at,
+    admissionEnd: event.discharged_at,
+    parentRank: 2,
+  }));
+
+  const admissionParents = [...dischargeParents, ...eventParents]
+    .filter((parent) => parent.admissionStart || parent.admissionEnd)
+    .sort((a, b) => {
+      const dateDifference = compareDatesDescending(a.date, b.date);
+      if (dateDifference !== 0) return dateDifference;
+      return a.parentRank - b.parentRank;
+    });
+
+  const documentToTimelineItem = (doc: DocumentCard): TimelineItem => ({
+    id: `doc-${doc.id}`,
+    type: "document",
+    date: getDocumentClinicalDate(doc),
+    title: getDocumentTitle(doc),
+    subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
+      doc.is_verified ? t("verified") : t("unverified")
+    }`,
+    documentId: doc.id,
+    section: doc.section,
+  });
+
+  for (const parent of admissionParents) {
+    const children = sortedDocuments
+      .filter((doc) => {
+        if (usedDocumentIds.has(doc.id)) return false;
+        if (isDischargeDocument(doc)) return false;
+
+        const belongs = isInsideDateRange(
+          getDocumentClinicalDate(doc),
+          parent.admissionStart,
+          parent.admissionEnd
+        );
+
+        if (belongs) usedDocumentIds.add(doc.id);
+
+        return belongs;
+      })
+      .map(documentToTimelineItem)
+      .sort((a, b) => compareDatesAscending(a.date, b.date));
+
+    parent.children = children;
+  }
+
+  const parentDocumentIds = new Set(
+    admissionParents.map((parent) => parent.documentId).filter((id): id is number => Boolean(id))
+  );
+
+  const standaloneDocuments = sortedDocuments
+    .filter((doc) => !usedDocumentIds.has(doc.id))
+    .filter((doc) => !parentDocumentIds.has(doc.id))
+    .map(documentToTimelineItem);
+
+  return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+    compareDatesDescending(a.date, b.date)
   );
 }
 
@@ -340,38 +361,30 @@ export default function MyRecordsTimelinePage() {
   const router = useRouter();
   const { t } = useLanguage();
 
-  const sectionLabels: Record<string, string> = {
-    bloodwork: t("bloodwork"),
-    medications: "Medications",
-    scans: t("scans"),
-    hospitalizations: "Hospitalizations",
-    other: "Other",
-  };
-
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
-  const [selectedTypes, setSelectedTypes] = useState<string[]>([]);
-  const [selectedYear, setSelectedYear] = useState("");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   useEffect(() => {
     async function init() {
       try {
-        const meResponse = await api.get<CurrentUser>("/auth/me");
-        const me = meResponse.data;
+        setError("");
 
-        setCurrentUser(me);
+        const [meResponse, profileResponse] = await Promise.all([
+          api.get<CurrentUser>("/auth/me"),
+          api.get<MyProfileResponse>("/my/profile"),
+        ]);
 
-        if (me.role !== "patient") {
-          router.push(me.role === "doctor" ? "/my-patients" : "/assignments");
+        if (meResponse.data.role !== "patient") {
+          router.replace(meResponse.data.role === "doctor" ? "/my-patients" : "/assignments");
           return;
         }
 
-        const profileResponse = await api.get<MyProfileResponse>("/my/profile");
-        setProfile(profileResponse.data);
+        setCurrentUser(meResponse.data);
+        setProfile(normalizeProfile(profileResponse.data));
       } catch (err) {
-        setError(getErrorMessage(err, "Failed to load timeline."));
+        setError(getErrorMessage(err, "Could not load timeline."));
       } finally {
         setLoading(false);
       }
@@ -383,75 +396,50 @@ export default function MyRecordsTimelinePage() {
   const allDocuments = useMemo(() => {
     if (!profile) return [];
 
-    return SECTION_ORDER.flatMap((section) => profile.sections[section]).sort((a, b) =>
-      compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
-    );
+    return SECTION_ORDER.flatMap((section) => profile.sections[section] || []);
   }, [profile]);
 
-  const timelineItems = useMemo<TimelineItem[]>(() => {
+  const documentById = useMemo(() => {
+    const lookup = new Map<number, DocumentCard>();
+
+    for (const doc of allDocuments) {
+      lookup.set(doc.id, doc);
+    }
+
+    return lookup;
+  }, [allDocuments]);
+
+  const timelineItems = useMemo(() => {
     if (!profile) return [];
 
-    const documentItems: TimelineItem[] = allDocuments.map((doc) => ({
-      id: `doc-${doc.id}`,
-      type: "document",
-      date: getDocumentClinicalDate(doc),
-      title: valueOrDash(doc.report_name || doc.filename),
-      subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabels[doc.section] || doc.section} · ${uploaderSubtitle(
-        doc
-      )} · ${doc.is_verified ? t("verified") : t("unverified")}`,
-      documentId: doc.id,
-      section: doc.section,
-    }));
-
-    const eventItems: TimelineItem[] = profile.events.map((event) => ({
-      id: `event-${event.id}`,
-      type: "event",
-      date: getEventDate(event),
-      title: event.title,
-      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
-        "doctor"
-      )} ${valueOrDash(event.doctor_name)}`,
-      eventId: event.id,
-      section: "events",
-    }));
-
-    return [...documentItems, ...eventItems].sort((a, b) => compareDatesDescending(a.date, b.date));
+    return buildTimelineItems(allDocuments, profile.events || [], t);
   }, [profile, allDocuments, t]);
 
-  const availableYears = useMemo(() => {
-    const years = new Set<string>();
+  function openTimelineDocument(documentId: number) {
+    const doc = documentById.get(documentId);
 
-    timelineItems.forEach((item) => {
-      const year = getYearFromDate(item.date);
-      if (year) years.add(year);
-    });
+    if (doc && isDischargeDocument(doc)) {
+      router.push(`/documents/${documentId}/discharge`);
+      return;
+    }
 
-    return Array.from(years).sort((a, b) => Number(b) - Number(a));
-  }, [timelineItems]);
-
-  const filteredTimelineItems = useMemo(() => {
-    return timelineItems.filter((item) => {
-      const typeMatches = selectedTypes.length === 0 || selectedTypes.includes(item.section || "");
-      const yearMatches = !selectedYear || getYearFromDate(item.date) === selectedYear;
-
-      return typeMatches && yearMatches;
-    });
-  }, [timelineItems, selectedTypes, selectedYear]);
-
-  function toggleReportType(type: string) {
-    setSelectedTypes((current) => {
-      if (current.includes(type)) {
-        return current.filter((item) => item !== type);
-      }
-
-      return [...current, type];
-    });
+    router.push(`/documents/${documentId}`);
   }
 
   if (loading || !currentUser || !profile) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading full timeline...</p>
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div className="soft-card-tight" style={{ padding: 22 }}>
+          <p className="muted-text">Loading timeline...</p>
+        </div>
       </main>
     );
   }
@@ -461,10 +449,15 @@ export default function MyRecordsTimelinePage() {
   return (
     <AppShell
       user={currentUser}
-      title="Full Timeline"
+      title="Full timeline"
       subtitle={`${valueOrDash(profile.patient.full_name)} · DOB ${valueOrDash(
         profile.patient.date_of_birth
       )} · Age ${calculatedAge} · Sex ${valueOrDash(profile.patient.sex)}`}
+      rightContent={
+        <button className="secondary-btn" onClick={() => router.push("/my-records")}>
+          Back to records
+        </button>
+      }
     >
       {error && (
         <div
@@ -481,102 +474,21 @@ export default function MyRecordsTimelinePage() {
         </div>
       )}
 
-      <div
-        className="soft-card"
-        style={{
-          padding: 24,
-          marginBottom: 24,
-        }}
-      >
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            marginBottom: 22,
-          }}
-        >
-          <div>
-            <div className="section-title" style={{ marginBottom: 8 }}>
-              Complete Patient Timeline
-            </div>
-
-            <div className="muted-text" style={{ lineHeight: 1.6 }}>
-              All documents and care events sorted by collected/test date when available.
-            </div>
+      <div className="soft-card" style={{ padding: 24 }}>
+        <div style={{ marginBottom: 18 }}>
+          <div className="section-title">Clinical timeline</div>
+          <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
+            Discharge summaries create admission episodes. Bloodwork, scans, medications, and other records are grouped
+            underneath when their clinical date falls inside that admission period.
           </div>
-
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={() => router.push("/my-records")}
-            style={{
-              whiteSpace: "nowrap",
-            }}
-          >
-            Back to records
-          </button>
-        </div>
-
-        <div
-          className="soft-card-tight"
-          style={{
-            padding: 18,
-            marginBottom: 20,
-            background: "var(--panel-2)",
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto",
-            gap: 18,
-            alignItems: "end",
-          }}
-        >
-          <ReportTypeMultiFilter
-            selectedTypes={selectedTypes}
-            onToggle={toggleReportType}
-            onClear={() => setSelectedTypes([])}
-          />
-
-          <YearDropdown value={selectedYear} years={availableYears} onChange={setSelectedYear} />
-        </div>
-
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 12,
-            alignItems: "center",
-            marginBottom: 14,
-          }}
-        >
-          <div className="muted-text" style={{ fontWeight: 850 }}>
-            Showing {filteredTimelineItems.length} of {timelineItems.length} timeline items
-          </div>
-
-          {(selectedTypes.length > 0 || selectedYear) && (
-            <button
-              type="button"
-              className="secondary-btn"
-              onClick={() => {
-                setSelectedTypes([]);
-                setSelectedYear("");
-              }}
-            >
-              Reset filters
-            </button>
-          )}
         </div>
 
         <ClinicalTimeline
-          items={filteredTimelineItems}
-          onOpenDocument={(documentId) => router.push(`/documents/${documentId}`)}
-          emptyText="No timeline activity matches these filters."
-          scrollable
-          maxHeight={780}
+          items={timelineItems}
+          onOpenDocument={openTimelineDocument}
+          emptyText="No timeline activity yet."
         />
       </div>
     </AppShell>
   );
 }
-
-

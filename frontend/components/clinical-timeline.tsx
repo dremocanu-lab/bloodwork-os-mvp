@@ -8,9 +8,21 @@ type TimelineItem = {
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  section?: string;
+  children?: TimelineItem[];
 };
 
-function parseTimelineDate(value?: string | null) {
+type ClinicalTimelineProps = {
+  items: TimelineItem[];
+  maxItems?: number;
+  onOpenDocument?: (documentId: number) => void;
+  onOpenEvent?: (eventId: number) => void;
+  onSeeFullTimeline?: () => void;
+  showSeeFullTimeline?: boolean;
+  emptyText?: string;
+};
+
+function parseDateTime(value?: string | null) {
   if (!value) return 0;
 
   const normalized = value.trim();
@@ -18,302 +30,497 @@ function parseTimelineDate(value?: string | null) {
 
   if (!Number.isNaN(direct)) return direct;
 
-  const match = normalized.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
+  const match = normalized.match(
+    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
+  );
 
-  if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
-    const yearRaw = Number(match[3]);
-    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
-    const parsed = new Date(year, month - 1, day).getTime();
+  if (!match) return 0;
 
-    if (!Number.isNaN(parsed)) return parsed;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const rawYear = Number(match[3]);
+  const year = rawYear < 100 ? 2000 + rawYear : rawYear;
+  const hour = match[4] ? Number(match[4]) : 0;
+  const minute = match[5] ? Number(match[5]) : 0;
+
+  const parsed = new Date(year, month - 1, day, hour, minute).getTime();
+
+  return Number.isNaN(parsed) ? 0 : parsed;
+}
+
+function formatDate(value?: string | null) {
+  if (!value) return "No date";
+
+  const time = parseDateTime(value);
+
+  if (!time) return value;
+
+  return new Date(time).toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
+}
+
+function formatShortDate(value?: string | null) {
+  if (!value) return "—";
+
+  const time = parseDateTime(value);
+
+  if (!time) return value;
+
+  return new Date(time).toLocaleDateString(undefined, {
+    month: "short",
+    day: "2-digit",
+  });
+}
+
+function getYear(value?: string | null) {
+  const time = parseDateTime(value);
+
+  if (!time) return "No date";
+
+  return String(new Date(time).getFullYear());
+}
+
+function getTypeLabel(item: TimelineItem) {
+  if (item.section === "bloodwork") return "Bloodwork";
+  if (item.section === "discharge_summary") return "Discharge";
+  if (item.section === "scans") return "Scan";
+  if (item.section === "medications") return "Medication";
+  if (item.section === "hospitalizations") return "Hospital";
+  if (item.section === "notes") return "Note";
+  if (item.type === "event") return "Care event";
+  return "Record";
+}
+
+function getItemTone(item: TimelineItem) {
+  if (item.section === "discharge_summary") {
+    return {
+      dot: "var(--primary)",
+      bg: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+      border: "color-mix(in srgb, var(--primary) 32%, var(--border))",
+      pillBg: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
+      pillText: "var(--primary)",
+    };
   }
 
-  return 0;
+  if (item.type === "event" || item.section === "hospitalizations") {
+    return {
+      dot: "var(--success-text)",
+      bg: "linear-gradient(135deg, color-mix(in srgb, var(--success-bg) 72%, var(--panel)), var(--panel))",
+      border: "var(--success-border)",
+      pillBg: "var(--success-bg)",
+      pillText: "var(--success-text)",
+    };
+  }
+
+  if (item.section === "bloodwork") {
+    return {
+      dot: "var(--danger-text)",
+      bg: "var(--panel)",
+      border: "var(--border)",
+      pillBg: "var(--danger-bg)",
+      pillText: "var(--danger-text)",
+    };
+  }
+
+  if (item.section === "scans") {
+    return {
+      dot: "var(--warn-text)",
+      bg: "var(--panel)",
+      border: "var(--border)",
+      pillBg: "var(--warn-bg)",
+      pillText: "var(--warn-text)",
+    };
+  }
+
+  return {
+    dot: "var(--muted)",
+    bg: "var(--panel)",
+    border: "var(--border)",
+    pillBg: "var(--panel-2)",
+    pillText: "var(--muted)",
+  };
 }
 
-function formatAxisYear(value?: string | null) {
-  const time = parseTimelineDate(value);
-  if (!time) return "—";
+function TimelineButton({
+  item,
+  compact = false,
+  onOpenDocument,
+  onOpenEvent,
+}: {
+  item: TimelineItem;
+  compact?: boolean;
+  onOpenDocument?: (documentId: number) => void;
+  onOpenEvent?: (eventId: number) => void;
+}) {
+  const tone = getItemTone(item);
+  const canOpen = Boolean(
+    (item.documentId && onOpenDocument) || (item.eventId && onOpenEvent)
+  );
 
-  return new Date(time).toLocaleDateString(undefined, {
-    year: "numeric",
-  });
-}
-
-function formatAxisDate(value?: string | null) {
-  const time = parseTimelineDate(value);
-  if (!time) return value || "No date";
-
-  return new Date(time).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-  });
-}
-
-function formatFullDate(value?: string | null) {
-  const time = parseTimelineDate(value);
-  if (!time) return value || "No date";
-
-  return new Date(time).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
-function getDateKey(value?: string | null) {
-  const time = parseTimelineDate(value);
-  if (!time) return "unknown";
-
-  const date = new Date(time);
-  return `${date.getFullYear()}-${date.getMonth() + 1}-${date.getDate()}`;
-}
-
-function sortTimelineItems(items: TimelineItem[]) {
-  return [...items].sort((a, b) => {
-    const aTime = parseTimelineDate(a.date);
-    const bTime = parseTimelineDate(b.date);
-
-    if (aTime || bTime) return bTime - aTime;
-
-    return (b.date || "").localeCompare(a.date || "");
-  });
-}
-
-function groupTimelineItems(items: TimelineItem[]) {
-  const sorted = sortTimelineItems(items);
-  const groups: Array<{
-    key: string;
-    date: string;
-    items: TimelineItem[];
-  }> = [];
-
-  sorted.forEach((item) => {
-    const key = getDateKey(item.date);
-    const existing = groups.find((group) => group.key === key);
-
-    if (existing) {
-      existing.items.push(item);
-    } else {
-      groups.push({
-        key,
-        date: item.date,
-        items: [item],
-      });
+  function handleOpen() {
+    if (item.documentId && onOpenDocument) {
+      onOpenDocument(item.documentId);
+      return;
     }
-  });
 
-  return groups;
+    if (item.eventId && onOpenEvent) {
+      onOpenEvent(item.eventId);
+    }
+  }
+
+  return (
+    <div
+      className="soft-card-tight"
+      style={{
+        padding: compact ? 12 : 15,
+        background: tone.bg,
+        borderColor: tone.border,
+        display: "grid",
+        gridTemplateColumns: canOpen ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)",
+        gap: 12,
+        alignItems: "center",
+        borderRadius: compact ? 16 : 18,
+      }}
+    >
+      <div style={{ minWidth: 0 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            gap: 9,
+            minWidth: 0,
+            flexWrap: "wrap",
+          }}
+        >
+          <span
+            style={{
+              width: compact ? 7 : 8,
+              height: compact ? 7 : 8,
+              borderRadius: 999,
+              background: tone.dot,
+              flex: "0 0 auto",
+            }}
+          />
+
+          <div
+            style={{
+              fontWeight: 950,
+              fontSize: compact ? 13 : 15,
+              letterSpacing: "-0.025em",
+              minWidth: 0,
+              overflow: "hidden",
+              textOverflow: "ellipsis",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {item.title}
+          </div>
+
+          <span
+            style={{
+              display: "inline-flex",
+              padding: compact ? "4px 7px" : "5px 8px",
+              borderRadius: 999,
+              background: tone.pillBg,
+              color: tone.pillText,
+              fontSize: compact ? 10 : 11,
+              fontWeight: 950,
+              lineHeight: 1,
+            }}
+          >
+            {getTypeLabel(item)}
+          </span>
+        </div>
+
+        <div
+          className="muted-text"
+          style={{
+            marginTop: compact ? 5 : 7,
+            lineHeight: 1.45,
+            fontSize: compact ? 12 : 13,
+          }}
+        >
+          {item.subtitle}
+        </div>
+      </div>
+
+      {canOpen && (
+        <button
+          type="button"
+          className="secondary-btn"
+          onClick={handleOpen}
+          style={{
+            borderRadius: 14,
+            padding: compact ? "8px 11px" : "10px 13px",
+            fontSize: compact ? 12 : 13,
+            fontWeight: 950,
+            whiteSpace: "nowrap",
+          }}
+        >
+          Open
+        </button>
+      )}
+    </div>
+  );
+}
+
+function AdmissionGroup({
+  item,
+  onOpenDocument,
+  onOpenEvent,
+}: {
+  item: TimelineItem;
+  onOpenDocument?: (documentId: number) => void;
+  onOpenEvent?: (eventId: number) => void;
+}) {
+  const children = item.children || [];
+  const tone = getItemTone(item);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "96px minmax(0, 1fr)",
+        gap: 14,
+        alignItems: "start",
+      }}
+    >
+      <div
+        style={{
+          paddingTop: 8,
+          textAlign: "right",
+          position: "sticky",
+          top: 10,
+        }}
+      >
+        <div
+          style={{
+            fontWeight: 950,
+            fontSize: 16,
+            letterSpacing: "-0.045em",
+          }}
+        >
+          {getYear(item.date)}
+        </div>
+        <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
+          {formatShortDate(item.date)}
+        </div>
+      </div>
+
+      <div style={{ position: "relative", paddingLeft: 18 }}>
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 17,
+            bottom: 12,
+            width: 2,
+            borderRadius: 999,
+            background:
+              children.length > 0
+                ? "linear-gradient(180deg, var(--primary), color-mix(in srgb, var(--primary) 18%, var(--border)))"
+                : "var(--border)",
+          }}
+        />
+
+        <div
+          style={{
+            position: "absolute",
+            left: -4,
+            top: 13,
+            width: 10,
+            height: 10,
+            borderRadius: 999,
+            background: tone.dot,
+            boxShadow: "0 0 0 5px var(--panel)",
+          }}
+        />
+
+        <div
+          className="soft-card-tight"
+          style={{
+            padding: 16,
+            background:
+              "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+            borderColor: "color-mix(in srgb, var(--primary) 34%, var(--border))",
+            borderRadius: 22,
+          }}
+        >
+          <TimelineButton
+            item={item}
+            onOpenDocument={onOpenDocument}
+            onOpenEvent={onOpenEvent}
+          />
+
+          {children.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <div
+                className="muted-text"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 950,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.05em",
+                  marginBottom: 10,
+                }}
+              >
+                Records during this admission
+              </div>
+
+              <div style={{ display: "grid", gap: 9 }}>
+                {children.map((child) => (
+                  <TimelineButton
+                    key={child.id}
+                    item={child}
+                    compact
+                    onOpenDocument={onOpenDocument}
+                    onOpenEvent={onOpenEvent}
+                  />
+                ))}
+              </div>
+            </div>
+          )}
+
+          {!children.length && (
+            <div
+              className="muted-text"
+              style={{
+                marginTop: 10,
+                fontSize: 12,
+                lineHeight: 1.5,
+              }}
+            >
+              No linked records were found inside this admission period.
+            </div>
+          )}
+        </div>
+      </div>
+    </div>
+  );
+}
+
+function RegularTimelineItem({
+  item,
+  onOpenDocument,
+  onOpenEvent,
+}: {
+  item: TimelineItem;
+  onOpenDocument?: (documentId: number) => void;
+  onOpenEvent?: (eventId: number) => void;
+}) {
+  const tone = getItemTone(item);
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "96px minmax(0, 1fr)",
+        gap: 14,
+        alignItems: "start",
+      }}
+    >
+      <div style={{ paddingTop: 8, textAlign: "right" }}>
+        <div
+          style={{
+            fontWeight: 950,
+            fontSize: 16,
+            letterSpacing: "-0.045em",
+          }}
+        >
+          {getYear(item.date)}
+        </div>
+        <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
+          {formatShortDate(item.date)}
+        </div>
+      </div>
+
+      <div style={{ position: "relative", paddingLeft: 18 }}>
+        <div
+          style={{
+            position: "absolute",
+            left: 0,
+            top: 17,
+            bottom: -15,
+            width: 2,
+            borderRadius: 999,
+            background: "var(--border)",
+          }}
+        />
+
+        <div
+          style={{
+            position: "absolute",
+            left: -4,
+            top: 13,
+            width: 10,
+            height: 10,
+            borderRadius: 999,
+            background: tone.dot,
+            boxShadow: "0 0 0 5px var(--panel)",
+          }}
+        />
+
+        <TimelineButton item={item} onOpenDocument={onOpenDocument} onOpenEvent={onOpenEvent} />
+      </div>
+    </div>
+  );
 }
 
 export default function ClinicalTimeline({
   items,
   maxItems,
   onOpenDocument,
+  onOpenEvent,
   onSeeFullTimeline,
-  showSeeFullTimeline = false,
+  showSeeFullTimeline,
   emptyText = "No timeline activity yet.",
-  scrollable = false,
-  maxHeight = 760,
-}: {
-  items: TimelineItem[];
-  maxItems?: number;
-  onOpenDocument?: (documentId: number) => void;
-  onSeeFullTimeline?: () => void;
-  showSeeFullTimeline?: boolean;
-  emptyText?: string;
-  scrollable?: boolean;
-  maxHeight?: number;
-}) {
-  const sortedItems = sortTimelineItems(items);
-  const visibleItems = typeof maxItems === "number" ? sortedItems.slice(0, maxItems) : sortedItems;
-  const groups = groupTimelineItems(visibleItems);
-  const hiddenCount = Math.max(sortedItems.length - visibleItems.length, 0);
+}: ClinicalTimelineProps) {
+  const visibleItems = typeof maxItems === "number" ? items.slice(0, maxItems) : items;
+  const hiddenCount = Math.max(items.length - visibleItems.length, 0);
 
-  if (!visibleItems.length) {
+  if (!items.length) {
     return (
-      <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+      <div
+        className="soft-card-tight"
+        style={{
+          padding: 18,
+          background: "var(--panel-2)",
+        }}
+      >
         <div className="muted-text">{emptyText}</div>
       </div>
     );
   }
 
   return (
-    <div>
-      <div
-        style={{
-          maxHeight: scrollable ? maxHeight : undefined,
-          overflowY: scrollable ? "auto" : undefined,
-          overflowX: "hidden",
-          paddingRight: scrollable ? 8 : 0,
-          scrollbarWidth: "thin",
-          scrollbarColor: "color-mix(in srgb, var(--primary) 50%, var(--border)) transparent",
-        }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "112px minmax(0, 1fr)",
-            gap: 18,
-            position: "relative",
-          }}
-        >
-          <div
-            aria-hidden="true"
-            style={{
-              position: "absolute",
-              left: 111,
-              top: 8,
-              bottom: 8,
-              width: 1,
-              background: "linear-gradient(180deg, transparent, var(--border), transparent)",
-            }}
-          />
+    <div style={{ display: "grid", gap: 14 }}>
+      <div style={{ display: "grid", gap: 16 }}>
+        {visibleItems.map((item) => {
+          const hasChildren = Boolean(item.children?.length);
 
-          {groups.map((group, groupIndex) => {
-            const isFirstYearInList =
-              groupIndex === 0 || formatAxisYear(groups[groupIndex - 1].date) !== formatAxisYear(group.date);
-
+          if (hasChildren || item.section === "discharge_summary" || item.section === "hospitalizations") {
             return (
-              <div key={group.key} style={{ display: "contents" }}>
-                <div
-                  style={{
-                    position: "relative",
-                    minHeight: 76,
-                    paddingTop: 6,
-                    textAlign: "right",
-                    paddingRight: 18,
-                  }}
-                >
-                  <div
-                    style={{
-                      position: "absolute",
-                      right: -5,
-                      top: 16,
-                      width: 11,
-                      height: 11,
-                      borderRadius: 999,
-                      background: "var(--primary)",
-                      border: "3px solid var(--panel)",
-                      boxShadow: "0 0 0 1px var(--border)",
-                      zIndex: 2,
-                    }}
-                  />
-
-                  {isFirstYearInList && (
-                    <div
-                      style={{
-                        fontWeight: 950,
-                        fontSize: 18,
-                        letterSpacing: "-0.04em",
-                        color: "var(--foreground)",
-                        marginBottom: 2,
-                      }}
-                    >
-                      {formatAxisYear(group.date)}
-                    </div>
-                  )}
-
-                  <div
-                    className="muted-text"
-                    style={{
-                      fontSize: 13,
-                      fontWeight: 850,
-                    }}
-                  >
-                    {formatAxisDate(group.date)}
-                  </div>
-                </div>
-
-                <div
-                  style={{
-                    display: "grid",
-                    gap: 10,
-                    paddingBottom: groupIndex === groups.length - 1 ? 0 : 14,
-                  }}
-                >
-                  {group.items.map((item) => (
-                    <div
-                      key={item.id}
-                      className="soft-card-tight"
-                      style={{
-                        padding: 16,
-                        background:
-                          item.type === "event"
-                            ? "color-mix(in srgb, var(--primary) 7%, var(--panel))"
-                            : "var(--panel)",
-                        borderColor:
-                          item.type === "event"
-                            ? "color-mix(in srgb, var(--primary) 28%, var(--border))"
-                            : "var(--border)",
-                      }}
-                    >
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "minmax(0, 1fr) auto",
-                          gap: 12,
-                          alignItems: "start",
-                        }}
-                      >
-                        <div style={{ minWidth: 0 }}>
-                          <div
-                            style={{
-                              display: "flex",
-                              gap: 9,
-                              alignItems: "center",
-                              flexWrap: "wrap",
-                              marginBottom: 4,
-                            }}
-                          >
-                            <span
-                              style={{
-                                width: 9,
-                                height: 9,
-                                borderRadius: 999,
-                                background: item.type === "event" ? "var(--primary)" : "var(--muted)",
-                                display: "inline-flex",
-                                flex: "0 0 auto",
-                              }}
-                            />
-
-                            <div
-                              style={{
-                                fontWeight: 900,
-                                letterSpacing: "-0.02em",
-                              }}
-                            >
-                              {item.title}
-                            </div>
-                          </div>
-
-                          <div className="muted-text" style={{ lineHeight: 1.55 }}>
-                            {formatFullDate(item.date)} · {item.subtitle}
-                          </div>
-                        </div>
-
-                        {item.documentId && onOpenDocument && (
-                          <button
-                            type="button"
-                            className="secondary-btn"
-                            onClick={() => onOpenDocument(item.documentId as number)}
-                            style={{
-                              whiteSpace: "nowrap",
-                            }}
-                          >
-                            Open
-                          </button>
-                        )}
-                      </div>
-                    </div>
-                  ))}
-                </div>
-              </div>
+              <AdmissionGroup
+                key={item.id}
+                item={item}
+                onOpenDocument={onOpenDocument}
+                onOpenEvent={onOpenEvent}
+              />
             );
-          })}
-        </div>
+          }
+
+          return (
+            <RegularTimelineItem
+              key={item.id}
+              item={item}
+              onOpenDocument={onOpenDocument}
+              onOpenEvent={onOpenEvent}
+            />
+          );
+        })}
       </div>
 
       {showSeeFullTimeline && onSeeFullTimeline && (
@@ -321,20 +528,20 @@ export default function ClinicalTimeline({
           style={{
             display: "flex",
             justifyContent: "center",
-            marginTop: 18,
+            paddingTop: 4,
           }}
         >
           <button
             type="button"
-            className="primary-btn"
+            className="secondary-btn"
             onClick={onSeeFullTimeline}
             style={{
-              padding: "13px 18px",
               borderRadius: 16,
+              padding: "12px 16px",
               fontWeight: 950,
             }}
           >
-            See full timeline{hiddenCount > 0 ? ` (${hiddenCount} more)` : ""}
+            {hiddenCount > 0 ? `See full timeline (${hiddenCount} more)` : "See full timeline"}
           </button>
         </div>
       )}

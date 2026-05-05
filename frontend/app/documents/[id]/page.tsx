@@ -516,15 +516,25 @@ export default function DocumentStructuredPage() {
   }
 
   async function fetchData() {
-    const [meResponse, documentResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<DocumentResponse>(`/documents/${documentId}`),
-    ]);
+  const [meResponse, documentResponse] = await Promise.all([
+    api.get<CurrentUser>("/auth/me"),
+    api.get<DocumentResponse>(`/documents/${documentId}`),
+  ]);
 
-    setCurrentUser(meResponse.data);
-    setDocumentData(documentResponse.data);
-    hydrateForm(documentResponse.data);
+  const isDischargeSummary =
+    documentResponse.data.section === "discharge_summary" ||
+    documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
+    documentResponse.data.parsed_data?.report_type === "discharge_summary";
+
+  if (isDischargeSummary) {
+    router.replace(`/documents/${documentId}/discharge`);
+    return;
   }
+
+  setCurrentUser(meResponse.data);
+  setDocumentData(documentResponse.data);
+  hydrateForm(documentResponse.data);
+}
 
   useEffect(() => {
     async function init() {

@@ -134,6 +134,14 @@ type TimelineItem = {
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  section?: string;
+  children?: TimelineItem[];
+};
+
+type AdmissionParent = TimelineItem & {
+  admissionStart?: string | null;
+  admissionEnd?: string | null;
+  parentRank: number;
 };
 
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
@@ -188,14 +196,19 @@ function parseDateTime(value?: string | null) {
 
   if (!Number.isNaN(direct)) return direct;
 
-  const match = normalized.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})/);
+  const dateTimeMatch = normalized.match(
+    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
+  );
 
-  if (match) {
-    const day = Number(match[1]);
-    const month = Number(match[2]);
-    const yearRaw = Number(match[3]);
+  if (dateTimeMatch) {
+    const day = Number(dateTimeMatch[1]);
+    const month = Number(dateTimeMatch[2]);
+    const yearRaw = Number(dateTimeMatch[3]);
     const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
-    const parsed = new Date(year, month - 1, day).getTime();
+    const hour = dateTimeMatch[4] ? Number(dateTimeMatch[4]) : 0;
+    const minute = dateTimeMatch[5] ? Number(dateTimeMatch[5]) : 0;
+
+    const parsed = new Date(year, month - 1, day, hour, minute).getTime();
 
     if (!Number.isNaN(parsed)) return parsed;
   }
@@ -203,7 +216,7 @@ function parseDateTime(value?: string | null) {
   return 0;
 }
 
-function compareDatesDescending(a: string, b: string) {
+function compareDatesDescending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
 
@@ -212,7 +225,7 @@ function compareDatesDescending(a: string, b: string) {
   return (b || "").localeCompare(a || "");
 }
 
-function compareDatesAscending(a: string, b: string) {
+function compareDatesAscending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
 
@@ -300,6 +313,7 @@ function getDocumentClinicalDate(doc: DocumentCard) {
     doc.reported_on ||
     doc.registered_on ||
     doc.generated_on ||
+    doc.created_at ||
     ""
   );
 }
@@ -314,6 +328,7 @@ function getDocumentDateLabel(doc: DocumentCard) {
   if (doc.reported_on) return `Reported ${doc.reported_on}`;
   if (doc.registered_on) return `Registered ${doc.registered_on}`;
   if (doc.generated_on) return `Generated ${doc.generated_on}`;
+  if (doc.created_at) return `Uploaded ${doc.created_at}`;
 
   return clinicalDate;
 }
@@ -330,6 +345,37 @@ function uploaderSubtitle(doc: DocumentCard) {
   const details = [uploader.full_name, uploader.department, uploader.hospital_name].filter(Boolean);
 
   return `Uploaded by ${details.join(" · ")}`;
+}
+
+function isDischargeDocument(doc: DocumentCard | TimelineItem) {
+  return (
+    doc.section === "discharge_summary" ||
+    doc.section === "hospitalizations" ||
+    ("report_type" in doc &&
+      (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
+  );
+}
+
+function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
+  if (isDischargeDocument(doc)) {
+    return `/documents/${documentId}/discharge`;
+  }
+
+  return `/documents/${documentId}`;
+}
+
+function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {
+  const dateTime = parseDateTime(date);
+  const startTime = parseDateTime(start);
+  const endTime = parseDateTime(end);
+
+  if (!dateTime || !startTime) return false;
+
+  if (!endTime) {
+    return dateTime >= startTime;
+  }
+
+  return dateTime >= startTime && dateTime <= endTime;
 }
 
 function getTrendPriority(trend: BloodworkTrend) {
@@ -811,6 +857,26 @@ export default function MyRecordsPage() {
     }
   }
 
+  function openStructuredDocument(doc: DocumentCard) {
+    router.push(getStructuredDocumentPath(doc, doc.id));
+  }
+
+  function openTimelineDocument(documentId: number, item?: TimelineItem) {
+    if (item) {
+      router.push(getStructuredDocumentPath(item, documentId));
+      return;
+    }
+
+    const foundDocument = allDocuments.find((doc) => doc.id === documentId);
+
+    if (foundDocument) {
+      router.push(getStructuredDocumentPath(foundDocument, documentId));
+      return;
+    }
+
+    router.push(`/documents/${documentId}`);
+  }
+
   useEffect(() => {
     async function init() {
       const me = await fetchMe();
@@ -919,7 +985,59 @@ export default function MyRecordsPage() {
   const myTimeline = useMemo<TimelineItem[]>(() => {
     if (!profile) return [];
 
-    const documentItems: TimelineItem[] = allDocuments.map((doc) => ({
+    const sortedDocuments = [...allDocuments].sort((a, b) =>
+      compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
+    );
+
+    const usedDocumentIds = new Set<number>();
+
+    const dischargeParents: AdmissionParent[] = sortedDocuments
+      .filter((doc) => isDischargeDocument(doc))
+      .map((doc) => ({
+        id: `discharge-${doc.id}`,
+        type: "document",
+        date: doc.reported_on || doc.collected_on || getDocumentClinicalDate(doc),
+        title: valueOrDash(doc.report_name || "Discharge summary"),
+        subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${
+          doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""
+        } · ${sectionLabels[doc.section] || "Discharge summary"} · ${uploaderSubtitle(doc)} · ${
+          doc.is_verified ? t("verified") : t("unverified")
+        }`,
+        documentId: doc.id,
+        section: doc.section,
+        children: [],
+        admissionStart: doc.collected_on,
+        admissionEnd: doc.reported_on,
+        parentRank: 1,
+      }));
+
+    const eventParents: AdmissionParent[] = (profile.events || []).map((event) => ({
+      id: `event-${event.id}`,
+      type: "event",
+      date: getEventDate(event),
+      title: event.title || "Hospitalization",
+      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
+        "doctor"
+      )} ${valueOrDash(event.doctor_name)} · ${valueOrDash(event.department)} · ${valueOrDash(
+        event.hospital_name
+      )}`,
+      eventId: event.id,
+      section: "care_events",
+      children: [],
+      admissionStart: event.admitted_at,
+      admissionEnd: event.discharged_at,
+      parentRank: 2,
+    }));
+
+    const admissionParents = [...dischargeParents, ...eventParents]
+      .filter((parent) => parent.admissionStart || parent.admissionEnd)
+      .sort((a, b) => {
+        const dateDifference = compareDatesDescending(a.date, b.date);
+        if (dateDifference !== 0) return dateDifference;
+        return a.parentRank - b.parentRank;
+      });
+
+    const documentToTimelineItem = (doc: DocumentCard): TimelineItem => ({
       id: `doc-${doc.id}`,
       type: "document",
       date: getDocumentClinicalDate(doc),
@@ -928,20 +1046,45 @@ export default function MyRecordsPage() {
         doc
       )} · ${doc.is_verified ? t("verified") : t("unverified")}`,
       documentId: doc.id,
-    }));
+      section: doc.section,
+    });
 
-    const eventItems: TimelineItem[] = profile.events.map((event) => ({
-      id: `event-${event.id}`,
-      type: "event",
-      date: getEventDate(event),
-      title: event.title,
-      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
-        "doctor"
-      )} ${valueOrDash(event.doctor_name)}`,
-      eventId: event.id,
-    }));
+    for (const parent of admissionParents) {
+      const children = sortedDocuments
+        .filter((doc) => {
+          if (usedDocumentIds.has(doc.id)) return false;
+          if (isDischargeDocument(doc)) return false;
 
-    return [...documentItems, ...eventItems].sort((a, b) => compareDatesDescending(a.date, b.date));
+          const belongs = isInsideDateRange(
+            getDocumentClinicalDate(doc),
+            parent.admissionStart,
+            parent.admissionEnd
+          );
+
+          if (belongs) {
+            usedDocumentIds.add(doc.id);
+          }
+
+          return belongs;
+        })
+        .map(documentToTimelineItem)
+        .sort((a, b) => compareDatesAscending(a.date, b.date));
+
+      parent.children = children;
+    }
+
+    const parentDocumentIds = new Set(
+      admissionParents.map((parent) => parent.documentId).filter((id): id is number => Boolean(id))
+    );
+
+    const standaloneDocuments = sortedDocuments
+      .filter((doc) => !usedDocumentIds.has(doc.id))
+      .filter((doc) => !parentDocumentIds.has(doc.id))
+      .map(documentToTimelineItem);
+
+    return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+      compareDatesDescending(a.date, b.date)
+    );
   }, [profile, allDocuments, t]);
 
   const sortedTrends = useMemo(() => {
@@ -1165,7 +1308,7 @@ export default function MyRecordsPage() {
             </div>
 
             <div className="muted-text" style={{ lineHeight: 1.6 }}>
-              Recent records and care events, sorted by collected/test date when available.
+              Recent records and admission episodes, grouped by hospitalization period when possible.
             </div>
           </div>
         </div>
@@ -1173,7 +1316,7 @@ export default function MyRecordsPage() {
         <ClinicalTimeline
           items={myTimeline}
           maxItems={10}
-          onOpenDocument={(documentId) => router.push(`/documents/${documentId}`)}
+          onOpenDocument={(documentId, item) => openTimelineDocument(documentId, item)}
           onSeeFullTimeline={() => router.push("/my-records/timeline")}
           showSeeFullTimeline
           emptyText={t("noTimelineActivity")}
@@ -1301,7 +1444,9 @@ export default function MyRecordsPage() {
                   <div className="muted-text" style={{ fontSize: 13 }}>
                     Source
                   </div>
-                  <div style={{ marginTop: 6, fontWeight: 700 }}>{sectionLabels[doc.section] || doc.section}</div>
+                  <div style={{ marginTop: 6, fontWeight: 700 }}>
+                    {sectionLabels[doc.section] || doc.section}
+                  </div>
                   <div className="muted-text" style={{ marginTop: 4 }}>
                     {valueOrDash(doc.referring_doctor)}
                   </div>
@@ -1311,8 +1456,8 @@ export default function MyRecordsPage() {
                   <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
                     {t("openOriginal")}
                   </button>
-                  <button className="primary-btn" onClick={() => router.push(`/documents/${doc.id}`)}>
-                    {t("structuredView")}
+                  <button className="primary-btn" onClick={() => openStructuredDocument(doc)}>
+                    {doc.section === "discharge_summary" ? "Open Discharge" : t("structuredView")}
                   </button>
                 </div>
               </div>
