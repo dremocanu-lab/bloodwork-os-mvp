@@ -77,6 +77,15 @@ type DocumentResponse = {
   };
 };
 
+type NavigationSection = {
+  key: string;
+  title: string;
+  body: string;
+  original_titles?: string[];
+  confidence?: number;
+  synthetic?: boolean;
+};
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
@@ -164,6 +173,9 @@ function parseDischargePayload(noteBody?: string | null): DischargePayload | nul
 }
 
 function sectionIcon(key?: string) {
+  if (key === "overview") return "Ov";
+  if (key === "full_summary") return "All";
+  if (key === "administrative_information") return "Ad";
   if (key === "diagnoses") return "Dx";
   if (key === "epicriza") return "Ep";
   if (key === "investigations") return "Ix";
@@ -171,17 +183,131 @@ function sectionIcon(key?: string) {
   if (key === "recommended_treatment") return "Rx";
   if (key === "recommendations") return "Fu";
   if (key === "discharge_status") return "St";
+  if (key === "audit") return "Au";
   return "Tx";
 }
 
 function sectionPreview(body?: string) {
-  const text = (body || "").replace(/\s+/g, " ").trim();
+  const text = cleanOneLine(body || "");
 
   if (!text) return "No extracted text.";
-
   if (text.length <= 88) return text;
 
   return `${text.slice(0, 88)}...`;
+}
+
+function cleanOneLine(value?: string | null) {
+  return String(value || "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\s+/g, " ")
+    .trim();
+}
+
+function normalizeDischargeText(value?: string | null) {
+  if (!value) return "";
+
+  let text = String(value)
+    .replace(/\r\n/g, "\n")
+    .replace(/\r/g, "\n")
+    .replace(/\u00a0/g, " ")
+    .replace(/−|–|—/g, "-")
+    .replace(/[ \t]+/g, " ")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
+
+  const noisePatterns = [
+    /^\s*\d+\s*\/\s*\d+\s*$/,
+    /^\s*\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(AM|PM)?\s*$/i,
+    /192\.168\./i,
+    /biletexternare\.asp/i,
+    /^hipocrate\s*-\s*imprimare\s*fisa$/i,
+  ];
+
+  text = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line && !noisePatterns.some((pattern) => pattern.test(line)))
+    .join("\n");
+
+  text = text.replace(/\bHg(?=\s*\d)/gi, "Hb");
+  text = text.replace(/\bAPPT\b/gi, "APTT");
+  text = text.replace(/\bHydree\b/gi, "Hydrea");
+  text = text.replace(/\bg\/dl\b/gi, "g/dL");
+  text = text.replace(/\bmg\/dl\b/gi, "mg/dL");
+  text = text.replace(/\bmg\/l\b/gi, "mg/L");
+  text = text.replace(/\bu\/l\b/gi, "U/L");
+
+  return text.trim();
+}
+
+function isClinicalAnchor(line: string) {
+  return (
+    /^la\s+(actuala|actualul|internarea|reevaluarea)/i.test(line) ||
+    /^revine\b/i.test(line) ||
+    /^hemograma\s*:/i.test(line) ||
+    /^biochimie\s*:/i.test(line) ||
+    /^coagulare\s*:/i.test(line) ||
+    /^consult\s+/i.test(line) ||
+    /^rx\s+/i.test(line) ||
+    /^eco\s+/i.test(line) ||
+    /^tratament\s*:/i.test(line) ||
+    /^diagnostic/i.test(line) ||
+    /^stare\s+la\s+externare/i.test(line) ||
+    /^recomand/i.test(line) ||
+    /^s-a\s+/i.test(line) ||
+    /^s-au\s+/i.test(line) ||
+    /^continua\b/i.test(line)
+  );
+}
+
+function shouldStartNewParagraph(line: string) {
+  return (
+    isClinicalAnchor(line) ||
+    /^\d{1,2}[./-]\d{1,2}[./-]\d{2,4}/.test(line) ||
+    /^[A-ZĂÂÎȘȚ][A-ZĂÂÎȘȚ\s]{6,}$/.test(line)
+  );
+}
+
+function splitReadableParagraphs(value?: string | null) {
+  const text = normalizeDischargeText(value);
+
+  if (!text) return [];
+
+  const rawLines = text
+    .split("\n")
+    .map((line) => line.trim())
+    .filter(Boolean);
+
+  const paragraphs: string[] = [];
+
+  for (const line of rawLines) {
+    const previous = paragraphs[paragraphs.length - 1] || "";
+
+    const previousLooksWrapped =
+      previous &&
+      !/[.;:!?)]$/.test(previous) &&
+      previous.length >= 70 &&
+      !shouldStartNewParagraph(line);
+
+    const shortContinuation =
+      previous &&
+      line.length < 95 &&
+      !shouldStartNewParagraph(line) &&
+      !previous.endsWith(".");
+
+    if (!paragraphs.length || shouldStartNewParagraph(line)) {
+      paragraphs.push(line);
+    } else if (previousLooksWrapped || shortContinuation) {
+      paragraphs[paragraphs.length - 1] = `${previous} ${line}`.replace(/\s+/g, " ").trim();
+    } else {
+      paragraphs.push(line);
+    }
+  }
+
+  return paragraphs;
 }
 
 function StatBubble({
@@ -193,12 +319,16 @@ function StatBubble({
   value?: string | number | null;
   note?: string | null;
 }) {
+  const displayValue =
+    value === null || value === undefined || value === "" ? "—" : String(value);
+
   return (
     <div
       className="soft-card-tight"
       style={{
         padding: 18,
-        background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
+        background:
+          "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
       }}
     >
       <div className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
@@ -215,7 +345,7 @@ function StatBubble({
           wordBreak: "break-word",
         }}
       >
-        {valueOrDash(value === null || value === undefined ? value : String(value))}
+        {valueOrDash(displayValue)}
       </div>
 
       {note && (
@@ -278,6 +408,111 @@ function StatusPill({
   );
 }
 
+function ClinicalTextBlock({ text }: { text?: string | null }) {
+  const paragraphs = splitReadableParagraphs(text);
+
+  if (!paragraphs.length) {
+    return <div className="muted-text">No text extracted for this section.</div>;
+  }
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gap: 12,
+        fontSize: 15,
+        lineHeight: 1.72,
+        color: "var(--foreground)",
+      }}
+    >
+      {paragraphs.map((paragraph, index) => {
+        const anchor = isClinicalAnchor(paragraph);
+
+        return (
+          <p
+            key={`${paragraph.slice(0, 42)}-${index}`}
+            style={{
+              margin: 0,
+              padding: anchor ? "12px 14px" : 0,
+              borderRadius: anchor ? 16 : 0,
+              background: anchor ? "var(--panel)" : "transparent",
+              border: anchor ? "1px solid var(--border)" : "0",
+              fontWeight: anchor ? 800 : 610,
+              whiteSpace: "normal",
+              wordBreak: "normal",
+              overflowWrap: "anywhere",
+            }}
+          >
+            {paragraph}
+          </p>
+        );
+      })}
+    </div>
+  );
+}
+
+function SectionTextPanel({
+  title,
+  subtitle,
+  text,
+  onCopy,
+}: {
+  title: string;
+  subtitle?: React.ReactNode;
+  text?: string | null;
+  onCopy?: () => void;
+}) {
+  return (
+    <div
+      style={{
+        minHeight: 0,
+        height: "100%",
+        display: "grid",
+        gridTemplateRows: "auto minmax(0, 1fr)",
+        overflow: "hidden",
+      }}
+    >
+      <div
+        style={{
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          marginBottom: 16,
+        }}
+      >
+        <div>
+          <div className="section-title">{title}</div>
+          {subtitle && (
+            <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
+              {subtitle}
+            </div>
+          )}
+        </div>
+
+        {onCopy && (
+          <button className="secondary-btn" onClick={onCopy}>
+            Copy section
+          </button>
+        )}
+      </div>
+
+      <div
+        className="soft-card-tight"
+        style={{
+          padding: 22,
+          background: "var(--panel-2)",
+          minHeight: 0,
+          overflowY: "auto",
+          paddingRight: 14,
+        }}
+      >
+        <ClinicalTextBlock text={text} />
+      </div>
+    </div>
+  );
+}
+
 function copyText(text: string) {
   if (!text) return;
   void navigator.clipboard?.writeText(text);
@@ -336,30 +571,42 @@ export default function DischargeStructuredPage() {
 
   const parsed = documentData?.parsed_data;
   const dischargePayload = parseDischargePayload(parsed?.note_body);
-  const sections = dischargePayload?.sections || [];
+  const sections = useMemo(() => dischargePayload?.sections || [], [dischargePayload?.sections]);
 
-  const navigationSections = useMemo(() => {
+  const fullSummaryText = useMemo(() => {
+    return sections.map((section) => `${section.title}\n\n${section.body}`).join("\n\n---\n\n");
+  }, [sections]);
+
+  const navigationSections = useMemo<NavigationSection[]>(() => {
     return [
       {
         key: "overview",
         title: "Overview",
         body: "Patient, hospitalization, and document details.",
+        synthetic: true,
       },
       {
         key: "full_summary",
         title: "Full discharge summary",
-        body: "All extracted sections shown together.",
+        body: fullSummaryText || "All extracted sections shown together.",
+        synthetic: true,
       },
-      ...sections,
+      ...sections.map((section) => ({
+        ...section,
+        synthetic: false,
+      })),
       {
         key: "audit",
         title: "Audit trail",
         body: "Verification and document activity.",
+        synthetic: true,
       },
     ];
-  }, [sections]);
+  }, [sections, fullSummaryText]);
 
-  const activeSection = navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
+  const activeSection =
+    navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
+
   const canDelete =
     Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
     currentUser?.role === "admin";
@@ -443,10 +690,6 @@ export default function DischargeStructuredPage() {
     );
   }
 
-  const fullSummaryText = sections
-    .map((section) => `${section.title}\n\n${section.body}`)
-    .join("\n\n---\n\n");
-
   return (
     <AppShell
       user={currentUser}
@@ -483,67 +726,67 @@ export default function DischargeStructuredPage() {
         </div>
       }
     >
+      {confirmDeleteOpen && (
+        <div
+          style={{
+            position: "fixed",
+            inset: 0,
+            zIndex: 1000,
+            background: "rgba(15, 23, 42, 0.42)",
+            display: "grid",
+            placeItems: "center",
+            padding: 20,
+            backdropFilter: "blur(10px)",
+          }}
+        >
+          <div
+            className="soft-card"
+            style={{
+              width: "min(520px, 100%)",
+              padding: 24,
+              boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
+            }}
+          >
+            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
+              Delete this discharge summary?
+            </div>
 
-        {confirmDeleteOpen && (
-                <div
+            <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
+              This removes the discharge summary from the patient files and timeline. This can only be done by the
+              uploader or an admin.
+            </div>
+
+            <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
+              <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
+              <div className="muted-text" style={{ marginTop: 5 }}>
+                Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
+              </div>
+            </div>
+
+            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
+              <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+                Cancel
+              </button>
+
+              <button
+                onClick={deleteDocument}
+                disabled={deleting}
                 style={{
-                    position: "fixed",
-                    inset: 0,
-                    zIndex: 1000,
-                    background: "rgba(15, 23, 42, 0.42)",
-                    display: "grid",
-                    placeItems: "center",
-                    padding: 20,
-                    backdropFilter: "blur(10px)",
+                  border: "1px solid var(--danger-border)",
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  borderRadius: 14,
+                  padding: "11px 15px",
+                  fontWeight: 950,
+                  cursor: deleting ? "not-allowed" : "pointer",
                 }}
-                >
-                <div
-                    className="soft-card"
-                    style={{
-                    width: "min(520px, 100%)",
-                    padding: 24,
-                    boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
-                    }}
-                >
-                    <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
-                    Delete this discharge summary?
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
-                    This removes the discharge summary from the patient files and timeline. This can only be done by the uploader or an admin.
-                    </div>
-
-                    <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
-                    <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
-                    <div className="muted-text" style={{ marginTop: 5 }}>
-                        Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
-                    </div>
-                    </div>
-
-                    <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
-                    <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
-                        Cancel
-                    </button>
-
-                    <button
-                        onClick={deleteDocument}
-                        disabled={deleting}
-                        style={{
-                        border: "1px solid var(--danger-border)",
-                        background: "var(--danger-bg)",
-                        color: "var(--danger-text)",
-                        borderRadius: 14,
-                        padding: "11px 15px",
-                        fontWeight: 950,
-                        cursor: deleting ? "not-allowed" : "pointer",
-                        }}
-                    >
-                        {deleting ? "Deleting..." : "Delete summary"}
-                    </button>
-                    </div>
-                </div>
-                </div>
-            )}
+              >
+                {deleting ? "Deleting..." : "Delete summary"}
+              </button>
+            </div>
+          </div>
+        </div>
+      )}
 
       {error && (
         <div
@@ -565,7 +808,8 @@ export default function DischargeStructuredPage() {
         style={{
           padding: 24,
           marginBottom: 24,
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 12%, var(--panel)), var(--panel))",
+          background:
+            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 12%, var(--panel)), var(--panel))",
         }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
@@ -583,7 +827,7 @@ export default function DischargeStructuredPage() {
             </div>
 
             <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.65 }}>
-              Narrative discharge record extracted from the original document and organized into clinical sections.
+              Narrative discharge record extracted from the original document and organized into readable clinical sections.
             </div>
           </div>
         </div>
@@ -619,11 +863,7 @@ export default function DischargeStructuredPage() {
           )}`}
         />
 
-        <StatBubble
-          label="Doctor"
-          value={parsed.referring_doctor}
-          note="Referring / responsible doctor"
-        />
+        <StatBubble label="Doctor" value={parsed.referring_doctor} note="Referring / responsible doctor" />
       </div>
 
       <div
@@ -705,20 +945,15 @@ export default function DischargeStructuredPage() {
                       fontWeight: 950,
                     }}
                   >
-                    {section.key === "overview"
-                      ? "Ov"
-                      : section.key === "full_summary"
-                      ? "All"
-                      : section.key === "audit"
-                      ? "Au"
-                      : sectionIcon(section.key)}
+                    {sectionIcon(section.key)}
                   </span>
 
                   <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>
-                      {section.title}
-                    </span>
-                    <span className="muted-text" style={{ display: "block", marginTop: 5, fontSize: 12, lineHeight: 1.35 }}>
+                    <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>{section.title}</span>
+                    <span
+                      className="muted-text"
+                      style={{ display: "block", marginTop: 5, fontSize: 12, lineHeight: 1.35 }}
+                    >
                       {sectionPreview(section.body)}
                     </span>
                   </span>
@@ -742,7 +977,14 @@ export default function DischargeStructuredPage() {
           }}
         >
           {activeSectionKey === "overview" && (
-            <div>
+            <div
+              style={{
+                minHeight: 0,
+                height: "100%",
+                overflowY: "auto",
+                paddingRight: 8,
+              }}
+            >
               <div className="section-title" style={{ marginBottom: 16 }}>
                 Overview
               </div>
@@ -769,118 +1011,42 @@ export default function DischargeStructuredPage() {
           )}
 
           {activeSectionKey === "full_summary" && (
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
-                  marginBottom: 16,
-                }}
-              >
-                <div>
-                  <div className="section-title">Full discharge summary</div>
-                  <div className="muted-text" style={{ marginTop: 6 }}>
-                    All extracted sections displayed in document order.
-                  </div>
-                </div>
-
-                <button className="secondary-btn" onClick={() => copyText(fullSummaryText)}>
-                  Copy all
-                </button>
-              </div>
-
-              <div style={{ display: "grid", gap: 16 }}>
-                {sections.map((section, index) => (
-                  <div key={`${section.key}-${index}`} className="soft-card-tight" style={{ padding: 18 }}>
-                    <div style={{ fontWeight: 950, fontSize: 18, letterSpacing: "-0.035em" }}>
-                      {section.title}
-                    </div>
-
-                    {section.original_titles?.length ? (
-                      <div className="muted-text" style={{ marginTop: 5, fontSize: 12, fontWeight: 800 }}>
-                        Original heading: {section.original_titles.join(" · ")}
-                      </div>
-                    ) : null}
-
-                    <div
-                      style={{
-                        whiteSpace: "pre-wrap",
-                        marginTop: 14,
-                        lineHeight: 1.75,
-                        fontWeight: 650,
-                      }}
-                    >
-                      {section.body || "No text extracted for this section."}
-                    </div>
-                  </div>
-                ))}
-
-                {!sections.length && (
-                  <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                    <div style={{ fontWeight: 900 }}>No discharge sections found.</div>
-                    <div className="muted-text" style={{ marginTop: 6 }}>
-                      The backend did not return a structured discharge payload for this document.
-                    </div>
-                  </div>
-                )}
-              </div>
-            </div>
+            <SectionTextPanel
+              title="Full discharge summary"
+              subtitle="All extracted sections displayed in document order."
+              text={fullSummaryText}
+              onCopy={() => copyText(fullSummaryText)}
+            />
           )}
 
           {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
-            <div>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  gap: 12,
-                  flexWrap: "wrap",
-                  marginBottom: 16,
-                }}
-              >
-                <div>
-                  <div className="section-title">{activeSection.title}</div>
-
-                  {"original_titles" in activeSection && activeSection.original_titles?.length ? (
-                    <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
-                      Original heading: {activeSection.original_titles.join(" · ")}
-                    </div>
-                  ) : null}
-                </div>
-
-                {"body" in activeSection && (
-                  <button className="secondary-btn" onClick={() => copyText(activeSection.body || "")}>
-                    Copy section
-                  </button>
-                )}
-              </div>
-
-              <div
-                className="soft-card-tight"
-                style={{
-                  padding: 22,
-                  background: "var(--panel-2)",
-                  whiteSpace: "pre-wrap",
-                  lineHeight: 1.8,
-                  fontWeight: 650,
-                  minHeight: 0,
-                  overflowY: "auto"
-                }}
-              >
-                {activeSection.body || "No text extracted for this section."}
-              </div>
-            </div>
+            <SectionTextPanel
+              title={activeSection.title}
+              subtitle={
+                activeSection.original_titles?.length
+                  ? `Original heading: ${activeSection.original_titles.join(" · ")}`
+                  : undefined
+              }
+              text={activeSection.body}
+              onCopy={() => copyText(activeSection.body || "")}
+            />
           )}
 
           {activeSectionKey === "audit" && (
-            <div>
+            <div
+              style={{
+                minHeight: 0,
+                height: "100%",
+                display: "grid",
+                gridTemplateRows: "auto minmax(0, 1fr)",
+                overflow: "hidden",
+              }}
+            >
               <div className="section-title" style={{ marginBottom: 16 }}>
                 Audit trail
               </div>
 
-              <div style={{ display: "grid", gap: 12 }}>
+              <div style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}>
                 {(parsed.audit_logs || []).map((log, index) => (
                   <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
                     <div style={{ fontWeight: 950 }}>{log.action}</div>
