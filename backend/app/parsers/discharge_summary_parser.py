@@ -36,25 +36,57 @@ def normalize(value: Any) -> str:
     return text.strip()
 
 
+def slugify(value: Any) -> str:
+    normalized = normalize(value)
+    normalized = re.sub(r"[^a-z0-9]+", "_", normalized).strip("_")
+    return normalized or "section"
+
+
+def strip_google_markers(text: str) -> str:
+    cleaned = clean_text(text)
+    cleaned = re.sub(
+        r"--- GOOGLE DOCUMENT AI [A-Z0-9 =_-]+ ---",
+        "\n",
+        cleaned,
+        flags=re.IGNORECASE,
+    )
+    cleaned = re.sub(r"\n{3,}", "\n\n", cleaned)
+    return cleaned.strip()
+
+
 def extract_best_text(extraction_or_text: dict[str, Any] | str) -> str:
     if isinstance(extraction_or_text, str):
-        return clean_text(extraction_or_text)
+        return strip_google_markers(extraction_or_text)
 
-    for key in ["plain_text", "lines_text", "text", "extracted_text", "debug_text"]:
+    parts: list[str] = []
+
+    for key in [
+        "plain_text",
+        "lines_text",
+        "table_text",
+        "tokens_text",
+        "text",
+        "extracted_text",
+        "debug_text",
+    ]:
         value = extraction_or_text.get(key)
+
         if isinstance(value, str) and value.strip():
-            text = value
-            break
-    else:
-        return ""
+            parts.append(strip_google_markers(value))
 
-    if "--- GOOGLE DOCUMENT AI PLAIN TEXT ---" in text:
-        text = text.split("--- GOOGLE DOCUMENT AI PLAIN TEXT ---", 1)[1]
-        marker = re.search(r"\n--- GOOGLE DOCUMENT AI [A-Z ]+ ---", text)
-        if marker:
-            text = text[: marker.start()]
+    seen: set[str] = set()
+    unique_parts: list[str] = []
 
-    return clean_text(text)
+    for part in parts:
+        compact = " ".join(part.split())
+
+        if not compact or compact in seen:
+            continue
+
+        seen.add(compact)
+        unique_parts.append(part)
+
+    return clean_text("\n\n".join(unique_parts))
 
 
 SECTION_BUCKETS: list[dict[str, Any]] = [
@@ -64,16 +96,22 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
         "aliases": [
             "date pacient",
             "datele pacientului",
+            "date identificare pacient",
             "foaie de observatie",
             "foaie observatie",
+            "nr foaie observatie",
             "sectia",
             "sectie",
             "medic curant",
+            "medic",
             "data internarii",
             "data internare",
             "data externarii",
             "data externare",
+            "unitatea sanitara",
+            "spital",
             "admission information",
+            "patient information",
         ],
     },
     {
@@ -121,6 +159,20 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
         ],
     },
     {
+        "key": "objective_exam",
+        "title": "Objective exam / Clinical examination",
+        "aliases": [
+            "examen obiectiv",
+            "examen clinic",
+            "stare generala",
+            "stare generală",
+            "status clinic",
+            "clinical examination",
+            "physical examination",
+            "objective exam",
+        ],
+    },
+    {
         "key": "investigations",
         "title": "Investigations / Results",
         "aliases": [
@@ -132,6 +184,7 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
             "paraclinic",
             "analize",
             "rezultate analize",
+            "rezultate laborator",
             "biologie",
             "hematologie",
             "biochimie",
@@ -152,6 +205,19 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
             "imaging",
             "laboratory",
             "results",
+        ],
+    },
+    {
+        "key": "procedures",
+        "title": "Procedures / Interventions",
+        "aliases": [
+            "proceduri",
+            "interventii",
+            "intervenții",
+            "proceduri efectuate",
+            "manevre",
+            "interventions",
+            "procedures",
         ],
     },
     {
@@ -181,8 +247,11 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
             "tratament recomandat",
             "tratamentul recomandat",
             "tratament la externare",
+            "tratament de urmat",
             "medicatie la externare",
             "medicație la externare",
+            "medicatie recomandata",
+            "medicație recomandată",
             "recomandari terapeutice",
             "recomandări terapeutice",
             "rp",
@@ -238,50 +307,47 @@ SECTION_BUCKETS: list[dict[str, Any]] = [
 ]
 
 
-ORDERED_KEYS = [
-    "patient_admission_info",
-    "diagnoses",
-    "epicriza",
-    "investigations",
-    "treatment_in_hospital",
-    "recommended_treatment",
-    "recommendations",
-    "discharge_status",
-    "other",
+HEADER_NOISE_PATTERNS = [
+    r"^pagina\s+\d+",
+    r"^\d+\s*/\s*\d+$",
+    r"^page\s+\d+",
+    r"^printabile",
+    r"^http",
+    r"^www\.",
+    r"^cod\s+bare",
+    r"^semnatura",
+    r"^parafa",
+    r"^validat",
+    r"^nevalidat",
 ]
+
+
+def is_noise_line(line: str) -> bool:
+    norm = normalize(line)
+
+    if not norm:
+        return True
+
+    for pattern in HEADER_NOISE_PATTERNS:
+        if re.search(pattern, norm):
+            return True
+
+    return False
 
 
 def canonical_title(key: str) -> str:
     for bucket in SECTION_BUCKETS:
         if bucket["key"] == key:
             return bucket["title"]
-    return "Other clinical text"
+
+    return "Clinical section"
 
 
-def looks_like_heading(line: str) -> bool:
+def match_known_heading(line: str) -> tuple[str, str] | None:
     raw = clean_text(line)
     norm = normalize(raw)
 
     if not norm:
-        return False
-
-    if len(norm) > 130 and ":" not in norm:
-        return False
-
-    if raw.isupper() and len(raw) <= 120:
-        return True
-
-    if ":" in raw and len(raw.split(":", 1)[0]) <= 90:
-        return True
-
-    return False
-
-
-def match_heading(line: str) -> tuple[str, str, str] | None:
-    raw = clean_text(line)
-    norm = normalize(raw)
-
-    if not norm or not looks_like_heading(raw):
         return None
 
     heading_part = raw.split(":", 1)[0].strip()
@@ -295,66 +361,134 @@ def match_heading(line: str) -> tuple[str, str, str] | None:
                 continue
 
             if heading_norm == alias_norm:
-                return bucket["key"], bucket["title"], raw
+                return bucket["key"], raw
 
-            if heading_norm.startswith(alias_norm):
-                return bucket["key"], bucket["title"], raw
+            if heading_norm.startswith(alias_norm) and len(heading_norm) <= len(alias_norm) + 55:
+                return bucket["key"], raw
 
             if norm.startswith(alias_norm + ":"):
-                return bucket["key"], bucket["title"], raw
+                return bucket["key"], raw
 
             if norm.startswith(alias_norm + " -"):
-                return bucket["key"], bucket["title"], raw
+                return bucket["key"], raw
 
     return None
 
 
-def classify_unheaded_text(body: str) -> tuple[str, str, float]:
-    norm = normalize(body)
+def has_value_after_colon(line: str) -> bool:
+    if ":" not in line:
+        return False
+
+    left, right = line.split(":", 1)
+    return bool(left.strip() and right.strip())
+
+
+def looks_like_dynamic_heading(line: str) -> bool:
+    raw = clean_text(line)
+
+    if is_noise_line(raw):
+        return False
+
+    norm = normalize(raw)
 
     if not norm:
-        return "other", "Other clinical text", 0.2
+        return False
 
-    scores: dict[str, int] = {}
+    if re.search(r"\d{4,}|\d+\.\d+|mg|g/dl|10\^|mmol|trombocite|hemoglobina", norm):
+        return False
 
+    if len(norm) < 3:
+        return False
+
+    # Known headings are always accepted.
+    if match_known_heading(raw):
+        return True
+
+    # Numbered section headings:
+    # 1. Epicriza
+    # 2) Tratament recomandat
+    if re.match(r"^\s*\d{1,2}[\.)]\s+[A-Za-zĂÂÎȘȚăâîșț]", raw):
+        return len(norm) <= 120
+
+    # Romanian forms sometimes use title + colon.
+    # Accept short labels before the colon as section headings.
+    if ":" in raw:
+        left, right = raw.split(":", 1)
+        left_norm = normalize(left)
+
+        if 3 <= len(left_norm) <= 95:
+            # If right side is long, it is still a section with same-line body.
+            return True
+
+    # All caps headings are very common in discharge summaries.
+    letters = re.sub(r"[^A-Za-zĂÂÎȘȚăâîșț]", "", raw)
+    if letters and len(letters) >= 4:
+        uppercase_letters = sum(1 for char in letters if char.isupper())
+        uppercase_ratio = uppercase_letters / max(len(letters), 1)
+
+        if uppercase_ratio >= 0.75 and len(norm) <= 120:
+            return True
+
+    # Title case short lines can be headings, but avoid generic sentence fragments.
+    words = raw.split()
+    if 1 <= len(words) <= 9 and len(norm) <= 90:
+        title_like_words = 0
+
+        for word in words:
+            stripped = word.strip(" .,:;-()[]")
+            if not stripped:
+                continue
+
+            if stripped[:1].isupper():
+                title_like_words += 1
+
+        if title_like_words >= max(1, len(words) - 1):
+            return True
+
+    return False
+
+
+def classify_heading_title(line: str, index: int) -> tuple[str, str, str]:
+    raw = clean_text(line)
+    known = match_known_heading(raw)
+
+    if known:
+        key, original_title = known
+        return key, canonical_title(key), original_title
+
+    heading_text = raw.split(":", 1)[0].strip() if ":" in raw else raw.strip()
+    heading_text = re.sub(r"^\s*\d{1,2}[\.)]\s*", "", heading_text).strip()
+    heading_text = heading_text.strip(" -–—:;.")
+
+    key = f"custom_{index}_{slugify(heading_text)[:50]}"
+    title = heading_text or f"Clinical section {index}"
+
+    return key, title, raw
+
+
+def split_inline_headings(text: str) -> str:
+    result = text
+
+    aliases: list[str] = []
     for bucket in SECTION_BUCKETS:
-        score = 0
+        aliases.extend(bucket["aliases"])
 
-        for alias in bucket["aliases"]:
-            alias_norm = normalize(alias)
-            if alias_norm and alias_norm in norm:
-                score += 1
+    for alias in sorted(set(aliases), key=len, reverse=True):
+        escaped = re.escape(alias)
+        result = re.sub(
+            rf"(?i)(?<!\n)\b({escaped})\s*:",
+            r"\n\1:",
+            result,
+        )
 
-        scores[bucket["key"]] = score
-
-    if re.search(r"\b(diagnostic|diagnostice|icd|drg)\b", norm):
-        scores["diagnoses"] = scores.get("diagnoses", 0) + 3
-
-    if re.search(r"\b(epicriza|evolutie|anamneza|internarii|pacientul)\b", norm):
-        scores["epicriza"] = scores.get("epicriza", 0) + 3
-
-    if re.search(r"\b(ct|rmn|irm|rx|ecografie|ecg|ekg|analize|hemoglobina|leucocite|trombocite)\b", norm):
-        scores["investigations"] = scores.get("investigations", 0) + 3
-
-    if re.search(r"\b(se recomanda|control|monitorizare|regim|revine|indicatii)\b", norm):
-        scores["recommendations"] = scores.get("recommendations", 0) + 3
-
-    if re.search(r"\b(rp|comprimate|capsule|mg|ml|x\s*\d|dimineata|seara|tratament)\b", norm):
-        scores["recommended_treatment"] = scores.get("recommended_treatment", 0) + 2
-
-    best_key = max(scores, key=lambda key: scores[key])
-    best_score = scores.get(best_key, 0)
-
-    if best_score <= 0:
-        return "other", "Other clinical text", 0.35
-
-    return best_key, canonical_title(best_key), min(0.9, 0.45 + best_score * 0.12)
+    return result
 
 
 def split_into_sections(text: str) -> list[dict[str, Any]]:
-    cleaned = clean_text(text)
-    lines = [clean_text(line) for line in cleaned.splitlines()]
-    lines = [line for line in lines if line]
+    cleaned = split_inline_headings(clean_text(text))
+
+    raw_lines = [clean_text(line) for line in cleaned.splitlines()]
+    lines = [line for line in raw_lines if line and not is_noise_line(line)]
 
     sections: list[dict[str, Any]] = []
 
@@ -362,6 +496,7 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
     current_title: str | None = None
     current_original_title: str | None = None
     current_lines: list[str] = []
+    section_index = 0
 
     def flush() -> None:
         nonlocal current_key, current_title, current_original_title, current_lines
@@ -379,21 +514,20 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
             sections.append(
                 {
                     "key": current_key,
-                    "title": current_title or canonical_title(current_key),
-                    "original_title": current_original_title,
+                    "title": current_title or "Clinical section",
+                    "original_titles": [current_original_title] if current_original_title else [],
                     "body": body,
-                    "confidence": 0.92,
+                    "confidence": 0.9,
                 }
             )
         else:
-            key, title, confidence = classify_unheaded_text(body)
             sections.append(
                 {
-                    "key": key,
-                    "title": title,
-                    "original_title": None,
+                    "key": "other_intro",
+                    "title": "Introductory / unclassified text",
+                    "original_titles": [],
                     "body": body,
-                    "confidence": confidence,
+                    "confidence": 0.45,
                 }
             )
 
@@ -403,14 +537,13 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
         current_lines = []
 
     for line in lines:
-        matched = match_heading(line)
-
-        if matched:
+        if looks_like_dynamic_heading(line):
+            section_index += 1
             flush()
 
-            current_key, current_title, current_original_title = matched
+            current_key, current_title, current_original_title = classify_heading_title(line, section_index)
 
-            if ":" in line:
+            if has_value_after_colon(line):
                 after_colon = line.split(":", 1)[1].strip()
                 if after_colon:
                     current_lines.append(after_colon)
@@ -424,67 +557,54 @@ def split_into_sections(text: str) -> list[dict[str, Any]]:
     if not sections and cleaned:
         sections.append(
             {
-                "key": "other",
+                "key": "full_discharge_text",
                 "title": "Full discharge text",
-                "original_title": None,
+                "original_titles": [],
                 "body": cleaned,
                 "confidence": 0.25,
             }
         )
 
-    merged = merge_sections(sections)
-
-    if not merged and cleaned:
-        merged = [
-            {
-                "key": "other",
-                "title": "Full discharge text",
-                "original_titles": [],
-                "body": cleaned,
-                "confidence": 0.25,
-            }
-        ]
-
-    return merged
+    return remove_empty_and_tiny_sections(sections)
 
 
-def merge_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
-    grouped: dict[str, dict[str, Any]] = {}
+def remove_empty_and_tiny_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+    cleaned_sections: list[dict[str, Any]] = []
 
     for section in sections:
-        key = section.get("key") or "other"
         body = clean_text(section.get("body"))
 
         if not body:
             continue
 
-        if key not in grouped:
-            grouped[key] = {
-                "key": key,
-                "title": section.get("title") or canonical_title(key),
-                "original_titles": [],
-                "body": body,
-                "confidence": float(section.get("confidence") or 0.5),
-            }
-        else:
-            grouped[key]["body"] = grouped[key]["body"].rstrip() + "\n\n" + body
-            grouped[key]["confidence"] = max(
-                float(grouped[key].get("confidence") or 0.5),
-                float(section.get("confidence") or 0.5),
+        # Avoid tiny administrative leftovers unless they are the only content.
+        if len(body) < 2:
+            continue
+
+        next_section = {
+            "key": section.get("key") or f"custom_{len(cleaned_sections) + 1}",
+            "title": section.get("title") or "Clinical section",
+            "original_titles": section.get("original_titles") or [],
+            "body": body,
+            "confidence": float(section.get("confidence") or 0.5),
+        }
+
+        cleaned_sections.append(next_section)
+
+    if not cleaned_sections and sections:
+        first_body = clean_text(sections[0].get("body"))
+        if first_body:
+            cleaned_sections.append(
+                {
+                    "key": "full_discharge_text",
+                    "title": "Full discharge text",
+                    "original_titles": [],
+                    "body": first_body,
+                    "confidence": 0.25,
+                }
             )
 
-        original_title = section.get("original_title")
-        if original_title and original_title not in grouped[key]["original_titles"]:
-            grouped[key]["original_titles"].append(original_title)
-
-    ordered: list[dict[str, Any]] = []
-
-    for key in ORDERED_KEYS:
-        if key in grouped:
-            ordered.append(grouped.pop(key))
-
-    ordered.extend(grouped.values())
-    return ordered
+    return cleaned_sections
 
 
 def extract_discharge_dates(text: str) -> dict[str, str | None]:
@@ -566,6 +686,6 @@ def parse_discharge_summary(extraction_or_text: dict[str, Any] | str) -> dict[st
         "note_body": json.dumps(note_payload, ensure_ascii=False),
         "labs": [],
         "warnings": [
-            f"New discharge summary parser created {len(sections)} narrative sections."
+            f"Dynamic discharge summary parser created {len(sections)} narrative sections."
         ],
     }
