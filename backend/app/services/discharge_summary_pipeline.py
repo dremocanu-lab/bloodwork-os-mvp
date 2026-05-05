@@ -3,7 +3,7 @@ from __future__ import annotations
 from pathlib import Path
 from typing import Any
 
-from app.parsers.discharge_summary_parser import parse_discharge_summary
+from app.parsers.discharge_summary_parser import parse_discharge_document
 from app.services.google_document_ai_service import (
     is_google_document_ai_configured,
     process_with_google_document_ai,
@@ -79,7 +79,7 @@ def process_uploaded_discharge_summary(
     warnings.extend(extraction.get("warnings", []) or [])
     warnings.extend(ocr_quality.get("warnings", []) or [])
 
-    parsed_data = parse_discharge_summary(extraction if extracted_text else extracted_text)
+    parsed_data = parse_discharge_document(extraction if extracted_text else extracted_text)
 
     parsed_data["report_type"] = "Discharge summary"
     parsed_data["sample_type"] = None
