@@ -215,7 +215,7 @@ function StatBubble({
           wordBreak: "break-word",
         }}
       >
-        {valueOrDash(value)}
+        {valueOrDash(value === null || value === undefined ? value : String(value))}
       </div>
 
       {note && (
