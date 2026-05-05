@@ -6,7 +6,6 @@ import unicodedata
 from typing import Any
 
 from app.report_fields import extract_report_metadata
-from app.services.discharge_epicriza_formatter import format_epicriza_section, normalize_epicriza_whitespace
 
 
 def clean_discharge_text(value: Any) -> str:
@@ -72,10 +71,6 @@ DISCHARGE_HINTS = [
     "data externării",
     "data eliberarii",
     "data eliberării",
-    "perioada internarii",
-    "perioada internării",
-    "diagnostic la externare",
-    "diagnostic externare",
     "diagnostic principal",
     "diagnostice secundare",
     "recomandari la externare",
@@ -99,291 +94,217 @@ def detect_discharge_document(extraction: dict[str, Any] | str) -> bool:
     return score >= 2
 
 
-SECTION_DEFINITIONS: list[tuple[str, str, list[str]]] = [
-    (
-        "administrative_information",
-        "Administrative information",
-        [
-            "institutul clinic fundeni",
-            "hipocrate",
-            "spital",
-            "unitate sanitara",
-            "unitate sanitară",
-            "foaie observatie",
-            "foaie observație",
-            "nr foaie observatie",
-            "nr foaie observație",
-            "fo urgenta",
-            "fo urgență",
-            "numar fo",
-            "număr fo",
-            "medic curant",
-            "medic",
-            "doctor",
-            "dr.",
-            "email",
-        ],
-    ),
-    (
-        "patient_information",
-        "Patient information",
-        [
-            "nume",
-            "prenume",
-            "varsta",
-            "vârsta",
-            "sex",
-            "cnp",
-            "cod pacient",
-            "pacient",
-        ],
-    ),
-    (
-        "hospitalization",
-        "Hospitalization",
-        [
-            "data eliberarii",
-            "data eliberării",
-            "perioada internarii",
-            "perioada internării",
-            "perioada de internare",
-            "data internarii",
-            "data internării",
-            "data externarii",
-            "data externării",
-            "sectia",
-            "secția",
-            "compartiment",
-        ],
-    ),
-    (
-        "insurance_contact",
-        "Insurance / Contact",
-        [
-            "casa asigurare",
-            "categoria de asigurat",
-            "numar de asigurat",
-            "număr de asigurat",
-            "telefon",
-            "adresa",
-            "loc de munca",
-            "loc de muncă",
-            "ocupatia",
-            "ocupația",
-            "pacient diagnosticat cu afectiune oncologica",
-            "pacient diagnosticat cu afecțiune oncologică",
-        ],
-    ),
-    (
-        "discharge_status",
-        "Discharge status",
-        [
-            "stare la externare",
-            "starea la externare",
-            "status la externare",
-            "discharge status",
-            "condition at discharge",
-        ],
-    ),
-    (
-        "diagnoses",
-        "Diagnoses / Diagnostic",
-        [
-            "diagnostic principal",
-            "diagnosticul principal",
-            "diagnostic secundar",
-            "diagnostice secundare",
-            "diagnostic externare",
-            "diagnostic la externare",
-            "diagnostic formulare libera",
-            "diagnostic formulare liberă",
-            "diagnostice",
-            "cod diagnostic",
-            "drg",
-            "icd",
-            "discharge diagnosis",
-            "final diagnosis",
-            "diagnoses",
-        ],
-    ),
-    (
-        "epicriza",
-        "Epicriză / Clinical course",
-        [
-            "epicriza",
-            "epicriză",
-            "evolutie",
-            "evoluție",
-            "istoric",
-            "anamneza",
-            "anamneză",
-            "boala actuala",
-            "boala actuală",
-            "motivul internarii",
-            "motivul internării",
-            "pacientul se interneaza",
-            "pacientul se internează",
-            "hospital course",
-            "clinical course",
-            "medical summary",
-            "summary",
-        ],
-    ),
-    (
-        "investigations",
-        "Investigations / Results",
-        [
-            "investigatii",
-            "investigații",
-            "explorari paraclinice",
-            "explorări paraclinice",
-            "investigatii paraclinice",
-            "investigații paraclinice",
-            "paraclinic",
-            "investigations",
-            "imaging",
-            "laboratory",
-            "results",
-        ],
-    ),
-    (
-        "treatment_in_hospital",
-        "Treatment during admission",
-        [
-            "tratament administrat",
-            "tratamentul administrat",
-            "tratament in spital",
-            "tratament în spital",
-            "tratament pe perioada internarii",
-            "tratament pe perioada internării",
-            "medicatie administrata",
-            "medicație administrată",
-            "s-a administrat",
-            "proceduri efectuate",
-            "procedura efectuata",
-            "procedură efectuată",
-            "inpatient treatment",
-            "hospital treatment",
-            "treatment during admission",
-        ],
-    ),
-    (
-        "recommended_treatment",
-        "Recommended treatment / Discharge medication",
-        [
-            "tratament recomandat",
-            "tratamentul recomandat",
-            "tratament la externare",
-            "medicatie la externare",
-            "medicație la externare",
-            "recomandari terapeutice",
-            "recomandări terapeutice",
-            "rp",
-            "reteta",
-            "rețeta",
-            "reteta la externare",
-            "rețeta la externare",
-            "discharge medication",
-            "recommended treatment",
-            "medication plan",
-        ],
-    ),
-    (
-        "recommendations",
-        "Recommendations / Follow-up",
-        [
-            "recomandari",
-            "recomandări",
-            "indicatii",
-            "indicații",
-            "indicatii la externare",
-            "indicații la externare",
-            "regim",
-            "control",
-            "revine la control",
-            "monitorizare",
-            "se recomanda",
-            "se recomandă",
-            "follow-up",
-            "follow up",
-            "recommendations",
-            "return precautions",
-            "monitoring",
-            "plan",
-        ],
-    ),
-]
-
-CANONICAL_TITLES = {key: title for key, title, _aliases in SECTION_DEFINITIONS}
-SECTION_ALIASES = {key: aliases for key, _title, aliases in SECTION_DEFINITIONS}
-
 SECTION_ORDER = [
     "administrative_information",
-    "patient_information",
-    "hospitalization",
-    "insurance_contact",
-    "discharge_status",
     "diagnoses",
+    "discharge_status",
     "epicriza",
     "investigations",
+    "laboratory_normal",
+    "laboratory_abnormal",
     "treatment_in_hospital",
     "recommended_treatment",
     "recommendations",
     "other",
 ]
 
-FRONT_PAGE_KEYS = {
-    "administrative_information",
-    "patient_information",
-    "hospitalization",
-    "insurance_contact",
-    "discharge_status",
-    "diagnoses",
+
+SECTION_TITLES = {
+    "administrative_information": "Administrative / admission information",
+    "diagnoses": "Diagnoses / Diagnostic",
+    "discharge_status": "Discharge status",
+    "epicriza": "Epicriză / Clinical course",
+    "investigations": "Investigations / Results",
+    "laboratory_normal": "Laboratory values - normal",
+    "laboratory_abnormal": "Laboratory values - abnormal",
+    "treatment_in_hospital": "Treatment during admission",
+    "recommended_treatment": "Recommended treatment / Discharge medication",
+    "recommendations": "Recommendations / Follow-up",
+    "other": "Other relevant clinical text",
 }
 
-CLINICAL_KEYS = {
-    "epicriza",
-    "investigations",
-    "treatment_in_hospital",
-    "recommended_treatment",
-    "recommendations",
-}
+
+# This is the important part:
+# Only these are allowed to split the document into top-level sections.
+# Small clinical lines like "Consult neurologic", "Rx CP", "Hemograma", "Biochimie"
+# should stay inside the active section unless they appear as a real major document heading.
+MAJOR_HEADING_PATTERNS: list[tuple[str, list[str]]] = [
+    (
+        "diagnoses",
+        [
+            r"diagnostic\s+principal(?:\s*\([^)]*\))?",
+            r"diagnostice\s+secundare(?:\s*\([^)]*\))?",
+            r"diagnostic\s+secundar(?:\s*\([^)]*\))?",
+            r"diagnostic\s+la\s+externare",
+            r"diagnostic\s+de\s+externare",
+            r"diagnostic\s+formulare\s+libera",
+            r"diagnostic\s+formulare\s+liber[aă]",
+            r"discharge\s+diagnosis",
+            r"final\s+diagnosis",
+        ],
+    ),
+    (
+        "discharge_status",
+        [
+            r"starea\s+la\s+externare",
+            r"stare\s+la\s+externare",
+            r"status\s+la\s+externare",
+            r"condition\s+at\s+discharge",
+            r"discharge\s+status",
+        ],
+    ),
+    (
+        "epicriza",
+        [
+            r"epicriza",
+            r"epicriz[aă]",
+            r"evolu[tț]ie",
+            r"evolutia\s+bolii",
+            r"evoluția\s+bolii",
+            r"hospital\s+course",
+            r"clinical\s+course",
+            r"medical\s+summary",
+        ],
+    ),
+    (
+        "investigations",
+        [
+            r"investiga[tț]ii",
+            r"explor[aă]ri\s+paraclinice",
+            r"rezultate\s+investiga[tț]ii",
+            r"imagistic[aă]",
+            r"investigations",
+            r"imaging",
+            r"results",
+        ],
+    ),
+    (
+        "laboratory_abnormal",
+        [
+            r"analize\s+modificate",
+            r"valori\s+modificate",
+            r"valori\s+anormale",
+            r"analize\s+anormale",
+            r"laboratory\s+abnormal",
+            r"abnormal\s+laboratory",
+            r"abnormal\s+labs",
+        ],
+    ),
+    (
+        "laboratory_normal",
+        [
+            r"analize\s+normale",
+            r"valori\s+normale",
+            r"laboratory\s+normal",
+            r"normal\s+laboratory",
+            r"normal\s+labs",
+        ],
+    ),
+    (
+        "treatment_in_hospital",
+        [
+            r"tratament\s+administrat",
+            r"tratamentul\s+administrat",
+            r"tratament\s+in\s+spital",
+            r"tratament\s+în\s+spital",
+            r"tratament\s+pe\s+perioada\s+intern[aă]rii",
+            r"medica[tț]ie\s+administrat[aă]",
+            r"proceduri\s+efectuate",
+            r"treatment\s+during\s+admission",
+            r"inpatient\s+treatment",
+            r"hospital\s+treatment",
+        ],
+    ),
+    (
+        "recommended_treatment",
+        [
+            r"tratament\s+recomandat",
+            r"tratamentul\s+recomandat",
+            r"tratament\s+la\s+externare",
+            r"medica[tț]ie\s+la\s+externare",
+            r"re[tț]et[aă]\s+la\s+externare",
+            r"re[tț]et[aă]",
+            r"rp",
+            r"discharge\s+medication",
+            r"recommended\s+treatment",
+            r"medication\s+plan",
+        ],
+    ),
+    (
+        "recommendations",
+        [
+            r"recomand[aă]ri",
+            r"indica[tț]ii",
+            r"indica[tț]ii\s+la\s+externare",
+            r"regim",
+            r"control",
+            r"monitorizare",
+            r"follow[\s-]*up",
+            r"recommendations",
+            r"return\s+precautions",
+            r"monitoring",
+            r"plan",
+        ],
+    ),
+]
 
 
-def prepare_text_for_sectioning(text: str) -> str:
-    text = clean_discharge_text(text)
+def strip_document_noise(text: str) -> str:
+    lines = [clean_discharge_text(line) for line in text.splitlines()]
+    cleaned_lines: list[str] = []
 
-    major_phrases = [
-        "BILET DE IESIRE DIN SPITAL / SCRISOARE MEDICALA",
-        "BILET DE IEȘIRE DIN SPITAL / SCRISOARE MEDICALĂ",
-        "DATA ELIBERARII",
-        "DATA ELIBERĂRII",
-        "PERIOADA INTERNARII",
-        "PERIOADA INTERNĂRII",
-        "NUME",
-        "PRENUME",
-        "VARSTA",
-        "VÂRSTA",
-        "CNP",
-        "CASA ASIGURARE",
-        "CATEGORIA DE ASIGURAT",
-        "TELEFON",
-        "ADRESA",
-        "LOC DE MUNCA / OCUPATIA",
-        "LOC DE MUNCĂ / OCUPAȚIA",
-        "STAREA LA EXTERNARE",
-        "STARE LA EXTERNARE",
+    noise_patterns = [
+        r"^\d+\s*/\s*\d+$",
+        r"^\d{1,2}/\d{1,2}/\d{2,4},?\s+\d{1,2}:\d{2}\s*(am|pm)?$",
+        r"^hipocrate\s*-\s*imprimare\s*fisa$",
+        r"^hipocrate\s*-\s*imprimare\s+fi[sș]a$",
+        r"192\.168\.",
+        r"biletexternare\.asp",
+        r"relname=",
+        r"relid=",
+    ]
+
+    for line in lines:
+        if not line:
+            continue
+
+        normalized = normalize_for_matching(line)
+
+        if any(re.search(pattern, normalized, flags=re.IGNORECASE) for pattern in noise_patterns):
+            continue
+
+        cleaned_lines.append(line)
+
+    return "\n".join(cleaned_lines).strip()
+
+
+def force_heading_linebreaks(text: str) -> str:
+    """
+    OCR/PDF text sometimes places a major heading in the middle of a line.
+    This forces known headings to start on their own line.
+    """
+    result = text
+
+    raw_heading_phrases = [
         "DIAGNOSTIC PRINCIPAL",
         "DIAGNOSTICE SECUNDARE",
         "DIAGNOSTIC SECUNDAR",
+        "DIAGNOSTIC LA EXTERNARE",
         "DIAGNOSTIC FORMULARE LIBERA",
-        "DIAGNOSTIC FORMULARE LIBERĂ",
+        "STAREA LA EXTERNARE",
+        "STARE LA EXTERNARE",
         "EPICRIZA",
         "EPICRIZĂ",
         "INVESTIGATII",
         "INVESTIGAȚII",
         "EXPLORARI PARACLINICE",
         "EXPLORĂRI PARACLINICE",
+        "ANALIZE MODIFICATE",
+        "VALORI MODIFICATE",
+        "VALORI ANORMALE",
+        "ANALIZE ANORMALE",
+        "ANALIZE NORMALE",
+        "VALORI NORMALE",
         "TRATAMENT ADMINISTRAT",
         "TRATAMENT RECOMANDAT",
         "TRATAMENT LA EXTERNARE",
@@ -393,208 +314,100 @@ def prepare_text_for_sectioning(text: str) -> str:
         "INDICAȚII",
     ]
 
-    for phrase in major_phrases:
-        text = re.sub(rf"(?<!\n)({re.escape(phrase)})", r"\n\1", text, flags=re.IGNORECASE)
+    for phrase in raw_heading_phrases:
+        result = re.sub(
+            rf"(?<!\n)({re.escape(phrase)})",
+            r"\n\1",
+            result,
+            flags=re.IGNORECASE,
+        )
 
-    text = re.sub(r"\n{3,}", "\n\n", text)
-    return text.strip()
+    result = re.sub(r"\n{3,}", "\n\n", result)
+    return result.strip()
 
 
-def is_noise_heading(line: str) -> bool:
-    normalized = normalize_for_matching(line)
+def is_probably_major_heading_line(line: str) -> bool:
+    clean = clean_discharge_text(line)
+    normalized = normalize_for_matching(clean)
 
     if not normalized:
-        return True
+        return False
 
-    if re.fullmatch(r"[\d\s./,:-]+", normalized):
-        return True
+    if len(normalized) > 150:
+        return False
 
-    if re.fullmatch(r"(da|nu|n|y|yes|no|-)", normalized):
-        return True
+    if re.fullmatch(r"[\d\s./,:;-]+", normalized):
+        return False
 
-    if re.search(r"biletexternare\.asp|192\.168|page\s*\d+|^\d+/\d+$", normalized):
-        return True
+    # Real headings often have colon, uppercase, or very short title style.
+    has_colon = ":" in clean
+    uppercase_ratio = 0.0
 
-    if len(normalized) <= 2:
-        return True
+    letters = [char for char in clean if char.isalpha()]
+    if letters:
+        uppercase_ratio = len([char for char in letters if char.isupper()]) / max(len(letters), 1)
 
-    return False
-
-
-def line_has_lab_or_visit_values(line: str) -> bool:
-    normalized = normalize_for_matching(line)
-
-    return bool(
-        re.search(
-            r"\b(hb|ht|leuc|tromb|plt|ldh|crp|urea|creatinina|glucoza|fibrinogen|inr|ast|alt|bilirubina|na|k|ta|av|spo2|mg/dl|mmc|g/dl|u/l)\b",
-            normalized,
-        )
-        or re.search(r"\d{1,2}[./]\d{1,2}[./]\d{2,4}", normalized)
-    )
+    return has_colon or uppercase_ratio > 0.65 or len(normalized.split()) <= 7
 
 
-def split_heading_body(line: str, alias: str) -> tuple[str, str]:
-    raw = clean_discharge_text(line)
-    alias_norm = normalize_for_matching(alias)
-    raw_norm = normalize_for_matching(raw)
+def split_heading_and_inline_body(line: str, matched_pattern: str) -> tuple[str, str]:
+    clean = clean_discharge_text(line)
 
-    body = ""
+    if ":" in clean:
+        before, after = clean.split(":", 1)
+        return clean_discharge_text(before), clean_discharge_text(after)
 
-    if ":" in raw:
-        before, after = raw.split(":", 1)
-        if normalize_for_matching(before).startswith(alias_norm) or alias_norm in normalize_for_matching(before):
-            body = after.strip()
-
-    if not body and raw_norm.startswith(alias_norm):
-        body = raw[len(raw[: len(alias)]) :].strip(" :-")
-
-    return raw, clean_discharge_text(body)
+    # If no colon, keep the full line as heading.
+    return clean, ""
 
 
-def match_major_section_header(
-    line: str,
-    current_key: str | None = None,
-    clinical_started: bool = False,
-) -> tuple[str, str, str] | None:
-    raw = clean_discharge_text(line)
-    normalized = normalize_for_matching(raw)
+def match_major_heading(line: str) -> tuple[str, str, str] | None:
+    clean = clean_discharge_text(line)
+    normalized = normalize_for_matching(clean)
 
-    if not normalized or is_noise_heading(raw):
+    if not normalized:
         return None
 
-    if clinical_started or current_key == "epicriza":
-        allowed_keys = {
-            "investigations",
-            "treatment_in_hospital",
-            "recommended_treatment",
-            "recommendations",
-        }
-    else:
-        allowed_keys = set(CANONICAL_TITLES.keys())
+    if not is_probably_major_heading_line(clean):
+        return None
 
-    for key, _title, aliases in SECTION_DEFINITIONS:
-        if key not in allowed_keys:
-            continue
-
-        for alias in aliases:
-            alias_norm = normalize_for_matching(alias)
-
-            if not alias_norm:
-                continue
-
-            exact_match = normalized == alias_norm
-            colon_match = normalized.startswith(alias_norm + ":")
-            dash_match = normalized.startswith(alias_norm + " -")
-            short_prefix_match = normalized.startswith(alias_norm + " ") and len(normalized) <= len(alias_norm) + 95
-
-            if not (exact_match or colon_match or dash_match or short_prefix_match):
-                continue
-
-            if clinical_started and line_has_lab_or_visit_values(raw) and key != "recommended_treatment":
-                continue
-
-            heading, body = split_heading_body(raw, alias)
-            return key, heading, body
+    for key, patterns in MAJOR_HEADING_PATTERNS:
+        for pattern in patterns:
+            # Match only at the beginning of the line.
+            # This prevents "Consult cardiologic..." or a sentence mentioning treatment
+            # from splitting the current section.
+            if re.match(rf"^\s*{pattern}\b", normalized, flags=re.IGNORECASE):
+                heading, inline_body = split_heading_and_inline_body(clean, pattern)
+                return key, heading, inline_body
 
     return None
 
 
-def extract_front_page_sections(text: str) -> list[dict[str, Any]]:
-    prepared_text = prepare_text_for_sectioning(text)
-    before_epicriza = re.split(r"\bEPICRIZ[ĂA]\b", prepared_text, maxsplit=1, flags=re.IGNORECASE)[0]
+def prepare_text_for_sectioning(text: str) -> str:
+    text = clean_discharge_text(text)
+    text = strip_document_noise(text)
+    text = force_heading_linebreaks(text)
+    text = re.sub(r"\n{3,}", "\n\n", text)
+    return text.strip()
 
-    lines = [clean_discharge_text(line) for line in before_epicriza.splitlines()]
+
+def split_into_major_sections(text: str) -> list[dict[str, Any]]:
+    prepared = prepare_text_for_sectioning(text)
+    lines = [clean_discharge_text(line) for line in prepared.splitlines()]
     lines = [line for line in lines if line]
 
-    buckets: dict[str, list[str]] = {
-        "administrative_information": [],
-        "patient_information": [],
-        "hospitalization": [],
-        "insurance_contact": [],
-        "discharge_status": [],
-        "diagnoses": [],
-    }
+    sections: list[dict[str, Any]] = []
 
     current_key = "administrative_information"
-
-    for line in lines:
-        matched = match_major_section_header(line, current_key=current_key, clinical_started=False)
-
-        if matched:
-            key, heading, inline_body = matched
-            if key in buckets:
-                current_key = key
-                if inline_body:
-                    buckets[current_key].append(inline_body)
-                elif key in {"discharge_status", "diagnoses"}:
-                    buckets[current_key].append(heading)
-                continue
-
-        normalized = normalize_for_matching(line)
-
-        if any(token in normalized for token in ["diagnostic principal", "diagnostice secundare", "diagnostic formulare"]):
-            current_key = "diagnoses"
-        elif any(token in normalized for token in ["stare la externare", "starea la externare", "status la externare"]):
-            current_key = "discharge_status"
-        elif any(token in normalized for token in ["data eliberarii", "perioada internarii", "data internarii", "data externarii", "sectia", "compartiment"]):
-            current_key = "hospitalization"
-        elif any(token in normalized for token in ["casa asigurare", "categoria de asigurat", "telefon", "adresa", "loc de munca", "ocupatia", "numar de asigurat"]):
-            current_key = "insurance_contact"
-        elif any(token in normalized for token in ["nume", "prenume", "varsta", "cnp", "cod pacient"]):
-            current_key = "patient_information"
-
-        buckets[current_key].append(line)
-
-    sections: list[dict[str, Any]] = []
-
-    for key in SECTION_ORDER:
-        if key not in buckets:
-            continue
-
-        body = clean_discharge_text("\n".join(buckets[key]))
-        if not body:
-            continue
-
-        sections.append(
-            {
-                "key": key,
-                "title": CANONICAL_TITLES[key],
-                "original_title": CANONICAL_TITLES[key],
-                "body": body,
-                "confidence": 0.9,
-            }
-        )
-
-    return sections
-
-
-def extract_epicriza_text(text: str) -> str:
-    prepared_text = prepare_text_for_sectioning(text)
-    match = re.search(r"\bEPICRIZ[ĂA]\b\s*[:\-]?", prepared_text, flags=re.IGNORECASE)
-
-    if not match:
-        return ""
-
-    return prepared_text[match.end() :].strip()
-
-
-def split_clinical_sections(text: str) -> list[dict[str, Any]]:
-    epicriza_body = extract_epicriza_text(text)
-
-    if not epicriza_body:
-        return []
-
-    sections: list[dict[str, Any]] = []
-
-    current_key = "epicriza"
-    current_title = CANONICAL_TITLES["epicriza"]
-    current_original_title = "EPICRIZA"
+    current_title = SECTION_TITLES[current_key]
+    current_original_title = "Document header"
     current_lines: list[str] = []
 
     def flush() -> None:
         nonlocal current_key, current_title, current_original_title, current_lines
 
-        body = clean_discharge_text("\n".join(current_lines))
+        body = "\n".join(current_lines).strip()
+
         if body:
             sections.append(
                 {
@@ -602,26 +415,27 @@ def split_clinical_sections(text: str) -> list[dict[str, Any]]:
                     "title": current_title,
                     "original_title": current_original_title,
                     "body": body,
-                    "confidence": 0.9,
+                    "confidence": 0.95,
                 }
             )
 
+        current_key = "other"
+        current_title = SECTION_TITLES["other"]
+        current_original_title = None
         current_lines = []
 
-    lines = [clean_discharge_text(line) for line in epicriza_body.splitlines()]
-    lines = [line for line in lines if line]
-
     for line in lines:
-        matched = match_major_section_header(line, current_key=current_key, clinical_started=True)
+        matched = match_major_heading(line)
 
         if matched:
-            key, heading, inline_body = matched
+            matched_key, original_heading, inline_body = matched
 
-            if key != current_key:
-                flush()
-                current_key = key
-                current_title = CANONICAL_TITLES.get(key, heading)
-                current_original_title = heading
+            flush()
+
+            current_key = matched_key
+            current_title = SECTION_TITLES.get(matched_key, original_heading)
+            current_original_title = original_heading
+            current_lines = []
 
             if inline_body:
                 current_lines.append(inline_body)
@@ -631,22 +445,32 @@ def split_clinical_sections(text: str) -> list[dict[str, Any]]:
         current_lines.append(line)
 
     flush()
-    return sections
+
+    if not sections and prepared:
+        sections.append(
+            {
+                "key": "other",
+                "title": SECTION_TITLES["other"],
+                "original_title": None,
+                "body": prepared,
+                "confidence": 0.45,
+            }
+        )
+
+    return merge_repeated_major_sections(sections)
 
 
-def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
+def merge_repeated_major_sections(sections: list[dict[str, Any]]) -> list[dict[str, Any]]:
     grouped: dict[str, dict[str, Any]] = {}
 
     for section in sections:
         key = section.get("key") or "other"
         body = clean_discharge_text(section.get("body"))
-        if key == "epicriza":
-            body = normalize_epicriza_whitespace(body)
 
         if not body:
             continue
 
-        title = section.get("title") or CANONICAL_TITLES.get(key, "Other relevant clinical text")
+        title = section.get("title") or SECTION_TITLES.get(key, key)
         original_title = section.get("original_title")
         confidence = float(section.get("confidence") or 0.5)
 
@@ -659,8 +483,13 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
                 "confidence": confidence,
             }
         else:
-            separator = f"\n\n[{original_title}]\n" if original_title else "\n\n"
-            grouped[key]["body"] = grouped[key]["body"].rstrip() + separator + body
+            # Repeated EPICRIZA on page 2, page 3, etc. should stay in Epicriză,
+            # not create dozens of duplicate cards.
+            if original_title and original_title not in grouped[key]["original_titles"]:
+                grouped[key]["body"] = grouped[key]["body"].rstrip() + "\n\n" + body
+            else:
+                grouped[key]["body"] = grouped[key]["body"].rstrip() + "\n\n" + body
+
             grouped[key]["confidence"] = max(float(grouped[key].get("confidence") or 0.5), confidence)
 
         if original_title and original_title not in grouped[key]["original_titles"]:
@@ -676,81 +505,12 @@ def merge_duplicate_sections(sections: list[dict[str, Any]]) -> list[dict[str, A
     return ordered
 
 
-def split_into_sections(text: str) -> list[dict[str, Any]]:
-    front_sections = extract_front_page_sections(text)
-    clinical_sections = split_clinical_sections(text)
-    sections = merge_duplicate_sections(front_sections + clinical_sections)
-
-    if not sections and text.strip():
-        sections.append(
-            {
-                "key": "other",
-                "title": "Other relevant clinical text",
-                "original_titles": [],
-                "body": clean_discharge_text(text),
-                "confidence": 0.35,
-            }
-        )
-
-    return sections
-
-
-def extract_discharge_dates(text: str) -> dict[str, str | None]:
-    clean = clean_discharge_text(text)
-
-    admission = None
-    discharge = None
-    issued = None
-
-    admission_patterns = [
-        r"data\s+(?:si\s+ora\s+)?intern[aă]rii\s*[:\-]?\s*([^\n]+)",
-        r"data\s+internare\s*[:\-]?\s*([^\n]+)",
-        r"admission\s+date\s*[:\-]?\s*([^\n]+)",
-    ]
-
-    discharge_patterns = [
-        r"data\s+(?:si\s+ora\s+)?extern[aă]rii\s*[:\-]?\s*([^\n]+)",
-        r"data\s+externare\s*[:\-]?\s*([^\n]+)",
-        r"discharge\s+date\s*[:\-]?\s*([^\n]+)",
-    ]
-
-    issued_patterns = [
-        r"data\s+eliber[aă]rii\s*[:\-]?\s*([^\n]+)",
-        r"data\s+emiterii\s*[:\-]?\s*([^\n]+)",
-        r"issued\s+date\s*[:\-]?\s*([^\n]+)",
-    ]
-
-    for pattern in admission_patterns:
-        match = re.search(pattern, clean, flags=re.IGNORECASE)
-        if match:
-            admission = clean_discharge_text(match.group(1))[:120]
-            break
-
-    for pattern in discharge_patterns:
-        match = re.search(pattern, clean, flags=re.IGNORECASE)
-        if match:
-            discharge = clean_discharge_text(match.group(1))[:120]
-            break
-
-    for pattern in issued_patterns:
-        match = re.search(pattern, clean, flags=re.IGNORECASE)
-        if match:
-            issued = clean_discharge_text(match.group(1))[:120]
-            break
-
-    return {
-        "admission_date": admission,
-        "discharge_date": discharge,
-        "issued_date": issued,
-    }
-
-
 def extract_hospitalization_period(text: str) -> dict[str, str | None]:
     clean = clean_discharge_text(text)
 
     period_patterns = [
-        r"perioada\s+intern[aă]rii\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?",
-        r"perioada\s+de\s+internare\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?",
+        r"perioada\s+intern[aă]rii\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?\s*[-–—]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?",
+        r"perioada\s+de\s+internare\s*[:\-]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?\s*[-–—]?\s*(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\s+(\d{1,2}:\d{2})?",
     ]
 
     for pattern in period_patterns:
@@ -789,6 +549,42 @@ def extract_issued_date(text: str) -> str | None:
     return None
 
 
+def extract_discharge_dates_fallback(text: str) -> dict[str, str | None]:
+    clean = clean_discharge_text(text)
+
+    admission = None
+    discharge = None
+
+    admission_patterns = [
+        r"data\s+(?:si\s+ora\s+)?intern[aă]rii\s*[:\-]?\s*([^\n]+)",
+        r"data\s+internare\s*[:\-]?\s*([^\n]+)",
+        r"admission\s+date\s*[:\-]?\s*([^\n]+)",
+    ]
+
+    discharge_patterns = [
+        r"data\s+(?:si\s+ora\s+)?extern[aă]rii\s*[:\-]?\s*([^\n]+)",
+        r"data\s+externare\s*[:\-]?\s*([^\n]+)",
+        r"discharge\s+date\s*[:\-]?\s*([^\n]+)",
+    ]
+
+    for pattern in admission_patterns:
+        match = re.search(pattern, clean, flags=re.IGNORECASE)
+        if match:
+            admission = clean_discharge_text(match.group(1))[:120]
+            break
+
+    for pattern in discharge_patterns:
+        match = re.search(pattern, clean, flags=re.IGNORECASE)
+        if match:
+            discharge = clean_discharge_text(match.group(1))[:120]
+            break
+
+    return {
+        "admission_date": admission,
+        "discharge_date": discharge,
+    }
+
+
 def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]:
     text = get_best_ocr_text(extraction)
     metadata = extract_report_metadata(text)
@@ -796,14 +592,10 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
     date_metadata = extract_hospitalization_period(text)
 
     if not date_metadata.get("admission_date") and not date_metadata.get("discharge_date"):
-        fallback_dates = extract_discharge_dates(text)
-        date_metadata = {
-            "admission_date": fallback_dates.get("admission_date"),
-            "discharge_date": fallback_dates.get("discharge_date"),
-        }
+        date_metadata = extract_discharge_dates_fallback(text)
 
     issued_date = extract_issued_date(text)
-    sections = split_into_sections(text)
+    sections = split_into_major_sections(text)
 
     patient_name = metadata.get("patient_name")
     report_date = (
@@ -817,17 +609,9 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
     if report_date:
         report_name = f"Fișă de externare {report_date}"
 
-    formatted_epicriza = None
-
-    for section in sections:
-        if section.get("key") == "epicriza":
-            formatted_epicriza = format_epicriza_section(section.get("body") or "")
-            break
-
     note_payload = {
         "document_type": "discharge_summary",
         "sections": sections,
-        "formatted_epicriza": formatted_epicriza,
     }
 
     return {
@@ -854,7 +638,6 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
         "note_body": json.dumps(note_payload, ensure_ascii=False),
         "labs": [],
         "warnings": [
-            f"Discharge parser created {len(sections)} organized narrative sections using strict fișă de externare buckets.",
-            "Hospitalization dates were extracted from Perioada internării when present.",
+            f"Discharge parser created {len(sections)} major sections using heading-boundary parsing."
         ],
     }
