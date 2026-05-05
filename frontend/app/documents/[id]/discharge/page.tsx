@@ -131,7 +131,6 @@ function parseDateTime(value?: string | null) {
   const year = rawYear < 100 ? 2000 + rawYear : rawYear;
   const hour = match[4] ? Number(match[4]) : 0;
   const minute = match[5] ? Number(match[5]) : 0;
-
   const parsed = new Date(year, month - 1, day, hour, minute).getTime();
 
   return Number.isNaN(parsed) ? 0 : parsed;
@@ -149,6 +148,11 @@ function formatDate(value?: string | null) {
     month: "short",
     year: "numeric",
   });
+}
+
+function displayValue(value?: string | number | null) {
+  if (value === null || value === undefined || value === "") return "—";
+  return String(value);
 }
 
 function parseDischargePayload(noteBody?: string | null): DischargePayload | null {
@@ -187,15 +191,6 @@ function sectionIcon(key?: string) {
   return "Tx";
 }
 
-function sectionPreview(body?: string) {
-  const text = cleanOneLine(body || "");
-
-  if (!text) return "No extracted text.";
-  if (text.length <= 88) return text;
-
-  return `${text.slice(0, 88)}...`;
-}
-
 function cleanOneLine(value?: string | null) {
   return String(value || "")
     .replace(/\r\n/g, "\n")
@@ -204,6 +199,15 @@ function cleanOneLine(value?: string | null) {
     .replace(/[ \t]+/g, " ")
     .replace(/\s+/g, " ")
     .trim();
+}
+
+function sectionPreview(body?: string) {
+  const text = cleanOneLine(body || "");
+
+  if (!text) return "No extracted text.";
+  if (text.length <= 82) return text;
+
+  return `${text.slice(0, 82)}...`;
 }
 
 function normalizeDischargeText(value?: string | null) {
@@ -310,53 +314,6 @@ function splitReadableParagraphs(value?: string | null) {
   return paragraphs;
 }
 
-function StatBubble({
-  label,
-  value,
-  note,
-}: {
-  label: string;
-  value?: string | number | null;
-  note?: string | null;
-}) {
-  const displayValue =
-    value === null || value === undefined || value === "" ? "—" : String(value);
-
-  return (
-    <div
-      className="soft-card-tight"
-      style={{
-        padding: 18,
-        background:
-          "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
-      }}
-    >
-      <div className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
-        {label}
-      </div>
-
-      <div
-        style={{
-          marginTop: 8,
-          fontSize: 18,
-          fontWeight: 950,
-          letterSpacing: "-0.035em",
-          lineHeight: 1.25,
-          wordBreak: "break-word",
-        }}
-      >
-        {valueOrDash(displayValue)}
-      </div>
-
-      {note && (
-        <div className="muted-text" style={{ marginTop: 7, fontSize: 12, lineHeight: 1.45 }}>
-          {note}
-        </div>
-      )}
-    </div>
-  );
-}
-
 function StatusPill({
   children,
   tone = "neutral",
@@ -405,6 +362,37 @@ function StatusPill({
     >
       {children}
     </span>
+  );
+}
+
+function CompactMetaItem({
+  label,
+  value,
+}: {
+  label: string;
+  value?: string | number | null;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 7,
+        minHeight: 34,
+        padding: "7px 10px",
+        borderRadius: 999,
+        border: "1px solid var(--border)",
+        background: "var(--panel-2)",
+      }}
+    >
+      <span className="muted-text" style={{ fontSize: 11, fontWeight: 900 }}>
+        {label}
+      </span>
+
+      <span style={{ fontSize: 12, fontWeight: 950 }}>
+        {displayValue(value)}
+      </span>
+    </div>
   );
 }
 
@@ -478,11 +466,13 @@ function SectionTextPanel({
           justifyContent: "space-between",
           gap: 12,
           flexWrap: "wrap",
-          marginBottom: 16,
+          marginBottom: 14,
+          alignItems: "flex-start",
         }}
       >
         <div>
           <div className="section-title">{title}</div>
+
           {subtitle && (
             <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
               {subtitle}
@@ -500,11 +490,12 @@ function SectionTextPanel({
       <div
         className="soft-card-tight"
         style={{
-          padding: 22,
+          padding: 26,
           background: "var(--panel-2)",
           minHeight: 0,
           overflowY: "auto",
-          paddingRight: 14,
+          paddingRight: 16,
+          borderRadius: 24,
         }}
       >
         <ClinicalTextBlock text={text} />
@@ -693,7 +684,7 @@ export default function DischargeStructuredPage() {
   return (
     <AppShell
       user={currentUser}
-      title={parsed.report_name || "Discharge summary"}
+      title={parsed.report_name || "Discharge reader"}
       subtitle={`${valueOrDash(parsed.patient_name)} · CNP ${valueOrDash(parsed.cnp)} · ${
         parsed.is_verified ? "Verified" : "Unverified"
       }`}
@@ -792,7 +783,7 @@ export default function DischargeStructuredPage() {
         <div
           className="soft-card-tight"
           style={{
-            marginBottom: 20,
+            marginBottom: 14,
             padding: 16,
             borderColor: "var(--danger-border)",
             background: "var(--danger-bg)",
@@ -804,85 +795,55 @@ export default function DischargeStructuredPage() {
       )}
 
       <div
-        className="soft-card"
+        className="soft-card-tight"
         style={{
-          padding: 24,
-          marginBottom: 24,
+          padding: 12,
+          marginBottom: 14,
+          display: "flex",
+          justifyContent: "space-between",
+          gap: 12,
+          flexWrap: "wrap",
+          alignItems: "center",
           background:
-            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 12%, var(--panel)), var(--panel))",
+            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
         }}
       >
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap" }}>
-          <div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-              <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
-                {parsed.is_verified ? "Verified" : "Unverified"}
-              </StatusPill>
-              <StatusPill>Discharge summary</StatusPill>
-              <StatusPill>{sections.length} sections</StatusPill>
-            </div>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
+            {parsed.is_verified ? "Verified" : "Unverified"}
+          </StatusPill>
 
-            <div style={{ fontSize: 32, fontWeight: 950, letterSpacing: "-0.06em" }}>
-              {parsed.report_name || "Discharge summary"}
-            </div>
+          <StatusPill>Discharge summary</StatusPill>
 
-            <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.65 }}>
-              Narrative discharge record extracted from the original document and organized into readable clinical sections.
-            </div>
-          </div>
+          <StatusPill>{sections.length} sections</StatusPill>
+        </div>
+
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <CompactMetaItem label="Patient" value={parsed.patient_name} />
+          <CompactMetaItem
+            label="Hospitalization"
+            value={`${valueOrDash(parsed.collected_on)} → ${valueOrDash(parsed.reported_on)}`}
+          />
         </div>
       </div>
 
       <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
-        }}
-      >
-        <StatBubble
-          label="Patient"
-          value={parsed.patient_name}
-          note={`DOB ${valueOrDash(parsed.date_of_birth)} · Sex ${valueOrDash(parsed.sex)} · CNP ${valueOrDash(
-            parsed.cnp
-          )}`}
-        />
-
-        <StatBubble
-          label="Hospitalization"
-          value={`${valueOrDash(parsed.collected_on)} → ${valueOrDash(parsed.reported_on)}`}
-          note="Admission to discharge period"
-        />
-
-        <StatBubble
-          label="Document"
-          value={parsed.report_type || "Discharge summary"}
-          note={`Language ${valueOrDash(parsed.source_language)} · Uploaded by ${valueOrDash(
-            documentData.uploaded_by?.full_name
-          )}`}
-        />
-
-        <StatBubble label="Doctor" value={parsed.referring_doctor} note="Referring / responsible doctor" />
-      </div>
-
-      <div
         className="soft-card"
         style={{
-          padding: 18,
+          padding: 16,
           display: "grid",
-          gridTemplateColumns: "minmax(250px, 0.34fr) minmax(0, 1fr)",
-          gap: 18,
+          gridTemplateColumns: "minmax(340px, 0.33fr) minmax(0, 1fr)",
+          gap: 16,
           alignItems: "stretch",
-          height: "calc(100vh - 280px)",
-          minHeight: 620,
+          height: "calc(100vh - 185px)",
+          minHeight: 720,
           overflow: "hidden",
         }}
       >
         <aside
           className="soft-card-tight"
           style={{
-            padding: 12,
+            padding: 14,
             background: "var(--panel-2)",
             height: "100%",
             overflowY: "auto",
@@ -918,22 +879,22 @@ export default function DischargeStructuredPage() {
                       ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, var(--panel)), var(--panel))"
                       : "var(--panel)",
                     color: "var(--foreground)",
-                    borderRadius: 18,
-                    padding: 12,
+                    borderRadius: 20,
+                    padding: 14,
                     textAlign: "left",
                     cursor: "pointer",
                     display: "grid",
-                    gridTemplateColumns: "34px minmax(0, 1fr)",
-                    gap: 10,
+                    gridTemplateColumns: "36px minmax(0, 1fr)",
+                    gap: 11,
                     alignItems: "start",
                     boxShadow: active ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
                   }}
                 >
                   <span
                     style={{
-                      width: 34,
-                      height: 34,
-                      borderRadius: 12,
+                      width: 36,
+                      height: 36,
+                      borderRadius: 13,
                       display: "grid",
                       placeItems: "center",
                       background: active
@@ -966,9 +927,9 @@ export default function DischargeStructuredPage() {
         <section
           className="soft-card-tight"
           style={{
-            padding: 24,
+            padding: 26,
             background: "var(--panel)",
-            borderRadius: 26,
+            borderRadius: 28,
             height: "100%",
             minHeight: 0,
             display: "grid",
@@ -996,16 +957,16 @@ export default function DischargeStructuredPage() {
                   gap: 14,
                 }}
               >
-                <StatBubble label="Patient name" value={parsed.patient_name} />
-                <StatBubble label="Date of birth" value={parsed.date_of_birth} />
-                <StatBubble label="Age" value={parsed.age} />
-                <StatBubble label="Sex" value={parsed.sex} />
-                <StatBubble label="CNP" value={parsed.cnp} />
-                <StatBubble label="Patient ID" value={parsed.patient_identifier} />
-                <StatBubble label="Admission date" value={parsed.collected_on} />
-                <StatBubble label="Discharge date" value={parsed.reported_on} />
-                <StatBubble label="Referring doctor" value={parsed.referring_doctor} />
-                <StatBubble label="Source language" value={parsed.source_language} />
+                <CompactMetaItem label="Patient" value={parsed.patient_name} />
+                <CompactMetaItem label="DOB" value={parsed.date_of_birth} />
+                <CompactMetaItem label="Age" value={parsed.age} />
+                <CompactMetaItem label="Sex" value={parsed.sex} />
+                <CompactMetaItem label="CNP" value={parsed.cnp} />
+                <CompactMetaItem label="Patient ID" value={parsed.patient_identifier} />
+                <CompactMetaItem label="Admission" value={parsed.collected_on} />
+                <CompactMetaItem label="Discharge" value={parsed.reported_on} />
+                <CompactMetaItem label="Doctor" value={parsed.referring_doctor} />
+                <CompactMetaItem label="Language" value={parsed.source_language} />
               </div>
             </div>
           )}
@@ -1053,6 +1014,7 @@ export default function DischargeStructuredPage() {
                     <div className="muted-text" style={{ marginTop: 5 }}>
                       {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                     </div>
+
                     {log.details && (
                       <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
                         {log.details}
