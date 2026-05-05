@@ -8,7 +8,7 @@ from app.parsers.google_table_parser import parse_labs_from_google_extraction
 from app.report_fields import extract_report_metadata
 from app.services.lab_catalog import build_report_name_from_categories, normalize_lab_rows
 from app.services.ocr_service import extract_text, score_ocr_quality
-from app.parsers.discharge_parser import detect_discharge_document, parse_discharge_document
+from app.parsers.discharge_summary_parser import parse_discharge_document
 
 try:
     from app.services.ai_lab_organizer import organize_labs_with_ai
@@ -729,18 +729,6 @@ def process_bloodwork_document(
 
     return parsed_data
 
-def process_discharge_document(
-    extraction: dict[str, Any],
-    extracted_text: str,
-    warnings: list[str],
-) -> dict[str, Any]:
-    parsed_data = parse_discharge_document(extraction or extracted_text)
-    parsed_data.setdefault("labs", [])
-    parsed_data.setdefault("warnings", [])
-
-    warnings.append("Document was parsed as a discharge summary / fișă de externare.")
-
-    return parsed_data
 
 def process_uploaded_document(
     file_path: Path,
@@ -764,12 +752,6 @@ def process_uploaded_document(
             warnings=warnings,
             file_path=file_path,
             filename=filename,
-        )
-    elif section == "discharge_summary" or detect_discharge_document(extraction or extracted_text):
-        parsed_data = process_discharge_document(
-            extraction=extraction,
-            extracted_text=extracted_text,
-            warnings=warnings,
         )
     else:
         parsed_data = empty_parsed_document(section)
