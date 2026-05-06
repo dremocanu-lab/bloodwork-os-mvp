@@ -1,4 +1,4 @@
-Im showerinexport type DischargeParagraphKind =
+export type DischargeParagraphKind =
   | "heading"
   | "clinical_event"
   | "lab_line"
