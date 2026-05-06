@@ -5,7 +5,7 @@ import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
-import { cleanOneLine, formatSectionPreview } from "@/lib/discharge-epicriza-formatter";
+import { cleanOneLine, formatPdfLikeText, formatSectionPreview } from "@/lib/discharge-epicriza-formatter";
 
 type CurrentUser = {
   id: number;
