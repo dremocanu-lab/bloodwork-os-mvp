@@ -5,7 +5,10 @@ import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
-import { cleanOneLine, formatPdfLikeText, formatSectionPreview } from "@/lib/discharge-epicriza-formatter";
+import {
+  cleanOneLine,
+  formatPdfLikeDischargeText,
+} from "@/lib/discharge-epicriza-formatter";
 
 type CurrentUser = {
   id: number;
@@ -178,7 +181,7 @@ function parseDischargePayload(noteBody?: string | null): DischargePayload | nul
 
 function getSectionBody(section?: Partial<DischargeSection> | null) {
   const raw = section?.formatted_body || section?.body || "";
-  return formatPdfLikeText(raw);
+  return formatPdfLikeDischargeText(raw);
 }
 
 function sectionIcon(key?: string) {
@@ -348,7 +351,7 @@ function SectionTextPanel({
       <div
         className="soft-card-tight"
         style={{
-          padding: 22,
+          padding: "22px 24px",
           background: "var(--panel-2)",
           minHeight: 0,
           overflow: "auto",
@@ -361,8 +364,8 @@ function SectionTextPanel({
             whiteSpace: "pre-wrap",
             fontFamily:
               'Arial, Helvetica, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontSize: 14,
-            lineHeight: 1.35,
+            fontSize: 13,
+            lineHeight: 1.32,
             fontWeight: 650,
             color: "var(--foreground)",
             tabSize: 4,
@@ -773,7 +776,7 @@ export default function DischargeStructuredPage() {
         style={{
           padding: 16,
           display: "grid",
-          gridTemplateColumns: "minmax(340px, 0.33fr) minmax(0, 1fr)",
+          gridTemplateColumns: "minmax(250px, 0.24fr) minmax(0, 1fr)",
           gap: 16,
           alignItems: "stretch",
           height: "calc(100vh - 185px)",
@@ -807,7 +810,6 @@ export default function DischargeStructuredPage() {
             {navigationSections.map((section) => {
               const active = activeSectionKey === section.key;
               const accent = sectionAccent(section.key);
-              const previewText = getSectionBody(section);
 
               return (
                 <button
@@ -829,7 +831,7 @@ export default function DischargeStructuredPage() {
                     display: "grid",
                     gridTemplateColumns: "36px minmax(0, 1fr)",
                     gap: 11,
-                    alignItems: "start",
+                    alignItems: "center",
                     boxShadow: active ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
                   }}
                 >
@@ -852,14 +854,16 @@ export default function DischargeStructuredPage() {
                     {sectionIcon(section.key)}
                   </span>
 
-                  <span style={{ minWidth: 0 }}>
-                    <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>{section.title}</span>
-                    <span
-                      className="muted-text"
-                      style={{ display: "block", marginTop: 5, fontSize: 12, lineHeight: 1.35 }}
-                    >
-                      {formatSectionPreview(previewText)}
-                    </span>
+                  <span
+                    style={{
+                      display: "block",
+                      minWidth: 0,
+                      fontWeight: 950,
+                      fontSize: 13,
+                      lineHeight: 1.25,
+                    }}
+                  >
+                    {section.title}
                   </span>
                 </button>
               );
@@ -870,7 +874,7 @@ export default function DischargeStructuredPage() {
         <section
           className="soft-card-tight"
           style={{
-            padding: 26,
+            padding: 24,
             background: "var(--panel)",
             borderRadius: 28,
             height: "100%",
