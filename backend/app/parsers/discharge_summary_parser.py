@@ -6,6 +6,10 @@ import unicodedata
 from typing import Any
 
 from app.report_fields import extract_report_metadata
+try:
+    from app.services.discharge_layout_formatter import format_discharge_sections_with_ai
+except Exception:
+    format_discharge_sections_with_ai = None
 
 
 def clean_discharge_text(value: Any) -> str:
@@ -596,7 +600,12 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
 
     issued_date = extract_issued_date(text)
     sections = split_into_major_sections(text)
+    formatter_warnings: list[str] = []
 
+    if format_discharge_sections_with_ai is not None:
+        sections, formatter_warnings = format_discharge_sections_with_ai(sections)
+    else:
+        formatter_warnings.append("OpenAI discharge layout formatter module is unavailable.")
     patient_name = metadata.get("patient_name")
     report_date = (
         date_metadata.get("discharge_date")
@@ -638,6 +647,7 @@ def parse_discharge_document(extraction: dict[str, Any] | str) -> dict[str, Any]
         "note_body": json.dumps(note_payload, ensure_ascii=False),
         "labs": [],
         "warnings": [
-            f"Discharge parser created {len(sections)} major sections using heading-boundary parsing."
+            f"Discharge parser created {len(sections)} major sections using heading-boundary parsing.",
+            *formatter_warnings,
         ],
     }

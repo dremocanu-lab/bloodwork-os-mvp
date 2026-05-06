@@ -128,7 +128,7 @@ def format_discharge_section_with_ai(
         }
 
     # Avoid oversized requests for now. We can later chunk by page.
-    max_chars = int(os.getenv("OPENAI_DISCHARGE_LAYOUT_MAX_CHARS", "14000"))
+    max_chars = int(os.getenv("OPENAI_DISCHARGE_LAYOUT_MAX_CHARS", "60000"))
     body_for_model = raw_body[:max_chars]
     truncated = len(raw_body) > max_chars
 

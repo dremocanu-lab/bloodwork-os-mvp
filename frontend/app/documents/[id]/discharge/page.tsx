@@ -43,6 +43,9 @@ type DischargeSection = {
   title: string;
   original_titles?: string[];
   body: string;
+  formatted_body?: string | null;
+  formatting_method?: string | null;
+  formatting_confidence?: number | null;
   confidence?: number;
 };
 
