@@ -126,6 +126,7 @@ class Document(Base):
     generated_on = Column(String, nullable=True)
 
     note_body = Column(Text, nullable=True)
+    original_layout_json = Column(Text, nullable=True)
 
     is_verified = Column(Integer, nullable=False, default=0)
     verified_by = Column(String, nullable=True)

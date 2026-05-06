@@ -97,6 +97,13 @@ def process_uploaded_discharge_summary(
     return {
         "extracted_text": extracted_text,
         "parsed_data": parsed_data,
+        "original_layout": {
+            "method": extraction.get("method") or "google_document_ai_discharge_summary",
+            "lines": extraction.get("lines") or [],
+            "words": extraction.get("words") or [],
+            "tables": extraction.get("tables") or [],
+            "debug": extraction.get("debug") or {},
+        },
         "ocr_method": extraction.get("method") or "google_document_ai_discharge_summary",
         "ocr_quality": ocr_quality,
         "warnings": dedupe_warnings(warnings),

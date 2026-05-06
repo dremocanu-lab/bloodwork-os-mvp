@@ -1,6 +1,7 @@
 import os
 import shutil
 import re
+import json
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -413,6 +414,11 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
 def get_document_payload(db: Session, document, labs, audit_logs, current_user=None):
     uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
 
+    try:
+        original_layout = json.loads(document.original_layout_json or "{}")
+    except Exception:
+        original_layout = {}
+
     return {
         "document_id": document.id,
         "patient_id": document.patient_id,
@@ -423,6 +429,7 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "uploaded_by_user_id": document.uploaded_by_user_id,
         "uploaded_by": uploaded_by,
         "extracted_text": document.extracted_text,
+        "original_layout": original_layout,
         "parsed_data": {
             "patient_name": document.patient_name,
             "date_of_birth": document.date_of_birth,
@@ -562,6 +569,7 @@ def process_upload_job(job_id: int):
 
         parsed_data = pipeline_result.get("parsed_data") or {}
         labs = parsed_data.get("labs") or []
+        original_layout = pipeline_result.get("original_layout") or {}
 
         if parsed_data.get("patient_name") and not patient.full_name:
             patient.full_name = parsed_data.get("patient_name")
@@ -602,6 +610,7 @@ def process_upload_job(job_id: int):
             registered_on=parsed_data.get("registered_on"),
             generated_on=parsed_data.get("generated_on"),
             note_body=parsed_data.get("note_body"),
+            original_layout_json=json.dumps(original_layout, ensure_ascii=False) if original_layout else None,
             is_verified=0,
             verified_by=None,
             verified_at=None,

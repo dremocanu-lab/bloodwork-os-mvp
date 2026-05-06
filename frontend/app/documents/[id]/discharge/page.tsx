@@ -4,10 +4,12 @@ import { useEffect, useMemo, useState } from "react";
 import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import OriginalLayoutViewer from "@/components/original-layout-viewer";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import {
   cleanOneLine,
   formatPdfLikeDischargeText,
+  formatSectionPreview,
 } from "@/lib/discharge-epicriza-formatter";
 
 type CurrentUser = {
@@ -33,6 +35,30 @@ type AuditLog = {
   actor?: string | null;
   timestamp: string;
   details?: string | null;
+};
+
+type LayoutBlock = {
+  id: string;
+  type: "paragraph" | "line" | string;
+  text: string;
+  x: number;
+  y: number;
+  w: number;
+  h: number;
+};
+
+type LayoutPage = {
+  page_number: number;
+  width: number;
+  height: number;
+  paragraph_blocks?: LayoutBlock[];
+  line_blocks?: LayoutBlock[];
+};
+
+type OriginalLayout = {
+  provider?: string;
+  plain_text?: string;
+  pages?: LayoutPage[];
 };
 
 type DischargeSection = {
@@ -81,6 +107,7 @@ type DocumentResponse = {
     verified_at?: string | null;
     last_edited_at?: string | null;
     note_body?: string | null;
+    original_layout?: OriginalLayout | null;
     audit_logs?: AuditLog[];
   };
 };
@@ -291,6 +318,37 @@ function CompactMetaItem({
   );
 }
 
+function ReaderToggle({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        border: active ? "1px solid color-mix(in srgb, var(--primary) 55%, var(--border))" : "1px solid var(--border)",
+        background: active
+          ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 20%, var(--panel)), var(--panel))"
+          : "var(--panel-2)",
+        color: active ? "var(--primary)" : "var(--foreground)",
+        borderRadius: 999,
+        padding: "9px 12px",
+        fontSize: 12,
+        fontWeight: 950,
+        cursor: "pointer",
+      }}
+    >
+      {children}
+    </button>
+  );
+}
+
 function SectionTextPanel({
   section,
   text,
@@ -351,7 +409,7 @@ function SectionTextPanel({
       <div
         className="soft-card-tight"
         style={{
-          padding: "22px 24px",
+          padding: 22,
           background: "var(--panel-2)",
           minHeight: 0,
           overflow: "auto",
@@ -364,12 +422,12 @@ function SectionTextPanel({
             whiteSpace: "pre-wrap",
             fontFamily:
               'Arial, Helvetica, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontSize: 13,
-            lineHeight: 1.32,
+            fontSize: 14,
+            lineHeight: 1.42,
             fontWeight: 650,
             color: "var(--foreground)",
             tabSize: 4,
-            overflowWrap: "normal",
+            overflowWrap: "break-word",
             wordBreak: "normal",
           }}
         >
@@ -436,7 +494,7 @@ function mergeFirstPageSections(rawSections: DischargeSection[]) {
     title: "Admission / patient / diagnoses",
     original_titles: Array.from(new Set(originalTitles)),
     body: combinedBody,
-    formatted_body: hasAiFormatting ? combinedFormattedBody : null,
+    formatted_body: combinedFormattedBody,
     formatting_method: hasAiFormatting ? "mixed" : "raw_ocr",
     formatting_confidence: hasAiFormatting
       ? Math.max(...preSections.map((section) => Number(section.formatting_confidence || 0)))
@@ -455,6 +513,7 @@ export default function DischargeStructuredPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
   const [activeSectionKey, setActiveSectionKey] = useState("full_summary");
+  const [readerMode, setReaderMode] = useState<"structured" | "original">("structured");
   const [loading, setLoading] = useState(true);
   const [openingOriginal, setOpeningOriginal] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -506,9 +565,7 @@ export default function DischargeStructuredPage() {
   }, [dischargePayload?.sections]);
 
   const fullSummaryText = useMemo(() => {
-    return sections
-      .map((section) => `${section.title}\n\n${getSectionBody(section)}`)
-      .join("\n\n---\n\n");
+    return sections.map((section) => `${section.title}\n\n${getSectionBody(section)}`).join("\n\n---\n\n");
   }, [sections]);
 
   const navigationSections = useMemo<NavigationSection[]>(() => {
@@ -539,8 +596,7 @@ export default function DischargeStructuredPage() {
     ];
   }, [sections, fullSummaryText]);
 
-  const activeSection =
-    navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
+  const activeSection = navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
 
   const canDelete =
     Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
@@ -748,16 +804,21 @@ export default function DischargeStructuredPage() {
           gap: 12,
           flexWrap: "wrap",
           alignItems: "center",
-          background:
-            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
+          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
         }}
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          <ReaderToggle active={readerMode === "structured"} onClick={() => setReaderMode("structured")}>
+            Structured reader
+          </ReaderToggle>
+
+          <ReaderToggle active={readerMode === "original"} onClick={() => setReaderMode("original")}>
+            Original layout
+          </ReaderToggle>
+
           <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
             {parsed.is_verified ? "Verified" : "Unverified"}
           </StatusPill>
-
-          <StatusPill>Discharge summary</StatusPill>
 
           <StatusPill>{sections.length} sections</StatusPill>
         </div>
@@ -776,7 +837,7 @@ export default function DischargeStructuredPage() {
         style={{
           padding: 16,
           display: "grid",
-          gridTemplateColumns: "minmax(250px, 0.24fr) minmax(0, 1fr)",
+          gridTemplateColumns: readerMode === "original" ? "minmax(0, 1fr)" : "minmax(310px, 0.28fr) minmax(0, 1fr)",
           gap: 16,
           alignItems: "stretch",
           height: "calc(100vh - 185px)",
@@ -784,97 +845,91 @@ export default function DischargeStructuredPage() {
           overflow: "hidden",
         }}
       >
-        <aside
-          className="soft-card-tight"
-          style={{
-            padding: 14,
-            background: "var(--panel-2)",
-            height: "100%",
-            overflowY: "auto",
-          }}
-        >
-          <div
-            className="muted-text"
+        {readerMode === "structured" && (
+          <aside
+            className="soft-card-tight"
             style={{
-              padding: "6px 8px 12px",
-              fontSize: 12,
-              fontWeight: 950,
-              textTransform: "uppercase",
-              letterSpacing: "0.06em",
+              padding: 14,
+              background: "var(--panel-2)",
+              height: "100%",
+              overflowY: "auto",
             }}
           >
-            Sections
-          </div>
+            <div
+              className="muted-text"
+              style={{
+                padding: "6px 8px 12px",
+                fontSize: 12,
+                fontWeight: 950,
+                textTransform: "uppercase",
+                letterSpacing: "0.06em",
+              }}
+            >
+              Sections
+            </div>
 
-          <div style={{ display: "grid", gap: 8 }}>
-            {navigationSections.map((section) => {
-              const active = activeSectionKey === section.key;
-              const accent = sectionAccent(section.key);
+            <div style={{ display: "grid", gap: 8 }}>
+              {navigationSections.map((section) => {
+                const active = activeSectionKey === section.key;
+                const accent = sectionAccent(section.key);
 
-              return (
-                <button
-                  key={section.key}
-                  type="button"
-                  onClick={() => setActiveSectionKey(section.key)}
-                  style={{
-                    border: `1px solid ${
-                      active ? "color-mix(in srgb, var(--primary) 55%, var(--border))" : "var(--border)"
-                    }`,
-                    background: active
-                      ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, var(--panel)), var(--panel))"
-                      : "var(--panel)",
-                    color: "var(--foreground)",
-                    borderRadius: 20,
-                    padding: 14,
-                    textAlign: "left",
-                    cursor: "pointer",
-                    display: "grid",
-                    gridTemplateColumns: "36px minmax(0, 1fr)",
-                    gap: 11,
-                    alignItems: "center",
-                    boxShadow: active ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
-                  }}
-                >
-                  <span
+                return (
+                  <button
+                    key={section.key}
+                    type="button"
+                    onClick={() => setActiveSectionKey(section.key)}
                     style={{
-                      width: 36,
-                      height: 36,
-                      borderRadius: 13,
-                      display: "grid",
-                      placeItems: "center",
+                      border: `1px solid ${
+                        active ? "color-mix(in srgb, var(--primary) 55%, var(--border))" : "var(--border)"
+                      }`,
                       background: active
-                        ? "color-mix(in srgb, var(--primary) 18%, var(--panel-2))"
-                        : "var(--panel-2)",
-                      color: active ? "var(--primary)" : accent,
-                      border: "1px solid var(--border)",
-                      fontSize: 11,
-                      fontWeight: 950,
+                        ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, var(--panel)), var(--panel))"
+                        : "var(--panel)",
+                      color: "var(--foreground)",
+                      borderRadius: 20,
+                      padding: 14,
+                      textAlign: "left",
+                      cursor: "pointer",
+                      display: "grid",
+                      gridTemplateColumns: "36px minmax(0, 1fr)",
+                      gap: 11,
+                      alignItems: "center",
+                      boxShadow: active ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
                     }}
                   >
-                    {sectionIcon(section.key)}
-                  </span>
+                    <span
+                      style={{
+                        width: 36,
+                        height: 36,
+                        borderRadius: 13,
+                        display: "grid",
+                        placeItems: "center",
+                        background: active
+                          ? "color-mix(in srgb, var(--primary) 18%, var(--panel-2))"
+                          : "var(--panel-2)",
+                        color: active ? "var(--primary)" : accent,
+                        border: "1px solid var(--border)",
+                        fontSize: 11,
+                        fontWeight: 950,
+                      }}
+                    >
+                      {sectionIcon(section.key)}
+                    </span>
 
-                  <span
-                    style={{
-                      display: "block",
-                      minWidth: 0,
-                      fontWeight: 950,
-                      fontSize: 13,
-                      lineHeight: 1.25,
-                    }}
-                  >
-                    {section.title}
-                  </span>
-                </button>
-              );
-            })}
-          </div>
-        </aside>
+                    <span style={{ minWidth: 0 }}>
+                      <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>{section.title}</span>
+                    </span>
+                  </button>
+                );
+              })}
+            </div>
+          </aside>
+        )}
 
         <section
           className="soft-card-tight"
           style={{
-            padding: 24,
+            padding: 26,
             background: "var(--panel)",
             borderRadius: 28,
             height: "100%",
@@ -884,98 +939,104 @@ export default function DischargeStructuredPage() {
             overflow: "hidden",
           }}
         >
-          {activeSectionKey === "overview" && (
-            <div
-              style={{
-                minHeight: 0,
-                height: "100%",
-                overflowY: "auto",
-                paddingRight: 8,
-              }}
-            >
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                Overview
-              </div>
+          {readerMode === "original" ? (
+            <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
+          ) : (
+            <>
+              {activeSectionKey === "overview" && (
+                <div
+                  style={{
+                    minHeight: 0,
+                    height: "100%",
+                    overflowY: "auto",
+                    paddingRight: 8,
+                  }}
+                >
+                  <div className="section-title" style={{ marginBottom: 16 }}>
+                    Overview
+                  </div>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                  gap: 14,
-                }}
-              >
-                <CompactMetaItem label="Patient" value={parsed.patient_name} />
-                <CompactMetaItem label="DOB" value={parsed.date_of_birth} />
-                <CompactMetaItem label="Age" value={parsed.age} />
-                <CompactMetaItem label="Sex" value={parsed.sex} />
-                <CompactMetaItem label="CNP" value={parsed.cnp} />
-                <CompactMetaItem label="Patient ID" value={parsed.patient_identifier} />
-                <CompactMetaItem label="Admission" value={parsed.collected_on} />
-                <CompactMetaItem label="Discharge" value={parsed.reported_on} />
-                <CompactMetaItem label="Doctor" value={parsed.referring_doctor} />
-                <CompactMetaItem label="Language" value={parsed.source_language} />
-              </div>
-            </div>
-          )}
+                  <div
+                    style={{
+                      display: "grid",
+                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
+                      gap: 14,
+                    }}
+                  >
+                    <CompactMetaItem label="Patient" value={parsed.patient_name} />
+                    <CompactMetaItem label="DOB" value={parsed.date_of_birth} />
+                    <CompactMetaItem label="Age" value={parsed.age} />
+                    <CompactMetaItem label="Sex" value={parsed.sex} />
+                    <CompactMetaItem label="CNP" value={parsed.cnp} />
+                    <CompactMetaItem label="Patient ID" value={parsed.patient_identifier} />
+                    <CompactMetaItem label="Admission" value={parsed.collected_on} />
+                    <CompactMetaItem label="Discharge" value={parsed.reported_on} />
+                    <CompactMetaItem label="Doctor" value={parsed.referring_doctor} />
+                    <CompactMetaItem label="Language" value={parsed.source_language} />
+                  </div>
+                </div>
+              )}
 
-          {activeSectionKey === "full_summary" && (
-            <SectionTextPanel
-              section={{
-                key: "full_summary",
-                title: "Full discharge summary",
-                body: fullSummaryText,
-                formatted_body: fullSummaryText,
-              }}
-              text={fullSummaryText}
-              onCopy={() => copyText(fullSummaryText)}
-            />
-          )}
+              {activeSectionKey === "full_summary" && (
+                <SectionTextPanel
+                  section={{
+                    key: "full_summary",
+                    title: "Full discharge summary",
+                    body: fullSummaryText,
+                    formatted_body: fullSummaryText,
+                  }}
+                  text={fullSummaryText}
+                  onCopy={() => copyText(fullSummaryText)}
+                />
+              )}
 
-          {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
-            <SectionTextPanel
-              section={activeSection}
-              text={getSectionBody(activeSection)}
-              onCopy={() => copyText(getSectionBody(activeSection))}
-            />
-          )}
+              {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
+                <SectionTextPanel
+                  section={activeSection}
+                  text={getSectionBody(activeSection)}
+                  onCopy={() => copyText(getSectionBody(activeSection))}
+                />
+              )}
 
-          {activeSectionKey === "audit" && (
-            <div
-              style={{
-                minHeight: 0,
-                height: "100%",
-                display: "grid",
-                gridTemplateRows: "auto minmax(0, 1fr)",
-                overflow: "hidden",
-              }}
-            >
-              <div className="section-title" style={{ marginBottom: 16 }}>
-                Audit trail
-              </div>
+              {activeSectionKey === "audit" && (
+                <div
+                  style={{
+                    minHeight: 0,
+                    height: "100%",
+                    display: "grid",
+                    gridTemplateRows: "auto minmax(0, 1fr)",
+                    overflow: "hidden",
+                  }}
+                >
+                  <div className="section-title" style={{ marginBottom: 16 }}>
+                    Audit trail
+                  </div>
 
-              <div style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}>
-                {(parsed.audit_logs || []).map((log, index) => (
-                  <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
-                    <div style={{ fontWeight: 950 }}>{log.action}</div>
-                    <div className="muted-text" style={{ marginTop: 5 }}>
-                      {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
-                    </div>
+                  <div style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}>
+                    {(parsed.audit_logs || []).map((log, index) => (
+                      <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
+                        <div style={{ fontWeight: 950 }}>{log.action}</div>
+                        <div className="muted-text" style={{ marginTop: 5 }}>
+                          {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
+                        </div>
 
-                    {log.details && (
-                      <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
-                        {log.details}
+                        {log.details && (
+                          <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
+                            {log.details}
+                          </div>
+                        )}
+                      </div>
+                    ))}
+
+                    {!parsed.audit_logs?.length && (
+                      <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+                        <div className="muted-text">No audit activity yet.</div>
                       </div>
                     )}
                   </div>
-                ))}
-
-                {!parsed.audit_logs?.length && (
-                  <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                    <div className="muted-text">No audit activity yet.</div>
-                  </div>
-                )}
-              </div>
-            </div>
+                </div>
+              )}
+            </>
           )}
         </section>
       </div>
