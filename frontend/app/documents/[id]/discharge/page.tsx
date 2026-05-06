@@ -5,13 +5,7 @@ import type { ReactNode } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
-import {
-  cleanOneLine,
-  formatDischargeParagraphs,
-  formatSectionPreview,
-  isAdmissionSummarySection,
-  splitAdmissionCards,
-} from "@/lib/discharge-epicriza-formatter";
+import { cleanOneLine, formatSectionPreview } from "@/lib/discharge-epicriza-formatter";
 
 type CurrentUser = {
   id: number;
@@ -182,6 +176,10 @@ function parseDischargePayload(noteBody?: string | null): DischargePayload | nul
   }
 }
 
+function getSectionBody(section?: Partial<DischargeSection> | null) {
+  return section?.formatted_body || section?.body || "";
+}
+
 function sectionIcon(key?: string) {
   if (key === "overview") return "Ov";
   if (key === "full_summary") return "All";
@@ -289,151 +287,6 @@ function CompactMetaItem({
   );
 }
 
-function ParagraphBadge({ kind }: { kind: string }) {
-  if (kind === "lab_line") return <StatusPill>Lab values</StatusPill>;
-  if (kind === "medication") return <StatusPill>Medication</StatusPill>;
-  if (kind === "recommendation") return <StatusPill>Recommendation</StatusPill>;
-  if (kind === "clinical_event") return <StatusPill>Clinical event</StatusPill>;
-  if (kind === "heading") return <StatusPill>Heading</StatusPill>;
-
-  return null;
-}
-
-function ClinicalTextBlock({ text }: { text?: string | null }) {
-  const paragraphs = formatDischargeParagraphs(text);
-
-  if (!paragraphs.length) {
-    return <div className="muted-text">No text extracted for this section.</div>;
-  }
-
-  return (
-    <div style={{ display: "grid", gap: 12 }}>
-      {paragraphs.map((paragraph, index) => {
-        const elevated =
-          paragraph.kind === "clinical_event" ||
-          paragraph.kind === "lab_line" ||
-          paragraph.kind === "medication" ||
-          paragraph.kind === "recommendation" ||
-          paragraph.kind === "heading";
-
-        return (
-          <div
-            key={`${paragraph.text.slice(0, 40)}-${index}`}
-            style={{
-              padding: elevated ? "14px 16px" : "2px 0",
-              borderRadius: elevated ? 18 : 0,
-              background: elevated ? "var(--panel)" : "transparent",
-              border: elevated ? "1px solid var(--border)" : "0",
-              display: "grid",
-              gap: elevated ? 8 : 0,
-            }}
-          >
-            {elevated && (
-              <div style={{ display: "flex", justifyContent: "space-between", gap: 8, flexWrap: "wrap" }}>
-                <ParagraphBadge kind={paragraph.kind} />
-              </div>
-            )}
-
-            <div
-              style={{
-                fontSize: paragraph.kind === "heading" ? 16 : 15,
-                lineHeight: 1.72,
-                fontWeight: elevated ? 760 : 610,
-                whiteSpace: "normal",
-                overflowWrap: "anywhere",
-              }}
-            >
-              {paragraph.text}
-            </div>
-          </div>
-        );
-      })}
-    </div>
-  );
-}
-
-function AdmissionSummaryBlock({ text }: { text?: string | null }) {
-  const cards = splitAdmissionCards(text);
-
-  if (!cards.length) {
-    return <div className="muted-text">No admission details extracted.</div>;
-  }
-
-  return (
-    <div style={{ display: "grid", gap: 16 }}>
-      {cards.map((card, cardIndex) => (
-        <div
-          key={`${card.title}-${cardIndex}`}
-          className="soft-card-tight"
-          style={{
-            padding: 18,
-            background: "var(--panel)",
-            borderRadius: 22,
-            border: "1px solid var(--border)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 17,
-              fontWeight: 950,
-              letterSpacing: "-0.035em",
-              marginBottom: 14,
-            }}
-          >
-            {card.title}
-          </div>
-
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "repeat(auto-fit, minmax(230px, 1fr))",
-              gap: 12,
-            }}
-          >
-            {card.rows.map((row, rowIndex) => (
-              <div
-                key={`${card.title}-${row.label}-${rowIndex}`}
-                style={{
-                  padding: 14,
-                  borderRadius: 18,
-                  background: "var(--panel-2)",
-                  border: "1px solid var(--border)",
-                  minHeight: 72,
-                }}
-              >
-                <div
-                  className="muted-text"
-                  style={{
-                    fontSize: 11,
-                    fontWeight: 950,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.04em",
-                    marginBottom: 7,
-                  }}
-                >
-                  {row.label}
-                </div>
-
-                <div
-                  style={{
-                    fontSize: 14,
-                    fontWeight: 750,
-                    lineHeight: 1.55,
-                    whiteSpace: "pre-wrap",
-                    overflowWrap: "anywhere",
-                  }}
-                >
-                  {row.value || "—"}
-                </div>
-              </div>
-            ))}
-          </div>
-        </div>
-      ))}
-    </div>
-  );
-}
-
 function SectionTextPanel({
   section,
   text,
@@ -443,7 +296,7 @@ function SectionTextPanel({
   text?: string | null;
   onCopy?: () => void;
 }) {
-  const useAdmissionCards = isAdmissionSummarySection(section.key, section.title);
+  const rawText = text || "";
 
   return (
     <div
@@ -473,6 +326,15 @@ function SectionTextPanel({
               Original heading: {section.original_titles.join(" · ")}
             </div>
           ) : null}
+
+          {section.formatting_method && section.formatting_method !== "raw_ocr" ? (
+            <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 800 }}>
+              AI layout formatted
+              {section.formatting_confidence !== null && section.formatting_confidence !== undefined
+                ? ` · ${Math.round(section.formatting_confidence * 100)}% confidence`
+                : ""}
+            </div>
+          ) : null}
         </div>
 
         {onCopy && (
@@ -485,15 +347,30 @@ function SectionTextPanel({
       <div
         className="soft-card-tight"
         style={{
-          padding: 26,
+          padding: 22,
           background: "var(--panel-2)",
           minHeight: 0,
-          overflowY: "auto",
-          paddingRight: 16,
+          overflow: "auto",
           borderRadius: 24,
         }}
       >
-        {useAdmissionCards ? <AdmissionSummaryBlock text={text} /> : <ClinicalTextBlock text={text} />}
+        <pre
+          style={{
+            margin: 0,
+            whiteSpace: "pre-wrap",
+            fontFamily:
+              'Arial, Helvetica, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
+            fontSize: 14,
+            lineHeight: 1.35,
+            fontWeight: 650,
+            color: "var(--foreground)",
+            tabSize: 4,
+            overflowWrap: "normal",
+            wordBreak: "normal",
+          }}
+        >
+          {rawText || "No text extracted for this section."}
+        </pre>
       </div>
     </div>
   );
@@ -540,13 +417,26 @@ function mergeFirstPageSections(rawSections: DischargeSection[]) {
     })
     .join("\n\n");
 
+  const combinedFormattedBody = preSections
+    .map((section) => {
+      const title = cleanOneLine(section.title || section.key || "Details");
+      return `[${title}]\n${getSectionBody(section)}`;
+    })
+    .join("\n\n");
+
   const originalTitles = preSections.flatMap((section) => section.original_titles || []);
+  const hasAiFormatting = preSections.some((section) => section.formatted_body);
 
   const combined: DischargeSection = {
     key: "pre_epicriza_summary",
     title: "Admission / patient / diagnoses",
     original_titles: Array.from(new Set(originalTitles)),
     body: combinedBody,
+    formatted_body: hasAiFormatting ? combinedFormattedBody : null,
+    formatting_method: hasAiFormatting ? "mixed" : "raw_ocr",
+    formatting_confidence: hasAiFormatting
+      ? Math.max(...preSections.map((section) => Number(section.formatting_confidence || 0)))
+      : 0,
     confidence: Math.max(...preSections.map((section) => Number(section.confidence || 0.8))),
   };
 
@@ -612,7 +502,9 @@ export default function DischargeStructuredPage() {
   }, [dischargePayload?.sections]);
 
   const fullSummaryText = useMemo(() => {
-    return sections.map((section) => `${section.title}\n\n${section.body}`).join("\n\n---\n\n");
+    return sections
+      .map((section) => `${section.title}\n\n${getSectionBody(section)}`)
+      .join("\n\n---\n\n");
   }, [sections]);
 
   const navigationSections = useMemo<NavigationSection[]>(() => {
@@ -627,6 +519,7 @@ export default function DischargeStructuredPage() {
         key: "full_summary",
         title: "Full discharge summary",
         body: fullSummaryText || "All extracted sections shown together.",
+        formatted_body: fullSummaryText || "",
         synthetic: true,
       },
       ...sections.map((section) => ({
@@ -913,6 +806,7 @@ export default function DischargeStructuredPage() {
             {navigationSections.map((section) => {
               const active = activeSectionKey === section.key;
               const accent = sectionAccent(section.key);
+              const previewText = getSectionBody(section);
 
               return (
                 <button
@@ -963,7 +857,7 @@ export default function DischargeStructuredPage() {
                       className="muted-text"
                       style={{ display: "block", marginTop: 5, fontSize: 12, lineHeight: 1.35 }}
                     >
-                      {formatSectionPreview(section.body)}
+                      {formatSectionPreview(previewText)}
                     </span>
                   </span>
                 </button>
@@ -1025,6 +919,7 @@ export default function DischargeStructuredPage() {
                 key: "full_summary",
                 title: "Full discharge summary",
                 body: fullSummaryText,
+                formatted_body: fullSummaryText,
               }}
               text={fullSummaryText}
               onCopy={() => copyText(fullSummaryText)}
@@ -1032,7 +927,11 @@ export default function DischargeStructuredPage() {
           )}
 
           {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
-            <SectionTextPanel section={activeSection} text={activeSection.body} onCopy={() => copyText(activeSection.body || "")} />
+            <SectionTextPanel
+              section={activeSection}
+              text={getSectionBody(activeSection)}
+              onCopy={() => copyText(getSectionBody(activeSection))}
+            />
           )}
 
           {activeSectionKey === "audit" && (
