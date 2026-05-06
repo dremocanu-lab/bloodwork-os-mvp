@@ -30,52 +30,41 @@ function normalizeForTextRules(value: string) {
     .replace(/[\u0300-\u036f]/g, "");
 }
 
-function isSeparatorLine(line: string) {
+function isHardSectionBreak(line: string) {
   const normalized = normalizeForTextRules(line);
 
   return (
     normalized === "---" ||
     /^[-_=]{3,}$/.test(normalized) ||
-    /^\[[^\]]+\]$/.test(line.trim())
+    /^\[[^\]]+\]$/.test(line.trim()) ||
+    [
+      "epicriza",
+      "diagnostic",
+      "diagnostice",
+      "investigatii",
+      "investigatii / rezultate",
+      "tratament",
+      "tratament recomandat",
+      "recomandari",
+      "recomandari / follow-up",
+      "stare la externare",
+    ].some((heading) => normalized === heading || normalized.startsWith(`${heading}:`))
   );
 }
 
-function isMajorSectionHeading(line: string) {
-  const normalized = normalizeForTextRules(line);
-
-  return [
-    "epicriza",
-    "evolutie si tratament",
-    "diagnostic",
-    "diagnostice",
-    "investigatii",
-    "investigatii / rezultate",
-    "tratament",
-    "tratament recomandat",
-    "recomandari",
-    "recomandari / follow-up",
-    "stare la externare",
-  ].some((heading) => normalized === heading || normalized.startsWith(`${heading}:`));
-}
-
-function startsNewClinicalThought(line: string) {
+function startsNewClinicalEvent(line: string) {
   const normalized = normalizeForTextRules(line);
 
   return Boolean(
     /^(\d{1,2}[./-]\d{1,2}[./-]\d{2,4})\b/.test(normalized) ||
       /^(la actual|la internarea|revine|se revine|control|reevaluare|la reevaluare)\b/.test(normalized) ||
-      /^(hemograma|biochimie|coagulare|rx cp|ecografie|eco abd|eco|ct|rmn|irm|ecg|ekg)\s*:/.test(
-        normalized
-      ) ||
-      /^(consult cardiologic|consult neurologic|consult|tratament|flebotomie|s-a efectuat|s-au efectuat|continua tratamentul|acuza)\b/.test(
-        normalized
-      ) ||
-      /^(pbmo|jak homozigot|sat ?o2|beta2 microglobulina)\b/.test(normalized) ||
-      /^(hb|ht|l:|ldh|ac uric|splina)\b/.test(normalized)
+      /^(hemograma|biochimie|coagulare|rx cp|ecografie|eco abd|eco|ct|rmn|irm|ecg|ekg)\s*:/.test(normalized) ||
+      /^(consult cardiologic|consult neurologic|consult|tratament|flebotomie|s-a efectuat|s-au efectuat|continua tratamentul|acuza)\b/.test(normalized) ||
+      /^(pbmo|jak homozigot|sat ?o2|beta2 microglobulina)\b/.test(normalized)
   );
 }
 
-function isListOrMeasurementLine(line: string) {
+function isMeasurementListLine(line: string) {
   const normalized = normalizeForTextRules(line);
 
   return Boolean(
@@ -85,21 +74,46 @@ function isListOrMeasurementLine(line: string) {
   );
 }
 
-function shouldKeepLineBreak(previousLine: string, currentLine: string) {
+function isObviousContinuationLine(line: string) {
+  const normalized = normalizeForTextRules(line);
+
+  return Boolean(
+    /^(usoare|usoara|modificari|degenerative|normal|normale|fara|cu|in|si|sau|tip|prezent|prezenta|palpabile|dilatatii|diam|rg\.?|stg\.?|sapt\.?|cp\/zi|mmhg|b\/min|mmc)\b/.test(
+      normalized
+    )
+  );
+}
+
+function previousLooksIncomplete(line: string) {
+  const normalized = normalizeForTextRules(line);
+
+  return Boolean(
+    /[,;:/(-]$/.test(normalized) ||
+      /\b(cu|fara|si|sau|la|in|de|pentru|prin|tip|diam|hd|rg|stg|normal|normale)\.?$/.test(normalized)
+  );
+}
+
+function shouldJoin(previousLine: string, currentLine: string) {
   const previous = cleanDisplayLine(previousLine);
   const current = cleanDisplayLine(currentLine);
 
-  if (!previous || !current) return true;
-  if (isSeparatorLine(previous) || isSeparatorLine(current)) return true;
-  if (isMajorSectionHeading(previous) || isMajorSectionHeading(current)) return true;
+  if (!previous || !current) return false;
+  if (isHardSectionBreak(previous) || isHardSectionBreak(current)) return false;
 
-  if (/^\[[^\]]+\]$/.test(previous)) return true;
+  if (previous.endsWith("-")) return true;
 
-  if (startsNewClinicalThought(current)) return true;
+  if (isObviousContinuationLine(current)) return true;
 
-  if (isListOrMeasurementLine(current) && previous.length < 45) return true;
+  if (previousLooksIncomplete(previous)) return true;
 
-  if (/^(da|nu)$/i.test(current)) return true;
+  if (previous.length > 70 && !startsNewClinicalEvent(current) && !isMeasurementListLine(current)) {
+    return true;
+  }
+
+  if (!startsNewClinicalEvent(current) && !isMeasurementListLine(current)) {
+    const currentStartsLower = /^[a-zăâîșț]/.test(current);
+    if (currentStartsLower) return true;
+  }
 
   return false;
 }
@@ -111,7 +125,6 @@ function joinLines(previousLine: string, currentLine: string) {
   if (!previous) return current;
   if (!current) return previous;
 
-  // Fix wrapped hyphenated medical text like "HD C6-\nC7 stg."
   if (previous.endsWith("-")) {
     return `${previous}${current}`;
   }
@@ -120,26 +133,34 @@ function joinLines(previousLine: string, currentLine: string) {
 }
 
 export function formatPdfLikeText(value?: string | null) {
-  const raw = String(value || "")
+  const rawLines = String(value || "")
     .replace(/\r\n/g, "\n")
     .replace(/\r/g, "\n")
     .replace(/\u00a0/g, " ")
     .replace(/[ \t]+/g, " ")
-    .replace(/\n{3,}/g, "\n\n")
-    .trim();
+    .split("\n");
 
-  if (!raw) return "";
+  const cleanedLines = rawLines.map(cleanDisplayLine);
 
-  const sourceLines = raw.split("\n");
   const outputLines: string[] = [];
 
-  for (const rawLine of sourceLines) {
-    const line = cleanDisplayLine(rawLine);
+  for (let index = 0; index < cleanedLines.length; index += 1) {
+    const line = cleanedLines[index];
 
     if (!line) {
+      const nextLine = cleanedLines[index + 1] || "";
+      const previousLine = outputLines[outputLines.length - 1] || "";
+
+      // OCR sometimes inserts a fake blank line inside a sentence.
+      // If the next line is clearly a continuation, skip this blank line.
+      if (previousLine && nextLine && shouldJoin(previousLine, nextLine)) {
+        continue;
+      }
+
       if (outputLines.length && outputLines[outputLines.length - 1] !== "") {
         outputLines.push("");
       }
+
       continue;
     }
 
@@ -150,10 +171,10 @@ export function formatPdfLikeText(value?: string | null) {
 
     const previous = outputLines[outputLines.length - 1];
 
-    if (!previous || shouldKeepLineBreak(previous, line)) {
-      outputLines.push(line);
-    } else {
+    if (shouldJoin(previous, line)) {
       outputLines[outputLines.length - 1] = joinLines(previous, line);
+    } else {
+      outputLines.push(line);
     }
   }
 

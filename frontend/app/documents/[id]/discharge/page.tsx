@@ -177,7 +177,8 @@ function parseDischargePayload(noteBody?: string | null): DischargePayload | nul
 }
 
 function getSectionBody(section?: Partial<DischargeSection> | null) {
-  return section?.formatted_body || section?.body || "";
+  const raw = section?.formatted_body || section?.body || "";
+  return formatPdfLikeText(raw);
 }
 
 function sectionIcon(key?: string) {
