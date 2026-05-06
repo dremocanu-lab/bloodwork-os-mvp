@@ -38,330 +38,279 @@ function stripDiacritics(value: string) {
     .replace(/Î/g, "I");
 }
 
-export function cleanOneLine(value?: string | number | null) {
-  if (value === null || value === undefined) return "";
+export function cleanOneLine(value?: string | null) {
+  if (!value) return "";
 
   return String(value)
     .normalize("NFKC")
     .replace(/\u00a0/g, " ")
-    .replace(/\ufeff/g, "")
-    .replace(/[ \t]+/g, " ")
+    .replace(/\s+/g, " ")
     .trim();
 }
 
-export function normalizeDischargeText(value?: string | null) {
-  if (!value) return "";
+function normalizeForMatching(value?: string | null) {
+  return stripDiacritics(cleanOneLine(value).toLowerCase());
+}
 
-  let text = String(value)
-    .normalize("NFKC")
+function removeKnownPrintNoise(text: string) {
+  return text
+    .split(/\r?\n/)
+    .map((line) => line.trimEnd())
+    .filter((line) => {
+      const normalized = normalizeForMatching(line);
+
+      if (!normalized) return true;
+
+      if (normalized.includes("hipocrate - imprimare fisa")) return false;
+      if (normalized.includes("biletexternare.asp")) return false;
+      if (/^https?:\/\//i.test(normalized)) return false;
+      if (/^192\.168\./i.test(normalized)) return false;
+      if (/^\d+\s*\/\s*\d+$/.test(normalized)) return false;
+      if (/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}/.test(normalized)) return false;
+
+      return true;
+    })
+    .join("\n");
+}
+
+function fixCommonOcrArtifacts(text: string) {
+  return text
     .replace(/\u00a0/g, " ")
-    .replace(/\ufeff/g, "")
-    .replace(/Â·/g, "·")
+    .replace(/[“”]/g, '"')
+    .replace(/[‘’]/g, "'")
+    .replace(/[–—−]/g, "-")
     .replace(/Â/g, "")
     .replace(/â€™/g, "'")
     .replace(/â€œ/g, '"')
-    .replace(/â€\u009d/g, '"')
-    .replace(/â€“/g, "-")
-    .replace(/â€”/g, "-")
-    .replace(/−/g, "-")
-    .replace(/–/g, "-")
-    .replace(/—/g, "-");
-
-  text = text.replace(/\r\n/g, "\n").replace(/\r/g, "\n");
-  text = text.replace(/[ \t]+\n/g, "\n");
-  text = text.replace(/\n{4,}/g, "\n\n\n");
-
-  return text.trim();
+    .replace(/â€\x9d/g, '"')
+    .replace(/\bAPPT\b/g, "APTT")
+    .replace(/\bHg (?=\d)/g, "Hb ")
+    .replace(/\bHT\b/g, "Ht")
+    .replace(/\bPLT\b/g, "Plt")
+    .replace(/\bplt\b/g, "Plt")
+    .replace(/\bpresent\b/gi, "prezent")
+    .replace(/\bPresent\b/g, "Prezent")
+    .replace(/\bopion\b/gi, "opinion")
+    .replace(/\btratramentului\b/gi, "tratamentului")
+    .replace(/\bCreatnina\b/gi, "Creatinina")
+    .replace(/\bepisatxis\b/gi, "epistaxis")
+    .replace(/\btratamentului cu Hydreea\b/gi, "tratamentului cu Hydrea")
+    .replace(/\btratamentului cu Hydree\b/gi, "tratamentului cu Hydrea")
+    .replace(/\bRp Hydreea\b/gi, "Rp Hydrea")
+    .replace(/\bRp Hydree\b/gi, "Rp Hydrea")
+    .replace(/\bcuu\b/gi, "cu")
+    .replace(/\s+,/g, ",")
+    .replace(/,\s*,/g, ",")
+    .replace(/\s+;/g, ";")
+    .replace(/\s+\./g, ".")
+    .replace(/([A-Za-zĂÂÎȘȚăâîșț])\.([A-ZĂÂÎȘȚ])/g, "$1. $2");
 }
 
-function normalizeForMatch(value?: string | null) {
-  return stripDiacritics(cleanOneLine(value || "").toLowerCase());
-}
+function shouldJoinWithPrevious(previous: string, current: string) {
+  const prev = previous.trim();
+  const cur = current.trim();
 
-function isJunkLine(line: string) {
-  const normalized = normalizeForMatch(line);
+  if (!prev || !cur) return false;
 
-  if (!normalized) return true;
+  const prevNorm = normalizeForMatching(prev);
+  const curNorm = normalizeForMatching(cur);
 
-  if (/^hipocrate\s*-\s*imprimare\s*fisa$/.test(normalized)) return true;
-  if (/^epicriza$/.test(normalized)) return true;
-  if (/^bilet\s+de\s+iesire/.test(normalized)) return true;
-  if (/^scrisoare\s+medicala/.test(normalized)) return true;
-  if (/^pagina\s+\d+/.test(normalized)) return true;
-  if (/^\d+\s*\/\s*\d+$/.test(normalized)) return true;
-  if (/^page\s+\d+/.test(normalized)) return true;
-  if (/^192\.168\./.test(normalized)) return true;
-  if (/biletexternare\.asp/.test(normalized)) return true;
-  if (/relid=|relld=|relname=/.test(normalized)) return true;
+  if (/[-:,;(/]$/.test(prev)) return true;
 
-  // Browser/PDF viewer timestamp junk.
-  if (/^\d{1,2}\/\d{1,2}\/\d{2,4},?\s+\d{1,2}:\d{2}\s*(am|pm)?$/i.test(line.trim())) {
+  if (/^(ecografiei|caboti?|m4|m5|m6|m7|m8|sap?t\.?|sapt|c7 stg\.?|cov 2 negativ\.?)$/i.test(curNorm)) {
+    return true;
+  }
+
+  if (/^[a-zăâîșț]/.test(cur) && !/^(la |revine|reevaluare|internare|hemograma|biochimie|coagulare|paraclinic|ecografie|consult|concluzie|tratament|s-au|se |continua|rx |ekg|ngs|fsp|fl:|fs\/)/i.test(cur)) {
+    return true;
+  }
+
+  if (/^(M\d+|Mbl\d+|Mt\d+|N\d+|S\d+|E\d+|B\d+|L\d+)$/i.test(cur)) {
+    return true;
+  }
+
+  if (/^(COV 2 negativ|ecografiei)\.?$/i.test(cur)) {
     return true;
   }
 
   return false;
 }
 
-function applySafeMedicalCorrections(value: string) {
-  let text = value;
-
-  const replacements: Array<[RegExp, string]> = [
-    [/\bΕΡΟ\b/g, "EPO"],
-    [/\bEΡO\b/g, "EPO"],
-    [/\bΕPO\b/g, "EPO"],
-    [/\bHydreea\b/gi, "Hydrea"],
-    [/\bHydree\b/gi, "Hydrea"],
-    [/\bAPPT\b/g, "APTT"],
-    [/\bafebrile\b/gi, "afebril"],
-    [/\bpresent\b/gi, "prezent"],
-    [/\bpaloaere\b/gi, "paloare"],
-    [/\btratramentului\b/gi, "tratamentului"],
-    [/\btrtament\b/gi, "tratament"],
-    [/\bopion\b/gi, "opinion"],
-  ];
-
-  replacements.forEach(([pattern, replacement]) => {
-    text = text.replace(pattern, replacement);
-  });
-
-  return text;
-}
-
-function startsLikeMajorMedicalLine(line: string) {
-  const normalized = normalizeForMatch(line);
+function isMajorClinicalStart(line: string) {
+  const normalized = normalizeForMatching(line);
 
   return (
-    /^(la diagnostic|tratament|pbmo|jak|din aprilie|in ultima perioada|la actuala prezentare|revine|la internarea|la actualul control|la reevaluarea|reevaluare|internare|pacientul revine|ex obiectiv|consult|ecografie|hemograma|biochimie|coagulare|coagulograma|rx cp|ekg|ecg|paraclinic|frotiu|fsp|fl|ngs|concluzie|concluzii|diagnostic|se recomanda|s-au administrat|s-a administrat|s-a efectuat|s-a eliberat|continua tratamentul|rp\.?|clearance creatinina|medic rezident|in perioada|\d{1,2}[./-]\d{1,2}[./-]\d{2,4}:|\d{1,2}\s*-\s*\d{1,2}[./-]\d{1,2}[./-]\d{2,4}:)/i.test(
+    /^la\s+(actualul\s+)?(control|reevaluarea|internarea|actuala\s+prezentare)/i.test(normalized) ||
+    /^revine\b/i.test(normalized) ||
+    /^reevaluare\b/i.test(normalized) ||
+    /^re-evaluare\b/i.test(normalized) ||
+    /^internare\b/i.test(normalized) ||
+    /^\d{1,2}[-./]\d{1,2}[-./]\d{2,4}\s*:/i.test(normalized) ||
+    /^\d{1,2}[-./]\d{1,2}[-./]\d{4}\s*:/i.test(normalized)
+  );
+}
+
+function isSectionLikeLine(line: string) {
+  const normalized = normalizeForMatching(line);
+
+  return (
+    /^hemograma\s*:/i.test(normalized) ||
+    /^biochimie\s*:/i.test(normalized) ||
+    /^coagulare\s*:/i.test(normalized) ||
+    /^coagulograma\s*:/i.test(normalized) ||
+    /^paraclinic\s*:/i.test(normalized) ||
+    /^ecografie\b/i.test(normalized) ||
+    /^consult\b/i.test(normalized) ||
+    /^rx\b/i.test(normalized) ||
+    /^ekg\b/i.test(normalized) ||
+    /^fsp\s*:/i.test(normalized) ||
+    /^fl\s*:/i.test(normalized) ||
+    /^fs\//i.test(normalized) ||
+    /^ngs\b/i.test(normalized) ||
+    /^concluzii?\s*:/i.test(normalized) ||
+    /^tratament\s*:/i.test(normalized) ||
+    /^diagnostic\b/i.test(normalized)
+  );
+}
+
+function isShortValueListLine(line: string) {
+  const normalized = normalizeForMatching(line);
+
+  if (normalized.length > 90) return false;
+
+  return (
+    /^(hb|ht|hct|leuc|l[:=]|plt|tr|trombocite|ldh|crp|fal|epo|sato2|spo2|ta|av|inr|fbg|aptt|splina|ac uric|jak)\b/i.test(
       normalized
-    )
+    ) ||
+    /^[-•]\s*/.test(line.trim())
   );
 }
 
-function startsLikeIndentedListLine(line: string) {
-  const trimmed = line.trim();
+function compactPdfLines(text: string) {
+  const sourceLines = text
+    .replace(/\r/g, "\n")
+    .split("\n")
+    .map((line) => line.trim())
+    .filter((line) => line.length > 0);
 
-  return (
-    /^[-•]/.test(trimmed) ||
-    /^(Hb|Ht|Hct|L|Leuc|Tr|Plt|FAL|LDH|AST|ALT|Cr|Creat|CRP|INR|Fbg|APTT|TA|AV|SatO2|SpO2|VP|RD|RS|FL|FS|FSP)\b/i.test(
-      trimmed
-    )
-  );
-}
+  const lines: string[] = [];
 
-function endsLikeCompleteSentence(line: string) {
-  const trimmed = line.trim();
+  for (const rawLine of sourceLines) {
+    let line = rawLine
+      .replace(/\s+/g, " ")
+      .replace(/\bHD C6-\s+C7\b/gi, "HD C6-C7")
+      .replace(/\bcardio-\s+respirator\b/gi, "cardio-respirator")
+      .replace(/\bhepato-\s*splenomegalie\b/gi, "hepatosplenomegalie")
+      .trim();
 
-  if (!trimmed) return false;
+    if (!line) continue;
 
-  if (/[.!?)]$/.test(trimmed)) return true;
+    const previous = lines[lines.length - 1];
 
-  // Medical shorthand often ends complete without punctuation.
-  if (/\b(OTS|incident[e]?|normale|normal|prezenta|prezent|absenta|absent|buna|bună|afebril)\.?$/i.test(trimmed)) {
-    return true;
+    if (previous && shouldJoinWithPrevious(previous, line)) {
+      lines[lines.length - 1] = `${previous.replace(/\s+$/, "")} ${line}`;
+      continue;
+    }
+
+    lines.push(line);
   }
 
-  return false;
-}
-
-function shouldJoinWithNext(current: string, next: string) {
-  const a = current.trim();
-  const b = next.trim();
-
-  if (!a || !b) return false;
-  if (isJunkLine(a) || isJunkLine(b)) return false;
-
-  // Never join new major medical events onto previous lines.
-  if (startsLikeMajorMedicalLine(b)) return false;
-
-  // Keep intentional lab/list rows on their own line.
-  if (startsLikeIndentedListLine(b)) return false;
-
-  // If next line starts lowercase, it is usually a wrapped continuation.
-  if (/^[a-zăâîșț]/.test(b)) return true;
-
-  // If previous line ends mid-phrase, join.
-  if (/[,:;(-]$/.test(a)) return true;
-
-  // If previous line is short and next continues without a new label, join.
-  if (a.length < 55 && !endsLikeCompleteSentence(a)) return true;
-
-  // OCR/PDF wraps long prose lines; join if previous does not look complete.
-  if (!endsLikeCompleteSentence(a) && b.length > 20) return true;
-
-  return false;
-}
-
-function cleanPdfLikeLines(value?: string | null) {
-  const raw = normalizeDischargeText(value);
-
-  if (!raw) return [];
-
-  const lines = raw
-    .split("\n")
-    .map((line) => line.replace(/[ \t]+/g, " ").trimEnd())
-    .filter((line) => !isJunkLine(line));
-
-  const corrected = lines.map((line) => applySafeMedicalCorrections(line));
-
-  return corrected;
+  return lines;
 }
 
 export function formatPdfLikeDischargeText(value?: string | null) {
-  const lines = cleanPdfLikeLines(value);
+  if (!value) return "";
 
-  if (!lines.length) return "";
+  let text = String(value).normalize("NFKC");
+  text = removeKnownPrintNoise(text);
+  text = fixCommonOcrArtifacts(text);
 
-  const result: string[] = [];
+  const lines = compactPdfLines(text);
+  const output: string[] = [];
 
   for (const line of lines) {
-    const current = line.trim();
+    const previous = output[output.length - 1] || "";
 
-    if (!current) continue;
+    const shouldAddBlankBefore =
+      output.length > 0 &&
+      isMajorClinicalStart(line) &&
+      previous.trim() !== "" &&
+      !isMajorClinicalStart(previous);
 
-    if (!result.length) {
-      result.push(current);
-      continue;
+    if (shouldAddBlankBefore) {
+      output.push("");
     }
 
-    const previous = result[result.length - 1];
-
-    if (shouldJoinWithNext(previous, current)) {
-      result[result.length - 1] = `${previous.replace(/\s+$/, "")} ${current.replace(/^\s+/, "")}`;
-      continue;
-    }
-
-    result.push(current);
+    output.push(line);
   }
 
-  let text = result.join("\n");
-
-  // Add light breathing room before true timeline/event starts, without destroying PDF-like layout.
-  text = text.replace(
-    /\n(La reevaluarea|Reevaluare|La internarea|Internare|La actualul control|Revine la internare|Revine \()/g,
-    "\n\n$1"
-  );
-
-  text = text.replace(/\n{4,}/g, "\n\n\n");
-
-  return text.trim();
+  return output
+    .join("\n")
+    .replace(/\n{3,}/g, "\n\n")
+    .trim();
 }
 
 export function formatSectionPreview(value?: string | null) {
-  const text = formatPdfLikeDischargeText(value || "").replace(/\s+/g, " ").trim();
+  const text = formatPdfLikeDischargeText(value).replace(/\s+/g, " ").trim();
 
   if (!text) return "No extracted text.";
-
   if (text.length <= 92) return text;
 
   return `${text.slice(0, 92)}...`;
 }
 
-function classifyParagraphKind(text: string): DischargeParagraphKind {
-  const normalized = normalizeForMatch(text);
-
-  if (/^(diagnostic|epicriza|tratament|recomandari|investigatii|stare la externare)/.test(normalized)) {
-    return "heading";
-  }
-
-  if (/^(hemograma|biochimie|coagulare|coagulograma|paraclinic|fl|fsp|ldh|hb|ht|hct|leuc|tr|plt|rx cp|ecografie|ekg|ecg)/.test(normalized)) {
-    return "lab_line";
-  }
-
-  if (/\b(hydrea|fedratinib|deferasirox|aspenter|ruxolitinib|mydocalm|movalis|alanerv|rp\.?)\b/i.test(normalized)) {
-    return "medication";
-  }
-
-  if (/^(se recomanda|recomand|continua tratamentul|reevaluare|control)/.test(normalized)) {
-    return "recommendation";
-  }
-
-  if (/^(la reevaluarea|reevaluare|la internarea|internare|la actualul control|revine)/.test(normalized)) {
-    return "clinical_event";
-  }
-
-  return "plain";
-}
-
-// Kept for compatibility with the current page import.
-// The new reader should mostly use formatPdfLikeDischargeText instead.
-export function formatDischargeParagraphs(value?: string | null): DischargeParagraph[] {
-  const formatted = formatPdfLikeDischargeText(value);
-
-  if (!formatted) return [];
-
-  return formatted
-    .split(/\n{2,}/)
-    .map((chunk) => chunk.trim())
-    .filter(Boolean)
-    .map((text) => ({
-      text,
-      kind: classifyParagraphKind(text),
-    }));
-}
-
 export function isAdmissionSummarySection(key?: string | null, title?: string | null) {
-  const normalizedKey = normalizeForMatch(key || "");
-  const normalizedTitle = normalizeForMatch(title || "");
+  const normalized = normalizeForMatching(`${key || ""} ${title || ""}`);
 
   return (
-    normalizedKey === "pre_epicriza_summary" ||
-    normalizedKey === "administrative_information" ||
-    normalizedTitle.includes("admission") ||
-    normalizedTitle.includes("patient") ||
-    normalizedTitle.includes("diagnoses") ||
-    normalizedTitle.includes("diagnostic")
+    normalized.includes("pre_epicriza") ||
+    normalized.includes("admission") ||
+    normalized.includes("patient") ||
+    normalized.includes("administrative") ||
+    normalized.includes("diagnoses") ||
+    normalized.includes("diagnostic")
   );
 }
 
-function parseBracketedSectionBlocks(value?: string | null) {
-  const text = normalizeDischargeText(value);
-
-  if (!text) return [];
-
-  const blocks: Array<{ title: string; body: string }> = [];
-  const lines = text.split("\n");
+function splitBracketedSections(text: string) {
+  const lines = formatPdfLikeDischargeText(text).split("\n");
+  const sections: { title: string; body: string[] }[] = [];
 
   let currentTitle = "Details";
-  let currentLines: string[] = [];
+  let currentBody: string[] = [];
 
   function flush() {
-    const body = currentLines.join("\n").trim();
-
-    if (body) {
-      blocks.push({
+    if (currentBody.length) {
+      sections.push({
         title: currentTitle,
-        body,
+        body: currentBody,
       });
     }
-
-    currentLines = [];
   }
 
-  lines.forEach((line) => {
-    const match = line.trim().match(/^\[(.+?)\]$/);
+  for (const line of lines) {
+    const match = line.match(/^\[(.+?)\]\s*$/);
 
     if (match) {
       flush();
-      currentTitle = cleanOneLine(match[1]) || "Details";
-      return;
+      currentTitle = match[1].trim();
+      currentBody = [];
+      continue;
     }
 
-    currentLines.push(line);
-  });
+    currentBody.push(line);
+  }
 
   flush();
 
-  return blocks;
+  return sections;
 }
 
-function splitLabelValueLines(body: string) {
+function splitKeyValueRows(body: string) {
   const rows: AdmissionCardRow[] = [];
-  const lines = formatPdfLikeDischargeText(body)
-    .split("\n")
-    .map((line) => line.trim())
-    .filter(Boolean);
+  const lines = body.split("\n").map((line) => line.trim()).filter(Boolean);
 
-  lines.forEach((line) => {
+  for (const line of lines) {
     const colonMatch = line.match(/^([^:]{2,80}):\s*(.+)$/);
 
     if (colonMatch) {
@@ -369,48 +318,62 @@ function splitLabelValueLines(body: string) {
         label: cleanOneLine(colonMatch[1]),
         value: cleanOneLine(colonMatch[2]),
       });
-      return;
-    }
-
-    const dashMatch = line.match(/^([A-ZĂÂÎȘȚa-zăâîșț0-9 /().-]{2,80})\s+-\s+(.+)$/);
-
-    if (dashMatch) {
-      rows.push({
-        label: cleanOneLine(dashMatch[1]),
-        value: cleanOneLine(dashMatch[2]),
-      });
-      return;
+      continue;
     }
 
     rows.push({
-      label: "Detail",
+      label: "Text",
       value: line,
     });
-  });
+  }
 
   return rows;
 }
 
 export function splitAdmissionCards(value?: string | null): AdmissionCard[] {
-  const blocks = parseBracketedSectionBlocks(value);
+  if (!value) return [];
 
-  if (blocks.length) {
-    return blocks.map((block) => ({
-      title: block.title,
-      rows: splitLabelValueLines(block.body),
-      rawBody: block.body,
-    }));
-  }
+  const sections = splitBracketedSections(value);
 
-  const body = normalizeDischargeText(value);
+  return sections.map((section) => {
+    const rawBody = section.body.join("\n").trim();
 
-  if (!body) return [];
+    return {
+      title: section.title,
+      rows: splitKeyValueRows(rawBody),
+      rawBody,
+    };
+  });
+}
 
-  return [
-    {
-      title: "Admission / patient / diagnoses",
-      rows: splitLabelValueLines(body),
-      rawBody: body,
-    },
-  ];
+/**
+ * Kept for older imports. The new discharge reader should use formatPdfLikeDischargeText.
+ */
+export function formatDischargeParagraphs(value?: string | null): DischargeParagraph[] {
+  const text = formatPdfLikeDischargeText(value);
+
+  if (!text) return [];
+
+  return text
+    .split(/\n{2,}|\n/)
+    .map((line) => line.trim())
+    .filter(Boolean)
+    .map((line) => {
+      const normalized = normalizeForMatching(line);
+
+      let kind: DischargeParagraphKind = "plain";
+
+      if (isMajorClinicalStart(line)) kind = "clinical_event";
+      else if (isSectionLikeLine(line) || isShortValueListLine(line)) kind = "lab_line";
+      else if (/\b(hydrea|hydree|ruxolitinib|fedratinib|deferasirox|aspenter|rp\.?|tratament)\b/i.test(normalized)) {
+        kind = "medication";
+      } else if (/\b(se recomanda|continua|reevaluare|control)\b/i.test(normalized)) {
+        kind = "recommendation";
+      }
+
+      return {
+        text: line,
+        kind,
+      };
+    });
 }
