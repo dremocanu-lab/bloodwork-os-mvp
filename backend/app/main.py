@@ -415,7 +415,8 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
     uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
 
     try:
-        original_layout = json.loads(document.original_layout_json or "{}")
+        original_layout_raw = getattr(document, "original_layout_json", None)
+        original_layout = json.loads(original_layout_raw or "{}")
     except Exception:
         original_layout = {}
 
@@ -472,25 +473,6 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
                 for log in audit_logs
             ],
         },
-    }
-
-
-def serialize_upload_job(job) -> dict:
-    return {
-        "id": job.id,
-        "user_id": job.user_id,
-        "patient_id": job.patient_id,
-        "section": job.section,
-        "filename": job.filename,
-        "content_type": job.content_type,
-        "status": job.status,
-        "progress": job.progress,
-        "message": job.message,
-        "error": job.error,
-        "document_id": job.document_id,
-        "created_at": job.created_at,
-        "started_at": job.started_at,
-        "finished_at": job.finished_at,
     }
 
 
