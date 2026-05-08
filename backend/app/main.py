@@ -9,6 +9,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -20,6 +21,37 @@ from app.services.discharge_summary_pipeline import process_uploaded_discharge_s
 app = FastAPI()
 
 models.Base.metadata.create_all(bind=engine)
+
+
+def ensure_runtime_schema():
+    try:
+        with engine.begin() as connection:
+            dialect = engine.dialect.name
+
+            if dialect == "postgresql":
+                connection.execute(
+                    text(
+                        """
+                        ALTER TABLE documents
+                        ADD COLUMN IF NOT EXISTS original_layout_json TEXT
+                        """
+                    )
+                )
+
+            elif dialect == "sqlite":
+                columns = connection.execute(text("PRAGMA table_info(documents)")).fetchall()
+                column_names = {column[1] for column in columns}
+
+                if "original_layout_json" not in column_names:
+                    connection.execute(
+                        text("ALTER TABLE documents ADD COLUMN original_layout_json TEXT")
+                    )
+
+    except Exception as error:
+        print(f"Runtime schema check failed: {error}")
+
+
+ensure_runtime_schema()
 
 frontend_origins_raw = os.getenv(
     "FRONTEND_ORIGINS",
@@ -475,6 +507,23 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         },
     }
 
+def serialize_upload_job(job) -> dict:
+    return {
+        "id": job.id,
+        "user_id": job.user_id,
+        "patient_id": job.patient_id,
+        "section": job.section,
+        "filename": job.filename,
+        "content_type": job.content_type,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "error": job.error,
+        "document_id": job.document_id,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }
 
 def resolve_upload_patient(db: Session, current_user, patient_id: int | None):
     if current_user.role == "patient":
