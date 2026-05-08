@@ -1320,6 +1320,63 @@ def get_patient_documents(
         "documents": [serialize_document_card(db, document, current_user) for document in documents],
     }
 
+def resolve_upload_patient(db: Session, current_user: models.User, patient_id: int | None = None):
+    if current_user.role == "patient":
+        patient = (
+            db.query(models.Patient)
+            .filter(models.Patient.user_id == current_user.id)
+            .first()
+        )
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient profile not found.")
+
+        return patient
+
+    if current_user.role == "doctor":
+        if not patient_id:
+            raise HTTPException(status_code=400, detail="patient_id is required for doctor uploads.")
+
+        patient = (
+            db.query(models.Patient)
+            .filter(models.Patient.id == patient_id)
+            .first()
+        )
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+
+        has_access = (
+            db.query(models.DoctorPatientAccess)
+            .filter(
+                models.DoctorPatientAccess.doctor_user_id == current_user.id,
+                models.DoctorPatientAccess.patient_id == patient.id,
+                models.DoctorPatientAccess.status == "approved",
+            )
+            .first()
+        )
+
+        if not has_access:
+            raise HTTPException(status_code=403, detail="You do not have access to this patient.")
+
+        return patient
+
+    if current_user.role == "admin":
+        if not patient_id:
+            raise HTTPException(status_code=400, detail="patient_id is required for admin uploads.")
+
+        patient = (
+            db.query(models.Patient)
+            .filter(models.Patient.id == patient_id)
+            .first()
+        )
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+
+        return patient
+
+    raise HTTPException(status_code=403, detail="Only patients, doctors, and admins can upload documents.")
 
 @app.post("/upload/background")
 async def create_background_upload(
