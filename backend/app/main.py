@@ -1322,11 +1322,7 @@ def get_patient_documents(
 
 def resolve_upload_patient(db: Session, current_user: models.User, patient_id: int | None = None):
     if current_user.role == "patient":
-        patient = (
-            db.query(models.Patient)
-            .filter(models.Patient.user_id == current_user.id)
-            .first()
-        )
+        patient = ensure_patient_for_user(db, current_user)
 
         if not patient:
             raise HTTPException(status_code=404, detail="Patient profile not found.")
@@ -1346,17 +1342,7 @@ def resolve_upload_patient(db: Session, current_user: models.User, patient_id: i
         if not patient:
             raise HTTPException(status_code=404, detail="Patient not found.")
 
-        has_access = (
-            db.query(models.DoctorPatientAccess)
-            .filter(
-                models.DoctorPatientAccess.doctor_user_id == current_user.id,
-                models.DoctorPatientAccess.patient_id == patient.id,
-                models.DoctorPatientAccess.status == "approved",
-            )
-            .first()
-        )
-
-        if not has_access:
+        if not doctor_has_patient_access(db, current_user.id, patient.id):
             raise HTTPException(status_code=403, detail="You do not have access to this patient.")
 
         return patient
@@ -1376,7 +1362,7 @@ def resolve_upload_patient(db: Session, current_user: models.User, patient_id: i
 
         return patient
 
-    raise HTTPException(status_code=403, detail="Only patients, doctors, and admins can upload documents.")
+    raise HTTPException(status_code=403, detail="Invalid user role.")
 
 @app.post("/upload/background")
 async def create_background_upload(
