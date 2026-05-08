@@ -1,34 +1,17 @@
 from __future__ import annotations
 
-import base64
-import io
 import json
 import os
 import re
 from pathlib import Path
-from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any
 
-try:
-    import fitz  # PyMuPDF
-except Exception:
-    fitz = None
-
-try:
-    from PIL import Image
-except Exception:
-    Image = None
-
-try:
-    from openai import OpenAI
-except Exception:
-    OpenAI = None
+from openai import OpenAI
 
 
-MODEL_NAME = os.getenv("OPENAI_DISCHARGE_MODEL", "gpt-4.1")
-PAGE_CHUNK_SIZE = int(os.getenv("OPENAI_DISCHARGE_PAGE_CHUNK_SIZE", "2"))
-PDF_RENDER_ZOOM = float(os.getenv("OPENAI_DISCHARGE_RENDER_ZOOM", "2.0"))
-MIN_PAGE_TEXT_CHARS = int(os.getenv("OPENAI_DISCHARGE_MIN_PAGE_TEXT_CHARS", "250"))
+MODEL = os.getenv("OPENAI_DISCHARGE_LAYOUT_MODEL", "gpt-4.1")
+MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_MAX_OUTPUT_TOKENS", "32768"))
+
 
 ALLOWED_SECTION_KEYS = {
     "administrative_information",
@@ -45,459 +28,307 @@ ALLOWED_SECTION_KEYS = {
 }
 
 
-def _client_available() -> bool:
-    return OpenAI is not None and bool(os.getenv("OPENAI_API_KEY"))
+SYSTEM_PROMPT = """
+You are a Romanian medical document extraction engine.
 
+You receive a user-provided hospital discharge PDF.
+Your job is to extract the complete discharge summary text into structured JSON.
 
-def dedupe_warnings(warnings: list[str]) -> list[str]:
-    deduped: list[str] = []
-    seen: set[str] = set()
+CRITICAL RULES:
+- Do NOT summarize.
+- Do NOT shorten.
+- Do NOT omit repeated follow-up entries.
+- Do NOT omit old dates, repeated admissions, transfusions, lab values, imaging, consultations, treatments, or recommendations.
+- Do NOT write placeholders such as "[...]", "[continues]", "[full text inserted]", "[text omitted]", or similar.
+- Preserve the complete clinical chronology.
+- Preserve all numbers, dates, medications, lab values, units, diagnoses, doctor names, hospital names, and recommendations.
+- Lightly normalize spacing only when it improves readability.
+- If a section is very long, still include the full text.
+- Output valid JSON only. No markdown.
 
-    for warning in warnings:
-        clean = str(warning).strip()
-        if not clean or clean in seen:
-            continue
-        deduped.append(clean)
-        seen.add(clean)
+You must return this JSON shape exactly:
 
-    return deduped
+{
+  "document_type": "discharge_summary",
+  "patient_name": string | null,
+  "cnp": string | null,
+  "date_of_birth": string | null,
+  "sex": string | null,
+  "admission_date": string | null,
+  "discharge_date": string | null,
+  "hospital_name": string | null,
+  "sections": [
+    {
+      "key": "epicriza",
+      "title": "EPICRIZA",
+      "original_titles": ["EPICRIZA"],
+      "body": "complete verbatim text"
+    }
+  ]
+}
 
+Allowed section keys:
+- administrative_information
+- diagnoses
+- discharge_status
+- epicriza
+- investigations
+- laboratory_normal
+- laboratory_abnormal
+- treatment_in_hospital
+- recommended_treatment
+- recommendations
+- other
 
-def _extract_output_text(response: Any) -> str:
-    output_text = getattr(response, "output_text", None)
-    if isinstance(output_text, str) and output_text.strip():
-        return output_text.strip()
-
-    parts: list[str] = []
-
-    try:
-        for item in getattr(response, "output", []) or []:
-            for content in getattr(item, "content", []) or []:
-                text = getattr(content, "text", None)
-                if isinstance(text, str) and text.strip():
-                    parts.append(text)
-    except Exception:
-        return ""
-
-    return "\n".join(parts).strip()
-
-
-def _safe_json_loads(value: str) -> dict[str, Any]:
-    try:
-        return json.loads(value)
-    except Exception:
-        start = value.find("{")
-        end = value.rfind("}")
-        if start >= 0 and end > start:
-            return json.loads(value[start : end + 1])
-        raise
-
-
-def _image_bytes_to_data_url(image_bytes: bytes) -> str:
-    encoded = base64.b64encode(image_bytes).decode("utf-8")
-    return f"data:image/png;base64,{encoded}"
-
-
-def _render_pdf_pages_to_png_data_urls(file_path: Path) -> list[dict[str, Any]]:
-    if fitz is None:
-        raise RuntimeError("PyMuPDF is not installed. Add PyMuPDF==1.24.14 to backend/requirements.txt")
-
-    pages: list[dict[str, Any]] = []
-    pdf = fitz.open(str(file_path))
-
-    try:
-        matrix = fitz.Matrix(PDF_RENDER_ZOOM, PDF_RENDER_ZOOM)
-
-        for index in range(pdf.page_count):
-            page = pdf.load_page(index)
-            pix = page.get_pixmap(matrix=matrix, alpha=False)
-            image_bytes = pix.tobytes("png")
-
-            pages.append(
-                {
-                    "page_number": index + 1,
-                    "data_url": _image_bytes_to_data_url(image_bytes),
-                }
-            )
-    finally:
-        pdf.close()
-
-    return pages
-
-
-def _chunk_list(items: list[Any], chunk_size: int) -> list[list[Any]]:
-    return [items[i : i + chunk_size] for i in range(0, len(items), chunk_size)]
-
-
-PAGE_TEXT_SYSTEM_PROMPT = """
-You are reading Romanian hospital discharge summary PDF pages from images.
-
-Your job:
-- Transcribe the visible medical text from these page images.
-- Return the actual text only.
-- Do not summarize.
-- Do not translate.
-- Do not write placeholders.
-- Do not write "[...]".
-- Preserve dates, diagnoses, lab values, units, medications, transfusions, consults, imaging, and Romanian wording.
-- If a word is uncertain, keep the best reading.
-- Return strict JSON only.
-
-Important:
-Each page must have its own full text.
+If the document has one huge EPICRIZA section, keep it as one huge epicriza section.
+If there are clear separate headings, split them into separate sections.
+The EPICRIZA section must include the complete body, not a short summary.
 """
 
 
-PAGE_TEXT_SCHEMA = {
-    "name": "discharge_page_text_output",
-    "strict": True,
-    "schema": {
-        "type": "object",
-        "properties": {
-            "pages": {
-                "type": "array",
-                "items": {
-                    "type": "object",
-                    "properties": {
-                        "page_number": {"type": "integer"},
-                        "text": {"type": "string"},
-                    },
-                    "required": ["page_number", "text"],
-                    "additionalProperties": False,
-                },
-            },
-            "warnings": {
-                "type": "array",
-                "items": {"type": "string"},
-            },
-        },
-        "required": ["pages", "warnings"],
-        "additionalProperties": False,
-    },
-}
+USER_PROMPT = """
+Extract this Romanian discharge summary.
+
+Return the full document content as JSON.
+
+Most important:
+- Give me EVERYTHING.
+- The EPICRIZA section must be complete and verbatim.
+- Do not stop early.
+- Do not use ellipses.
+- Do not use placeholders.
+- Do not summarize.
+- Preserve the entire chronological medical history.
+"""
 
 
-def _extract_page_chunk_text(client: Any, page_chunk: list[dict[str, Any]]) -> dict[str, Any]:
-    content: list[dict[str, Any]] = [
-        {
-            "type": "input_text",
-            "text": json.dumps(
+def _client() -> OpenAI:
+    api_key = os.getenv("OPENAI_API_KEY")
+    if not api_key:
+        raise RuntimeError("OPENAI_API_KEY is not set.")
+    return OpenAI(api_key=api_key)
+
+
+def _extract_response_text(response: Any) -> str:
+    text = getattr(response, "output_text", None)
+    if isinstance(text, str) and text.strip():
+        return text.strip()
+
+    chunks: list[str] = []
+
+    for item in getattr(response, "output", []) or []:
+        for content in getattr(item, "content", []) or []:
+            value = getattr(content, "text", None)
+            if isinstance(value, str):
+                chunks.append(value)
+
+    return "\n".join(chunks).strip()
+
+
+def _strip_json_fences(text: str) -> str:
+    cleaned = text.strip()
+
+    if cleaned.startswith("```"):
+        cleaned = re.sub(r"^```(?:json)?", "", cleaned, flags=re.IGNORECASE).strip()
+        cleaned = re.sub(r"```$", "", cleaned).strip()
+
+    start = cleaned.find("{")
+    end = cleaned.rfind("}")
+
+    if start >= 0 and end > start:
+        cleaned = cleaned[start : end + 1]
+
+    return cleaned
+
+
+def _safe_json_loads(text: str) -> dict[str, Any]:
+    cleaned = _strip_json_fences(text)
+
+    try:
+        parsed = json.loads(cleaned)
+    except json.JSONDecodeError as exc:
+        raise RuntimeError(f"OpenAI returned invalid JSON: {exc}. First 1000 chars: {cleaned[:1000]}") from exc
+
+    if not isinstance(parsed, dict):
+        raise RuntimeError("OpenAI returned JSON, but it was not an object.")
+
+    return parsed
+
+
+def _clean_section(section: dict[str, Any], index: int) -> dict[str, Any]:
+    key = str(section.get("key") or "other").strip()
+
+    if key not in ALLOWED_SECTION_KEYS:
+        key = "other"
+
+    title = str(section.get("title") or key.replace("_", " ").title()).strip()
+    body = str(section.get("body") or "").strip()
+
+    original_titles = section.get("original_titles")
+    if not isinstance(original_titles, list):
+        original_titles = [title]
+
+    cleaned_original_titles = [
+        str(item).strip()
+        for item in original_titles
+        if str(item).strip()
+    ]
+
+    if not cleaned_original_titles:
+        cleaned_original_titles = [title]
+
+    return {
+        "key": key if index == 0 or key != "other" else f"other_{index}",
+        "title": title,
+        "original_titles": cleaned_original_titles,
+        "body": body,
+        "formatted_body": body,
+        "formatting_method": "openai_pdf_single_pass",
+        "formatting_confidence": 0.9,
+        "confidence": 0.9,
+    }
+
+
+def _normalize_payload(payload: dict[str, Any]) -> dict[str, Any]:
+    sections = payload.get("sections")
+
+    if not isinstance(sections, list):
+        sections = []
+
+    cleaned_sections = []
+    for index, section in enumerate(sections):
+        if isinstance(section, dict):
+            cleaned = _clean_section(section, index)
+            if cleaned["body"]:
+                cleaned_sections.append(cleaned)
+
+    if not cleaned_sections:
+        fallback_text = json.dumps(payload, ensure_ascii=False, indent=2)
+        cleaned_sections = [
+            {
+                "key": "epicriza",
+                "title": "EPICRIZA",
+                "original_titles": ["EPICRIZA"],
+                "body": fallback_text,
+                "formatted_body": fallback_text,
+                "formatting_method": "openai_pdf_single_pass_fallback",
+                "formatting_confidence": 0.4,
+                "confidence": 0.4,
+            }
+        ]
+
+    return {
+        "document_type": "discharge_summary",
+        "patient_name": payload.get("patient_name"),
+        "cnp": payload.get("cnp"),
+        "date_of_birth": payload.get("date_of_birth"),
+        "sex": payload.get("sex"),
+        "admission_date": payload.get("admission_date"),
+        "discharge_date": payload.get("discharge_date"),
+        "hospital_name": payload.get("hospital_name"),
+        "sections": cleaned_sections,
+    }
+
+
+def _payload_to_text(payload: dict[str, Any]) -> str:
+    sections = payload.get("sections") or []
+
+    parts: list[str] = []
+
+    for section in sections:
+        title = str(section.get("title") or "").strip()
+        body = str(section.get("body") or "").strip()
+
+        if title and body:
+            parts.append(f"{title}\n\n{body}")
+        elif body:
+            parts.append(body)
+
+    return "\n\n---\n\n".join(parts).strip()
+
+
+def process_uploaded_discharge_summary(file_path: str | Path, filename: str | None = None) -> dict[str, Any]:
+    """
+    Single-pass discharge summary pipeline.
+
+    No OCR.
+    No Google Document AI.
+    No page chunks.
+    Sends the full PDF to OpenAI and asks for complete JSON extraction.
+    """
+
+    path = Path(file_path)
+
+    if not path.exists():
+        raise FileNotFoundError(f"Discharge PDF not found: {path}")
+
+    client = _client()
+
+    uploaded_file = None
+
+    try:
+        with path.open("rb") as file_handle:
+            uploaded_file = client.files.create(
+                file=file_handle,
+                purpose="user_data",
+            )
+
+        response = client.responses.create(
+            model=MODEL,
+            input=[
                 {
-                    "instructions": [
-                        "Transcribe these discharge summary pages.",
-                        "Return actual Romanian text for every page.",
-                        "Do not summarize.",
-                        "Do not omit middle sections.",
-                        "Do not use ellipses.",
-                        "Preserve line order as much as possible.",
+                    "role": "system",
+                    "content": [
+                        {
+                            "type": "input_text",
+                            "text": SYSTEM_PROMPT,
+                        }
                     ],
-                    "page_numbers": [page["page_number"] for page in page_chunk],
                 },
-                ensure_ascii=False,
-            ),
-        }
-    ]
-
-    for page in page_chunk:
-        content.append(
-            {
-                "type": "input_text",
-                "text": f"PAGE {page['page_number']}",
-            }
-        )
-        content.append(
-            {
-                "type": "input_image",
-                "image_url": page["data_url"],
-            }
-        )
-
-    response = client.responses.create(
-        model=MODEL_NAME,
-        input=[
-            {
-                "role": "system",
-                "content": [{"type": "input_text", "text": PAGE_TEXT_SYSTEM_PROMPT}],
-            },
-            {
-                "role": "user",
-                "content": content,
-            },
-        ],
-        text={
-            "format": {
-                "type": "json_schema",
-                "name": PAGE_TEXT_SCHEMA["name"],
-                "strict": True,
-                "schema": PAGE_TEXT_SCHEMA["schema"],
-            }
-        },
-    )
-
-    output_text = _extract_output_text(response)
-    if not output_text:
-        raise RuntimeError("OpenAI returned empty page text output.")
-
-    return _safe_json_loads(output_text)
-
-
-def _extract_all_page_text(client: Any, file_path: Path) -> tuple[str, list[str]]:
-    warnings: list[str] = []
-    rendered_pages = _render_pdf_pages_to_png_data_urls(file_path)
-
-    if not rendered_pages:
-        raise RuntimeError("No PDF pages could be rendered.")
-
-    page_text_by_number: dict[int, str] = {}
-    chunks = _chunk_list(rendered_pages, PAGE_CHUNK_SIZE)
-
-    max_workers = int(os.getenv("OPENAI_DISCHARGE_MAX_WORKERS", "4"))
-
-    with ThreadPoolExecutor(max_workers=max_workers) as executor:
-        future_to_chunk = {
-            executor.submit(_extract_page_chunk_text, client, page_chunk): page_chunk
-            for page_chunk in chunks
-        }
-
-        for future in as_completed(future_to_chunk):
-            page_chunk = future_to_chunk[future]
-            page_numbers = [page["page_number"] for page in page_chunk]
-
-            try:
-                parsed = future.result()
-            except Exception as exc:
-                raise RuntimeError(f"OpenAI failed while reading pages {page_numbers}: {exc}") from exc
-
-            for page_result in parsed.get("pages") or []:
-                page_number = int(page_result.get("page_number"))
-                text = str(page_result.get("text") or "").strip()
-
-                if len(text) < MIN_PAGE_TEXT_CHARS:
-                    warnings.append(
-                        f"Page {page_number} returned short text ({len(text)} chars). Manual review recommended."
-                    )
-
-                page_text_by_number[page_number] = text
-
-            warnings.extend(parsed.get("warnings") or [])
-
-    full_parts: list[str] = []
-
-    for page_number in sorted(page_text_by_number):
-        text = page_text_by_number[page_number].strip()
-        if not text:
-            continue
-
-        full_parts.append(f"--- PAGE {page_number} ---\n{text}")
-
-    full_text = "\n\n".join(full_parts).strip()
-
-    missing_pages = [
-        page["page_number"]
-        for page in rendered_pages
-        if page["page_number"] not in page_text_by_number
-    ]
-
-    if missing_pages:
-        raise RuntimeError(f"Missing extracted text for pages: {missing_pages}")
-
-    if "[...]" in full_text or "textul complet" in full_text.lower() or "a fost inserat" in full_text.lower():
-        raise RuntimeError("OpenAI returned placeholder text during page extraction.")
-
-    if len(full_text) < 8000:
-        raise RuntimeError(f"Discharge extraction returned too little text: {len(full_text)} characters.")
-
-    return full_text, dedupe_warnings(warnings)
-
-
-def _find_first_match(patterns: list[str], text: str) -> str | None:
-    for pattern in patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
-        if match:
-            return match.group(1).strip()
-    return None
-
-
-def _extract_metadata_from_text(full_text: str, filename: str) -> dict[str, Any]:
-    patient_name = _find_first_match(
-        [
-            r"\bPacient\s+([A-ZĂÂÎȘȚA-Z\s\-]+?)(?:\s{2,}|\n|,)",
-            r"\bNume\s+prenume\s*[:\-]\s*([A-ZĂÂÎȘȚA-Z\s\-]+)",
-            r"\bPUIA\s+LIVIU\b",
-        ],
-        full_text,
-    )
-
-    if patient_name == "PUIA LIVIU":
-        patient_name = "PUIA LIVIU"
-
-    generated_on = _find_first_match(
-        [
-            r"(\d{1,2}/\d{1,2}/\d{2,4},?\s*\d{1,2}:\d{2}\s*(?:AM|PM)?)",
-            r"(\d{1,2}\.\d{1,2}\.\d{4})",
-        ],
-        full_text,
-    )
-
-    return {
-        "patient_name": patient_name,
-        "date_of_birth": None,
-        "age": None,
-        "sex": None,
-        "cnp": None,
-        "patient_identifier": None,
-        "lab_name": None,
-        "sample_type": None,
-        "referring_doctor": None,
-        "report_name": "Fișă de externare",
-        "report_type": "Discharge summary",
-        "source_language": "ro",
-        "test_date": None,
-        "collected_on": None,
-        "reported_on": None,
-        "registered_on": None,
-        "generated_on": generated_on,
-    }
-
-
-def _extract_between_headings(text: str, start_patterns: list[str], end_patterns: list[str]) -> str | None:
-    start_match = None
-
-    for pattern in start_patterns:
-        match = re.search(pattern, text, flags=re.IGNORECASE | re.MULTILINE)
-        if match and (start_match is None or match.start() < start_match.start()):
-            start_match = match
-
-    if not start_match:
-        return None
-
-    start_index = start_match.start()
-    end_index = len(text)
-
-    for pattern in end_patterns:
-        match = re.search(pattern, text[start_match.end() :], flags=re.IGNORECASE | re.MULTILINE)
-        if match:
-            candidate_end = start_match.end() + match.start()
-            if candidate_end > start_index and candidate_end < end_index:
-                end_index = candidate_end
-
-    return text[start_index:end_index].strip()
-
-
-def _build_sections_from_full_text(full_text: str) -> list[dict[str, Any]]:
-    sections: list[dict[str, Any]] = []
-
-    diagnosis_text = _extract_between_headings(
-        full_text,
-        [r"^\s*Diagnostic(?:e)?\b", r"^\s*DIAGNOSTIC(?:E)?\b"],
-        [r"^\s*EPICRIZA\b", r"^\s*Tratament\b", r"^\s*Recomand"],
-    )
-
-    epicriza_text = _extract_between_headings(
-        full_text,
-        [r"^\s*EPICRIZA\b", r"^\s*Epicriza\b"],
-        [r"^\s*TRATAMENT RECOMANDAT\b", r"^\s*Tratament recomandat\b", r"^\s*RECOMAND[ĂA]RI\b", r"^\s*Recomand"],
-    )
-
-    recommended_text = _extract_between_headings(
-        full_text,
-        [r"^\s*TRATAMENT RECOMANDAT\b", r"^\s*Tratament recomandat\b", r"^\s*RECOMAND[ĂA]RI\b", r"^\s*Recomand"],
-        [],
-    )
-
-    if diagnosis_text:
-        sections.append(
-            {
-                "key": "diagnoses",
-                "title": "Diagnostice",
-                "original_titles": ["Diagnostic"],
-                "body": diagnosis_text,
-                "formatted_body": diagnosis_text,
-                "formatting_method": "page_chunk_openai_vision",
-                "formatting_confidence": 0.85,
-                "confidence": 0.85,
-            }
+                {
+                    "role": "user",
+                    "content": [
+                        {
+                            "type": "input_file",
+                            "file_id": uploaded_file.id,
+                        },
+                        {
+                            "type": "input_text",
+                            "text": USER_PROMPT,
+                        },
+                    ],
+                },
+            ],
+            temperature=0,
+            max_output_tokens=MAX_OUTPUT_TOKENS,
         )
 
-    # If heading split fails, put the whole document in Epicriza so nothing is lost.
-    if not epicriza_text:
-        epicriza_text = full_text
+        raw_text = _extract_response_text(response)
+        parsed = _safe_json_loads(raw_text)
+        payload = _normalize_payload(parsed)
+        extracted_text = _payload_to_text(payload)
 
-    sections.append(
-        {
-            "key": "epicriza",
-            "title": "EPICRIZA",
-            "original_titles": ["EPICRIZA"],
-            "body": epicriza_text,
-            "formatted_body": epicriza_text,
-            "formatting_method": "page_chunk_openai_vision",
-            "formatting_confidence": 0.9,
-            "confidence": 0.9,
-        }
-    )
-
-    if recommended_text:
-        sections.append(
-            {
-                "key": "recommended_treatment",
-                "title": "Tratament recomandat / Recomandări",
-                "original_titles": ["TRATAMENT RECOMANDAT", "RECOMANDĂRI"],
-                "body": recommended_text,
-                "formatted_body": recommended_text,
-                "formatting_method": "page_chunk_openai_vision",
-                "formatting_confidence": 0.85,
-                "confidence": 0.85,
-            }
-        )
-
-    return sections
-
-
-def _build_note_body(sections: list[dict[str, Any]]) -> str:
-    return json.dumps(
-        {
+        return {
             "document_type": "discharge_summary",
-            "sections": sections,
-        },
-        ensure_ascii=False,
-    )
+            "payload": payload,
+            "parsed_payload": payload,
+            "note_body": json.dumps(payload, ensure_ascii=False),
+            "extracted_text": extracted_text,
+            "patient_name": payload.get("patient_name"),
+            "cnp": payload.get("cnp"),
+            "date_of_birth": payload.get("date_of_birth"),
+            "sex": payload.get("sex"),
+            "collected_on": payload.get("admission_date"),
+            "reported_on": payload.get("discharge_date"),
+            "hospital_name": payload.get("hospital_name"),
+            "report_type": "discharge_summary",
+            "source_language": "ro",
+            "formatting_method": "openai_pdf_single_pass",
+        }
 
-
-def process_uploaded_discharge_summary(
-    file_path: Path,
-    filename: str,
-    temp_dir: Path | None = None,
-) -> dict[str, Any]:
-    warnings: list[str] = []
-
-    if not _client_available():
-        raise RuntimeError("OPENAI_API_KEY is not configured, so discharge summary processing cannot run.")
-
-    if not file_path.exists():
-        raise RuntimeError(f"Discharge file does not exist: {file_path}")
-
-    if fitz is None:
-        raise RuntimeError("PyMuPDF is not installed. Add PyMuPDF==1.24.14 to backend/requirements.txt")
-
-    client = OpenAI()
-
-    full_text, extraction_warnings = _extract_all_page_text(client, file_path)
-    warnings.extend(extraction_warnings)
-
-    metadata = _extract_metadata_from_text(full_text, filename)
-    sections = _build_sections_from_full_text(full_text)
-
-    parsed_data = {
-        **metadata,
-        "note_body": _build_note_body(sections),
-        "labs": [],
-        "warnings": dedupe_warnings(warnings),
-    }
-
-    return {
-        "extracted_text": full_text,
-        "parsed_data": parsed_data,
-        "ocr_method": "none_openai_vision_page_chunks",
-        "ocr_quality": None,
-        "warnings": dedupe_warnings(warnings),
-    }
+    finally:
+        if uploaded_file is not None:
+            try:
+                client.files.delete(uploaded_file.id)
+            except Exception:
+                pass

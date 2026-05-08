@@ -411,107 +411,6 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
     }
 
 
-def get_document_payload(db: Session, document, labs, audit_logs, current_user=None):
-    uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
-
-    return {
-        "document_id": document.id,
-        "patient_id": document.patient_id,
-        "filename": document.filename,
-        "content_type": document.content_type,
-        "saved_to": document.saved_to,
-        "section": document.section,
-        "uploaded_by_user_id": document.uploaded_by_user_id,
-        "uploaded_by": uploaded_by,
-        "extracted_text": document.extracted_text,
-        "parsed_data": {
-            "patient_name": document.patient_name,
-            "date_of_birth": document.date_of_birth,
-            "age": document.age,
-            "sex": document.sex,
-            "cnp": document.cnp,
-            "patient_identifier": document.patient_identifier,
-            "lab_name": document.lab_name,
-            "sample_type": document.sample_type,
-            "referring_doctor": document.referring_doctor,
-            "report_name": document.report_name,
-            "report_type": document.report_type,
-            "source_language": document.source_language,
-            "test_date": document.test_date,
-            "collected_on": document.collected_on,
-            "reported_on": document.reported_on,
-            "registered_on": document.registered_on,
-            "generated_on": document.generated_on,
-            "note_body": document.note_body,
-            "is_verified": bool(document.is_verified),
-            "verified_by": document.verified_by,
-            "verified_at": document.verified_at,
-            "last_edited_at": document.last_edited_at,
-            "created_at": document.created_at,
-            "has_abnormal": document_has_abnormal_labs(db, document.id),
-            "reviewed_by_current_doctor": (
-                current_user.role == "doctor"
-                and doctor_reviewed_document(db, current_user.id, document.id)
-                if current_user
-                else False
-            ),
-            "labs": [serialize_lab_result(lab) for lab in labs],
-            "audit_logs": [
-                {
-                    "action": log.action,
-                    "actor": log.actor,
-                    "timestamp": log.timestamp,
-                    "details": log.details,
-                }
-                for log in audit_logs
-            ],
-        },
-    }
-
-def serialize_upload_job(job) -> dict:
-    return {
-        "id": job.id,
-        "user_id": job.user_id,
-        "patient_id": job.patient_id,
-        "section": job.section,
-        "filename": job.filename,
-        "content_type": job.content_type,
-        "status": job.status,
-        "progress": job.progress,
-        "message": job.message,
-        "error": job.error,
-        "document_id": job.document_id,
-        "created_at": job.created_at,
-        "started_at": job.started_at,
-        "finished_at": job.finished_at,
-    }
-
-def resolve_upload_patient(db: Session, current_user, patient_id: int | None):
-    if current_user.role == "patient":
-        patient = ensure_patient_for_user(db, current_user)
-
-        if patient_id is not None and patient.id != patient_id:
-            raise HTTPException(status_code=403, detail="Patients can only upload to their own profile")
-
-        return patient
-
-    if current_user.role in {"doctor", "admin"}:
-        if patient_id is None:
-            raise HTTPException(status_code=400, detail="patient_id is required for doctor/admin uploads")
-
-        patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
-
-        if not patient:
-            raise HTTPException(status_code=404, detail="Patient not found")
-
-        if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient.id):
-            raise HTTPException(status_code=403, detail="Doctor does not have access to this patient")
-
-        return patient
-
-    raise HTTPException(status_code=403, detail="Insufficient permissions")
-
-
 def process_upload_job(job_id: int):
     db = SessionLocal()
 
@@ -541,11 +440,19 @@ def process_upload_job(job_id: int):
 
         file_path = Path(job.saved_to)
 
+        if not file_path.exists():
+            job.status = "error"
+            job.progress = 100
+            job.message = "Upload failed."
+            job.error = f"Uploaded file not found: {job.saved_to}"
+            job.finished_at = now_iso()
+            db.commit()
+            return
+
         if job.section == "discharge_summary":
             pipeline_result = process_uploaded_discharge_summary(
                 file_path=file_path,
                 filename=job.filename,
-                temp_dir=UPLOAD_DIR,
             )
         else:
             pipeline_result = process_uploaded_document(
@@ -559,19 +466,59 @@ def process_upload_job(job_id: int):
         job.message = "Saving structured record..."
         db.commit()
 
-        parsed_data = pipeline_result.get("parsed_data") or {}
-        labs = parsed_data.get("labs") or []
+        parsed_data = (
+            pipeline_result.get("parsed_data")
+            or pipeline_result.get("payload")
+            or {}
+        )
+
+        labs = parsed_data.get("labs") or pipeline_result.get("labs") or []
+
+        extracted_text = (
+            pipeline_result.get("extracted_text")
+            or parsed_data.get("extracted_text")
+            or ""
+        )
+
+        note_body = (
+            pipeline_result.get("note_body")
+            or parsed_data.get("note_body")
+            or extracted_text
+            or None
+        )
+
+        report_name = (
+            parsed_data.get("report_name")
+            or pipeline_result.get("report_name")
+            or ("Discharge summary" if job.section == "discharge_summary" else job.section.replace("_", " ").title())
+        )
+
+        report_type = (
+            parsed_data.get("report_type")
+            or pipeline_result.get("report_type")
+            or ("discharge_summary" if job.section == "discharge_summary" else job.section)
+        )
+
+        source_language = (
+            parsed_data.get("source_language")
+            or pipeline_result.get("source_language")
+        )
 
         if parsed_data.get("patient_name") and not patient.full_name:
             patient.full_name = parsed_data.get("patient_name")
+
         if parsed_data.get("date_of_birth") and not patient.date_of_birth:
             patient.date_of_birth = parsed_data.get("date_of_birth")
+
         if parsed_data.get("age") and not patient.age:
             patient.age = parsed_data.get("age")
+
         if parsed_data.get("sex") and not patient.sex:
             patient.sex = parsed_data.get("sex")
+
         if parsed_data.get("cnp") and not patient.cnp:
             patient.cnp = parsed_data.get("cnp")
+
         if parsed_data.get("patient_identifier") and not patient.patient_identifier:
             patient.patient_identifier = parsed_data.get("patient_identifier")
 
@@ -582,25 +529,32 @@ def process_upload_job(job_id: int):
             filename=job.filename,
             content_type=job.content_type,
             saved_to=job.saved_to,
-            extracted_text=pipeline_result.get("extracted_text") or "",
+
+            extracted_text=extracted_text,
+
             patient_name=parsed_data.get("patient_name") or patient.full_name,
             date_of_birth=parsed_data.get("date_of_birth") or patient.date_of_birth,
             age=parsed_data.get("age") or patient.age,
             sex=parsed_data.get("sex") or patient.sex,
             cnp=parsed_data.get("cnp") or patient.cnp,
             patient_identifier=parsed_data.get("patient_identifier") or patient.patient_identifier,
+
             lab_name=parsed_data.get("lab_name"),
             sample_type=parsed_data.get("sample_type"),
             referring_doctor=parsed_data.get("referring_doctor"),
-            report_name=parsed_data.get("report_name") or job.section.replace("_", " ").title(),
-            report_type=parsed_data.get("report_type") or job.section,
-            source_language=parsed_data.get("source_language"),
+
+            report_name=report_name,
+            report_type=report_type,
+            source_language=source_language,
+
             test_date=parsed_data.get("test_date"),
             collected_on=parsed_data.get("collected_on"),
             reported_on=parsed_data.get("reported_on"),
             registered_on=parsed_data.get("registered_on"),
             generated_on=parsed_data.get("generated_on"),
-            note_body=parsed_data.get("note_body"),
+
+            note_body=note_body,
+
             is_verified=0,
             verified_by=None,
             verified_at=None,
@@ -634,7 +588,12 @@ def process_upload_job(job_id: int):
             details=f"Uploaded {job.filename} to {job.section}",
         )
 
-        warnings = pipeline_result.get("warnings") or parsed_data.get("warnings") or []
+        warnings = (
+            pipeline_result.get("warnings")
+            or parsed_data.get("warnings")
+            or []
+        )
+
         for warning in warnings:
             add_audit_log(
                 db=db,
@@ -657,6 +616,7 @@ def process_upload_job(job_id: int):
 
         try:
             job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+
             if job:
                 job.status = "error"
                 job.progress = 100
@@ -664,6 +624,7 @@ def process_upload_job(job_id: int):
                 job.error = str(error)
                 job.finished_at = now_iso()
                 db.commit()
+
         except Exception:
             db.rollback()
 
