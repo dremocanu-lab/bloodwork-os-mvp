@@ -2,6 +2,7 @@ import os
 import shutil
 import re
 import json
+import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -631,6 +632,10 @@ def process_upload_job(job_id: int):
     except Exception as error:
         db.rollback()
 
+        error_text = traceback.format_exc()
+        print("UPLOAD JOB ERROR:")
+        print(error_text)
+
         try:
             job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
 
@@ -638,12 +643,14 @@ def process_upload_job(job_id: int):
                 job.status = "error"
                 job.progress = 100
                 job.message = "Upload failed."
-                job.error = str(error)
+                job.error = error_text
                 job.finished_at = now_iso()
                 db.commit()
 
         except Exception:
             db.rollback()
+            print("FAILED TO SAVE UPLOAD JOB ERROR:")
+            print(traceback.format_exc())
 
     finally:
         db.close()
