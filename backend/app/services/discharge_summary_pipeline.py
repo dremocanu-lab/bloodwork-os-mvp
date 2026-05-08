@@ -248,24 +248,37 @@ def _extract_all_page_text(client: Any, file_path: Path) -> tuple[str, list[str]
         raise RuntimeError("No PDF pages could be rendered.")
 
     page_text_by_number: dict[int, str] = {}
-
     chunks = _chunk_list(rendered_pages, PAGE_CHUNK_SIZE)
 
-    for chunk_index, page_chunk in enumerate(chunks, start=1):
-        parsed = _extract_page_chunk_text(client, page_chunk)
+    max_workers = int(os.getenv("OPENAI_DISCHARGE_MAX_WORKERS", "4"))
 
-        for page_result in parsed.get("pages") or []:
-            page_number = int(page_result.get("page_number"))
-            text = str(page_result.get("text") or "").strip()
+    with ThreadPoolExecutor(max_workers=max_workers) as executor:
+        future_to_chunk = {
+            executor.submit(_extract_page_chunk_text, client, page_chunk): page_chunk
+            for page_chunk in chunks
+        }
 
-            if len(text) < MIN_PAGE_TEXT_CHARS:
-                warnings.append(
-                    f"Page {page_number} returned short text ({len(text)} chars). Manual review recommended."
-                )
+        for future in as_completed(future_to_chunk):
+            page_chunk = future_to_chunk[future]
+            page_numbers = [page["page_number"] for page in page_chunk]
 
-            page_text_by_number[page_number] = text
+            try:
+                parsed = future.result()
+            except Exception as exc:
+                raise RuntimeError(f"OpenAI failed while reading pages {page_numbers}: {exc}") from exc
 
-        warnings.extend(parsed.get("warnings") or [])
+            for page_result in parsed.get("pages") or []:
+                page_number = int(page_result.get("page_number"))
+                text = str(page_result.get("text") or "").strip()
+
+                if len(text) < MIN_PAGE_TEXT_CHARS:
+                    warnings.append(
+                        f"Page {page_number} returned short text ({len(text)} chars). Manual review recommended."
+                    )
+
+                page_text_by_number[page_number] = text
+
+            warnings.extend(parsed.get("warnings") or [])
 
     full_parts: list[str] = []
 
@@ -277,6 +290,15 @@ def _extract_all_page_text(client: Any, file_path: Path) -> tuple[str, list[str]
         full_parts.append(f"--- PAGE {page_number} ---\n{text}")
 
     full_text = "\n\n".join(full_parts).strip()
+
+    missing_pages = [
+        page["page_number"]
+        for page in rendered_pages
+        if page["page_number"] not in page_text_by_number
+    ]
+
+    if missing_pages:
+        raise RuntimeError(f"Missing extracted text for pages: {missing_pages}")
 
     if "[...]" in full_text or "textul complet" in full_text.lower() or "a fost inserat" in full_text.lower():
         raise RuntimeError("OpenAI returned placeholder text during page extraction.")
