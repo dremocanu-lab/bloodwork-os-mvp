@@ -410,6 +410,23 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         "events": [serialize_patient_event(event) for event in events],
     }
 
+def serialize_upload_job(job) -> dict:
+    return {
+        "id": job.id,
+        "user_id": job.user_id,
+        "patient_id": job.patient_id,
+        "section": job.section,
+        "filename": job.filename,
+        "content_type": job.content_type,
+        "status": job.status,
+        "progress": job.progress,
+        "message": job.message,
+        "error": job.error,
+        "document_id": job.document_id,
+        "created_at": job.created_at,
+        "started_at": job.started_at,
+        "finished_at": job.finished_at,
+    }
 
 def process_upload_job(job_id: int):
     db = SessionLocal()
