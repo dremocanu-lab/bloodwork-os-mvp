@@ -521,24 +521,31 @@ export default function DischargeStructuredPage() {
   const [error, setError] = useState("");
 
   async function fetchData() {
-    const [meResponse, documentResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<DocumentResponse>(`/documents/${documentId}`),
-    ]);
-
-    const isDischarge =
-      documentResponse.data.section === "discharge_summary" ||
-      documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
-      documentResponse.data.parsed_data?.report_type === "discharge_summary";
-
-    if (!isDischarge) {
-      router.replace(`/documents/${documentId}`);
-      return;
-    }
-
-    setCurrentUser(meResponse.data);
-    setDocumentData(documentResponse.data);
+  if (!documentId) {
+    throw new Error("Missing document id.");
   }
+
+  const meResponse = await api.get<CurrentUser>("/auth/me");
+  setCurrentUser(meResponse.data);
+
+  const documentResponse = await api.get<DocumentResponse>(`/documents/${documentId}`);
+
+  if (!documentResponse.data?.parsed_data) {
+    throw new Error("Document loaded, but parsed_data is missing.");
+  }
+
+  const isDischarge =
+    documentResponse.data.section === "discharge_summary" ||
+    documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
+    documentResponse.data.parsed_data?.report_type === "discharge_summary";
+
+  if (!isDischarge) {
+    router.replace(`/documents/${documentId}`);
+    return;
+  }
+
+  setDocumentData(documentResponse.data);
+}
 
   useEffect(() => {
     async function init() {
@@ -662,24 +669,76 @@ export default function DischargeStructuredPage() {
     }
   }
 
-  if (loading || !currentUser || !documentData || !parsed) {
-    return (
-      <main
-        className="app-page-bg"
-        style={{
-          minHeight: "100vh",
-          padding: 24,
-          display: "grid",
-          placeItems: "center",
-        }}
-      >
-        <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
-          <Spinner size={20} />
-          <span className="muted-text">Loading discharge summary...</span>
+  if (loading) {
+  return (
+    <main
+      className="app-page-bg"
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        display: "grid",
+        placeItems: "center",
+      }}
+    >
+      <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
+        <Spinner size={20} />
+        <span className="muted-text">Loading discharge summary...</span>
+      </div>
+    </main>
+  );
+}
+
+if (!currentUser || !documentData || !parsed) {
+  return (
+    <main
+      className="app-page-bg"
+      style={{
+        minHeight: "100vh",
+        padding: 24,
+        display: "grid",
+        placeItems: "center",
+      }}
+    >
+      <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
+        <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
+          Could not load discharge summary
         </div>
-      </main>
-    );
-  }
+
+        <div className="muted-text" style={{ lineHeight: 1.6 }}>
+          The page loaded, but the discharge document data did not come back in the expected format.
+        </div>
+
+        {error ? (
+          <div
+            style={{
+              marginTop: 14,
+              padding: 14,
+              borderRadius: 16,
+              background: "var(--danger-bg)",
+              color: "var(--danger-text)",
+              border: "1px solid var(--danger-border)",
+              fontWeight: 800,
+              lineHeight: 1.5,
+              whiteSpace: "pre-wrap",
+            }}
+          >
+            {error}
+          </div>
+        ) : null}
+
+        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+          <button className="secondary-btn" onClick={() => router.push("/my-records")}>
+            Back to my records
+          </button>
+
+          <button className="secondary-btn" onClick={() => window.location.reload()}>
+            Try again
+          </button>
+        </div>
+      </div>
+    </main>
+  );
+}
 
   return (
     <AppShell
