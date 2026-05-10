@@ -411,6 +411,76 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         "events": [serialize_patient_event(event) for event in events],
     }
 
+def get_document_payload(db: Session, document, labs, audit_logs, current_user=None):
+    uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
+
+    original_layout = {}
+    original_layout_json = getattr(document, "original_layout_json", None)
+
+    if original_layout_json:
+        try:
+            original_layout = json.loads(original_layout_json or "{}")
+        except Exception:
+            original_layout = {}
+
+    has_abnormal = document_has_abnormal_labs(db, document.id)
+
+    reviewed_by_current_doctor = False
+    if current_user and current_user.role == "doctor":
+        reviewed_by_current_doctor = doctor_reviewed_document(db, current_user.id, document.id)
+
+    return {
+        "document_id": document.id,
+        "id": document.id,
+        "patient_id": document.patient_id,
+        "filename": document.filename,
+        "content_type": document.content_type,
+        "saved_to": document.saved_to,
+        "section": document.section,
+        "uploaded_by_user_id": document.uploaded_by_user_id,
+        "uploaded_by": uploaded_by,
+        "extracted_text": document.extracted_text or "",
+        "original_layout": original_layout,
+        "parsed_data": {
+            "patient_name": document.patient_name,
+            "date_of_birth": document.date_of_birth,
+            "age": document.age,
+            "sex": document.sex,
+            "cnp": document.cnp,
+            "patient_identifier": document.patient_identifier,
+            "lab_name": document.lab_name,
+            "sample_type": document.sample_type,
+            "referring_doctor": document.referring_doctor,
+            "report_name": document.report_name,
+            "report_type": document.report_type,
+            "source_language": document.source_language,
+            "test_date": document.test_date,
+            "collected_on": document.collected_on,
+            "reported_on": document.reported_on,
+            "registered_on": document.registered_on,
+            "generated_on": document.generated_on,
+            "note_body": document.note_body,
+            "is_verified": bool(document.is_verified),
+            "verified_by": document.verified_by,
+            "verified_at": document.verified_at,
+            "last_edited_at": document.last_edited_at,
+            "created_at": document.created_at,
+            "has_abnormal": has_abnormal,
+            "has_abnormal_labs": has_abnormal,
+            "reviewed_by_current_doctor": reviewed_by_current_doctor,
+            "labs": [serialize_lab_result(lab) for lab in labs],
+            "audit_logs": [
+                {
+                    "action": log.action,
+                    "actor": log.actor,
+                    "timestamp": log.timestamp,
+                    "details": log.details,
+                }
+                for log in audit_logs
+            ],
+        },
+    }
+
 def serialize_upload_job(job) -> dict:
     return {
         "id": job.id,
