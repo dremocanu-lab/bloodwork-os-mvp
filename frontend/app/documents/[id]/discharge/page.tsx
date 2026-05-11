@@ -421,13 +421,13 @@ function SectionTextPanel({
             margin: 0,
             whiteSpace: "pre-wrap",
             fontFamily:
-              'Arial, Helvetica, ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", sans-serif',
-            fontSize: 14,
-            lineHeight: 1.42,
-            fontWeight: 650,
+            '"Courier New", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
+            fontSize: 13,
+            lineHeight: 1.38,
+            fontWeight: 600,
             color: "var(--foreground)",
             tabSize: 4,
-            overflowWrap: "break-word",
+            overflowWrap: "normal",
             wordBreak: "normal",
           }}
         >
