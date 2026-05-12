@@ -301,6 +301,15 @@ function sectionLabel(section: string) {
 }
 
 function getDocumentClinicalDate(doc: DocumentCard) {
+  if (doc.section === "discharge_summary") {
+    return (
+      doc.reported_on ||
+      doc.collected_on ||
+      doc.generated_on ||
+      doc.created_at ||
+      ""
+    );
+  }
   return (
     doc.collected_on ||
     doc.test_date ||

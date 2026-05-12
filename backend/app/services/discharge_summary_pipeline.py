@@ -12,7 +12,7 @@ from openai import OpenAI
 
 
 MODEL = os.getenv("OPENAI_DISCHARGE_LAYOUT_MODEL", "gpt-4.1")
-PAGE_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_PAGE_MAX_OUTPUT_TOKENS", "16000"))
+PAGE_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_PAGE_MAX_OUTPUT_TOKENS", "32000"))
 PDF_RENDER_ZOOM = float(os.getenv("OPENAI_DISCHARGE_RENDER_ZOOM", "2.6"))
 MAX_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PAGES", "90"))
 
@@ -52,67 +52,75 @@ SECTION_TITLE_BY_KEY = {
 
 
 SYSTEM_PROMPT = """
-You are a Romanian hospital discharge document layout transcription engine.
+You are a Romanian hospital discharge document verbatim transcription engine.
 
-Your job is NOT to summarize and NOT to rewrite.
-Your job is to transcribe one visible PDF page as faithfully as possible, preserving the visual layout of the paper.
+YOUR ONLY JOB IS TO COPY TEXT. NOT TO SUMMARIZE. NOT TO EXPLAIN. NOT TO REWRITE.
 
-CRITICAL RULES:
-- Extract VERBATIM visible text from the page.
-- Preserve line breaks exactly as much as possible.
-- Preserve indentation, spacing, bullets, dashes, arrows, table-like alignment, and short line fragments.
-- Preserve section order from top to bottom.
-- Preserve repeated entries and repeated headings.
-- Do NOT combine separate lines into one paragraph if they appear on separate lines.
-- Do NOT turn tables into prose.
-- Do NOT rewrite Romanian medical language.
-- Do NOT fix typos, OCR-looking words, abbreviations, punctuation, dates, values, or units.
-- Do NOT summarize, shorten, infer, normalize, or clinically clean anything.
-- Do NOT omit old dates, repeated admissions, transfusions, lab values, imaging, treatments, consults, or recommendations.
-- Never write placeholders such as "[...]", "continues", "omitted", "same as above", or "full text inserted".
-- If a word is unreadable, write [?] only for that unreadable word.
-- Keep Romanian text in Romanian.
-- This is one page of a multi-page document.
-- Return valid JSON only. No markdown.
+ABSOLUTE RULES — NEVER BREAK THESE:
+1. Copy every single word visible on the page, exactly as written.
+2. If a laboratory table has 60 rows, you write all 60 rows. If it has 100 rows, you write all 100 rows. Never stop partway through a table.
+3. If the EPICRIZA section is 3 pages long, you write the entire EPICRIZA for the current page — every sentence, every date, every lab value, every medication name and dose.
+4. NEVER truncate, shorten, compress, abbreviate, or omit any content.
+5. NEVER replace multiple lines with "[...]", "...", "see above", "same as previous", "continues", "omitted", "abbreviated", or any similar placeholder.
+6. NEVER decide a piece of text is "redundant", "repetitive", or "already captured". Copy it anyway.
+7. Do NOT summarize. Do NOT paraphrase. Do NOT rewrite. Copy verbatim.
+8. Do NOT fix Romanian spelling, medical abbreviations, OCR artifacts, typos, odd spacing, or unusual punctuation.
+9. If a word is completely unreadable, write [?] for that word only.
+10. LENGTH OF YOUR OUTPUT DOES NOT MATTER. A 30,000-token verbatim transcript is correct. A 2,000-token "summary" is a failure.
 
-Very important formatting rule:
-Each section body must be a preformatted text block.
-Use newline characters and leading spaces to mimic the original page layout.
-For table-like areas, keep label/value pairs on separate lines and use spaces to preserve alignment.
+FORMATTING RULES:
+- Preserve original line breaks exactly.
+- Preserve indentation and leading spaces.
+- Preserve bullets, dashes, arrows (→, ->, —), parentheses.
+- For table-like areas: keep each label/value pair on its own line, aligned with spaces as best you can.
+- Do NOT merge separate lines into one paragraph.
+- Do NOT convert tables into flowing prose.
+- Do NOT collapse multiple entries onto one line.
 
-Use these section keys only:
-- administrative_information: first-page hospital/patient/admin table fields, provider, doctor, FO, dates, section, compartment, CNP, address, insurance, work/occupation, discharge/admission data.
-- diagnoses: diagnostic boxes/lists, DRG diagnoses, secondary diagnoses, free-form diagnoses.
-- discharge_status: status at discharge / stare la externare.
-- epicriza: the EPICRIZA narrative and chronological medical history, including old labs, admissions, imaging, transfusions, consultations, and treatment history when they appear under EPICRIZA.
-- investigations: imaging, ultrasound, radiology, ECG, echo, or other investigations outside epicriza when separately headed.
-- consults: consultations outside epicriza when separately headed.
-- laboratory_normal: section titled like "Examen de laborator cu valori normale" or equivalent.
-- laboratory_abnormal: section titled like "Examen de laborator cu valori patologice" or equivalent.
-- treatment_in_hospital: treatment administered during admission, transfusions, medications given in hospital, when separately headed.
-- recommended_treatment: "Tratament recomandat".
-- prescriptions_released: "Retete eliberate" / "Rețete eliberate" / "Rp."
-- recommendations: recommendations/follow-up/discharge instructions.
-- other: any visible text that does not fit above.
+SECTION ASSIGNMENT RULES:
+- administrative_information: hospital/patient/admin table on page 1 (provider, doctor, FO, section, compartment, CNP, address, insurance, occupation, admission/discharge dates).
+- diagnoses: DRG boxes, diagnostic boxes, secondary diagnoses, diagnosis lists.
+- discharge_status: stare la externare / discharge status field.
+- epicriza: the EPICRIZA narrative and everything under its heading — chronological medical history, old labs, previous admissions, imaging results, transfusions, consultations, treatments described in the narrative.
+- investigations: imaging, ultrasound, radiology, ECG, echo, CT, MRI — when under a separate heading outside epicriza.
+- consults: consultations under a separate heading outside epicriza.
+- laboratory_normal: section titled "Examen de laborator cu valori normale" or equivalent.
+- laboratory_abnormal: section titled "Examen de laborator cu valori patologice" or equivalent.
+- treatment_in_hospital: medications and treatments administered during the admission, transfusions given — under a separate heading.
+- recommended_treatment: "Tratament recomandat" section.
+- prescriptions_released: "Retete eliberate" / "Rp." section.
+- recommendations: recommendations, follow-up, discharge instructions.
+- other: any visible text that does not fit the above.
 
-Return exactly this JSON shape:
+METADATA FIELDS (extract from the document — null if not visible):
+- patient_name: full name
+- cnp: 13-digit Romanian CNP
+- date_of_birth: date of birth
+- sex: M/F or masculin/feminin
+- admission_date: data internarii
+- discharge_date: data externarii
+- hospital_name: full hospital name
+
+Return ONLY valid JSON. No markdown. No explanations before or after. Start with { and end with }.
+
+Required JSON shape:
 {
-  "page_number": number,
-  "printed_page_label": string | null,
-  "document_page_count_visible": string | null,
-  "patient_name": string | null,
-  "cnp": string | null,
-  "date_of_birth": string | null,
-  "sex": string | null,
-  "admission_date": string | null,
-  "discharge_date": string | null,
-  "hospital_name": string | null,
+  "page_number": <integer>,
+  "printed_page_label": <string or null>,
+  "document_page_count_visible": <string or null>,
+  "patient_name": <string or null>,
+  "cnp": <string or null>,
+  "date_of_birth": <string or null>,
+  "sex": <string or null>,
+  "admission_date": <string or null>,
+  "discharge_date": <string or null>,
+  "hospital_name": <string or null>,
   "sections": [
     {
-      "key": "epicriza",
-      "title": "EPICRIZA",
-      "original_titles": ["EPICRIZA"],
-      "body": "preformatted verbatim visible text from this page with original line breaks and indentation"
+      "key": "<one of the allowed section keys>",
+      "title": "<heading as it appears on this page>",
+      "original_titles": ["<heading as it appears on this page>"],
+      "body": "<complete verbatim text from this section on this page, with original line breaks and indentation>"
     }
   ],
   "warnings": []
@@ -121,28 +129,27 @@ Return exactly this JSON shape:
 
 
 USER_PROMPT_TEMPLATE = """
-Transcribe page {page_number} of this Romanian discharge document.
+Transcribe page {page_number} of this Romanian hospital discharge document.
 
-Put ALL visible text into sections.
+CRITICAL: Extract EVERY word visible on this page. Do not skip, summarize, or abbreviate anything.
 
-Formatting requirements:
-- Preserve the page layout as much as possible.
-- Keep original line breaks.
-- Keep indentation.
-- Keep bullets, dashes, arrows, parentheses, and short line fragments.
-- Keep table-like fields as table-like text.
-- Do not merge separate lines into one paragraph.
-- Do not convert the page into a summary.
-- The section body must look like copied text from the paper.
+For each visible section heading on this page:
+1. Identify the section key from the allowed list.
+2. Copy the COMPLETE text under that heading — every line, every row, every value.
+3. If a table appears, copy ALL rows of the table, not just a sample.
+4. If the section body is very long, write all of it. There is no length limit.
 
-Important sectioning rules:
-- On page 1, put the hospital/patient/admin table into administrative_information.
-- On page 1, put DRG/diagnosis boxes into diagnoses.
-- Put the EPICRIZA narrative into epicriza.
-- If the page has a separate heading such as "Tratament recomandat", "Retete eliberate", "Examen de laborator cu valori normale", "Examen de laborator cu valori patologice", "Recomandari", or similar, split that text into its own matching section.
-- If a section starts on this page and continues from the previous page, still include the text visible on this page.
+For page 1 specifically:
+- The hospital/patient/admin table → administrative_information
+- Any DRG/diagnosis boxes → diagnoses
+- If the EPICRIZA heading appears, start the epicriza section
 
-Return complete preformatted verbatim JSON for this page only.
+For all pages:
+- If a section that started on a previous page continues here (no new heading), assign it the same key it had before.
+- If a new heading appears, start a new section entry.
+- Do NOT merge two different sections into one.
+
+Output complete JSON only. No notes, no explanations.
 """
 
 
@@ -275,12 +282,11 @@ def _clean_text(value: Any) -> str:
         return ""
 
     text = str(value)
-    text = text.replace("\ufeff", "")
-    text = text.replace("\u00a0", " ")
+    text = text.replace("﻿", "")
+    text = text.replace(" ", " ")
     text = text.replace("\r\n", "\n").replace("\r", "\n")
 
-    # Preserve indentation and table-like spacing.
-    # Only reduce absurd blank vertical gaps.
+    # Only collapse truly absurd vertical gaps (5+ blank lines → 4).
     text = re.sub(r"\n{5,}", "\n\n\n\n", text)
 
     return text.strip("\n")
@@ -484,9 +490,16 @@ def _should_merge_with_previous(previous: dict[str, Any] | None, current: dict[s
     if previous_title == current_title:
         return True
 
-    # EPICRIZA often continues across many pages. Keep it as one major section
-    # even if the model labels continuation titles slightly differently.
-    if previous["key"] == "epicriza":
+    # EPICRIZA and lab sections often continue across many pages.
+    if previous["key"] in {
+        "epicriza",
+        "laboratory_normal",
+        "laboratory_abnormal",
+        "treatment_in_hospital",
+        "recommended_treatment",
+        "recommendations",
+        "prescriptions_released",
+    }:
         return True
 
     return False
@@ -621,15 +634,10 @@ def process_uploaded_discharge_summary(
     """
     Verbatim, layout-preserving discharge summary extraction.
 
-    This pipeline:
-    - renders every PDF page as an image
-    - sends each page separately to OpenAI vision
-    - asks for preformatted verbatim text
-    - separates the text into document sections
-    - merges section continuations across pages
-    - stores the complete JSON in note_body
-
-    It is intentionally not a summarizer.
+    Each PDF page is rendered as a high-resolution image and sent separately
+    to the OpenAI vision model, which extracts the complete visible text
+    verbatim into named sections. Sections that continue across pages are
+    merged. Nothing is summarized or omitted.
     """
 
     path = Path(file_path)

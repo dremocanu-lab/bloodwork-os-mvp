@@ -636,8 +636,8 @@ def process_upload_job(job_id: int):
             source_language=source_language,
 
             test_date=parsed_data.get("test_date"),
-            collected_on=parsed_data.get("collected_on"),
-            reported_on=parsed_data.get("reported_on"),
+            collected_on=parsed_data.get("collected_on") or pipeline_result.get("collected_on"),
+            reported_on=parsed_data.get("reported_on") or pipeline_result.get("reported_on"),
             registered_on=parsed_data.get("registered_on"),
             generated_on=parsed_data.get("generated_on"),
 

@@ -6,11 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import OriginalLayoutViewer from "@/components/original-layout-viewer";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
-import {
-  cleanOneLine,
-  formatPdfLikeDischargeText,
-  formatSectionPreview,
-} from "@/lib/discharge-epicriza-formatter";
+import { formatPdfLikeDischargeText } from "@/lib/discharge-epicriza-formatter";
 
 type CurrentUser = {
   id: number;
@@ -443,66 +439,91 @@ function copyText(text: string) {
   void navigator.clipboard?.writeText(text);
 }
 
+function parseAdminLines(body: string): Array<{ label: string; value: string }> {
+  const results: Array<{ label: string; value: string }> = [];
+  const seen = new Set<string>();
+
+  for (const rawLine of body.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+
+    const colonIndex = line.indexOf(":");
+    if (colonIndex < 2 || colonIndex > 60) continue;
+
+    const label = line.slice(0, colonIndex).trim();
+    const value = line.slice(colonIndex + 1).trim();
+
+    if (!value || label.length < 2) continue;
+
+    const key = label.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
+
+    results.push({ label, value });
+  }
+
+  return results;
+}
+
+function AdminBoxesPanel({
+  section,
+  parsed,
+  dischargePayload,
+}: {
+  section: NavigationSection;
+  parsed: DocumentResponse["parsed_data"];
+  dischargePayload: DischargePayload | null;
+}) {
+  const payloadMeta = (dischargePayload as Record<string, unknown>) || {};
+
+  const metaFields = [
+    { label: "Patient", value: parsed.patient_name },
+    { label: "CNP", value: parsed.cnp },
+    { label: "Date of Birth", value: parsed.date_of_birth },
+    { label: "Age", value: parsed.age },
+    { label: "Sex", value: parsed.sex },
+    { label: "Hospital", value: parsed.lab_name ?? (payloadMeta.hospital_name as string | null) },
+    { label: "Doctor", value: parsed.referring_doctor },
+    { label: "Admitted", value: parsed.collected_on },
+    { label: "Discharged", value: parsed.reported_on },
+  ].filter((f): f is { label: string; value: string } => Boolean(f.value));
+
+  const metaLabelKeys = new Set(metaFields.map((f) => f.label.toLowerCase()));
+
+  const bodyFields = parseAdminLines(section.body || "").filter(
+    (f) => !metaLabelKeys.has(f.label.toLowerCase())
+  );
+
+  const allFields = [...metaFields, ...bodyFields];
+
+  return (
+    <div style={{ minHeight: 0, height: "100%", overflowY: "auto", paddingRight: 8 }}>
+      <div style={{ marginBottom: 18 }}>
+        <div className="section-title">{section.title}</div>
+        {section.original_titles?.length ? (
+          <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
+            Original heading: {section.original_titles.join(" · ")}
+          </div>
+        ) : null}
+      </div>
+
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
+          gap: 10,
+        }}
+      >
+        {allFields.map((field) => (
+          <CompactMetaItem key={field.label} label={field.label} value={field.value} />
+        ))}
+      </div>
+    </div>
+  );
+}
+
 function mergeFirstPageSections(rawSections: DischargeSection[]) {
-  const firstClinicalIndex = rawSections.findIndex((section) => section.key === "epicriza");
-
-  const preEpicrizaKeys = new Set([
-    "administrative_information",
-    "discharge_status",
-    "diagnoses",
-    "pre_epicriza_summary",
-  ]);
-
-  const preSections: DischargeSection[] = [];
-  const remainingSections: DischargeSection[] = [];
-
-  rawSections.forEach((section, index) => {
-    const isBeforeEpicriza = firstClinicalIndex === -1 ? index < 3 : index < firstClinicalIndex;
-    const shouldMerge =
-      section.key === "pre_epicriza_summary" ||
-      preEpicrizaKeys.has(section.key) ||
-      (isBeforeEpicriza && section.key !== "epicriza");
-
-    if (shouldMerge) {
-      preSections.push(section);
-    } else {
-      remainingSections.push(section);
-    }
-  });
-
-  if (!preSections.length) return rawSections;
-
-  const combinedBody = preSections
-    .map((section) => {
-      const title = cleanOneLine(section.title || section.key || "Details");
-      return `[${title}]\n${section.body || ""}`;
-    })
-    .join("\n\n");
-
-  const combinedFormattedBody = preSections
-    .map((section) => {
-      const title = cleanOneLine(section.title || section.key || "Details");
-      return `[${title}]\n${getSectionBody(section)}`;
-    })
-    .join("\n\n");
-
-  const originalTitles = preSections.flatMap((section) => section.original_titles || []);
-  const hasAiFormatting = preSections.some((section) => section.formatted_body);
-
-  const combined: DischargeSection = {
-    key: "pre_epicriza_summary",
-    title: "Admission / patient / diagnoses",
-    original_titles: Array.from(new Set(originalTitles)),
-    body: combinedBody,
-    formatted_body: combinedFormattedBody,
-    formatting_method: hasAiFormatting ? "mixed" : "raw_ocr",
-    formatting_confidence: hasAiFormatting
-      ? Math.max(...preSections.map((section) => Number(section.formatting_confidence || 0)))
-      : 0,
-    confidence: Math.max(...preSections.map((section) => Number(section.confidence || 0.8))),
-  };
-
-  return [combined, ...remainingSections];
+  return rawSections;
 }
 
 export default function DischargeStructuredPage() {
@@ -1050,11 +1071,19 @@ if (!currentUser || !documentData || !parsed) {
               )}
 
               {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
-                <SectionTextPanel
-                  section={activeSection}
-                  text={getSectionBody(activeSection)}
-                  onCopy={() => copyText(getSectionBody(activeSection))}
-                />
+                activeSection.key === "administrative_information" ? (
+                  <AdminBoxesPanel
+                    section={activeSection}
+                    parsed={parsed}
+                    dischargePayload={dischargePayload}
+                  />
+                ) : (
+                  <SectionTextPanel
+                    section={activeSection}
+                    text={getSectionBody(activeSection)}
+                    onCopy={() => copyText(getSectionBody(activeSection))}
+                  />
+                )
               )}
 
               {activeSectionKey === "audit" && (
