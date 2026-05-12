@@ -426,6 +426,11 @@ const en = {
   goToLoginSuffix: "login",
 
   // Landing / About
+  videoLandingTitle1: "Your health records,",
+  videoLandingTitle2: "always within reach.",
+  videoLandingSubtitle:
+    "A unified clinical records platform for patients and healthcare professionals. Secure, fast, and always available.",
+  enterPortal: "Enter Portal",
   clinicalRecordWorkspace: "Clinical record workspace",
   landingHeroLine1: "Clear records.",
   landingHeroLine2: "Faster care.",
@@ -1039,6 +1044,11 @@ const ro: Record<keyof typeof en, string> = {
   goToLoginSuffix: "",
 
   // Landing / About
+  videoLandingTitle1: "Dosarul tău medical,",
+  videoLandingTitle2: "mereu la îndemână.",
+  videoLandingSubtitle:
+    "O platformă unificată de dosare clinice pentru pacienți și profesioniști din sănătate. Securizată, rapidă și mereu disponibilă.",
+  enterPortal: "Intră în Portal",
   clinicalRecordWorkspace: "Platformă pentru documente medicale",
   landingHeroLine1: "Documente clare.",
   landingHeroLine2: "Îngrijire mai rapidă.",
