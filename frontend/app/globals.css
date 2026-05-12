@@ -1433,81 +1433,36 @@ body.dark ::-webkit-scrollbar-thumb,
     -webkit-box-orient: vertical;
     overflow: hidden;
   }
-.portal-art-new {
-  position: relative;
-  width: 100%;
-  min-height: 180px;
-  display: grid;
-  place-items: center;
-}
-
-.portal-art-glass-card {
-  position: relative;
-  z-index: 2;
-  width: 76%;
-  min-height: 118px;
-  border-radius: 28px;
-  background: rgba(255, 255, 255, 0.46);
-  border: 1px solid rgba(255, 255, 255, 0.54);
-  display: grid;
-  grid-template-columns: 70px 1fr;
-  align-items: center;
-  gap: 16px;
-  padding: 18px;
-  box-shadow: 0 18px 38px rgba(15, 23, 42, 0.12);
-}
-
-.portal-art-emoji {
-  width: 64px;
-  height: 64px;
-  border-radius: 22px;
-  display: grid;
-  place-items: center;
-  background: rgba(255, 255, 255, 0.6);
-  font-size: 34px;
-}
-
-.portal-art-lines {
-  display: grid;
-  gap: 10px;
-}
-
-.portal-art-lines span {
-  height: 10px;
-  border-radius: 999px;
-  background: rgba(15, 23, 42, 0.22);
-}
-
-.portal-art-lines span:nth-child(1) {
-  width: 92%;
-}
-
-.portal-art-lines span:nth-child(2) {
-  width: 68%;
-}
-
-.portal-art-lines span:nth-child(3) {
-  width: 82%;
-}
-
-.portal-art-floating {
+.portal-art-orb {
   position: absolute;
   border-radius: 999px;
-  background: rgba(255, 255, 255, 0.45);
+  background: rgba(255, 255, 255, 0.22);
 }
 
-.portal-art-floating-a {
-  width: 58px;
-  height: 58px;
-  top: 18px;
-  right: 22px;
+.portal-art-orb-lg {
+  width: 150px;
+  height: 150px;
+  bottom: -36px;
+  left: -28px;
+  filter: blur(14px);
+  opacity: 0.75;
 }
 
-.portal-art-floating-b {
-  width: 42px;
-  height: 42px;
-  left: 26px;
-  bottom: 24px;
+.portal-art-orb-sm {
+  width: 54px;
+  height: 54px;
+  top: 22px;
+  right: 28px;
+  background: rgba(255, 255, 255, 0.34);
+}
+
+.portal-art-orb-mid {
+  width: 86px;
+  height: 86px;
+  bottom: 14px;
+  right: -18px;
+  filter: blur(10px);
+  background: rgba(255, 255, 255, 0.18);
 }
 input[type="file"] {
   color: var(--text);

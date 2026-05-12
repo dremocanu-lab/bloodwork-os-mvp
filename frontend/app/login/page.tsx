@@ -94,9 +94,9 @@ export default function LoginChooserPage() {
                 <div className="portal-role-description">{card.description}</div>
 
                 <div className={`portal-role-art ${card.artClass}`}>
-                  <div className="portal-shape shape-a" />
-                  <div className="portal-shape shape-b" />
-                  <div className="portal-shape shape-c" />
+                  <div className="portal-art-orb portal-art-orb-lg" />
+                  <div className="portal-art-orb portal-art-orb-sm" />
+                  <div className="portal-art-orb portal-art-orb-mid" />
                 </div>
 
                 <div className="portal-role-actions">

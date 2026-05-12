@@ -5,20 +5,13 @@ import ThemeToggle from "@/components/theme-toggle";
 import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 
-function PortalArt({ emoji }: { emoji: string }) {
+function PortalArt() {
   return (
-    <div className="portal-art-new">
-      <div className="portal-art-glass-card">
-        <div className="portal-art-emoji">{emoji}</div>
-        <div className="portal-art-lines">
-          <span />
-          <span />
-          <span />
-        </div>
-      </div>
-      <div className="portal-art-floating portal-art-floating-a" />
-      <div className="portal-art-floating portal-art-floating-b" />
-    </div>
+    <>
+      <div className="portal-art-orb portal-art-orb-lg" />
+      <div className="portal-art-orb portal-art-orb-sm" />
+      <div className="portal-art-orb portal-art-orb-mid" />
+    </>
   );
 }
 
@@ -33,8 +26,8 @@ export default function PortalPage() {
       loginHref: "/login/doctor",
       signupHref: "/signup/doctor",
       artClass: "portal-art-doctor",
-      emoji: "🩺",
     },
+
     {
       tag: t("personalRecords"),
       title: t("patientPortal"),
@@ -42,7 +35,6 @@ export default function PortalPage() {
       loginHref: "/login/patient",
       signupHref: "/signup/patient",
       artClass: "portal-art-patient",
-      emoji: "📁",
     },
     {
       tag: t("operationsControl"),
@@ -51,7 +43,6 @@ export default function PortalPage() {
       loginHref: "/login/admin",
       signupHref: "/signup/admin",
       artClass: "portal-art-admin",
-      emoji: "⚙️",
     },
   ];
 
@@ -111,7 +102,7 @@ export default function PortalPage() {
                 <div className="portal-role-description">{card.description}</div>
 
                 <div className={`portal-role-art ${card.artClass}`}>
-                  <PortalArt emoji={card.emoji} />
+                  <PortalArt />
                 </div>
 
                 <div className="portal-role-actions">
