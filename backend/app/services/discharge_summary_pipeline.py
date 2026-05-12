@@ -4,6 +4,7 @@ import base64
 import json
 import os
 import re
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from pathlib import Path
 from typing import Any
 
@@ -15,6 +16,7 @@ MODEL = os.getenv("OPENAI_DISCHARGE_LAYOUT_MODEL", "gpt-4.1")
 PAGE_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_PAGE_MAX_OUTPUT_TOKENS", "32000"))
 PDF_RENDER_ZOOM = float(os.getenv("OPENAI_DISCHARGE_RENDER_ZOOM", "2.6"))
 MAX_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PAGES", "90"))
+MAX_PARALLEL_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PARALLEL_PAGES", "6"))
 
 
 ALLOWED_SECTION_KEYS = {
@@ -653,8 +655,12 @@ def process_uploaded_discharge_summary(
 
     page_payloads: list[dict[str, Any]] = []
 
-    for page in rendered_pages:
-        page_payloads.append(_call_openai_for_page(client, page))
+    with ThreadPoolExecutor(max_workers=MAX_PARALLEL_PAGES) as executor:
+        futures = {executor.submit(_call_openai_for_page, client, page): page for page in rendered_pages}
+        for future in as_completed(futures):
+            page_payloads.append(future.result())
+
+    page_payloads.sort(key=lambda p: int(p.get("page_number") or 0))
 
     payload = _normalize_payload(page_payloads, actual_page_count=len(rendered_pages))
     extracted_text = _payload_to_text(payload)
