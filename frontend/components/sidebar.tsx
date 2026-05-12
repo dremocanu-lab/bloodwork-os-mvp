@@ -113,20 +113,39 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
           </div>
 
           <div className="soft-card-tight" style={{ padding: 16 }}>
-            <div
-              style={{
-                display: "inline-flex",
-                width: "fit-content",
-                padding: "5px 9px",
-                borderRadius: 999,
-                background: "var(--panel-2)",
-                color: "var(--muted)",
-                fontSize: 12,
-                fontWeight: 900,
-                marginBottom: 10,
-              }}
-            >
-              {getRoleLabel()}
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
+              <div
+                style={{
+                  width: 36,
+                  height: 36,
+                  borderRadius: 999,
+                  background: "var(--primary)",
+                  color: "#fff",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontWeight: 950,
+                  fontSize: 15,
+                  letterSpacing: "-0.02em",
+                  flexShrink: 0,
+                }}
+              >
+                {user.full_name.charAt(0).toUpperCase()}
+              </div>
+
+              <div
+                style={{
+                  display: "inline-flex",
+                  padding: "5px 9px",
+                  borderRadius: 999,
+                  background: "var(--panel-2)",
+                  color: "var(--muted)",
+                  fontSize: 12,
+                  fontWeight: 900,
+                }}
+              >
+                {getRoleLabel()}
+              </div>
             </div>
 
             <div style={{ fontWeight: 900, lineHeight: 1.25 }}>{user.full_name}</div>

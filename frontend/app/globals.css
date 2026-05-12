@@ -295,19 +295,23 @@ textarea {
 }
 
 .stat-card-accent-violet {
-  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(109, 93, 252, 0.12);
+  background: linear-gradient(160deg, color-mix(in srgb, var(--primary) 9%, var(--panel)) 0%, var(--panel) 52%);
+  border-top: 2.5px solid color-mix(in srgb, var(--primary) 58%, transparent);
 }
 
 .stat-card-accent-blue {
-  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(59, 130, 246, 0.12);
+  background: linear-gradient(160deg, color-mix(in srgb, #3b82f6 9%, var(--panel)) 0%, var(--panel) 52%);
+  border-top: 2.5px solid color-mix(in srgb, #3b82f6 58%, transparent);
 }
 
 .stat-card-accent-green {
-  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(16, 185, 129, 0.12);
+  background: linear-gradient(160deg, color-mix(in srgb, #10b981 9%, var(--panel)) 0%, var(--panel) 52%);
+  border-top: 2.5px solid color-mix(in srgb, #10b981 58%, transparent);
 }
 
 .stat-card-accent-orange {
-  box-shadow: var(--shadow-card), inset 0 0 0 1px rgba(245, 158, 11, 0.12);
+  background: linear-gradient(160deg, color-mix(in srgb, #f59e0b 9%, var(--panel)) 0%, var(--panel) 52%);
+  border-top: 2.5px solid color-mix(in srgb, #f59e0b 58%, transparent);
 }
 
 /* TRENDS */
@@ -478,6 +482,7 @@ textarea {
 .app-shell-header {
   padding: 24px;
   margin-bottom: 24px;
+  border-bottom: 1px solid var(--border);
 }
 
 .app-shell-header-row {
