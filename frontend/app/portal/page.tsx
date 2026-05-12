@@ -5,21 +5,12 @@ import ThemeToggle from "@/components/theme-toggle";
 import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 
-function PortalArt() {
-  return (
-    <>
-      <div className="portal-art-orb portal-art-orb-lg" />
-      <div className="portal-art-orb portal-art-orb-sm" />
-      <div className="portal-art-orb portal-art-orb-mid" />
-    </>
-  );
-}
-
 export default function PortalPage() {
   const { t } = useLanguage();
 
   const portalCards = [
     {
+      initial: "D",
       tag: t("clinicalWorkspace"),
       title: t("doctorPortal"),
       description: t("doctorPortalDesc"),
@@ -27,8 +18,8 @@ export default function PortalPage() {
       signupHref: "/signup/doctor",
       artClass: "portal-art-doctor",
     },
-
     {
+      initial: "P",
       tag: t("personalRecords"),
       title: t("patientPortal"),
       description: t("patientPortalDesc"),
@@ -37,6 +28,7 @@ export default function PortalPage() {
       artClass: "portal-art-patient",
     },
     {
+      initial: "A",
       tag: t("operationsControl"),
       title: t("adminPortal"),
       description: t("adminPortalDesc"),
@@ -93,16 +85,17 @@ export default function PortalPage() {
           <section className="portal-card-rail">
             {portalCards.map((card) => (
               <article key={card.title} className="portal-role-card">
-                <div className="portal-role-card-top">
-                  <span className="portal-role-pill">{card.tag}</span>
-                  <span className="portal-role-arrow">↗</span>
+                <div className={`portal-role-art ${card.artClass}`}>
+                  <div className="portal-art-orb portal-art-orb-lg" />
+                  <div className="portal-art-orb portal-art-orb-sm" />
+                  <div className="portal-art-orb portal-art-orb-mid" />
+                  <div className="portal-art-initial">{card.initial}</div>
                 </div>
 
-                <div className="portal-role-title">{card.title}</div>
-                <div className="portal-role-description">{card.description}</div>
-
-                <div className={`portal-role-art ${card.artClass}`}>
-                  <PortalArt />
+                <div className="portal-role-body">
+                  <div className="portal-role-label">{card.tag}</div>
+                  <div className="portal-role-title">{card.title}</div>
+                  <div className="portal-role-description">{card.description}</div>
                 </div>
 
                 <div className="portal-role-actions">

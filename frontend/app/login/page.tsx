@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import ThemeToggle from "@/components/theme-toggle";
@@ -11,6 +11,7 @@ export default function LoginChooserPage() {
   const portalCards = [
     {
       key: "doctor",
+      initial: "D",
       tag: t("clinicalWorkspace"),
       title: t("doctorLogin"),
       description: t("doctorLoginDesc"),
@@ -20,6 +21,7 @@ export default function LoginChooserPage() {
     },
     {
       key: "patient",
+      initial: "P",
       tag: t("personalRecords"),
       title: t("patientLogin"),
       description: t("patientLoginDesc"),
@@ -29,6 +31,7 @@ export default function LoginChooserPage() {
     },
     {
       key: "admin",
+      initial: "A",
       tag: t("operationsControl"),
       title: t("adminLogin"),
       description: t("adminLoginDesc"),
@@ -85,25 +88,23 @@ export default function LoginChooserPage() {
           <section className="portal-card-rail">
             {portalCards.map((card) => (
               <article key={card.key} className="portal-role-card">
-                <div className="portal-role-card-top">
-                  <span className="portal-role-pill">{card.tag}</span>
-                  <span className="portal-role-arrow">↗</span>
-                </div>
-
-                <div className="portal-role-title">{card.title}</div>
-                <div className="portal-role-description">{card.description}</div>
-
                 <div className={`portal-role-art ${card.artClass}`}>
                   <div className="portal-art-orb portal-art-orb-lg" />
                   <div className="portal-art-orb portal-art-orb-sm" />
                   <div className="portal-art-orb portal-art-orb-mid" />
+                  <div className="portal-art-initial">{card.initial}</div>
+                </div>
+
+                <div className="portal-role-body">
+                  <div className="portal-role-label">{card.tag}</div>
+                  <div className="portal-role-title">{card.title}</div>
+                  <div className="portal-role-description">{card.description}</div>
                 </div>
 
                 <div className="portal-role-actions">
                   <Link href={card.loginHref} className="portal-primary-btn">
                     {t("login")}
                   </Link>
-
                   <Link href={card.signupHref} className="portal-secondary-btn">
                     {t("signUp")}
                   </Link>

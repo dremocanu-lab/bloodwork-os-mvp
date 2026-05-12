@@ -652,7 +652,10 @@ textarea {
   backdrop-filter: blur(10px);
   box-shadow: var(--portal-shadow);
   color: var(--portal-text);
-  padding: 22px;
+  padding: 0;
+  overflow: hidden;
+  display: flex;
+  flex-direction: column;
   transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms ease;
 }
 
@@ -714,30 +717,56 @@ body.dark .portal-role-pill,
 }
 
 .portal-role-title {
-  font-size: clamp(25px, 2vw, 34px);
-  line-height: 1.02;
+  font-size: clamp(22px, 1.8vw, 30px);
+  line-height: 1.05;
   letter-spacing: -0.05em;
-  font-weight: 900;
+  font-weight: 950;
   color: var(--portal-text);
 }
 
 .portal-role-description {
-  margin-top: 14px;
-  font-size: 15px;
-  line-height: 1.65;
+  margin-top: 10px;
+  font-size: 14px;
+  line-height: 1.6;
   color: var(--portal-muted);
-  min-height: 94px;
 }
 
 .portal-role-art {
-  margin-top: 18px;
-  border-radius: 24px;
-  min-height: 180px;
+  margin-top: 0;
+  border-radius: 0;
+  min-height: 158px;
   position: relative;
   overflow: hidden;
   display: flex;
   align-items: center;
   justify-content: center;
+}
+
+.portal-art-initial {
+  position: relative;
+  z-index: 1;
+  font-size: 116px;
+  font-weight: 950;
+  letter-spacing: -0.07em;
+  line-height: 1;
+  color: rgba(255, 255, 255, 0.2);
+  user-select: none;
+}
+
+.portal-role-body {
+  padding: 20px 22px 0;
+  flex: 1;
+  display: flex;
+  flex-direction: column;
+}
+
+.portal-role-label {
+  font-size: 11px;
+  font-weight: 900;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--portal-muted);
+  margin-bottom: 8px;
 }
 
 .portal-art-doctor {
@@ -822,8 +851,8 @@ body.dark .portal-role-pill,
 .portal-role-actions {
   display: grid;
   grid-template-columns: 1fr 1fr;
-  gap: 12px;
-  margin-top: 18px;
+  gap: 10px;
+  padding: 18px 22px 22px;
 }
 
 .portal-primary-btn,
