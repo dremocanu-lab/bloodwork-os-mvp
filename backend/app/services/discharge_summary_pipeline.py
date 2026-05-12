@@ -133,23 +133,33 @@ Required JSON shape:
 USER_PROMPT_TEMPLATE = """
 Transcribe page {page_number} of this Romanian hospital discharge document.
 
-CRITICAL: Extract EVERY word visible on this page. Do not skip, summarize, or abbreviate anything.
+RAW TEXT EXTRACTED FROM PDF (GROUND TRUTH):
+===
+{raw_text}
+===
 
-For each visible section heading on this page:
-1. Identify the section key from the allowed list.
-2. Copy the COMPLETE text under that heading — every line, every row, every value.
-3. If a table appears, copy ALL rows of the table, not just a sample.
-4. If the section body is very long, write all of it. There is no length limit.
+The raw text block above is extracted directly from the PDF's text layer — it is character-perfect.
+Every word, number, date, lab value, medical term, name, and abbreviation in that block is exactly correct.
+
+YOUR RULES:
+1. Use the raw text as your authoritative source for ALL content. Copy it exactly.
+2. Use the image ONLY to understand layout: which text belongs to which section heading.
+3. Do NOT alter any character from the raw text. Do NOT fix spelling, do NOT "correct" medical abbreviations.
+4. Do NOT skip any line present in the raw text.
+5. If the raw text has a number like "11.690" do NOT change it to "1.690" or "11,690".
+6. Preserve the exact line breaks, spacing, and order from the raw text within each section.
+7. If a table appears, include every row exactly as it appears in the raw text.
+8. Do NOT truncate, summarize, or abbreviate. If the section is 2000 words, write all 2000 words.
+
+SECTION ASSIGNMENT (use the image to determine section boundaries):
+- Assign each block of raw text to the correct section key based on where it visually appears under each heading.
+- If a section continues from a previous page (no new heading visible), use the same section key.
+- Do NOT merge two different sections into one.
 
 For page 1 specifically:
 - The hospital/patient/admin table → administrative_information
-- Any DRG/diagnosis boxes → diagnoses
+- DRG/diagnosis boxes → diagnoses
 - If the EPICRIZA heading appears, start the epicriza section
-
-For all pages:
-- If a section that started on a previous page continues here (no new heading), assign it the same key it had before.
-- If a new heading appears, start a new section entry.
-- Do NOT merge two different sections into one.
 
 Output complete JSON only. No notes, no explanations.
 """
@@ -226,6 +236,7 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
             pixmap = page.get_pixmap(matrix=matrix, alpha=False)
             png_bytes = pixmap.tobytes("png")
             encoded = base64.b64encode(png_bytes).decode("ascii")
+            native_text = page.get_text("text").strip()
 
             pages.append(
                 {
@@ -233,6 +244,7 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
                     "width": page.rect.width,
                     "height": page.rect.height,
                     "image_url": f"data:image/png;base64,{encoded}",
+                    "native_text": native_text,
                 }
             )
 
@@ -241,6 +253,17 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
 
 def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any]:
     page_number = page["page_number"]
+    native_text = page.get("native_text") or ""
+
+    # If the PDF has a native text layer (digital PDFs like Hipocrate), use it as
+    # ground truth so the model doesn't hallucinate characters from the image.
+    # For scanned PDFs with no text layer, fall back to vision-only mode.
+    has_native_text = len(native_text) > 80
+
+    if has_native_text:
+        raw_text_block = native_text
+    else:
+        raw_text_block = "(No native text layer — use the image only)"
 
     response = client.responses.create(
         model=MODEL,
@@ -263,7 +286,10 @@ def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any
                     },
                     {
                         "type": "input_text",
-                        "text": USER_PROMPT_TEMPLATE.format(page_number=page_number),
+                        "text": USER_PROMPT_TEMPLATE.format(
+                            page_number=page_number,
+                            raw_text=raw_text_block,
+                        ),
                     },
                 ],
             },
