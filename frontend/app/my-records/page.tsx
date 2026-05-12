@@ -1160,15 +1160,8 @@ export default function MyRecordsPage() {
       </div>
 
       <div
-        className="soft-card"
-        style={{
-          padding: 28,
-          marginBottom: 24,
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) auto",
-          gap: 18,
-          alignItems: "center",
-        }}
+        className="soft-card upload-banner-grid"
+        style={{ padding: 28, marginBottom: 24 }}
       >
         <div>
           <div style={{ fontWeight: 950, fontSize: 28, letterSpacing: "-0.055em" }}>
@@ -1300,14 +1293,7 @@ export default function MyRecordsPage() {
         <div style={{ display: "grid", gap: 14 }}>
           {visibleDocsForSection.map((doc) => (
             <div key={doc.id} className="soft-card-tight" style={{ padding: 18 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1.25fr 1fr auto",
-                  gap: 18,
-                  alignItems: "start",
-                }}
-              >
+              <div className="doc-card-grid">
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 18 }}>
                     {valueOrDash(doc.report_name || doc.filename)}
@@ -1414,12 +1400,9 @@ export default function MyRecordsPage() {
                   }}
                 >
                   <div
+                    className="trend-item-header"
                     style={{
-                      display: "grid",
                       gridTemplateColumns: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr) 420px auto",
-                      gap: 18,
-                      alignItems: "center",
-                      transition: "grid-template-columns 300ms cubic-bezier(0.22, 1, 0.36, 1)",
                     }}
                   >
                     <div>
@@ -1476,9 +1459,8 @@ export default function MyRecordsPage() {
 
                     {!expanded && (
                       <div
+                        className="trend-sparkline-col"
                         style={{
-                          width: "100%",
-                          height: 150,
                           justifySelf: "stretch",
                           opacity: expanded ? 0 : 1,
                           transform: expanded ? "scale(0.96) translateY(6px)" : "scale(1) translateY(0)",

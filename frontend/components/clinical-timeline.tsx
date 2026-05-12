@@ -195,6 +195,7 @@ function TimelineButton({
           />
 
           <div
+            className="timeline-item-title"
             style={{
               fontWeight: 950,
               fontSize: compact ? 13 : 15,
@@ -225,7 +226,7 @@ function TimelineButton({
         </div>
 
         <div
-          className="muted-text"
+          className="muted-text timeline-item-subtitle"
           style={{
             marginTop: compact ? 5 : 7,
             lineHeight: 1.45,
