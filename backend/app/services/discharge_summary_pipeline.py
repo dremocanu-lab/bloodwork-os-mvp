@@ -269,7 +269,7 @@ def _render_image_as_single_page(path: Path) -> list[dict[str, Any]]:
             "width": 0,
             "height": 0,
             "image_url": f"data:image/{mime};base64,{encoded}",
-            "native_text": "",  # No text layer for image files — vision-only path
+            "native_text": "",
         }
     ]
 
@@ -278,6 +278,42 @@ def _render_pages_from_file(path: Path) -> list[dict[str, Any]]:
     if path.suffix.lower() in _IMAGE_EXTENSIONS:
         return _render_image_as_single_page(path)
     return _render_pdf_pages_as_data_urls(path)
+
+
+def _try_document_ai_ocr_per_page(path: Path) -> dict[int, str]:
+    """
+    Runs Google Document AI on the whole file and returns per-page OCR text.
+    Keys are 0-based page indices. Returns empty dict if not configured or fails.
+    Used when the PDF has no native text layer (scanned) or the upload is an image.
+    """
+    try:
+        from app.services.google_document_ai_service import (
+            is_google_document_ai_configured,
+            process_with_google_document_ai,
+        )
+
+        if not is_google_document_ai_configured():
+            return {}
+
+        result = process_with_google_document_ai(path, path.name)
+        lines = result.get("lines") or []
+
+        pages_text: dict[int, list[str]] = {}
+
+        for line in sorted(
+            lines,
+            key=lambda ln: (int(ln.get("page", 0)), float(ln.get("top", 0)), float(ln.get("left", 0))),
+        ):
+            page_idx = int(line.get("page", 0))
+            text = (line.get("text") or "").strip()
+
+            if text:
+                pages_text.setdefault(page_idx, []).append(text)
+
+        return {idx: "\n".join(lines) for idx, lines in pages_text.items()}
+
+    except Exception:
+        return {}
 
 
 def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any]:
@@ -707,6 +743,23 @@ def process_uploaded_discharge_summary(
 
     if not rendered_pages:
         raise RuntimeError("No pages could be rendered for discharge extraction.")
+
+    # Enrich pages that have no native text layer with Google Document AI OCR.
+    # Digital PDFs (Hipocrate etc.) already have native_text so this is skipped.
+    # For scanned PDFs and image uploads, Document AI gives character-accurate OCR
+    # which we then pass to OpenAI as ground truth instead of relying on vision alone.
+    pages_needing_ocr = [p for p in rendered_pages if len(p.get("native_text") or "") <= 80]
+
+    if pages_needing_ocr:
+        doc_ai_text = _try_document_ai_ocr_per_page(path)
+
+        if doc_ai_text:
+            for page in pages_needing_ocr:
+                page_idx = page["page_number"] - 1
+                ocr_text = doc_ai_text.get(page_idx, "")
+
+                if len(ocr_text) > 80:
+                    page["native_text"] = ocr_text
 
     page_payloads: list[dict[str, Any]] = []
 
