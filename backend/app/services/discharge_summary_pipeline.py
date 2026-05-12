@@ -97,11 +97,18 @@ SECTION ASSIGNMENT RULES:
 METADATA FIELDS (extract from the document — null if not visible):
 - patient_name: full name
 - cnp: 13-digit Romanian CNP
-- date_of_birth: date of birth
+- date_of_birth: date of birth in YYYY-MM-DD format
 - sex: M/F or masculin/feminin
-- admission_date: data internarii
-- discharge_date: data externarii
+- admission_date: data internarii — output as YYYY-MM-DD
+- discharge_date: data externarii — output as YYYY-MM-DD
 - hospital_name: full hospital name
+
+DATE FORMAT RULES — CRITICAL:
+- Romanian documents use DD/MM/YYYY (day first, then month, then year).
+- "06/03/2026" means 6 March 2026, NOT 3 June 2026.
+- "02/03/2026" means 2 March 2026.
+- Always output dates as YYYY-MM-DD (ISO 8601). Example: "06/03/2026" → "2026-03-06".
+- NEVER swap day and month. NEVER output MM/DD/YYYY.
 
 Return ONLY valid JSON. No markdown. No explanations before or after. Start with { and end with }.
 
@@ -370,6 +377,31 @@ def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any
     parsed["page_number"] = int(parsed.get("page_number") or page_number)
 
     return parsed
+
+
+def _normalize_date(value: Any) -> str | None:
+    """
+    Normalise a date string to YYYY-MM-DD, assuming European DD/MM/YYYY input.
+    Handles DD/MM/YYYY, DD.MM.YYYY, DD-MM-YYYY, and already-correct YYYY-MM-DD.
+    Returns None if the value is empty or unparseable.
+    """
+    if not value:
+        return None
+
+    text = str(value).strip()
+
+    # Already ISO: YYYY-MM-DD or YYYY-MM-DD ...
+    iso_match = re.match(r"^(\d{4})-(\d{2})-(\d{2})", text)
+    if iso_match:
+        return f"{iso_match.group(1)}-{iso_match.group(2)}-{iso_match.group(3)}"
+
+    # European: DD/MM/YYYY or DD.MM.YYYY or DD-MM-YYYY (optionally followed by time)
+    eu_match = re.match(r"^(\d{1,2})[./\-](\d{1,2})[./\-](\d{4})", text)
+    if eu_match:
+        day, month, year = eu_match.group(1), eu_match.group(2), eu_match.group(3)
+        return f"{year}-{month.zfill(2)}-{day.zfill(2)}"
+
+    return text  # Return as-is if we can't parse it
 
 
 def _clean_text(value: Any) -> str:
@@ -712,8 +744,8 @@ def _normalize_payload(page_payloads: list[dict[str, Any]], actual_page_count: i
         "cnp": _first_non_empty(page_payloads, "cnp"),
         "date_of_birth": _first_non_empty(page_payloads, "date_of_birth"),
         "sex": _first_non_empty(page_payloads, "sex"),
-        "admission_date": _first_non_empty(page_payloads, "admission_date"),
-        "discharge_date": _first_non_empty(page_payloads, "discharge_date"),
+        "admission_date": _normalize_date(_first_non_empty(page_payloads, "admission_date")),
+        "discharge_date": _normalize_date(_first_non_empty(page_payloads, "discharge_date")),
         "hospital_name": _first_non_empty(page_payloads, "hospital_name"),
         "page_count": actual_page_count,
         "page_payloads": page_payloads,
