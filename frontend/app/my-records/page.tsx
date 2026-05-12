@@ -1292,7 +1292,7 @@ export default function MyRecordsPage() {
 
         <div style={{ display: "grid", gap: 14 }}>
           {visibleDocsForSection.map((doc) => (
-            <div key={doc.id} className="soft-card-tight" style={{ padding: 18 }}>
+            <div key={doc.id} className="soft-card-tight interactive-card" style={{ padding: 18 }}>
               <div className="doc-card-grid">
                 <div>
                   <div style={{ fontWeight: 800, fontSize: 18 }}>
@@ -1393,7 +1393,7 @@ export default function MyRecordsPage() {
               return (
                 <div
                   key={trend.test_key}
-                  className="soft-card-tight"
+                  className="soft-card-tight interactive-card"
                   style={{
                     padding: 18,
                     overflow: "hidden",
@@ -1482,14 +1482,11 @@ export default function MyRecordsPage() {
                   </div>
 
                   <div
+                    className="trend-expand-body"
                     style={{
-                      display: "grid",
                       gridTemplateRows: expanded ? "1fr" : "0fr",
                       opacity: expanded ? 1 : 0,
                       transform: expanded ? "scale(1) translateY(0)" : "scale(0.985) translateY(-10px)",
-                      transformOrigin: "top center",
-                      transition:
-                        "grid-template-rows 380ms cubic-bezier(0.22, 1, 0.36, 1), opacity 260ms ease, transform 380ms cubic-bezier(0.22, 1, 0.36, 1)",
                     }}
                   >
                     <div style={{ overflow: "hidden" }}>
