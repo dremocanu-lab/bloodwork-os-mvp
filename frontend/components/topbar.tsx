@@ -1,4 +1,8 @@
-﻿type TopbarUser = {
+"use client";
+
+import { useLanguage } from "@/lib/i18n";
+
+type TopbarUser = {
   full_name: string;
   role: "patient" | "doctor" | "admin";
 };
@@ -14,6 +18,8 @@ export default function Topbar({
   user: TopbarUser;
   rightContent?: React.ReactNode;
 }) {
+  const { t } = useLanguage();
+
   return (
     <div
       style={{
@@ -36,7 +42,7 @@ export default function Topbar({
             fontSize: 14,
           }}
         >
-          Search patients, documents, or workflow items
+          {t("topbarSearch")}
         </div>
 
         <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.1 }}>{title}</div>

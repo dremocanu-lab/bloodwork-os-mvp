@@ -1,10 +1,11 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -229,14 +230,14 @@ function normalizeProfile(profile: PatientProfileResponse): PatientProfileRespon
   };
 }
 
-function sectionLabel(section: string) {
-  if (section === "bloodwork") return "Bloodwork";
-  if (section === "discharge_summary") return "Discharge summary";
-  if (section === "medications") return "Medications";
-  if (section === "scans") return "Scans";
-  if (section === "hospitalizations") return "Hospitalization";
-  if (section === "notes") return "Clinical notes";
-  return "Other";
+function sectionLabel(section: string, t: (key: string) => string) {
+  if (section === "bloodwork") return t("bloodwork");
+  if (section === "discharge_summary") return t("dischargeSummaryLabel");
+  if (section === "medications") return t("medications");
+  if (section === "scans") return t("scans");
+  if (section === "hospitalizations") return t("hospitalization");
+  if (section === "notes") return t("clinicalNotesLabel");
+  return t("other");
 }
 
 function getSectionDocuments(profile: PatientProfileResponse | null, section: (typeof SECTION_ORDER)[number]) {
@@ -256,28 +257,28 @@ function getDocumentClinicalDate(doc: DocumentCard) {
   );
 }
 
-function getDocumentDateLabel(doc: DocumentCard) {
-  if (doc.collected_on) return `Collected ${doc.collected_on}`;
-  if (doc.test_date) return `Test date ${doc.test_date}`;
-  if (doc.reported_on) return `Reported ${doc.reported_on}`;
-  if (doc.registered_on) return `Registered ${doc.registered_on}`;
-  if (doc.generated_on) return `Generated ${doc.generated_on}`;
-  if (doc.created_at) return `Uploaded ${doc.created_at}`;
-  return "No date";
+function getDocumentDateLabel(doc: DocumentCard, t: (key: string) => string) {
+  if (doc.collected_on) return `${t("collectedDate")} ${doc.collected_on}`;
+  if (doc.test_date) return `${t("testDateLabel")} ${doc.test_date}`;
+  if (doc.reported_on) return `${t("reportedDate")} ${doc.reported_on}`;
+  if (doc.registered_on) return `${t("registeredDate")} ${doc.registered_on}`;
+  if (doc.generated_on) return `${t("generatedDate")} ${doc.generated_on}`;
+  if (doc.created_at) return `${t("uploadedDate")} ${doc.created_at}`;
+  return t("noDate");
 }
 
 function getDocumentTitle(doc: DocumentCard) {
   return doc.report_name || doc.filename || `Document ${doc.id}`;
 }
 
-function getUploaderText(doc: DocumentCard) {
-  if (!doc.uploaded_by) return "Uploaded by unknown user";
+function getUploaderText(doc: DocumentCard, t: (key: string) => string) {
+  if (!doc.uploaded_by) return t("uploadedByUnknown");
 
   const details = [doc.uploaded_by.full_name, doc.uploaded_by.department, doc.uploaded_by.hospital_name].filter(
     Boolean
   );
 
-  return `Uploaded by ${details.join(" · ")}`;
+  return `${t("uploadedBy")} ${details.join(" · ")}`;
 }
 
 function isDischargeDocument(doc: DocumentCard) {
@@ -300,7 +301,11 @@ function isInsideDateRange(date?: string | null, start?: string | null, end?: st
   return dateTime >= startTime && dateTime <= endTime;
 }
 
-function buildTimelineItems(documents: DocumentCard[], events: PatientEvent[]): TimelineItem[] {
+function buildTimelineItems(
+  documents: DocumentCard[],
+  events: PatientEvent[],
+  t: (key: string) => string
+): TimelineItem[] {
   const sortedDocuments = [...documents].sort((a, b) =>
     compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
   );
@@ -314,10 +319,10 @@ function buildTimelineItems(documents: DocumentCard[], events: PatientEvent[]): 
       type: "document",
       date: doc.reported_on || doc.collected_on || getDocumentClinicalDate(doc),
       title: getDocumentTitle(doc),
-      subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${
-        doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""
-      } · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
-        doc.is_verified ? "Verified" : "Unverified"
+      subtitle: `${doc.collected_on ? `${t("admittedCapital")} ${doc.collected_on}` : t("admissionDateUnknown")}${
+        doc.reported_on ? ` · ${t("discharged")} ${doc.reported_on}` : ""
+      } · ${sectionLabel(doc.section, t)} · ${getUploaderText(doc, t)} · ${
+        t(doc.is_verified ? "verified" : "unverified")
       }`,
       documentId: doc.id,
       section: doc.section,
@@ -331,8 +336,8 @@ function buildTimelineItems(documents: DocumentCard[], events: PatientEvent[]): 
     id: `event-${event.id}`,
     type: "event",
     date: event.discharged_at || event.admitted_at || "",
-    title: event.title || "Hospitalization",
-    subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} · Doctor ${valueOrDash(
+    title: event.title || t("hospitalization"),
+    subtitle: `${event.status === "active" ? t("activeAdmission") : t("discharged")} · ${t("doctor")} ${valueOrDash(
       event.doctor_name
     )} · ${valueOrDash(event.department)} · ${valueOrDash(event.hospital_name)}`,
     eventId: event.id,
@@ -356,8 +361,8 @@ function buildTimelineItems(documents: DocumentCard[], events: PatientEvent[]): 
     type: "document",
     date: getDocumentClinicalDate(doc),
     title: getDocumentTitle(doc),
-    subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
-      doc.is_verified ? "Verified" : "Unverified"
+    subtitle: `${getDocumentDateLabel(doc, t)} · ${sectionLabel(doc.section, t)} · ${getUploaderText(doc, t)} · ${
+      t(doc.is_verified ? "verified" : "unverified")
     }`,
     documentId: doc.id,
     section: doc.section,
@@ -403,6 +408,7 @@ export default function PatientTimelinePage() {
   const params = useParams();
   const router = useRouter();
   const patientId = params?.id as string;
+  const { t, language } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<PatientProfileResponse | null>(null);
@@ -430,7 +436,7 @@ export default function PatientTimelinePage() {
         setError("");
         await fetchData();
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load patient timeline."));
+        setError(getErrorMessage(err, t("couldNotLoadPatientTimeline")));
       } finally {
         setLoading(false);
       }
@@ -458,8 +464,9 @@ export default function PatientTimelinePage() {
   const timelineItems = useMemo(() => {
     if (!profile) return [];
 
-    return buildTimelineItems(allDocuments, profile.events || []);
-  }, [profile, allDocuments]);
+    return buildTimelineItems(allDocuments, profile.events || [], t);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [profile, allDocuments, language]);
 
   const stats = useMemo(() => {
     if (!profile) {
@@ -505,7 +512,7 @@ export default function PatientTimelinePage() {
       >
         <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
           <Spinner size={20} />
-          <span className="muted-text">Loading patient timeline...</span>
+          <span className="muted-text">{t("loadingPatientTimeline")}</span>
         </div>
       </main>
     );
@@ -517,13 +524,13 @@ export default function PatientTimelinePage() {
   return (
     <AppShell
       user={currentUser}
-      title={`${profile.patient.full_name} timeline`}
+      title={`${profile.patient.full_name} ${t("timeline")}`}
       subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · DOB ${valueOrDash(
         profile.patient.date_of_birth
       )} · Age ${calculatedAge} · Sex ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.push(backPath)}>
-          Back to chart
+          {t("backToChart")}
         </button>
       }
     >
@@ -551,44 +558,43 @@ export default function PatientTimelinePage() {
         }}
       >
         <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">Total records</div>
+          <div className="stat-card-label">{t("totalRecords")}</div>
           <div className="stat-card-value">{stats.total}</div>
         </div>
 
         <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">Discharges</div>
+          <div className="stat-card-label">{t("discharges")}</div>
           <div className="stat-card-value">{stats.dischargeSummaries}</div>
         </div>
 
         <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">Bloodwork</div>
+          <div className="stat-card-label">{t("bloodwork")}</div>
           <div className="stat-card-value">{stats.bloodwork}</div>
         </div>
 
         <div className="stat-card stat-card-accent-green">
-          <div className="stat-card-label">Scans</div>
+          <div className="stat-card-label">{t("scans")}</div>
           <div className="stat-card-value">{stats.scans}</div>
         </div>
 
         <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">Care events</div>
+          <div className="stat-card-label">{t("careEvents")}</div>
           <div className="stat-card-value">{stats.events}</div>
         </div>
       </div>
 
       <div className="soft-card" style={{ padding: 24 }}>
         <div style={{ marginBottom: 18 }}>
-          <div className="section-title">Clinical timeline</div>
+          <div className="section-title">{t("clinicalTimeline")}</div>
           <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-            Discharge summaries create admission episodes. Bloodwork, scans, medications, notes, and other records are
-            grouped underneath when their clinical date falls inside the admission period.
+            {t("clinicalTimelineDesc")}
           </div>
         </div>
 
         <ClinicalTimeline
           items={timelineItems}
           onOpenDocument={openTimelineDocument}
-          emptyText="No timeline activity yet."
+          emptyText={t("noTimelineActivity")}
         />
       </div>
     </AppShell>

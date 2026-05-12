@@ -1,34 +1,14 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
 import ThemeToggle from "@/components/theme-toggle";
+import { useLanguage } from "@/lib/i18n";
 import { api, getErrorMessage } from "@/lib/api";
 
 type Role = "doctor" | "patient" | "admin";
 type Mode = "login" | "signup";
-
-const copy = {
-  doctor: {
-    loginTitle: "Doctor Login",
-    signupTitle: "Doctor Signup",
-    badge: "Clinical Workspace",
-    text: "Review charts, structured bloodwork, notes, uploads, and patient timelines.",
-  },
-  patient: {
-    loginTitle: "Patient Login",
-    signupTitle: "Patient Signup",
-    badge: "Personal Records",
-    text: "Access records, uploads, doctor notes, approvals, and shared updates securely.",
-  },
-  admin: {
-    loginTitle: "Admin Login",
-    signupTitle: "Admin Signup",
-    badge: "Operations Control",
-    text: "Manage assignments, permissions, user roles, and access oversight.",
-  },
-};
 
 function destination(role: Role) {
   if (role === "patient") return "/my-records";
@@ -38,7 +18,30 @@ function destination(role: Role) {
 
 export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode }) {
   const router = useRouter();
-  const meta = copy[role];
+  const { t } = useLanguage();
+
+  const roleMeta = {
+    doctor: {
+      loginTitle: t("doctorLogin"),
+      signupTitle: t("doctorSignup"),
+      badge: t("clinicalWorkspace"),
+      text: t("doctorLoginDesc"),
+    },
+    patient: {
+      loginTitle: t("patientLogin"),
+      signupTitle: t("patientSignup"),
+      badge: t("personalRecords"),
+      text: t("patientLoginDesc"),
+    },
+    admin: {
+      loginTitle: t("adminLogin"),
+      signupTitle: t("adminSignup"),
+      badge: t("operationsControl"),
+      text: t("adminLoginDesc"),
+    },
+  };
+
+  const meta = roleMeta[role];
 
   const [fullName, setFullName] = useState("");
   const [email, setEmail] = useState("");
@@ -65,14 +68,11 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
       setError("");
 
       if (mode === "login") {
-        const response = await api.post("/auth/login", {
-          email,
-          password,
-        });
+        const response = await api.post("/auth/login", { email, password });
 
         if (response.data?.user?.role !== role) {
           throw new Error(
-            `This account belongs to the ${response.data?.user?.role ?? "wrong"} portal.`
+            `${t("wrongPortalPrefix")} ${response.data?.user?.role ?? "wrong"} ${t("wrongPortalSuffix")}`
           );
         }
 
@@ -107,7 +107,7 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
       localStorage.setItem("user", JSON.stringify(response.data.user));
       router.push(destination(role));
     } catch (err) {
-      setError(getErrorMessage(err, `${title} failed.`));
+      setError(getErrorMessage(err, `${title} ${t("signupFailed")}`));
     } finally {
       setLoading(false);
     }
@@ -119,11 +119,11 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
         <div className="portal-topbar">
           <Link href="/" className="portal-brand-pill">
             <span className="portal-brand-dot" />
-            <span>Bloodwork OS</span>
+            <span>{t("brand")}</span>
           </Link>
 
           <Link href="/about" className="portal-top-link">
-            About Us
+            {t("aboutUs")}
           </Link>
         </div>
 
@@ -134,7 +134,7 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
             <h1 className="portal-hero-title auth-copy-title">
               {title}
               <br />
-              made clear.
+              {t("madeClear")}
             </h1>
 
             <p className="portal-hero-subtitle">{meta.text}</p>
@@ -154,19 +154,19 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
             <form onSubmit={submit} className="auth-form">
               {mode === "signup" && (
                 <label className="auth-label">
-                  <span>Full Name</span>
+                  <span>{t("fullName")}</span>
                   <input
                     className="auth-input"
                     value={fullName}
                     onChange={(e) => setFullName(e.target.value)}
-                    placeholder="Full name"
+                    placeholder={t("fullNamePlaceholder")}
                     required
                   />
                 </label>
               )}
 
               <label className="auth-label">
-                <span>Email</span>
+                <span>{t("email")}</span>
                 <input
                   className="auth-input"
                   type="email"
@@ -180,7 +180,7 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
               {mode === "signup" && (role === "doctor" || role === "admin") && (
                 <>
                   <label className="auth-label">
-                    <span>Department</span>
+                    <span>{t("department")}</span>
                     <input
                       className="auth-input"
                       value={department}
@@ -191,7 +191,7 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
                   </label>
 
                   <label className="auth-label">
-                    <span>Hospital</span>
+                    <span>{t("hospital")}</span>
                     <input
                       className="auth-input"
                       value={hospitalName}
@@ -206,7 +206,7 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
               {mode === "signup" && role === "patient" && (
                 <>
                   <label className="auth-label">
-                    <span>Date of Birth</span>
+                    <span>{t("dateOfBirth")}</span>
                     <input
                       className="auth-input"
                       type="date"
@@ -216,45 +216,45 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
                   </label>
 
                   <label className="auth-label">
-                    <span>Sex</span>
+                    <span>{t("sex")}</span>
                     <input
                       className="auth-input"
                       value={sex}
                       onChange={(e) => setSex(e.target.value)}
-                      placeholder="Male / Female"
+                      placeholder={t("maleFemalePlaceholder")}
                     />
                   </label>
 
                   <label className="auth-label">
-                    <span>CNP</span>
+                    <span>{t("cnp")}</span>
                     <input
                       className="auth-input"
                       value={cnp}
                       onChange={(e) => setCnp(e.target.value)}
-                      placeholder="Optional"
+                      placeholder={t("optional")}
                     />
                   </label>
 
                   <label className="auth-label">
-                    <span>Patient ID</span>
+                    <span>{t("patientId")}</span>
                     <input
                       className="auth-input"
                       value={patientIdentifier}
                       onChange={(e) => setPatientIdentifier(e.target.value)}
-                      placeholder="Optional"
+                      placeholder={t("optional")}
                     />
                   </label>
                 </>
               )}
 
               <label className="auth-label">
-                <span>Password</span>
+                <span>{t("password")}</span>
                 <input
                   className="auth-input"
                   type="password"
                   value={password}
                   onChange={(e) => setPassword(e.target.value)}
-                  placeholder={mode === "login" ? "Password" : "Create password"}
+                  placeholder={mode === "login" ? t("passwordPlaceholder") : t("createPassword")}
                   required
                 />
               </label>
@@ -266,28 +266,28 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
                 type="submit"
                 disabled={loading}
               >
-                {loading ? "Working..." : title}
+                {loading ? t("working") : title}
               </button>
             </form>
 
             <div className="auth-footer">
               {mode === "login" ? (
                 <>
-                  Need an account?{" "}
-                  <Link href={`/signup/${role}`}>Go to {role} signup</Link>
+                  {t("needAnAccount")}{" "}
+                  <Link href={`/signup/${role}`}>{t("goToSignupPrefix")} {role} {t("goToSignupSuffix")}</Link>
                 </>
               ) : (
                 <>
-                  Already have an account?{" "}
-                  <Link href={`/login/${role}`}>Go to {role} login</Link>
+                  {t("alreadyHaveAccount")}{" "}
+                  <Link href={`/login/${role}`}>{t("goToLoginPrefix")} {role} {t("goToLoginSuffix")}</Link>
                 </>
               )}
             </div>
 
             <div className="auth-footer">
-              Need another role?{" "}
+              {t("needAnotherRole")}{" "}
               <Link href={mode === "login" ? "/login" : "/signup"}>
-                Choose a different portal
+                {t("chooseDifferentPortal")}
               </Link>
             </div>
           </section>

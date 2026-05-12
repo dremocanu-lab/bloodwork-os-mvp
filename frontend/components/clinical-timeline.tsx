@@ -1,4 +1,6 @@
-﻿"use client";
+"use client";
+
+import { useLanguage } from "@/lib/i18n";
 
 type TimelineItem = {
   id: string;
@@ -48,20 +50,6 @@ function parseDateTime(value?: string | null) {
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function formatDate(value?: string | null) {
-  if (!value) return "No date";
-
-  const time = parseDateTime(value);
-
-  if (!time) return value;
-
-  return new Date(time).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
-}
-
 function formatShortDate(value?: string | null) {
   if (!value) return "—";
 
@@ -75,23 +63,23 @@ function formatShortDate(value?: string | null) {
   });
 }
 
-function getYear(value?: string | null) {
+function getYear(value?: string | null, noDateText = "No date") {
   const time = parseDateTime(value);
 
-  if (!time) return "No date";
+  if (!time) return noDateText;
 
   return String(new Date(time).getFullYear());
 }
 
-function getTypeLabel(item: TimelineItem) {
-  if (item.section === "bloodwork") return "Bloodwork";
-  if (item.section === "discharge_summary") return "Discharge";
-  if (item.section === "scans") return "Scan";
-  if (item.section === "medications") return "Medication";
-  if (item.section === "hospitalizations") return "Hospital";
-  if (item.section === "notes") return "Note";
-  if (item.type === "event") return "Care event";
-  return "Record";
+function getTypeLabel(item: TimelineItem, t: (key: string) => string) {
+  if (item.section === "bloodwork") return t("bloodwork");
+  if (item.section === "discharge_summary") return t("dischargeSummaryLabel");
+  if (item.section === "scans") return t("scan");
+  if (item.section === "medications") return t("medication");
+  if (item.section === "hospitalizations") return t("hospitalEvent");
+  if (item.section === "notes") return t("note");
+  if (item.type === "event") return t("careEvent");
+  return t("record");
 }
 
 function getItemTone(item: TimelineItem) {
@@ -155,6 +143,7 @@ function TimelineButton({
   onOpenDocument?: (documentId: number) => void;
   onOpenEvent?: (eventId: number) => void;
 }) {
+  const { t } = useLanguage();
   const tone = getItemTone(item);
   const canOpen = Boolean(
     (item.documentId && onOpenDocument) || (item.eventId && onOpenEvent)
@@ -231,7 +220,7 @@ function TimelineButton({
               lineHeight: 1,
             }}
           >
-            {getTypeLabel(item)}
+            {getTypeLabel(item, t)}
           </span>
         </div>
 
@@ -260,7 +249,7 @@ function TimelineButton({
             whiteSpace: "nowrap",
           }}
         >
-          Open
+          {t("open")}
         </button>
       )}
     </div>
@@ -276,6 +265,7 @@ function AdmissionGroup({
   onOpenDocument?: (documentId: number) => void;
   onOpenEvent?: (eventId: number) => void;
 }) {
+  const { t } = useLanguage();
   const children = item.children || [];
   const tone = getItemTone(item);
 
@@ -303,7 +293,7 @@ function AdmissionGroup({
             letterSpacing: "-0.045em",
           }}
         >
-          {getYear(item.date)}
+          {getYear(item.date, t("noDate"))}
         </div>
         <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
           {formatShortDate(item.date)}
@@ -367,7 +357,7 @@ function AdmissionGroup({
                   marginBottom: 10,
                 }}
               >
-                Records during this admission
+                {t("recordsDuringAdmission")}
               </div>
 
               <div style={{ display: "grid", gap: 9 }}>
@@ -393,7 +383,7 @@ function AdmissionGroup({
                 lineHeight: 1.5,
               }}
             >
-              No linked records were found inside this admission period.
+              {t("noLinkedRecordsInAdmission")}
             </div>
           )}
         </div>
@@ -411,6 +401,7 @@ function RegularTimelineItem({
   onOpenDocument?: (documentId: number) => void;
   onOpenEvent?: (eventId: number) => void;
 }) {
+  const { t } = useLanguage();
   const tone = getItemTone(item);
 
   return (
@@ -430,7 +421,7 @@ function RegularTimelineItem({
             letterSpacing: "-0.045em",
           }}
         >
-          {getYear(item.date)}
+          {getYear(item.date, t("noDate"))}
         </div>
         <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
           {formatShortDate(item.date)}
@@ -476,10 +467,12 @@ export default function ClinicalTimeline({
   onOpenEvent,
   onSeeFullTimeline,
   showSeeFullTimeline,
-  emptyText = "No timeline activity yet.",
+  emptyText,
 }: ClinicalTimelineProps) {
+  const { t } = useLanguage();
   const visibleItems = typeof maxItems === "number" ? items.slice(0, maxItems) : items;
   const hiddenCount = Math.max(items.length - visibleItems.length, 0);
+  const empty = emptyText ?? t("noTimelineActivity");
 
   if (!items.length) {
     return (
@@ -490,7 +483,7 @@ export default function ClinicalTimeline({
           background: "var(--panel-2)",
         }}
       >
-        <div className="muted-text">{emptyText}</div>
+        <div className="muted-text">{empty}</div>
       </div>
     );
   }
@@ -541,7 +534,9 @@ export default function ClinicalTimeline({
               fontWeight: 950,
             }}
           >
-            {hiddenCount > 0 ? `See full timeline (${hiddenCount} more)` : "See full timeline"}
+            {hiddenCount > 0
+              ? `${t("seeFullTimeline")} (${hiddenCount} ${t("moreLabel")})`
+              : t("seeFullTimeline")}
           </button>
         </div>
       )}

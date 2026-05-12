@@ -1,9 +1,10 @@
-﻿"use client";
+"use client";
 
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -436,6 +437,7 @@ export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
   const documentId = params?.id as string;
+  const { t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
@@ -515,33 +517,33 @@ export default function DocumentStructuredPage() {
     setNoteBody(parsed.note_body || "");
   }
 
-async function fetchData() {
-  if (!documentId) {
-    throw new Error("Missing document id.");
+  async function fetchData() {
+    if (!documentId) {
+      throw new Error("Missing document id.");
+    }
+
+    const meResponse = await api.get<CurrentUser>("/auth/me");
+    setCurrentUser(meResponse.data);
+
+    const documentResponse = await api.get<DocumentResponse>(`/documents/${documentId}`);
+
+    if (!documentResponse.data?.parsed_data) {
+      throw new Error("Document loaded, but parsed_data is missing.");
+    }
+
+    const isDischargeSummary =
+      documentResponse.data.section === "discharge_summary" ||
+      documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
+      documentResponse.data.parsed_data?.report_type === "discharge_summary";
+
+    if (isDischargeSummary) {
+      router.replace(`/documents/${documentId}/discharge`);
+      return;
+    }
+
+    setDocumentData(documentResponse.data);
+    hydrateForm(documentResponse.data);
   }
-
-  const meResponse = await api.get<CurrentUser>("/auth/me");
-  setCurrentUser(meResponse.data);
-
-  const documentResponse = await api.get<DocumentResponse>(`/documents/${documentId}`);
-
-  if (!documentResponse.data?.parsed_data) {
-    throw new Error("Document loaded, but parsed_data is missing.");
-  }
-
-  const isDischargeSummary =
-    documentResponse.data.section === "discharge_summary" ||
-    documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
-    documentResponse.data.parsed_data?.report_type === "discharge_summary";
-
-  if (isDischargeSummary) {
-    router.replace(`/documents/${documentId}/discharge`);
-    return;
-  }
-
-  setDocumentData(documentResponse.data);
-  hydrateForm(documentResponse.data);
-}
 
   useEffect(() => {
     async function init() {
@@ -550,7 +552,7 @@ async function fetchData() {
         setError("");
         await fetchData();
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load document."));
+        setError(getErrorMessage(err, t("couldNotLoadDocument")));
       } finally {
         setLoading(false);
       }
@@ -759,7 +761,7 @@ async function fetchData() {
     if (!documentData) return;
 
     if (!noteBody.trim()) {
-      setError("Note body is required.");
+      setError(t("noteBodyRequired"));
       return;
     }
 
@@ -782,77 +784,76 @@ async function fetchData() {
     }
   }
 
-if (loading) {
-  return (
-    <main
-      className="app-page-bg"
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
-        <Spinner size={20} />
-        <span className="muted-text">Loading structured document...</span>
-      </div>
-    </main>
-  );
-}
-
-if (!currentUser || !documentData || !parsed) {
-  return (
-    <main
-      className="app-page-bg"
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
-        <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
-          Could not load document
+  if (loading) {
+    return (
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
+          <Spinner size={20} />
+          <span className="muted-text">{t("loadingStructuredDocument")}</span>
         </div>
+      </main>
+    );
+  }
 
-        <div className="muted-text" style={{ lineHeight: 1.6 }}>
-          The page loaded, but the document data did not come back in the expected format.
-        </div>
-
-        {error ? (
-          <div
-            style={{
-              marginTop: 14,
-              padding: 14,
-              borderRadius: 16,
-              background: "var(--danger-bg)",
-              color: "var(--danger-text)",
-              border: "1px solid var(--danger-border)",
-              fontWeight: 800,
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {error}
+  if (!currentUser || !documentData || !parsed) {
+    return (
+      <main
+        className="app-page-bg"
+        style={{
+          minHeight: "100vh",
+          padding: 24,
+          display: "grid",
+          placeItems: "center",
+        }}
+      >
+        <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
+          <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
+            {t("couldNotLoadDocument")}
           </div>
-        ) : null}
 
-        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-          <button className="secondary-btn" onClick={() => router.push("/my-records")}>
-            Back to my records
-          </button>
+          <div className="muted-text" style={{ lineHeight: 1.6 }}>
+            {t("documentLoadedBadFormat")}
+          </div>
 
-          <button className="secondary-btn" onClick={() => window.location.reload()}>
-            Try again
-          </button>
+          {error ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 16,
+                background: "var(--danger-bg)",
+                color: "var(--danger-text)",
+                border: "1px solid var(--danger-border)",
+                fontWeight: 800,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+
+          <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+            <button className="secondary-btn" onClick={() => router.push("/my-records")}>
+              {t("backToMyRecords")}
+            </button>
+
+            <button className="secondary-btn" onClick={() => window.location.reload()}>
+              {t("tryAgain")}
+            </button>
+          </div>
         </div>
-      </div>
-    </main>
-  );
-}
-
+      </main>
+    );
+  }
 
   return (
     <AppShell
@@ -860,10 +861,10 @@ if (!currentUser || !documentData || !parsed) {
       title={parsed.report_name || documentData.filename || "Document"}
       subtitle={`${valueOrDash(parsed.patient_name)} · CNP ${valueOrDash(parsed.cnp)} · ${valueOrDash(
         parsed.report_type
-      )} · ${parsed.is_verified ? "Verified" : "Unverified"}`}
+      )} · ${t(parsed.is_verified ? "verified" : "unverified")}`}
       rightContent={
         <button className="secondary-btn" onClick={() => router.back()}>
-          Back
+          {t("back")}
         </button>
       }
     >
@@ -979,23 +980,22 @@ if (!currentUser || !documentData || !parsed) {
               boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
             }}
           >
-            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>Delete this report?</div>
+            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>{t("deleteThisReport")}</div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
-              This removes the report from the patient files and timeline. This can only be done by the uploader or an
-              admin.
+              {t("deleteReportDesc")}
             </div>
 
             <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
               <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 5 }}>
-                Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
+                {t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)}
               </div>
             </div>
 
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
               <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 onClick={deleteDocument}
@@ -1010,7 +1010,7 @@ if (!currentUser || !documentData || !parsed) {
                   cursor: deleting ? "not-allowed" : "pointer",
                 }}
               >
-                {deleting ? "Deleting..." : "Delete report"}
+                {deleting ? t("deleting") : t("deleteReport")}
               </button>
             </div>
           </div>
@@ -1029,48 +1029,48 @@ if (!currentUser || !documentData || !parsed) {
           <div>
             <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
               <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
-                {parsed.is_verified ? "Verified" : "Unverified"}
+                {t(parsed.is_verified ? "verified" : "unverified")}
               </StatusPill>
 
               <StatusPill>{documentData.section}</StatusPill>
 
               {!isNote && !isDischargeSummary && abnormalLabs.length > 0 && (
-                <StatusPill tone="danger">{abnormalLabs.length} abnormal</StatusPill>
+                <StatusPill tone="danger">{abnormalLabs.length} {t("abnormalCountLabel")}</StatusPill>
               )}
 
-              {isNote && <StatusPill>Clinical note</StatusPill>}
+              {isNote && <StatusPill>{t("clinicalNote")}</StatusPill>}
 
-              {isDischargeSummary && <StatusPill>Discharge summary</StatusPill>}
+              {isDischargeSummary && <StatusPill>{t("dischargeSummaryLabel")}</StatusPill>}
             </div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
-              Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)} · Created {formatDate(parsed.created_at)}
-              {parsed.last_edited_at ? ` · Edited ${formatDate(parsed.last_edited_at)}` : ""}
+              {t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)} · {t("created")} {formatDate(parsed.created_at)}
+              {parsed.last_edited_at ? ` · ${t("lastEdited")} ${formatDate(parsed.last_edited_at)}` : ""}
             </div>
           </div>
 
           <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {!isNote && (
               <button className="secondary-btn" onClick={openOriginal} disabled={openingOriginal}>
-                {openingOriginal ? "Opening..." : "Open original"}
+                {openingOriginal ? t("opening") : t("openOriginal")}
               </button>
             )}
 
             {canVerify && !parsed.is_verified && (
               <button className="primary-btn" onClick={verifyDocument} disabled={verifying}>
-                {verifying ? "Verifying..." : "Verify"}
+                {verifying ? t("verifying") : t("verify")}
               </button>
             )}
 
             {!isNote && !isDischargeSummary && canEditStructured && (
               <button className={editMode ? "secondary-btn" : "primary-btn"} onClick={() => setEditMode((prev) => !prev)}>
-                {editMode ? "Cancel edit" : "Edit structured data"}
+                {editMode ? t("cancelEdit") : t("editStructuredData")}
               </button>
             )}
 
             {isNote && canEditNote && (
               <button className={noteEditMode ? "secondary-btn" : "primary-btn"} onClick={() => setNoteEditMode((prev) => !prev)}>
-                {noteEditMode ? "Cancel edit" : "Edit note"}
+                {noteEditMode ? t("cancelEdit") : t("editNote")}
               </button>
             )}
 
@@ -1087,7 +1087,7 @@ if (!currentUser || !documentData || !parsed) {
                   cursor: "pointer",
                 }}
               >
-                Delete
+                {t("delete")}
               </button>
             )}
           </div>
@@ -1098,7 +1098,7 @@ if (!currentUser || !documentData || !parsed) {
         <div className="soft-card" style={{ padding: 24 }}>
           {!noteEditMode ? (
             <>
-              <SectionHeader title={parsed.report_name || "Clinical Note"} />
+              <SectionHeader title={parsed.report_name || t("clinicalNote")} />
 
               <div
                 className="soft-card-tight"
@@ -1109,7 +1109,7 @@ if (!currentUser || !documentData || !parsed) {
                   whiteSpace: "pre-wrap",
                 }}
               >
-                {parsed.note_body || "No note body."}
+                {parsed.note_body || t("noNoteBody")}
               </div>
             </>
           ) : (
@@ -1118,7 +1118,7 @@ if (!currentUser || !documentData || !parsed) {
                 className="text-input"
                 value={noteTitle}
                 onChange={(event) => setNoteTitle(event.target.value)}
-                placeholder="Note title"
+                placeholder={t("noteTitle")}
                 disabled={savingNote}
               />
 
@@ -1127,17 +1127,17 @@ if (!currentUser || !documentData || !parsed) {
                 value={noteBody}
                 onChange={(event) => setNoteBody(event.target.value)}
                 rows={16}
-                placeholder="Write clinical note..."
+                placeholder={t("writeNote")}
                 disabled={savingNote}
                 style={{ resize: "vertical", lineHeight: 1.7 }}
               />
 
               <div style={{ display: "flex", justifyContent: "flex-end", gap: 10 }}>
                 <button type="button" className="secondary-btn" onClick={() => setNoteEditMode(false)} disabled={savingNote}>
-                  Cancel
+                  {t("cancel")}
                 </button>
                 <button type="submit" className="primary-btn" disabled={savingNote}>
-                  {savingNote ? "Saving..." : "Save note"}
+                  {savingNote ? t("saving") : t("saveNote")}
                 </button>
               </div>
             </form>
@@ -1153,46 +1153,46 @@ if (!currentUser || !documentData || !parsed) {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Patient" />
+              <SectionHeader title={t("patient")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Name" value={parsed.patient_name} />
-                <DetailField label="Date of birth" value={parsed.date_of_birth} />
-                <DetailField label="Age" value={parsed.age} />
-                <DetailField label="Sex" value={parsed.sex} />
-                <DetailField label="CNP" value={parsed.cnp} />
-                <DetailField label="Patient ID" value={parsed.patient_identifier} />
+                <DetailField label={t("name")} value={parsed.patient_name} />
+                <DetailField label={t("dateOfBirth")} value={parsed.date_of_birth} />
+                <DetailField label={t("age")} value={parsed.age} />
+                <DetailField label={t("sex")} value={parsed.sex} />
+                <DetailField label={t("cnp")} value={parsed.cnp} />
+                <DetailField label={t("patientId")} value={parsed.patient_identifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Document details" />
+              <SectionHeader title={t("documentDetails")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Report name" value={parsed.report_name} />
-                <DetailField label="Report type" value={parsed.report_type} />
-                <DetailField label="Hospital / lab" value={parsed.lab_name} />
-                <DetailField label="Referring doctor" value={parsed.referring_doctor} />
-                <DetailField label="Source language" value={parsed.source_language} />
+                <DetailField label={t("reportName")} value={parsed.report_name} />
+                <DetailField label={t("reportType")} value={parsed.report_type} />
+                <DetailField label={t("lab")} value={parsed.lab_name} />
+                <DetailField label={t("referringDoctor")} value={parsed.referring_doctor} />
+                <DetailField label={t("sourceLanguageLabel")} value={parsed.source_language} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Dates" />
+              <SectionHeader title={t("dates")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Collected / admission" value={parsed.collected_on} />
-                <DetailField label="Reported / discharge" value={parsed.reported_on} />
-                <DetailField label="Registered on" value={parsed.registered_on} />
-                <DetailField label="Generated on" value={parsed.generated_on} />
+                <DetailField label={t("collectedOn")} value={parsed.collected_on} />
+                <DetailField label={t("reportedOn")} value={parsed.reported_on} />
+                <DetailField label={t("registeredOn")} value={parsed.registered_on} />
+                <DetailField label={t("generatedOn")} value={parsed.generated_on} />
               </div>
             </div>
           </div>
 
           <div className="soft-card" style={{ padding: 22 }}>
             <SectionHeader
-              title="Structured discharge summary"
-              subtitle="Text copied verbatim from the original document and organized into broad clinical buckets."
+              title={t("structuredDischargeSummary")}
+              subtitle={t("structuredDischargeSummaryDesc")}
             />
 
             {dischargePayload?.sections?.length ? (
@@ -1219,12 +1219,12 @@ if (!currentUser || !documentData || !parsed) {
                     >
                       <div>
                         <div style={{ fontWeight: 950, fontSize: 17, letterSpacing: "-0.03em" }}>
-                          {section.title || "Clinical section"}
+                          {section.title || t("clinicalSection")}
                         </div>
 
                         {section.original_titles?.length ? (
                           <div className="muted-text" style={{ marginTop: 5, fontSize: 12, fontWeight: 800 }}>
-                            Original heading: {section.original_titles.join(" · ")}
+                            {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
                           </div>
                         ) : null}
                       </div>
@@ -1249,16 +1249,16 @@ if (!currentUser || !documentData || !parsed) {
               </div>
             ) : (
               <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 900 }}>No structured discharge sections found.</div>
+                <div style={{ fontWeight: 900 }}>{t("noStructuredDischargeSections")}</div>
                 <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                  Re-upload after the discharge summary parser is deployed, or open the original document.
+                  {t("noStructuredDischargeSectionsDesc")}
                 </div>
               </div>
             )}
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
-            <SectionHeader title="Audit trail" />
+            <SectionHeader title={t("auditTrail")} />
 
             <div style={{ display: "grid", gap: 12 }}>
               {(parsed.audit_logs || []).map((log, index) => (
@@ -1280,7 +1280,7 @@ if (!currentUser || !documentData || !parsed) {
 
               {!parsed.audit_logs?.length && (
                 <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                  <div className="muted-text">No audit activity yet.</div>
+                  <div className="muted-text">{t("noAuditActivity")}</div>
                 </div>
               )}
             </div>
@@ -1290,51 +1290,51 @@ if (!currentUser || !documentData || !parsed) {
         <form onSubmit={saveStructuredData} style={{ display: "grid", gap: 24 }}>
           <div className="document-edit-grid">
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Patient" />
+              <SectionHeader title={t("patient")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <TextInput label="Patient name" value={patientName} onChange={setPatientName} />
-                <TextInput label="Date of birth" value={dateOfBirth} onChange={setDateOfBirth} />
-                <TextInput label="Age" value={age} onChange={setAge} />
-                <TextInput label="Sex" value={sex} onChange={setSex} />
-                <TextInput label="CNP" value={cnp} onChange={setCnp} />
-                <TextInput label="Patient ID" value={patientIdentifier} onChange={setPatientIdentifier} />
+                <TextInput label={t("patientNameLabel")} value={patientName} onChange={setPatientName} />
+                <TextInput label={t("dateOfBirth")} value={dateOfBirth} onChange={setDateOfBirth} />
+                <TextInput label={t("age")} value={age} onChange={setAge} />
+                <TextInput label={t("sex")} value={sex} onChange={setSex} />
+                <TextInput label={t("cnp")} value={cnp} onChange={setCnp} />
+                <TextInput label={t("patientId")} value={patientIdentifier} onChange={setPatientIdentifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Document details" />
+              <SectionHeader title={t("documentDetails")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <TextInput label="Report name" value={reportName} onChange={setReportName} />
-                <TextInput label="Report type" value={reportType} onChange={setReportType} />
-                <TextInput label="Lab" value={labName} onChange={setLabName} />
-                <TextInput label="Sample type" value={sampleType} onChange={setSampleType} />
-                <TextInput label="Referring doctor" value={referringDoctor} onChange={setReferringDoctor} />
-                <TextInput label="Source language" value={sourceLanguage} onChange={setSourceLanguage} />
+                <TextInput label={t("reportName")} value={reportName} onChange={setReportName} />
+                <TextInput label={t("reportType")} value={reportType} onChange={setReportType} />
+                <TextInput label={t("lab")} value={labName} onChange={setLabName} />
+                <TextInput label={t("sampleType")} value={sampleType} onChange={setSampleType} />
+                <TextInput label={t("referringDoctor")} value={referringDoctor} onChange={setReferringDoctor} />
+                <TextInput label={t("sourceLanguageLabel")} value={sourceLanguage} onChange={setSourceLanguage} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Dates" />
+              <SectionHeader title={t("dates")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <TextInput label="Test date" value={testDate} onChange={setTestDate} />
-                <TextInput label="Collected on" value={collectedOn} onChange={setCollectedOn} />
-                <TextInput label="Reported on" value={reportedOn} onChange={setReportedOn} />
-                <TextInput label="Registered on" value={registeredOn} onChange={setRegisteredOn} />
-                <TextInput label="Generated on" value={generatedOn} onChange={setGeneratedOn} />
+                <TextInput label={t("testDate")} value={testDate} onChange={setTestDate} />
+                <TextInput label={t("collectedOn")} value={collectedOn} onChange={setCollectedOn} />
+                <TextInput label={t("reportedOn")} value={reportedOn} onChange={setReportedOn} />
+                <TextInput label={t("registeredOn")} value={registeredOn} onChange={setRegisteredOn} />
+                <TextInput label={t("generatedOn")} value={generatedOn} onChange={setGeneratedOn} />
               </div>
             </div>
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
             <SectionHeader
-              title="Structured lab rows"
-              subtitle="Edit categories, values, units, references, and flags. Empty, dash, or nil values are saved as nil and will not be used in trends."
+              title={t("structuredData")}
+              subtitle={t("labRowsEditHint")}
               right={
                 <button type="button" className="secondary-btn" onClick={addLabRow}>
-                  Add row
+                  {t("addRow")}
                 </button>
               }
             />
@@ -1356,14 +1356,14 @@ if (!currentUser || !documentData || !parsed) {
                     className="text-input"
                     value={lab.display_name || ""}
                     onChange={(event) => updateLab(index, "display_name", event.target.value)}
-                    placeholder="Display name"
+                    placeholder={t("displayName")}
                   />
 
                   <input
                     className="text-input"
                     value={lab.raw_test_name || ""}
                     onChange={(event) => updateLab(index, "raw_test_name", event.target.value)}
-                    placeholder="Raw name"
+                    placeholder={t("rawName")}
                   />
 
                   <select
@@ -1382,21 +1382,21 @@ if (!currentUser || !documentData || !parsed) {
                     className="text-input"
                     value={lab.value || ""}
                     onChange={(event) => updateLab(index, "value", event.target.value)}
-                    placeholder="Value / nil"
+                    placeholder={t("valueNil")}
                   />
 
                   <input
                     className="text-input"
                     value={lab.reference_range || ""}
                     onChange={(event) => updateLab(index, "reference_range", event.target.value)}
-                    placeholder="Reference"
+                    placeholder={t("reference")}
                   />
 
                   <input
                     className="text-input"
                     value={lab.unit || ""}
                     onChange={(event) => updateLab(index, "unit", event.target.value)}
-                    placeholder="Unit"
+                    placeholder={t("unit")}
                   />
 
                   <div style={{ display: "flex", gap: 8 }}>
@@ -1406,7 +1406,7 @@ if (!currentUser || !documentData || !parsed) {
                       onChange={(event) => updateLab(index, "flag", event.target.value)}
                       style={{ minWidth: 110 }}
                     >
-                      <option value="">No flag</option>
+                      <option value="">{t("noFlag")}</option>
                       <option value="Normal">Normal</option>
                       <option value="High">High</option>
                       <option value="Low">Low</option>
@@ -1414,7 +1414,7 @@ if (!currentUser || !documentData || !parsed) {
                     </select>
 
                     <button type="button" className="secondary-btn" onClick={() => removeLabRow(index)}>
-                      Remove
+                      {t("remove")}
                     </button>
                   </div>
                 </div>
@@ -1422,7 +1422,7 @@ if (!currentUser || !documentData || !parsed) {
 
               {!labs.length && (
                 <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                  <div className="muted-text">No structured lab rows yet.</div>
+                  <div className="muted-text">{t("noStructuredLabRowsYet")}</div>
                 </div>
               )}
             </div>
@@ -1437,11 +1437,11 @@ if (!currentUser || !documentData || !parsed) {
                   setEditMode(false);
                 }}
               >
-                Cancel
+                {t("cancel")}
               </button>
 
               <button type="submit" className="primary-btn" disabled={saving}>
-                {saving ? "Saving..." : "Save structured data"}
+                {saving ? t("saving") : t("saveStructuredData")}
               </button>
             </div>
           </div>
@@ -1456,48 +1456,48 @@ if (!currentUser || !documentData || !parsed) {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Patient" />
+              <SectionHeader title={t("patient")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Name" value={parsed.patient_name} />
-                <DetailField label="Date of birth" value={parsed.date_of_birth} />
-                <DetailField label="Age" value={parsed.age} />
-                <DetailField label="Sex" value={parsed.sex} />
-                <DetailField label="CNP" value={parsed.cnp} />
-                <DetailField label="Patient ID" value={parsed.patient_identifier} />
+                <DetailField label={t("name")} value={parsed.patient_name} />
+                <DetailField label={t("dateOfBirth")} value={parsed.date_of_birth} />
+                <DetailField label={t("age")} value={parsed.age} />
+                <DetailField label={t("sex")} value={parsed.sex} />
+                <DetailField label={t("cnp")} value={parsed.cnp} />
+                <DetailField label={t("patientId")} value={parsed.patient_identifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Document details" />
+              <SectionHeader title={t("documentDetails")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Report name" value={parsed.report_name} />
-                <DetailField label="Report type" value={parsed.report_type} />
-                <DetailField label="Lab" value={parsed.lab_name} />
-                <DetailField label="Sample type" value={parsed.sample_type} />
-                <DetailField label="Referring doctor" value={parsed.referring_doctor} />
-                <DetailField label="Source language" value={parsed.source_language} />
+                <DetailField label={t("reportName")} value={parsed.report_name} />
+                <DetailField label={t("reportType")} value={parsed.report_type} />
+                <DetailField label={t("lab")} value={parsed.lab_name} />
+                <DetailField label={t("sampleType")} value={parsed.sample_type} />
+                <DetailField label={t("referringDoctor")} value={parsed.referring_doctor} />
+                <DetailField label={t("sourceLanguageLabel")} value={parsed.source_language} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title="Dates" />
+              <SectionHeader title={t("dates")} />
 
               <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label="Test date" value={parsed.test_date} />
-                <DetailField label="Collected on" value={parsed.collected_on} />
-                <DetailField label="Reported on" value={parsed.reported_on} />
-                <DetailField label="Registered on" value={parsed.registered_on} />
-                <DetailField label="Generated on" value={parsed.generated_on} />
+                <DetailField label={t("testDate")} value={parsed.test_date} />
+                <DetailField label={t("collectedOn")} value={parsed.collected_on} />
+                <DetailField label={t("reportedOn")} value={parsed.reported_on} />
+                <DetailField label={t("registeredOn")} value={parsed.registered_on} />
+                <DetailField label={t("generatedOn")} value={parsed.generated_on} />
               </div>
             </div>
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
             <SectionHeader
-              title="Structured Data"
-              subtitle={`${parsed.labs?.length || 0} structured lab rows extracted.`}
+              title={t("structuredData")}
+              subtitle={`${parsed.labs?.length || 0} ${t("structuredLabRowsExtracted")}`}
             />
 
             {orderedGroupedLabs.length > 0 ? (
@@ -1527,11 +1527,11 @@ if (!currentUser || !documentData || !parsed) {
                       <table className="document-lab-table">
                         <thead>
                           <tr>
-                            <th style={{ width: "38%" }}>Test</th>
-                            <th>Value</th>
-                            <th>Unit</th>
-                            <th>Reference range</th>
-                            <th>Flag</th>
+                            <th style={{ width: "38%" }}>{t("test")}</th>
+                            <th>{t("value")}</th>
+                            <th>{t("unit")}</th>
+                            <th>{t("reference")}</th>
+                            <th>{t("flag")}</th>
                           </tr>
                         </thead>
 
@@ -1546,7 +1546,7 @@ if (!currentUser || !documentData || !parsed) {
                                 key={lab.id}
                                 className={`${abnormal ? "abnormal-row" : ""} ${nil ? "nil-row" : ""}`}
                               >
-                                <td data-label="Test">
+                                <td data-label={t("test")}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
                                     {abnormal && (
                                       <span
@@ -1574,29 +1574,29 @@ if (!currentUser || !documentData || !parsed) {
                                     <div>
                                       <div style={{ fontWeight: 950 }}>{bestDisplayName(lab)}</div>
                                       <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
-                                        Raw: {valueOrDash(lab.raw_test_name)}
+                                        {t("rawName")}: {valueOrDash(lab.raw_test_name)}
                                       </div>
                                     </div>
                                   </div>
                                 </td>
 
-                                <td data-label="Value">
+                                <td data-label={t("value")}>
                                   <span style={{ fontWeight: 950 }}>{displayLabValue(lab.value)}</span>
                                 </td>
 
-                                <td data-label="Unit">
+                                <td data-label={t("unit")}>
                                   <span className="muted-text" style={{ fontWeight: 850 }}>
                                     {valueOrDash(lab.unit)}
                                   </span>
                                 </td>
 
-                                <td data-label="Reference range">
+                                <td data-label={t("reference")}>
                                   <span className="muted-text" style={{ fontWeight: 850 }}>
                                     {valueOrDash(lab.reference_range)}
                                   </span>
                                 </td>
 
-                                <td data-label="Flag">
+                                <td data-label={t("flag")}>
                                   {nil ? (
                                     <span
                                       style={{
@@ -1640,16 +1640,16 @@ if (!currentUser || !documentData || !parsed) {
               </div>
             ) : (
               <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 900 }}>No structured lab values found.</div>
+                <div style={{ fontWeight: 900 }}>{t("noStructuredLabs")}</div>
                 <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                  If this was a lab report, re-upload after the OCR/AI extraction backend is deployed.
+                  {t("noStructuredLabsHint")}
                 </div>
               </div>
             )}
           </div>
 
           <div className="soft-card" style={{ padding: 24 }}>
-            <SectionHeader title="Audit trail" />
+            <SectionHeader title={t("auditTrail")} />
 
             <div style={{ display: "grid", gap: 12 }}>
               {(parsed.audit_logs || []).map((log, index) => (
@@ -1671,7 +1671,7 @@ if (!currentUser || !documentData || !parsed) {
 
               {!parsed.audit_logs?.length && (
                 <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                  <div className="muted-text">No audit activity yet.</div>
+                  <div className="muted-text">{t("noAuditActivity")}</div>
                 </div>
               )}
             </div>

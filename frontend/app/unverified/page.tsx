@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -6,6 +6,7 @@ import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import AppShell from "@/components/app-shell";
 import PageTabs from "@/components/page-tabs";
 import StatCard from "@/components/stat-card";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -27,6 +28,7 @@ type SavedDocument = {
 
 export default function UnverifiedPage() {
   const router = useRouter();
+  const { t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documents, setDocuments] = useState<SavedDocument[]>([]);
@@ -36,9 +38,9 @@ export default function UnverifiedPage() {
   const [filterText, setFilterText] = useState("");
 
   const tabs = [
-    { key: "all", label: "All" },
-    { key: "bloodwork", label: "Bloodwork" },
-    { key: "other", label: "Other Sections" },
+    { key: "all", label: t("all") },
+    { key: "bloodwork", label: t("bloodwork") },
+    { key: "other", label: t("otherSections") },
   ];
 
   const unverifiedDocuments = useMemo(
@@ -139,7 +141,7 @@ export default function UnverifiedPage() {
   if (!currentUser) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading...</p>
+        <p className="muted-text">{t("loadingQueue")}</p>
       </main>
     );
   }
@@ -147,11 +149,11 @@ export default function UnverifiedPage() {
   return (
     <AppShell
       user={currentUser}
-      title="Unverified Queue"
-      subtitle="Review pending documents that still need human verification."
+      title={t("unverifiedQueue")}
+      subtitle={t("unverifiedQueueDesc")}
       rightContent={
         <button className="secondary-btn" onClick={() => router.push("/")}>
-          Back to Dashboard
+          {t("backToDashboard")}
         </button>
       }
     >
@@ -161,9 +163,9 @@ export default function UnverifiedPage() {
           style={{
             marginBottom: 20,
             padding: 16,
-            borderColor: "#fecaca",
-            background: "#fef2f2",
-            color: "#b91c1c",
+            borderColor: "var(--danger-border)",
+            background: "var(--danger-bg)",
+            color: "var(--danger-text)",
           }}
         >
           {error}
@@ -171,9 +173,9 @@ export default function UnverifiedPage() {
       )}
 
       <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 16, marginBottom: 24 }}>
-        <StatCard label="Total Unverified" value={unverifiedDocuments.length} accent="orange" />
-        <StatCard label="Bloodwork" value={bloodworkCount} accent="violet" />
-        <StatCard label="Other Sections" value={otherCount} accent="blue" />
+        <StatCard label={t("totalUnverified")} value={unverifiedDocuments.length} accent="orange" />
+        <StatCard label={t("bloodwork")} value={bloodworkCount} accent="violet" />
+        <StatCard label={t("otherSections")} value={otherCount} accent="blue" />
       </div>
 
       <div className="soft-card" style={{ padding: 24 }}>
@@ -188,38 +190,38 @@ export default function UnverifiedPage() {
         >
           <div>
             <div style={{ fontSize: 14, fontWeight: 600, marginBottom: 8 }}>
-              Filter queue
+              {t("filterQueue")}
             </div>
             <input
               className="text-input"
               value={filterText}
               onChange={(e) => setFilterText(e.target.value)}
-              placeholder="Filter by patient, filename, report, or section"
+              placeholder={t("filterQueuePlaceholder")}
             />
           </div>
 
           <button className="primary-btn" onClick={fetchDocuments}>
-            Refresh Queue
+            {t("refreshQueue")}
           </button>
         </div>
 
         <PageTabs tabs={tabs} activeTab={activeTab} onChange={setActiveTab} />
 
         {loading ? (
-          <p className="muted-text">Loading queue...</p>
+          <p className="muted-text">{t("loadingQueue")}</p>
         ) : filteredDocuments.length === 0 ? (
-          <p className="muted-text">No unverified documents found.</p>
+          <p className="muted-text">{t("noUnverifiedDocuments")}</p>
         ) : (
           <div style={{ overflowX: "auto" }}>
             <table className="data-table">
               <thead>
                 <tr>
-                  <th>Patient</th>
-                  <th>Filename</th>
-                  <th>Section</th>
-                  <th>Report</th>
-                  <th>Date</th>
-                  <th>Action</th>
+                  <th>{t("patient")}</th>
+                  <th>{t("filename")}</th>
+                  <th>{t("sectionColumn")}</th>
+                  <th>{t("reportName")}</th>
+                  <th>{t("date")}</th>
+                  <th>{t("action")}</th>
                 </tr>
               </thead>
               <tbody>
@@ -236,10 +238,10 @@ export default function UnverifiedPage() {
                           className="secondary-btn"
                           onClick={() => router.push(`/patients/${doc.patient_id}`)}
                         >
-                          Open Patient
+                          {t("openPatient")}
                         </button>
                       ) : (
-                        <span className="muted-text">No patient linked</span>
+                        <span className="muted-text">{t("noPatientLinked")}</span>
                       )}
                     </td>
                   </tr>

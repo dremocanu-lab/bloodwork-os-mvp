@@ -1,18 +1,10 @@
-﻿"use client";
+"use client";
 
 import { ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
+import { useLanguage } from "@/lib/i18n";
 
 const THEME_KEY = "bloodwork-theme";
-
-type PortalCard = {
-  label: string;
-  title: string;
-  subtitle: string;
-  accentClass: string;
-  loginHref: string;
-  signupHref: string;
-};
 
 type AuthShellProps = {
   title: string;
@@ -26,33 +18,6 @@ type AuthShellProps = {
   rightTopAction?: ReactNode;
 };
 
-const portalCards: Record<"doctor" | "patient" | "admin", PortalCard> = {
-  doctor: {
-    label: "Clinical Workspace",
-    title: "Doctor Portal",
-    subtitle: "Review labs, notes, trends, charts, and care updates in one clean workspace.",
-    accentClass: "auth-portal-accent-doctor",
-    loginHref: "/login/doctor",
-    signupHref: "/signup/doctor",
-  },
-  patient: {
-    label: "Personal Records",
-    title: "Patient Portal",
-    subtitle: "View records, uploads, notes, and doctor-shared updates in one secure place.",
-    accentClass: "auth-portal-accent-patient",
-    loginHref: "/login/patient",
-    signupHref: "/signup/patient",
-  },
-  admin: {
-    label: "Operations Control",
-    title: "Admin Portal",
-    subtitle: "Manage users, assignments, access, and oversight across the platform.",
-    accentClass: "auth-portal-accent-admin",
-    loginHref: "/login/admin",
-    signupHref: "/signup/admin",
-  },
-};
-
 function getStoredTheme() {
   if (typeof window === "undefined") return "light";
   return localStorage.getItem(THEME_KEY) || "light";
@@ -61,7 +26,7 @@ function getStoredTheme() {
 export default function AuthShell({
   title,
   subtitle,
-  badge = "Clinical record workspace",
+  badge,
   role,
   children,
   showFormCard = true,
@@ -69,8 +34,38 @@ export default function AuthShell({
   formSubtitle,
   rightTopAction,
 }: AuthShellProps) {
+  const { t } = useLanguage();
   const [mounted, setMounted] = useState(false);
   const [theme, setTheme] = useState<"light" | "dark">("light");
+
+  const resolvedBadge = badge ?? t("clinicalRecordWorkspace");
+
+  const portalCards = {
+    doctor: {
+      label: t("clinicalWorkspace"),
+      title: t("doctorPortal"),
+      subtitle: t("doctorPortalDesc"),
+      accentClass: "auth-portal-accent-doctor",
+      loginHref: "/login/doctor",
+      signupHref: "/signup/doctor",
+    },
+    patient: {
+      label: t("personalRecords"),
+      title: t("patientPortal"),
+      subtitle: t("patientPortalDesc"),
+      accentClass: "auth-portal-accent-patient",
+      loginHref: "/login/patient",
+      signupHref: "/signup/patient",
+    },
+    admin: {
+      label: t("operationsControl"),
+      title: t("adminPortal"),
+      subtitle: t("adminPortalDesc"),
+      accentClass: "auth-portal-accent-admin",
+      loginHref: "/login/admin",
+      signupHref: "/signup/admin",
+    },
+  };
 
   useEffect(() => {
     const saved = getStoredTheme();
@@ -94,15 +89,15 @@ export default function AuthShell({
           <div className="auth-brand-row">
             <Link href="/" className="auth-brand-pill">
               <span className="auth-brand-dot" />
-              <span>Bloodwork OS</span>
+              <span>{t("brand")}</span>
             </Link>
 
             <Link href="/about" className="auth-top-link">
-              About Us
+              {t("aboutUs")}
             </Link>
           </div>
 
-          <div className="auth-badge">{badge}</div>
+          <div className="auth-badge">{resolvedBadge}</div>
 
           <h1 className="auth-hero-title">{title}</h1>
           <p className="auth-hero-subtitle">{subtitle}</p>
@@ -136,10 +131,10 @@ export default function AuthShell({
                       href={card.loginHref}
                       className={active ? "auth-portal-action-primary" : "auth-portal-action-secondary"}
                     >
-                      Login
+                      {t("login")}
                     </Link>
                     <Link href={card.signupHref} className="auth-portal-action-secondary">
-                      Sign Up
+                      {t("signUp")}
                     </Link>
                   </div>
                 </div>
@@ -168,9 +163,9 @@ export default function AuthShell({
 
       <div className="auth-theme-dock">
         <div>
-          <div className="auth-theme-title">Appearance</div>
+          <div className="auth-theme-title">{t("appearance")}</div>
           <div className="auth-theme-caption">
-            {theme === "dark" ? "Dark mode enabled" : "Light mode enabled"}
+            {theme === "dark" ? t("darkModeEnabled") : t("lightModeEnabled")}
           </div>
         </div>
 
@@ -178,7 +173,7 @@ export default function AuthShell({
           type="button"
           className={theme === "dark" ? "auth-theme-toggle dark" : "auth-theme-toggle"}
           onClick={() => setTheme((prev) => (prev === "dark" ? "light" : "dark"))}
-          aria-label="Toggle light and dark mode"
+          aria-label={t("appearance")}
         >
           <span className="auth-theme-knob" />
         </button>

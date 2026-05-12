@@ -1,5 +1,7 @@
 "use client";
 
+import { useLanguage } from "@/lib/i18n";
+
 type LayoutBlock = {
   id: string;
   type: "paragraph" | "line" | string;
@@ -35,6 +37,7 @@ function safePages(layout?: OriginalLayout | null) {
 }
 
 export default function OriginalLayoutViewer({ layout, mode = "lines" }: OriginalLayoutViewerProps) {
+  const { t } = useLanguage();
   const pages = safePages(layout);
 
   if (!pages.length) {
@@ -48,8 +51,7 @@ export default function OriginalLayoutViewer({ layout, mode = "lines" }: Origina
           lineHeight: 1.6,
         }}
       >
-        No original layout data was saved for this document yet. Re-upload or reprocess this document after Document AI
-        layout extraction is enabled.
+        {t("noOriginalLayout")}
       </div>
     );
   }

@@ -1,12 +1,14 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useState } from "react";
+import { useLanguage } from "@/lib/i18n";
 
 type Theme = "light" | "dark";
 
 const STORAGE_KEY = "bloodwork-theme";
 
 export default function ThemeToggle({ compact = false }: { compact?: boolean }) {
+  const { t } = useLanguage();
   const [theme, setTheme] = useState<Theme>("light");
 
   useEffect(() => {
@@ -29,9 +31,9 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
   return (
     <div className={compact ? "theme-toggle-inline" : "theme-toggle-dock"}>
       <div className="theme-toggle-copy">
-        <div className="theme-toggle-title">Appearance</div>
+        <div className="theme-toggle-title">{t("appearance")}</div>
         <div className="theme-toggle-subtitle">
-          {theme === "dark" ? "Dark mode enabled" : "Light mode enabled"}
+          {theme === "dark" ? t("darkModeEnabled") : t("lightModeEnabled")}
         </div>
       </div>
 
@@ -39,7 +41,7 @@ export default function ThemeToggle({ compact = false }: { compact?: boolean }) 
         type="button"
         className={`theme-toggle-switch ${theme === "dark" ? "is-dark" : ""}`}
         onClick={toggleTheme}
-        aria-label="Toggle theme"
+        aria-label={t("appearance")}
       >
         <span className="theme-toggle-knob" />
       </button>

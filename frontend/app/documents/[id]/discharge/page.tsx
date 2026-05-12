@@ -7,6 +7,7 @@ import AppShell from "@/components/app-shell";
 import OriginalLayoutViewer from "@/components/original-layout-viewer";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { formatPdfLikeDischargeText } from "@/lib/discharge-epicriza-formatter";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -322,6 +323,7 @@ function FontSizeControl({
   fontSize: number;
   onChange: (next: number) => void;
 }) {
+  const { t } = useLanguage();
   return (
     <div
       style={{
@@ -353,7 +355,7 @@ function FontSizeControl({
           justifyContent: "center",
           lineHeight: 1,
         }}
-        title="Smaller text"
+        title={t("smallerText")}
       >
         −
       </button>
@@ -387,7 +389,7 @@ function FontSizeControl({
           justifyContent: "center",
           lineHeight: 1,
         }}
-        title="Larger text"
+        title={t("largerText")}
       >
         +
       </button>
@@ -406,6 +408,7 @@ function SectionTextPanel({
   fontSize: number;
   onCopy?: () => void;
 }) {
+  const { t } = useLanguage();
   const rawText = text || "";
 
   return (
@@ -432,14 +435,14 @@ function SectionTextPanel({
           <div className="section-title">{section.title}</div>
           {section.original_titles?.length ? (
             <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
-              Original heading: {section.original_titles.join(" · ")}
+              {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
             </div>
           ) : null}
           {section.formatting_method && section.formatting_method !== "raw_ocr" ? (
             <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 800 }}>
-              AI layout formatted
+              {t("aiLayoutFormatted")}
               {section.formatting_confidence !== null && section.formatting_confidence !== undefined
-                ? ` · ${Math.round(section.formatting_confidence * 100)}% confidence`
+                ? ` · ${Math.round(section.formatting_confidence * 100)}%`
                 : ""}
             </div>
           ) : null}
@@ -448,7 +451,7 @@ function SectionTextPanel({
         <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
           {onCopy && (
             <button className="secondary-btn" onClick={onCopy}>
-              Copy section
+              {t("copySection")}
             </button>
           )}
         </div>
@@ -478,7 +481,7 @@ function SectionTextPanel({
             wordBreak: "normal",
           }}
         >
-          {rawText || "No text extracted for this section."}
+          {rawText || t("noTextExtracted")}
         </pre>
       </div>
     </div>
@@ -518,18 +521,19 @@ function AdminBoxesPanel({
   parsed: DocumentResponse["parsed_data"];
   dischargePayload: DischargePayload | null;
 }) {
+  const { t } = useLanguage();
   const payloadMeta = (dischargePayload as Record<string, unknown>) || {};
 
   const metaFields = [
-    { label: "Patient", value: parsed.patient_name },
-    { label: "CNP", value: parsed.cnp },
-    { label: "Date of Birth", value: parsed.date_of_birth },
-    { label: "Age", value: parsed.age },
-    { label: "Sex", value: parsed.sex },
-    { label: "Hospital", value: parsed.lab_name ?? (payloadMeta.hospital_name as string | null) },
-    { label: "Doctor", value: parsed.referring_doctor },
-    { label: "Admitted", value: parsed.collected_on },
-    { label: "Discharged", value: parsed.reported_on },
+    { label: t("patient"), value: parsed.patient_name },
+    { label: t("cnp"), value: parsed.cnp },
+    { label: t("dob"), value: parsed.date_of_birth },
+    { label: t("age"), value: parsed.age },
+    { label: t("sex"), value: parsed.sex },
+    { label: t("hospital"), value: parsed.lab_name ?? (payloadMeta.hospital_name as string | null) },
+    { label: t("doctor"), value: parsed.referring_doctor },
+    { label: t("admittedCapital"), value: parsed.collected_on },
+    { label: t("discharged"), value: parsed.reported_on },
   ].filter((f): f is { label: string; value: string } => Boolean(f.value));
 
   const metaLabelKeys = new Set(metaFields.map((f) => f.label.toLowerCase()));
@@ -544,7 +548,7 @@ function AdminBoxesPanel({
         <div className="section-title">{section.title}</div>
         {section.original_titles?.length ? (
           <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
-            Original heading: {section.original_titles.join(" · ")}
+            {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
           </div>
         ) : null}
       </div>
@@ -571,6 +575,7 @@ export default function DischargeStructuredPage() {
   const params = useParams();
   const router = useRouter();
   const documentId = params?.id as string;
+  const { t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
@@ -610,7 +615,7 @@ export default function DischargeStructuredPage() {
         setError("");
         await fetchData();
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load discharge summary."));
+        setError(getErrorMessage(err, t("couldNotLoadDischargeSummary")));
       } finally {
         setLoading(false);
       }
@@ -636,26 +641,26 @@ export default function DischargeStructuredPage() {
     return [
       {
         key: "overview",
-        title: "Overview",
-        body: "Patient, hospitalization, and document details.",
+        title: t("overviewSection"),
+        body: t("overviewSectionDesc"),
         synthetic: true,
       },
       {
         key: "full_summary",
-        title: "Full discharge summary",
-        body: fullSummaryText || "All extracted sections shown together.",
+        title: t("fullDischargeSummary"),
+        body: fullSummaryText || t("allSectionsDescription"),
         formatted_body: fullSummaryText || "",
         synthetic: true,
       },
       ...sections.map((section) => ({ ...section, synthetic: false })),
       {
         key: "audit",
-        title: "Audit trail",
-        body: "Verification and document activity.",
+        title: t("auditTrail"),
+        body: t("auditTrailDesc"),
         synthetic: true,
       },
     ];
-  }, [sections, fullSummaryText]);
+  }, [sections, fullSummaryText, t]);
 
   const activeSection =
     navigationSections.find((section) => section.key === activeSectionKey) ||
@@ -683,7 +688,7 @@ export default function DischargeStructuredPage() {
       window.open(fileUrl, "_blank", "noopener,noreferrer");
       window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
     } catch (err) {
-      setError(getErrorMessage(err, "Could not open original file."));
+      setError(getErrorMessage(err, t("failedOpenOriginal")));
     } finally {
       setOpeningOriginal(false);
     }
@@ -705,7 +710,7 @@ export default function DischargeStructuredPage() {
       }
       router.push("/my-records");
     } catch (err) {
-      setError(getErrorMessage(err, "Could not delete discharge summary."));
+      setError(getErrorMessage(err, t("failedLoadRecord")));
       setConfirmDeleteOpen(false);
     } finally {
       setDeleting(false);
@@ -723,7 +728,7 @@ export default function DischargeStructuredPage() {
           style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}
         >
           <Spinner size={20} />
-          <span className="muted-text">Loading discharge summary...</span>
+          <span className="muted-text">{t("loadingDischargeSummary")}</span>
         </div>
       </main>
     );
@@ -737,10 +742,10 @@ export default function DischargeStructuredPage() {
       >
         <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
           <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
-            Could not load discharge summary
+            {t("couldNotLoadDischargeSummary")}
           </div>
           <div className="muted-text" style={{ lineHeight: 1.6 }}>
-            The page loaded, but the discharge document data did not come back in the expected format.
+            {t("dischargeSummaryBadFormat")}
           </div>
           {error ? (
             <div
@@ -761,10 +766,10 @@ export default function DischargeStructuredPage() {
           ) : null}
           <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
             <button className="secondary-btn" onClick={() => router.push("/my-records")}>
-              Back to my records
+              {t("backToMyRecords")}
             </button>
             <button className="secondary-btn" onClick={() => window.location.reload()}>
-              Try again
+              {t("tryAgain")}
             </button>
           </div>
         </div>
@@ -774,7 +779,6 @@ export default function DischargeStructuredPage() {
 
   const showStructured = readerMode === "structured";
 
-  // Grid columns: collapsed strip | open sidebar | reader
   const gridColumns = !showStructured
     ? "minmax(0, 1fr)"
     : sidebarOpen
@@ -784,14 +788,14 @@ export default function DischargeStructuredPage() {
   return (
     <AppShell
       user={currentUser}
-      title={parsed.report_name || "Discharge reader"}
+      title={parsed.report_name || t("loadingDischargeSummary")}
       subtitle={`${valueOrDash(parsed.patient_name)} · CNP ${valueOrDash(parsed.cnp)} · ${
-        parsed.is_verified ? "Verified" : "Unverified"
+        parsed.is_verified ? t("verified") : t("unverified")
       }`}
       rightContent={
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
           <button className="secondary-btn" onClick={openOriginal} disabled={openingOriginal}>
-            {openingOriginal ? "Opening..." : "Open original"}
+            {openingOriginal ? t("opening") : t("openOriginal")}
           </button>
           {canDelete && (
             <button
@@ -806,11 +810,11 @@ export default function DischargeStructuredPage() {
                 cursor: "pointer",
               }}
             >
-              Delete
+              {t("delete")}
             </button>
           )}
           <button className="secondary-btn" onClick={() => router.back()}>
-            Back
+            {t("back")}
           </button>
         </div>
       }
@@ -833,16 +837,15 @@ export default function DischargeStructuredPage() {
             style={{ width: "min(520px, 100%)", padding: 24, boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)" }}
           >
             <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
-              Delete this discharge summary?
+              {t("deleteThisDischargeSummary")}
             </div>
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
-              This removes the discharge summary from the patient files and timeline. This can only be
-              done by the uploader or an admin.
+              {t("deleteDischargeDesc")}
             </div>
             <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
               <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 5 }}>
-                Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
+                {t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)}
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
@@ -851,7 +854,7 @@ export default function DischargeStructuredPage() {
                 onClick={() => setConfirmDeleteOpen(false)}
                 disabled={deleting}
               >
-                Cancel
+                {t("cancel")}
               </button>
               <button
                 onClick={deleteDocument}
@@ -866,7 +869,7 @@ export default function DischargeStructuredPage() {
                   cursor: deleting ? "not-allowed" : "pointer",
                 }}
               >
-                {deleting ? "Deleting..." : "Delete summary"}
+                {deleting ? t("deleting") : t("deleteSummary")}
               </button>
             </div>
           </div>
@@ -905,24 +908,24 @@ export default function DischargeStructuredPage() {
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <ReaderToggle active={readerMode === "structured"} onClick={() => setReaderMode("structured")}>
-            Structured reader
+            {t("structuredReader")}
           </ReaderToggle>
           <ReaderToggle active={readerMode === "original"} onClick={() => setReaderMode("original")}>
-            Original layout
+            {t("originalLayoutLabel")}
           </ReaderToggle>
           <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
-            {parsed.is_verified ? "Verified" : "Unverified"}
+            {parsed.is_verified ? t("verified") : t("unverified")}
           </StatusPill>
-          <StatusPill>{sections.length} sections</StatusPill>
+          <StatusPill>{sections.length} {t("sectionsSidebar").toLowerCase()}</StatusPill>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           {readerMode === "structured" && (
             <FontSizeControl fontSize={fontSize} onChange={setFontSize} />
           )}
-          <CompactMetaItem label="Patient" value={parsed.patient_name} />
+          <CompactMetaItem label={t("patient")} value={parsed.patient_name} />
           <CompactMetaItem
-            label="Hospitalization"
+            label={t("hospitalization")}
             value={`${valueOrDash(parsed.collected_on)} → ${valueOrDash(parsed.reported_on)}`}
           />
         </div>
@@ -956,7 +959,6 @@ export default function DischargeStructuredPage() {
               gridTemplateRows: "auto minmax(0, 1fr)",
             }}
           >
-            {/* Sidebar header with collapse button */}
             <div
               style={{
                 display: "flex",
@@ -974,12 +976,12 @@ export default function DischargeStructuredPage() {
                   letterSpacing: "0.06em",
                 }}
               >
-                Sections
+                {t("sectionsSidebar")}
               </span>
               <button
                 type="button"
                 onClick={() => setSidebarOpen(false)}
-                title="Collapse sidebar"
+                title={t("collapseSidebarLabel")}
                 style={{
                   width: 36,
                   height: 36,
@@ -1063,7 +1065,7 @@ export default function DischargeStructuredPage() {
           </aside>
         )}
 
-        {/* Collapsed sidebar strip — expand button */}
+        {/* Collapsed sidebar strip */}
         {showStructured && !sidebarOpen && (
           <div
             style={{
@@ -1076,7 +1078,7 @@ export default function DischargeStructuredPage() {
             <button
               type="button"
               onClick={() => setSidebarOpen(true)}
-              title="Open sections"
+              title={t("openSectionsLabel")}
               style={{
                 width: 40,
                 height: 40,
@@ -1118,7 +1120,7 @@ export default function DischargeStructuredPage() {
               {activeSectionKey === "overview" && (
                 <div style={{ minHeight: 0, height: "100%", overflowY: "auto", paddingRight: 8 }}>
                   <div className="section-title" style={{ marginBottom: 16 }}>
-                    Overview
+                    {t("overviewSection")}
                   </div>
                   <div
                     style={{
@@ -1127,16 +1129,16 @@ export default function DischargeStructuredPage() {
                       gap: 14,
                     }}
                   >
-                    <CompactMetaItem label="Patient" value={parsed.patient_name} />
-                    <CompactMetaItem label="DOB" value={parsed.date_of_birth} />
-                    <CompactMetaItem label="Age" value={parsed.age} />
-                    <CompactMetaItem label="Sex" value={parsed.sex} />
-                    <CompactMetaItem label="CNP" value={parsed.cnp} />
-                    <CompactMetaItem label="Patient ID" value={parsed.patient_identifier} />
-                    <CompactMetaItem label="Admission" value={parsed.collected_on} />
-                    <CompactMetaItem label="Discharge" value={parsed.reported_on} />
-                    <CompactMetaItem label="Doctor" value={parsed.referring_doctor} />
-                    <CompactMetaItem label="Language" value={parsed.source_language} />
+                    <CompactMetaItem label={t("patient")} value={parsed.patient_name} />
+                    <CompactMetaItem label={t("dob")} value={parsed.date_of_birth} />
+                    <CompactMetaItem label={t("age")} value={parsed.age} />
+                    <CompactMetaItem label={t("sex")} value={parsed.sex} />
+                    <CompactMetaItem label={t("cnp")} value={parsed.cnp} />
+                    <CompactMetaItem label={t("patientId")} value={parsed.patient_identifier} />
+                    <CompactMetaItem label={t("admittedCapital")} value={parsed.collected_on} />
+                    <CompactMetaItem label={t("discharged")} value={parsed.reported_on} />
+                    <CompactMetaItem label={t("doctor")} value={parsed.referring_doctor} />
+                    <CompactMetaItem label={t("language")} value={parsed.source_language} />
                   </div>
                 </div>
               )}
@@ -1145,7 +1147,7 @@ export default function DischargeStructuredPage() {
                 <SectionTextPanel
                   section={{
                     key: "full_summary",
-                    title: "Full discharge summary",
+                    title: t("fullDischargeSummary"),
                     body: fullSummaryText,
                     formatted_body: fullSummaryText,
                   }}
@@ -1184,7 +1186,7 @@ export default function DischargeStructuredPage() {
                   }}
                 >
                   <div className="section-title" style={{ marginBottom: 16 }}>
-                    Audit trail
+                    {t("auditTrail")}
                   </div>
                   <div
                     style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}
@@ -1211,7 +1213,7 @@ export default function DischargeStructuredPage() {
                         className="soft-card-tight"
                         style={{ padding: 18, background: "var(--panel-2)" }}
                       >
-                        <div className="muted-text">No audit activity yet.</div>
+                        <div className="muted-text">{t("noAuditActivity")}</div>
                       </div>
                     )}
                   </div>

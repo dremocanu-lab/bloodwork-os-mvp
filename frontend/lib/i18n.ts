@@ -454,6 +454,155 @@ const en = {
   forAdmins: "For admins",
   forAdminsDesc:
     "Manage assignments, roles, permissions, and operational oversight.",
+
+  // Common actions
+  tryAgain: "Try again",
+  backToMyRecords: "Back to my records",
+  opening: "Opening...",
+  verifying: "Verifying...",
+  verify: "Verify",
+  delete: "Delete",
+  deleting: "Deleting...",
+  cancelEdit: "Cancel edit",
+  refresh: "Refresh",
+  backToDashboard: "Back to Dashboard",
+  working: "Working...",
+  needAnAccount: "Need an account?",
+  madeClear: "made clear.",
+
+  // Theme / Appearance
+  appearance: "Appearance",
+  darkModeEnabled: "Dark mode enabled",
+  lightModeEnabled: "Light mode enabled",
+
+  // Document detail page
+  loadingStructuredDocument: "Loading structured document...",
+  couldNotLoadDocument: "Could not load document",
+  documentLoadedBadFormat:
+    "The page loaded, but the document data did not come back in the expected format.",
+  deleteThisReport: "Delete this report?",
+  deleteReportDesc:
+    "This removes the report from the patient files and timeline. This can only be done by the uploader or an admin.",
+  deleteReport: "Delete report",
+  editStructuredData: "Edit structured data",
+  editNote: "Edit note",
+  dates: "Dates",
+  testDate: "Test date",
+  collectedOn: "Collected on",
+  reportedOn: "Reported on",
+  registeredOn: "Registered on",
+  generatedOn: "Generated on",
+  auditTrail: "Audit trail",
+  noAuditActivity: "No audit activity yet.",
+  rawName: "Raw name",
+  displayName: "Display name",
+  valueNil: "Value / nil",
+  noFlag: "No flag",
+  addRow: "Add row",
+  saveStructuredData: "Save structured data",
+  noStructuredLabRowsYet: "No structured lab rows yet.",
+  labRowsEditHint:
+    "Edit categories, values, units, references, and flags. Empty, dash, or nil values are saved as nil and will not be used in trends.",
+  noNoteBody: "No note body.",
+  clinicalSection: "Clinical section",
+  originalHeadingLabel: "Original heading:",
+  structuredDischargeSummary: "Structured discharge summary",
+  structuredDischargeSummaryDesc:
+    "Text copied verbatim from the original document and organized into broad clinical buckets.",
+  noStructuredDischargeSections: "No structured discharge sections found.",
+  noStructuredDischargeSectionsDesc:
+    "Re-upload after the discharge summary parser is deployed, or open the original document.",
+  dischargeSummaryLabel: "Discharge summary",
+  sourceLanguageLabel: "Source language",
+  patientNameLabel: "Patient name",
+
+  // Discharge viewer page
+  loadingDischargeSummary: "Loading discharge summary...",
+  couldNotLoadDischargeSummary: "Could not load discharge summary",
+  dischargeSummaryBadFormat:
+    "The page loaded, but the discharge document data did not come back in the expected format.",
+  deleteThisDischargeSummary: "Delete this discharge summary?",
+  deleteDischargeDesc:
+    "This removes the discharge summary from the patient files and timeline. This can only be done by the uploader or an admin.",
+  deleteSummary: "Delete summary",
+  structuredReader: "Structured reader",
+  originalLayoutLabel: "Original layout",
+  sectionsSidebar: "Sections",
+  collapseSidebarLabel: "Collapse sidebar",
+  openSectionsLabel: "Open sections",
+  copySection: "Copy section",
+  aiLayoutFormatted: "AI layout formatted",
+  noTextExtracted: "No text extracted for this section.",
+  smallerText: "Smaller text",
+  largerText: "Larger text",
+  fullDischargeSummary: "Full discharge summary",
+  allSectionsDescription: "All extracted sections shown together.",
+  overviewSection: "Overview",
+  overviewSectionDesc: "Patient, hospitalization, and document details.",
+  auditTrailDesc: "Verification and document activity.",
+
+  // Patient timeline page
+  loadingPatientTimeline: "Loading patient timeline...",
+  couldNotLoadPatientTimeline: "Could not load patient timeline.",
+  clinicalTimeline: "Clinical timeline",
+  clinicalTimelineDesc:
+    "Discharge summaries create admission episodes. Bloodwork, scans, medications, notes, and other records are grouped underneath when their clinical date falls inside the admission period.",
+  discharges: "Discharges",
+  careEvents: "Care events",
+  admissionDateUnknown: "Admission date unknown",
+  collectedDate: "Collected",
+  testDateLabel: "Test date",
+  reportedDate: "Reported",
+  registeredDate: "Registered",
+  generatedDate: "Generated",
+  uploadedDate: "Uploaded",
+  uploadedByUnknown: "Uploaded by unknown user",
+  hospitalEvent: "Hospitalization",
+  clinicalNotesLabel: "Clinical notes",
+
+  // Clinical Timeline component
+  careEvent: "Care event",
+  recordsDuringAdmission: "Records during this admission",
+  noLinkedRecordsInAdmission:
+    "No linked records were found inside this admission period.",
+  seeFullTimeline: "See full timeline",
+  moreLabel: "more",
+
+  // Unverified queue page
+  unverifiedQueue: "Unverified Queue",
+  unverifiedQueueDesc:
+    "Review pending documents that still need human verification.",
+  totalUnverified: "Total Unverified",
+  otherSections: "Other Sections",
+  filterQueue: "Filter queue",
+  filterQueuePlaceholder: "Filter by patient, filename, report, or section",
+  refreshQueue: "Refresh Queue",
+  loadingQueue: "Loading queue...",
+  noUnverifiedDocuments: "No unverified documents found.",
+  filename: "Filename",
+  sectionColumn: "Section",
+  action: "Action",
+  openPatient: "Open Patient",
+  noPatientLinked: "No patient linked",
+
+  // Upload provider
+  sendingFile: "Sending file...",
+  queuedForProcessing: "Queued for processing.",
+
+  // Original layout viewer
+  noOriginalLayout:
+    "No original layout data was saved for this document yet. Re-upload or reprocess this document after Document AI layout extraction is enabled.",
+
+  // Topbar
+  topbarSearch: "Search patients, documents, or workflow items",
+
+  // Section label fallback
+  other: "Other",
+
+  // Structured data
+  structuredLabRowsExtracted: "structured lab rows extracted.",
+  noStructuredLabsHint:
+    "If this was a lab report, re-upload after the OCR/AI extraction backend is deployed.",
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
@@ -903,6 +1052,155 @@ const ro: Record<keyof typeof en, string> = {
   forAdmins: "Pentru administratori",
   forAdminsDesc:
     "Gestionează alocări, roluri, permisiuni și supraveghere operațională.",
+
+  // Common actions
+  tryAgain: "Încearcă din nou",
+  backToMyRecords: "Înapoi la documentele mele",
+  opening: "Se deschide...",
+  verifying: "Se verifică...",
+  verify: "Verifică",
+  delete: "Șterge",
+  deleting: "Se șterge...",
+  cancelEdit: "Anulează editarea",
+  refresh: "Actualizează",
+  backToDashboard: "Înapoi la tablou de bord",
+  working: "Se procesează...",
+  needAnAccount: "Nu ai cont?",
+  madeClear: "simplificat.",
+
+  // Theme / Appearance
+  appearance: "Aspect",
+  darkModeEnabled: "Mod întunecat activ",
+  lightModeEnabled: "Mod luminos activ",
+
+  // Document detail page
+  loadingStructuredDocument: "Se încarcă documentul structurat...",
+  couldNotLoadDocument: "Nu am putut încărca documentul",
+  documentLoadedBadFormat:
+    "Pagina s-a încărcat, dar datele documentului nu au fost primite în formatul așteptat.",
+  deleteThisReport: "Ștergi acest raport?",
+  deleteReportDesc:
+    "Aceasta elimină raportul din dosarul pacientului și cronologie. Poate fi realizat doar de cel care l-a încărcat sau de un administrator.",
+  deleteReport: "Șterge raportul",
+  editStructuredData: "Editează datele structurate",
+  editNote: "Editează nota",
+  dates: "Date",
+  testDate: "Data analizei",
+  collectedOn: "Colectat pe",
+  reportedOn: "Raportat pe",
+  registeredOn: "Înregistrat pe",
+  generatedOn: "Generat pe",
+  auditTrail: "Jurnal de audit",
+  noAuditActivity: "Nu există activitate de audit.",
+  rawName: "Nume brut",
+  displayName: "Nume afișat",
+  valueNil: "Valoare / nil",
+  noFlag: "Fără marcaj",
+  addRow: "Adaugă rând",
+  saveStructuredData: "Salvează datele structurate",
+  noStructuredLabRowsYet: "Nu există rânduri de analize structurate.",
+  labRowsEditHint:
+    "Editează categorii, valori, unități, referințe și marcaje. Valorile goale, liniuțe sau nil sunt salvate ca nil și nu sunt folosite în tendințe.",
+  noNoteBody: "Nu există conținut al notei.",
+  clinicalSection: "Secțiune clinică",
+  originalHeadingLabel: "Titlu original:",
+  structuredDischargeSummary: "Scrisoare medicală structurată",
+  structuredDischargeSummaryDesc:
+    "Text copiat verbatim din documentul original, organizat în categorii clinice.",
+  noStructuredDischargeSections: "Nu au fost găsite secțiuni structurate.",
+  noStructuredDischargeSectionsDesc:
+    "Reîncarcă documentul după ce procesorul de scrisori medicale este activ sau deschide documentul original.",
+  dischargeSummaryLabel: "Scrisoare medicală",
+  sourceLanguageLabel: "Limbă sursă",
+  patientNameLabel: "Numele pacientului",
+
+  // Discharge viewer page
+  loadingDischargeSummary: "Se încarcă scrisoarea medicală...",
+  couldNotLoadDischargeSummary: "Nu am putut încărca scrisoarea medicală",
+  dischargeSummaryBadFormat:
+    "Pagina s-a încărcat, dar datele scrisorii medicale nu au fost primite în formatul așteptat.",
+  deleteThisDischargeSummary: "Ștergi această scrisoare medicală?",
+  deleteDischargeDesc:
+    "Aceasta elimină scrisoarea medicală din dosarul pacientului și cronologie. Poate fi realizat doar de cel care l-a încărcat sau de un administrator.",
+  deleteSummary: "Șterge scrisoarea",
+  structuredReader: "Cititor structurat",
+  originalLayoutLabel: "Aspect original",
+  sectionsSidebar: "Secțiuni",
+  collapseSidebarLabel: "Restrânge bara laterală",
+  openSectionsLabel: "Deschide secțiunile",
+  copySection: "Copiază secțiunea",
+  aiLayoutFormatted: "Formatat cu AI",
+  noTextExtracted: "Nu a fost extras text pentru această secțiune.",
+  smallerText: "Text mai mic",
+  largerText: "Text mai mare",
+  fullDischargeSummary: "Scrisoare medicală completă",
+  allSectionsDescription: "Toate secțiunile extrase afișate împreună.",
+  overviewSection: "Prezentare generală",
+  overviewSectionDesc: "Detalii pacient, internare și document.",
+  auditTrailDesc: "Verificare și activitate document.",
+
+  // Patient timeline page
+  loadingPatientTimeline: "Se încarcă cronologia pacientului...",
+  couldNotLoadPatientTimeline: "Nu am putut încărca cronologia pacientului.",
+  clinicalTimeline: "Cronologie clinică",
+  clinicalTimelineDesc:
+    "Scrisorile medicale creează episoade de internare. Analizele, investigațiile, medicația, notele și alte documente sunt grupate dedesubt când data lor clinică se încadrează în perioada de internare.",
+  discharges: "Externări",
+  careEvents: "Evenimente clinice",
+  admissionDateUnknown: "Data internării necunoscută",
+  collectedDate: "Colectat",
+  testDateLabel: "Data analizei",
+  reportedDate: "Raportat",
+  registeredDate: "Înregistrat",
+  generatedDate: "Generat",
+  uploadedDate: "Încărcat",
+  uploadedByUnknown: "Încărcat de utilizator necunoscut",
+  hospitalEvent: "Internare",
+  clinicalNotesLabel: "Note clinice",
+
+  // Clinical Timeline component
+  careEvent: "Eveniment clinic",
+  recordsDuringAdmission: "Documente în această perioadă de internare",
+  noLinkedRecordsInAdmission:
+    "Nu au fost găsite documente în această perioadă de internare.",
+  seeFullTimeline: "Vezi cronologia completă",
+  moreLabel: "mai mult",
+
+  // Unverified queue page
+  unverifiedQueue: "Coadă de verificat",
+  unverifiedQueueDesc:
+    "Revizuiește documentele în așteptare care necesită verificare umană.",
+  totalUnverified: "Total neverificate",
+  otherSections: "Alte secțiuni",
+  filterQueue: "Filtrează coada",
+  filterQueuePlaceholder: "Filtrează după pacient, fișier, raport sau secțiune",
+  refreshQueue: "Actualizează coada",
+  loadingQueue: "Se încarcă coada...",
+  noUnverifiedDocuments: "Nu există documente neverificate.",
+  filename: "Fișier",
+  sectionColumn: "Secțiune",
+  action: "Acțiune",
+  openPatient: "Deschide pacient",
+  noPatientLinked: "Niciun pacient legat",
+
+  // Upload provider
+  sendingFile: "Se trimite fișierul...",
+  queuedForProcessing: "Pus în coadă pentru procesare.",
+
+  // Original layout viewer
+  noOriginalLayout:
+    "Nu există date de aspect original salvate pentru acest document. Reîncarcă sau reprocesează documentul după ce extracția Document AI este activată.",
+
+  // Topbar
+  topbarSearch: "Caută pacienți, documente sau elemente de lucru",
+
+  // Section label fallback
+  other: "Altele",
+
+  // Structured data
+  structuredLabRowsExtracted: "rânduri de analize extrase.",
+  noStructuredLabsHint:
+    "Dacă aceasta a fost o analiză de laborator, reîncarcă documentul după ce procesorul OCR/AI este activ.",
 };
 
 const dictionaries = {
