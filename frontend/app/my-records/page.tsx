@@ -70,18 +70,6 @@ type PatientEvent = {
   doctor_name?: string | null;
 };
 
-type AccessRequest = {
-  id: number;
-  doctor_user_id: number;
-  doctor_name?: string | null;
-  doctor_email?: string | null;
-  doctor_department?: string | null;
-  doctor_hospital_name?: string | null;
-  status: string;
-  requested_at: string;
-  responded_at?: string | null;
-};
-
 type MyProfileResponse = {
   patient: {
     id: number;
@@ -757,7 +745,6 @@ export default function MyRecordsPage() {
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
-  const [requests, setRequests] = useState<AccessRequest[]>([]);
   const [trends, setTrends] = useState<BloodworkTrend[]>([]);
   const [activeSection, setActiveSection] =
     useState<keyof MyProfileResponse["sections"]>("bloodwork");
@@ -792,11 +779,6 @@ export default function MyRecordsPage() {
     return normalized;
   }
 
-  async function fetchRequests() {
-    const response = await api.get<AccessRequest[]>("/my/access-requests");
-    setRequests(response.data);
-  }
-
   async function fetchTrends(patientId: number) {
     try {
       const response = await api.get<BloodworkTrend[]>(`/patients/${patientId}/bloodwork-trends`);
@@ -811,24 +793,11 @@ export default function MyRecordsPage() {
       const profileResponse = await fetchProfile();
 
       await Promise.all([
-        fetchRequests(),
         fetchTrends(profileResponse.patient.id),
         refreshUploadJobs(),
       ]);
     } catch {
       // Silent refresh should never break the page.
-    }
-  }
-
-  async function respondToRequest(requestId: number, status: "approved" | "denied") {
-    try {
-      setError("");
-      await api.post(`/access-requests/${requestId}/respond`, { status });
-
-      const updatedProfile = await fetchProfile();
-      await Promise.all([fetchRequests(), fetchTrends(updatedProfile.patient.id)]);
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedRespondRequest")));
     }
   }
 
@@ -891,7 +860,7 @@ export default function MyRecordsPage() {
         setError("");
 
         const profileResponse = await fetchProfile();
-        await Promise.all([fetchRequests(), fetchTrends(profileResponse.patient.id)]);
+        await fetchTrends(profileResponse.patient.id);
       } catch (err) {
         setError(getErrorMessage(err, t("failedLoadRecords")));
       } finally {
@@ -1122,7 +1091,6 @@ export default function MyRecordsPage() {
         records: 0,
         bloodwork: 0,
         scans: 0,
-        doctors: 0,
       };
     }
 
@@ -1130,7 +1098,6 @@ export default function MyRecordsPage() {
       records: allDocuments.length,
       bloodwork: profile.sections.bloodwork.length,
       scans: profile.sections.scans.length,
-      doctors: profile.doctor_access.length,
     };
   }, [profile, allDocuments]);
 
@@ -1190,10 +1157,6 @@ export default function MyRecordsPage() {
           <div className="stat-card-value">{stats.scans}</div>
         </div>
 
-        <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">{t("doctorsWithAccess")}</div>
-          <div className="stat-card-value">{stats.doctors}</div>
-        </div>
       </div>
 
       <div
@@ -1230,66 +1193,6 @@ export default function MyRecordsPage() {
         >
           {t("uploadDocuments")}
         </button>
-      </div>
-
-      <div style={{ display: "grid", gridTemplateColumns: "1.1fr 1fr", gap: 20, marginBottom: 24 }}>
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 16 }}>
-            {t("myDoctors")}
-          </div>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            {profile.doctor_access.map((doctor) => (
-              <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800 }}>{doctor.doctor_name}</div>
-                <div className="muted-text" style={{ marginTop: 4 }}>
-                  {doctor.doctor_email}
-                </div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
-                </div>
-              </div>
-            ))}
-
-            {!profile.doctor_access.length && <div className="muted-text">{t("noDoctorsAssigned")}</div>}
-          </div>
-        </div>
-
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="section-title" style={{ marginBottom: 16 }}>
-            {t("doctorAccessRequests")}
-          </div>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            {requests.map((request) => (
-              <div key={request.id} className="soft-card-tight" style={{ padding: 16 }}>
-                <div style={{ fontWeight: 800 }}>{valueOrDash(request.doctor_name)}</div>
-                <div className="muted-text" style={{ marginTop: 4 }}>
-                  {valueOrDash(request.doctor_email)}
-                </div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  {valueOrDash(request.doctor_department)} · {valueOrDash(request.doctor_hospital_name)}
-                </div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  {t("status")}: {request.status}
-                </div>
-
-                {request.status === "pending" && (
-                  <div style={{ display: "flex", gap: 10, marginTop: 12, flexWrap: "wrap" }}>
-                    <button className="primary-btn" onClick={() => respondToRequest(request.id, "approved")}>
-                      {t("approve")}
-                    </button>
-                    <button className="secondary-btn" onClick={() => respondToRequest(request.id, "denied")}>
-                      {t("deny")}
-                    </button>
-                  </div>
-                )}
-              </div>
-            ))}
-
-            {!requests.length && <div className="muted-text">{t("noDoctorAccessRequests")}</div>}
-          </div>
-        </div>
       </div>
 
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>

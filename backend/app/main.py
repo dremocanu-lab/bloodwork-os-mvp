@@ -1347,6 +1347,32 @@ def get_patient_profile(
     return build_patient_profile_response(db, patient, current_user)
 
 
+@app.delete("/my/access/{doctor_user_id}")
+def revoke_doctor_access(
+    doctor_user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = ensure_patient_for_user(db, current_user)
+
+    access = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor_user_id,
+            models.DoctorPatientAccess.patient_id == patient.id,
+        )
+        .first()
+    )
+
+    if not access:
+        raise HTTPException(status_code=404, detail="Access record not found")
+
+    db.delete(access)
+    db.commit()
+
+    return {"revoked": True, "doctor_user_id": doctor_user_id}
+
+
 @app.get("/my/profile")
 def get_my_profile(
     db: Session = Depends(get_db),

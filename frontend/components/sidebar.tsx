@@ -36,7 +36,10 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
       { label: t("myCurrentPatients"), href: "/my-patients" },
       { label: t("searchPatients"), href: "/patients/search" },
     ],
-    patient: [{ label: t("myRecords"), href: "/my-records" }],
+    patient: [
+      { label: t("myRecords"), href: "/my-records" },
+      { label: t("myAccess"), href: "/my-records/access" },
+    ],
     admin: [
       { label: t("assignments"), href: "/assignments" },
       { label: t("searchPatients"), href: "/patients/search" },

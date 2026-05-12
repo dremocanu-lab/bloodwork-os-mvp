@@ -596,6 +596,21 @@ const en = {
   // Topbar
   topbarSearch: "Search patients, documents, or workflow items",
 
+  // My Access page
+  myAccess: "My Access",
+  myAccessDesc: "Manage who can view your records. Approve or deny requests, and revoke access at any time.",
+  activeAccess: "Active Access",
+  pendingRequests: "Pending Requests",
+  revokeAccess: "Revoke",
+  revoking: "Revoking...",
+  revokeAccessConfirmTitle: "Revoke access?",
+  revokeAccessConfirmDesc: "This doctor will no longer be able to view your records.",
+  confirmRevoke: "Yes, revoke",
+  grantedAt: "Granted",
+  requestedAt: "Requested",
+  noActiveAccessDesc: "No doctors currently have access to your records.",
+  noPendingRequestsDesc: "No pending access requests.",
+
   // Section label fallback
   other: "Other",
 
@@ -1193,6 +1208,21 @@ const ro: Record<keyof typeof en, string> = {
 
   // Topbar
   topbarSearch: "Caută pacienți, documente sau elemente de lucru",
+
+  // My Access page
+  myAccess: "Acces meu",
+  myAccessDesc: "Gestionează cine îți poate vedea documentele. Aprobă sau refuză cererile și revocă accesul oricând.",
+  activeAccess: "Acces activ",
+  pendingRequests: "Cereri în așteptare",
+  revokeAccess: "Revocă",
+  revoking: "Se revocă...",
+  revokeAccessConfirmTitle: "Revoci accesul?",
+  revokeAccessConfirmDesc: "Acest medic nu va mai putea vizualiza documentele tale.",
+  confirmRevoke: "Da, revocă",
+  grantedAt: "Acordat",
+  requestedAt: "Solicitat",
+  noActiveAccessDesc: "Niciun medic nu are acces la documentele tale momentan.",
+  noPendingRequestsDesc: "Nu există cereri de acces în așteptare.",
 
   // Section label fallback
   other: "Altele",
