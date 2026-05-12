@@ -653,6 +653,27 @@ textarea {
   box-shadow: var(--portal-shadow);
   color: var(--portal-text);
   padding: 22px;
+  transition: transform 260ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 260ms ease;
+}
+
+.portal-role-card:hover {
+  transform: translateY(-5px);
+  box-shadow: var(--portal-shadow), 0 24px 52px rgba(15, 23, 42, 0.16);
+}
+
+.portal-role-card:has(.portal-art-doctor) {
+  border-top: 2.5px solid rgba(109, 93, 252, 0.6);
+  background: linear-gradient(160deg, color-mix(in srgb, #6d5dfc 9%, var(--portal-card)) 0%, var(--portal-card) 52%);
+}
+
+.portal-role-card:has(.portal-art-patient) {
+  border-top: 2.5px solid rgba(16, 185, 129, 0.6);
+  background: linear-gradient(160deg, color-mix(in srgb, #10b981 9%, var(--portal-card)) 0%, var(--portal-card) 52%);
+}
+
+.portal-role-card:has(.portal-art-admin) {
+  border-top: 2.5px solid rgba(59, 130, 246, 0.6);
+  background: linear-gradient(160deg, color-mix(in srgb, #3b82f6 9%, var(--portal-card)) 0%, var(--portal-card) 52%);
 }
 
 .portal-role-card-top {
@@ -720,15 +741,15 @@ body.dark .portal-role-pill,
 }
 
 .portal-art-doctor {
-  background: #cbb2e9;
+  background: linear-gradient(135deg, #7c3aed 0%, #a78bfa 100%);
 }
 
 .portal-art-patient {
-  background: #b7d67d;
+  background: linear-gradient(135deg, #065f46 0%, #6ee7b7 100%);
 }
 
 .portal-art-admin {
-  background: #b8c4ee;
+  background: linear-gradient(135deg, #1e40af 0%, #93c5fd 100%);
 }
 
 .portal-illustration {
@@ -775,7 +796,8 @@ body.dark .portal-role-pill,
   height: 112px;
   left: 18%;
   bottom: 16%;
-  background: rgba(255, 255, 255, 0.56);
+  background: rgba(255, 255, 255, 0.28);
+  backdrop-filter: blur(6px);
 }
 
 .portal-shape.shape-b {
@@ -784,7 +806,8 @@ body.dark .portal-role-pill,
   right: 18%;
   bottom: 16%;
   border-radius: 34px;
-  background: rgba(109, 93, 252, 0.26);
+  background: rgba(255, 255, 255, 0.16);
+  backdrop-filter: blur(6px);
 }
 
 .portal-shape.shape-c {
@@ -792,7 +815,7 @@ body.dark .portal-role-pill,
   height: 46px;
   top: 16%;
   right: 12%;
-  border: 3px solid rgba(15, 23, 42, 0.7);
+  border: 2.5px solid rgba(255, 255, 255, 0.5);
   background: transparent;
 }
 
@@ -821,17 +844,36 @@ body.dark .portal-role-pill,
   border: none;
   background: linear-gradient(135deg, var(--portal-primary), var(--portal-primary-2));
   color: #fff;
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), box-shadow 200ms ease, opacity 200ms ease;
 }
 
 .portal-secondary-btn {
   border: 1px solid var(--portal-border);
   background: transparent;
   color: var(--portal-text);
+  transition: transform 200ms cubic-bezier(0.22, 1, 0.36, 1), border-color 200ms ease, color 200ms ease;
 }
 
-.portal-primary-btn:hover,
+.portal-primary-btn:hover {
+  opacity: 0.92;
+  transform: translateY(-1px);
+  box-shadow: 0 8px 22px rgba(109, 93, 252, 0.36);
+}
+
+.portal-primary-btn:active {
+  transform: scale(0.97);
+  box-shadow: none;
+  opacity: 0.88;
+}
+
 .portal-secondary-btn:hover {
-  opacity: 0.96;
+  border-color: var(--portal-primary);
+  color: var(--portal-primary);
+  transform: translateY(-1px);
+}
+
+.portal-secondary-btn:active {
+  transform: scale(0.97);
 }
 
 /* AUTH PAGES */
