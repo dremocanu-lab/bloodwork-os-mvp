@@ -112,16 +112,20 @@ type NavigationSection = DischargeSection & {
   synthetic?: boolean;
 };
 
+const READER_FONT =
+  '"Inter", ui-sans-serif, system-ui, -apple-system, BlinkMacSystemFont, "Segoe UI", Roboto, sans-serif';
+
+const FONT_SIZE_MIN = 11;
+const FONT_SIZE_MAX = 22;
+const FONT_SIZE_DEFAULT = 14;
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
       <style jsx>{`
         @keyframes bloodworkSpin {
-          to {
-            transform: rotate(360deg);
-          }
+          to { transform: rotate(360deg); }
         }
-
         .bloodwork-spinner {
           width: ${size}px;
           height: ${size}px;
@@ -131,7 +135,6 @@ function Spinner({ size = 18 }: { size?: number }) {
           animation: bloodworkSpin 0.8s linear infinite;
         }
       `}</style>
-
       <span className="bloodwork-spinner" />
     </>
   );
@@ -139,18 +142,13 @@ function Spinner({ size = 18 }: { size?: number }) {
 
 function parseDateTime(value?: string | null) {
   if (!value) return 0;
-
   const normalized = value.trim();
   const direct = new Date(normalized).getTime();
-
   if (!Number.isNaN(direct)) return direct;
-
   const match = normalized.match(
     /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
   );
-
   if (!match) return 0;
-
   const day = Number(match[1]);
   const month = Number(match[2]);
   const rawYear = Number(match[3]);
@@ -158,17 +156,13 @@ function parseDateTime(value?: string | null) {
   const hour = match[4] ? Number(match[4]) : 0;
   const minute = match[5] ? Number(match[5]) : 0;
   const parsed = new Date(year, month - 1, day, hour, minute).getTime();
-
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
-
   const time = parseDateTime(value);
-
   if (!time) return value;
-
   return new Date(time).toLocaleDateString(undefined, {
     day: "2-digit",
     month: "short",
@@ -183,10 +177,8 @@ function displayValue(value?: string | number | null) {
 
 function parseDischargePayload(noteBody?: string | null): DischargePayload | null {
   if (!noteBody) return null;
-
   try {
     const parsed = JSON.parse(noteBody);
-
     if (
       parsed &&
       typeof parsed === "object" &&
@@ -195,7 +187,6 @@ function parseDischargePayload(noteBody?: string | null): DischargePayload | nul
     ) {
       return parsed;
     }
-
     return null;
   } catch {
     return null;
@@ -242,28 +233,12 @@ function StatusPill({
 }) {
   const style =
     tone === "success"
-      ? {
-          background: "var(--success-bg)",
-          color: "var(--success-text)",
-          borderColor: "var(--success-border)",
-        }
+      ? { background: "var(--success-bg)", color: "var(--success-text)", borderColor: "var(--success-border)" }
       : tone === "warn"
-      ? {
-          background: "var(--warn-bg)",
-          color: "var(--warn-text)",
-          borderColor: "var(--warn-border)",
-        }
+      ? { background: "var(--warn-bg)", color: "var(--warn-text)", borderColor: "var(--warn-border)" }
       : tone === "danger"
-      ? {
-          background: "var(--danger-bg)",
-          color: "var(--danger-text)",
-          borderColor: "var(--danger-border)",
-        }
-      : {
-          background: "var(--panel-2)",
-          color: "var(--muted)",
-          borderColor: "var(--border)",
-        };
+      ? { background: "var(--danger-bg)", color: "var(--danger-text)", borderColor: "var(--danger-border)" }
+      : { background: "var(--panel-2)", color: "var(--muted)", borderColor: "var(--border)" };
 
   return (
     <span
@@ -285,13 +260,7 @@ function StatusPill({
   );
 }
 
-function CompactMetaItem({
-  label,
-  value,
-}: {
-  label: string;
-  value?: string | number | null;
-}) {
+function CompactMetaItem({ label, value }: { label: string; value?: string | number | null }) {
   return (
     <div
       style={{
@@ -308,7 +277,6 @@ function CompactMetaItem({
       <span className="muted-text" style={{ fontSize: 11, fontWeight: 900 }}>
         {label}
       </span>
-
       <span style={{ fontSize: 12, fontWeight: 950 }}>{displayValue(value)}</span>
     </div>
   );
@@ -328,7 +296,9 @@ function ReaderToggle({
       type="button"
       onClick={onClick}
       style={{
-        border: active ? "1px solid color-mix(in srgb, var(--primary) 55%, var(--border))" : "1px solid var(--border)",
+        border: active
+          ? "1px solid color-mix(in srgb, var(--primary) 55%, var(--border))"
+          : "1px solid var(--border)",
         background: active
           ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 20%, var(--panel)), var(--panel))"
           : "var(--panel-2)",
@@ -345,13 +315,93 @@ function ReaderToggle({
   );
 }
 
+function FontSizeControl({
+  fontSize,
+  onChange,
+}: {
+  fontSize: number;
+  onChange: (next: number) => void;
+}) {
+  return (
+    <div
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        gap: 2,
+        border: "1px solid var(--border)",
+        borderRadius: 999,
+        background: "var(--panel-2)",
+        padding: "3px 4px",
+      }}
+    >
+      <button
+        type="button"
+        onClick={() => onChange(Math.max(FONT_SIZE_MIN, fontSize - 1))}
+        disabled={fontSize <= FONT_SIZE_MIN}
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 999,
+          border: "none",
+          background: "transparent",
+          color: fontSize <= FONT_SIZE_MIN ? "var(--muted)" : "var(--foreground)",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: fontSize <= FONT_SIZE_MIN ? "not-allowed" : "pointer",
+          display: "grid",
+          placeItems: "center",
+          lineHeight: 1,
+        }}
+        title="Smaller text"
+      >
+        −
+      </button>
+      <span
+        style={{
+          fontSize: 11,
+          fontWeight: 950,
+          color: "var(--muted)",
+          minWidth: 26,
+          textAlign: "center",
+        }}
+      >
+        {fontSize}
+      </span>
+      <button
+        type="button"
+        onClick={() => onChange(Math.min(FONT_SIZE_MAX, fontSize + 1))}
+        disabled={fontSize >= FONT_SIZE_MAX}
+        style={{
+          width: 26,
+          height: 26,
+          borderRadius: 999,
+          border: "none",
+          background: "transparent",
+          color: fontSize >= FONT_SIZE_MAX ? "var(--muted)" : "var(--foreground)",
+          fontSize: 16,
+          fontWeight: 700,
+          cursor: fontSize >= FONT_SIZE_MAX ? "not-allowed" : "pointer",
+          display: "grid",
+          placeItems: "center",
+          lineHeight: 1,
+        }}
+        title="Larger text"
+      >
+        +
+      </button>
+    </div>
+  );
+}
+
 function SectionTextPanel({
   section,
   text,
+  fontSize,
   onCopy,
 }: {
   section: NavigationSection;
   text?: string | null;
+  fontSize: number;
   onCopy?: () => void;
 }) {
   const rawText = text || "";
@@ -378,13 +428,11 @@ function SectionTextPanel({
       >
         <div>
           <div className="section-title">{section.title}</div>
-
           {section.original_titles?.length ? (
             <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
               Original heading: {section.original_titles.join(" · ")}
             </div>
           ) : null}
-
           {section.formatting_method && section.formatting_method !== "raw_ocr" ? (
             <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 800 }}>
               AI layout formatted
@@ -395,11 +443,13 @@ function SectionTextPanel({
           ) : null}
         </div>
 
-        {onCopy && (
-          <button className="secondary-btn" onClick={onCopy}>
-            Copy section
-          </button>
-        )}
+        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
+          {onCopy && (
+            <button className="secondary-btn" onClick={onCopy}>
+              Copy section
+            </button>
+          )}
+        </div>
       </div>
 
       <div
@@ -416,14 +466,13 @@ function SectionTextPanel({
           style={{
             margin: 0,
             whiteSpace: "pre-wrap",
-            fontFamily:
-            '"Courier New", ui-monospace, SFMono-Regular, Menlo, Monaco, Consolas, monospace',
-            fontSize: 13,
-            lineHeight: 1.38,
-            fontWeight: 600,
+            fontFamily: READER_FONT,
+            fontSize: fontSize,
+            lineHeight: 1.65,
+            fontWeight: 450,
             color: "var(--foreground)",
             tabSize: 4,
-            overflowWrap: "normal",
+            overflowWrap: "break-word",
             wordBreak: "normal",
           }}
         >
@@ -442,26 +491,19 @@ function copyText(text: string) {
 function parseAdminLines(body: string): Array<{ label: string; value: string }> {
   const results: Array<{ label: string; value: string }> = [];
   const seen = new Set<string>();
-
   for (const rawLine of body.split("\n")) {
     const line = rawLine.trim();
     if (!line) continue;
-
     const colonIndex = line.indexOf(":");
     if (colonIndex < 2 || colonIndex > 60) continue;
-
     const label = line.slice(0, colonIndex).trim();
     const value = line.slice(colonIndex + 1).trim();
-
     if (!value || label.length < 2) continue;
-
     const key = label.toLowerCase().replace(/\s+/g, " ");
     if (seen.has(key)) continue;
     seen.add(key);
-
     results.push({ label, value });
   }
-
   return results;
 }
 
@@ -489,11 +531,9 @@ function AdminBoxesPanel({
   ].filter((f): f is { label: string; value: string } => Boolean(f.value));
 
   const metaLabelKeys = new Set(metaFields.map((f) => f.label.toLowerCase()));
-
   const bodyFields = parseAdminLines(section.body || "").filter(
     (f) => !metaLabelKeys.has(f.label.toLowerCase())
   );
-
   const allFields = [...metaFields, ...bodyFields];
 
   return (
@@ -506,7 +546,6 @@ function AdminBoxesPanel({
           </div>
         ) : null}
       </div>
-
       <div
         style={{
           display: "grid",
@@ -535,6 +574,8 @@ export default function DischargeStructuredPage() {
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
   const [activeSectionKey, setActiveSectionKey] = useState("full_summary");
   const [readerMode, setReaderMode] = useState<"structured" | "original">("structured");
+  const [sidebarOpen, setSidebarOpen] = useState(true);
+  const [fontSize, setFontSize] = useState(FONT_SIZE_DEFAULT);
   const [loading, setLoading] = useState(true);
   const [openingOriginal, setOpeningOriginal] = useState(false);
   const [deleting, setDeleting] = useState(false);
@@ -542,31 +583,23 @@ export default function DischargeStructuredPage() {
   const [error, setError] = useState("");
 
   async function fetchData() {
-  if (!documentId) {
-    throw new Error("Missing document id.");
+    if (!documentId) throw new Error("Missing document id.");
+    const meResponse = await api.get<CurrentUser>("/auth/me");
+    setCurrentUser(meResponse.data);
+    const documentResponse = await api.get<DocumentResponse>(`/documents/${documentId}`);
+    if (!documentResponse.data?.parsed_data) {
+      throw new Error("Document loaded, but parsed_data is missing.");
+    }
+    const isDischarge =
+      documentResponse.data.section === "discharge_summary" ||
+      documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
+      documentResponse.data.parsed_data?.report_type === "discharge_summary";
+    if (!isDischarge) {
+      router.replace(`/documents/${documentId}`);
+      return;
+    }
+    setDocumentData(documentResponse.data);
   }
-
-  const meResponse = await api.get<CurrentUser>("/auth/me");
-  setCurrentUser(meResponse.data);
-
-  const documentResponse = await api.get<DocumentResponse>(`/documents/${documentId}`);
-
-  if (!documentResponse.data?.parsed_data) {
-    throw new Error("Document loaded, but parsed_data is missing.");
-  }
-
-  const isDischarge =
-    documentResponse.data.section === "discharge_summary" ||
-    documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
-    documentResponse.data.parsed_data?.report_type === "discharge_summary";
-
-  if (!isDischarge) {
-    router.replace(`/documents/${documentId}`);
-    return;
-  }
-
-  setDocumentData(documentResponse.data);
-}
 
   useEffect(() => {
     async function init() {
@@ -580,7 +613,6 @@ export default function DischargeStructuredPage() {
         setLoading(false);
       }
     }
-
     init();
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
@@ -593,7 +625,9 @@ export default function DischargeStructuredPage() {
   }, [dischargePayload?.sections]);
 
   const fullSummaryText = useMemo(() => {
-    return sections.map((section) => `${section.title}\n\n${getSectionBody(section)}`).join("\n\n---\n\n");
+    return sections
+      .map((section) => `${section.title}\n\n${getSectionBody(section)}`)
+      .join("\n\n---\n\n");
   }, [sections]);
 
   const navigationSections = useMemo<NavigationSection[]>(() => {
@@ -611,10 +645,7 @@ export default function DischargeStructuredPage() {
         formatted_body: fullSummaryText || "",
         synthetic: true,
       },
-      ...sections.map((section) => ({
-        ...section,
-        synthetic: false,
-      })),
+      ...sections.map((section) => ({ ...section, synthetic: false })),
       {
         key: "audit",
         title: "Audit trail",
@@ -624,7 +655,9 @@ export default function DischargeStructuredPage() {
     ];
   }, [sections, fullSummaryText]);
 
-  const activeSection = navigationSections.find((section) => section.key === activeSectionKey) || navigationSections[0];
+  const activeSection =
+    navigationSections.find((section) => section.key === activeSectionKey) ||
+    navigationSections[0];
 
   const canDelete =
     Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
@@ -632,29 +665,21 @@ export default function DischargeStructuredPage() {
 
   async function openOriginal() {
     if (!documentData) return;
-
     try {
       setOpeningOriginal(true);
       setError("");
-
       const response = await api.get(`/documents/${documentData.document_id}/file`, {
         responseType: "blob",
       });
-
       const rawContentType = response.headers["content-type"];
       const contentType =
         typeof rawContentType === "string"
           ? rawContentType
           : documentData.content_type || "application/octet-stream";
-
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
-
       window.open(fileUrl, "_blank", "noopener,noreferrer");
-
-      window.setTimeout(() => {
-        window.URL.revokeObjectURL(fileUrl);
-      }, 60_000);
+      window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
     } catch (err) {
       setError(getErrorMessage(err, "Could not open original file."));
     } finally {
@@ -664,23 +689,18 @@ export default function DischargeStructuredPage() {
 
   async function deleteDocument() {
     if (!documentData) return;
-
     try {
       setDeleting(true);
       setError("");
-
       await api.delete(`/documents/${documentData.document_id}`);
-
       if (currentUser?.role === "patient") {
         router.push("/my-records");
         return;
       }
-
       if (documentData.patient_id) {
         router.push(`/patients/${documentData.patient_id}`);
         return;
       }
-
       router.push("/my-records");
     } catch (err) {
       setError(getErrorMessage(err, "Could not delete discharge summary."));
@@ -691,75 +711,66 @@ export default function DischargeStructuredPage() {
   }
 
   if (loading) {
-  return (
-    <main
-      className="app-page-bg"
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
-        <Spinner size={20} />
-        <span className="muted-text">Loading discharge summary...</span>
-      </div>
-    </main>
-  );
-}
-
-if (!currentUser || !documentData || !parsed) {
-  return (
-    <main
-      className="app-page-bg"
-      style={{
-        minHeight: "100vh",
-        padding: 24,
-        display: "grid",
-        placeItems: "center",
-      }}
-    >
-      <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
-        <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
-          Could not load discharge summary
+    return (
+      <main
+        className="app-page-bg"
+        style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}
+      >
+        <div
+          className="soft-card-tight"
+          style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}
+        >
+          <Spinner size={20} />
+          <span className="muted-text">Loading discharge summary...</span>
         </div>
+      </main>
+    );
+  }
 
-        <div className="muted-text" style={{ lineHeight: 1.6 }}>
-          The page loaded, but the discharge document data did not come back in the expected format.
-        </div>
-
-        {error ? (
-          <div
-            style={{
-              marginTop: 14,
-              padding: 14,
-              borderRadius: 16,
-              background: "var(--danger-bg)",
-              color: "var(--danger-text)",
-              border: "1px solid var(--danger-border)",
-              fontWeight: 800,
-              lineHeight: 1.5,
-              whiteSpace: "pre-wrap",
-            }}
-          >
-            {error}
+  if (!currentUser || !documentData || !parsed) {
+    return (
+      <main
+        className="app-page-bg"
+        style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}
+      >
+        <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
+          <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
+            Could not load discharge summary
           </div>
-        ) : null}
-
-        <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
-          <button className="secondary-btn" onClick={() => router.push("/my-records")}>
-            Back to my records
-          </button>
-
-          <button className="secondary-btn" onClick={() => window.location.reload()}>
-            Try again
-          </button>
+          <div className="muted-text" style={{ lineHeight: 1.6 }}>
+            The page loaded, but the discharge document data did not come back in the expected format.
+          </div>
+          {error ? (
+            <div
+              style={{
+                marginTop: 14,
+                padding: 14,
+                borderRadius: 16,
+                background: "var(--danger-bg)",
+                color: "var(--danger-text)",
+                border: "1px solid var(--danger-border)",
+                fontWeight: 800,
+                lineHeight: 1.5,
+                whiteSpace: "pre-wrap",
+              }}
+            >
+              {error}
+            </div>
+          ) : null}
+          <div style={{ display: "flex", gap: 10, marginTop: 18, flexWrap: "wrap" }}>
+            <button className="secondary-btn" onClick={() => router.push("/my-records")}>
+              Back to my records
+            </button>
+            <button className="secondary-btn" onClick={() => window.location.reload()}>
+              Try again
+            </button>
+          </div>
         </div>
-      </div>
-    </main>
-  );
-}
+      </main>
+    );
+  }
+
+  const showSidebar = readerMode === "structured" && sidebarOpen;
 
   return (
     <AppShell
@@ -773,7 +784,6 @@ if (!currentUser || !documentData || !parsed) {
           <button className="secondary-btn" onClick={openOriginal} disabled={openingOriginal}>
             {openingOriginal ? "Opening..." : "Open original"}
           </button>
-
           {canDelete && (
             <button
               onClick={() => setConfirmDeleteOpen(true)}
@@ -790,7 +800,6 @@ if (!currentUser || !documentData || !parsed) {
               Delete
             </button>
           )}
-
           <button className="secondary-btn" onClick={() => router.back()}>
             Back
           </button>
@@ -812,33 +821,29 @@ if (!currentUser || !documentData || !parsed) {
         >
           <div
             className="soft-card"
-            style={{
-              width: "min(520px, 100%)",
-              padding: 24,
-              boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
-            }}
+            style={{ width: "min(520px, 100%)", padding: 24, boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)" }}
           >
             <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
               Delete this discharge summary?
             </div>
-
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
-              This removes the discharge summary from the patient files and timeline. This can only be done by the
-              uploader or an admin.
+              This removes the discharge summary from the patient files and timeline. This can only be
+              done by the uploader or an admin.
             </div>
-
             <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
               <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 5 }}>
                 Uploaded by {valueOrDash(documentData.uploaded_by?.full_name)}
               </div>
             </div>
-
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
-              <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
+              <button
+                className="secondary-btn"
+                onClick={() => setConfirmDeleteOpen(false)}
+                disabled={deleting}
+              >
                 Cancel
               </button>
-
               <button
                 onClick={deleteDocument}
                 disabled={deleting}
@@ -874,6 +879,7 @@ if (!currentUser || !documentData || !parsed) {
         </div>
       )}
 
+      {/* Top toolbar */}
       <div
         className="soft-card-tight"
         style={{
@@ -884,26 +890,27 @@ if (!currentUser || !documentData || !parsed) {
           gap: 12,
           flexWrap: "wrap",
           alignItems: "center",
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
+          background:
+            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
         }}
       >
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
           <ReaderToggle active={readerMode === "structured"} onClick={() => setReaderMode("structured")}>
             Structured reader
           </ReaderToggle>
-
           <ReaderToggle active={readerMode === "original"} onClick={() => setReaderMode("original")}>
             Original layout
           </ReaderToggle>
-
           <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
             {parsed.is_verified ? "Verified" : "Unverified"}
           </StatusPill>
-
           <StatusPill>{sections.length} sections</StatusPill>
         </div>
 
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+          {readerMode === "structured" && (
+            <FontSizeControl fontSize={fontSize} onChange={setFontSize} />
+          )}
           <CompactMetaItem label="Patient" value={parsed.patient_name} />
           <CompactMetaItem
             label="Hospitalization"
@@ -912,20 +919,28 @@ if (!currentUser || !documentData || !parsed) {
         </div>
       </div>
 
+      {/* Main reader area */}
       <div
         className="soft-card"
         style={{
           padding: 16,
           display: "grid",
-          gridTemplateColumns: readerMode === "original" ? "minmax(0, 1fr)" : "minmax(310px, 0.28fr) minmax(0, 1fr)",
+          gridTemplateColumns:
+            readerMode === "original"
+              ? "minmax(0, 1fr)"
+              : showSidebar
+              ? "minmax(240px, 0.26fr) minmax(0, 1fr)"
+              : "minmax(0, 1fr)",
           gap: 16,
           alignItems: "stretch",
           height: "calc(100vh - 185px)",
           minHeight: 720,
           overflow: "hidden",
+          transition: "grid-template-columns 0.2s ease",
         }}
       >
-        {readerMode === "structured" && (
+        {/* Sidebar */}
+        {readerMode === "structured" && showSidebar && (
           <aside
             className="soft-card-tight"
             style={{
@@ -933,26 +948,56 @@ if (!currentUser || !documentData || !parsed) {
               background: "var(--panel-2)",
               height: "100%",
               overflowY: "auto",
+              display: "grid",
+              gridTemplateRows: "auto minmax(0, 1fr)",
             }}
           >
+            {/* Sidebar header with collapse button */}
             <div
-              className="muted-text"
               style={{
-                padding: "6px 8px 12px",
-                fontSize: 12,
-                fontWeight: 950,
-                textTransform: "uppercase",
-                letterSpacing: "0.06em",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "space-between",
+                padding: "4px 4px 12px",
               }}
             >
-              Sections
+              <span
+                className="muted-text"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 950,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.06em",
+                }}
+              >
+                Sections
+              </span>
+              <button
+                type="button"
+                onClick={() => setSidebarOpen(false)}
+                title="Collapse sidebar"
+                style={{
+                  width: 28,
+                  height: 28,
+                  borderRadius: 999,
+                  border: "1px solid var(--border)",
+                  background: "var(--panel)",
+                  color: "var(--muted)",
+                  cursor: "pointer",
+                  display: "grid",
+                  placeItems: "center",
+                  fontSize: 14,
+                  lineHeight: 1,
+                }}
+              >
+                ‹
+              </button>
             </div>
 
-            <div style={{ display: "grid", gap: 8 }}>
+            <div style={{ display: "grid", gap: 8, alignContent: "start", overflowY: "auto" }}>
               {navigationSections.map((section) => {
                 const active = activeSectionKey === section.key;
                 const accent = sectionAccent(section.key);
-
                 return (
                   <button
                     key={section.key}
@@ -960,7 +1005,9 @@ if (!currentUser || !documentData || !parsed) {
                     onClick={() => setActiveSectionKey(section.key)}
                     style={{
                       border: `1px solid ${
-                        active ? "color-mix(in srgb, var(--primary) 55%, var(--border))" : "var(--border)"
+                        active
+                          ? "color-mix(in srgb, var(--primary) 55%, var(--border))"
+                          : "var(--border)"
                       }`,
                       background: active
                         ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, var(--panel)), var(--panel))"
@@ -974,7 +1021,9 @@ if (!currentUser || !documentData || !parsed) {
                       gridTemplateColumns: "36px minmax(0, 1fr)",
                       gap: 11,
                       alignItems: "center",
-                      boxShadow: active ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)" : "none",
+                      boxShadow: active
+                        ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)"
+                        : "none",
                     }}
                   >
                     <span
@@ -995,9 +1044,10 @@ if (!currentUser || !documentData || !parsed) {
                     >
                       {sectionIcon(section.key)}
                     </span>
-
                     <span style={{ minWidth: 0 }}>
-                      <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>{section.title}</span>
+                      <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>
+                        {section.title}
+                      </span>
                     </span>
                   </button>
                 );
@@ -1006,6 +1056,7 @@ if (!currentUser || !documentData || !parsed) {
           </aside>
         )}
 
+        {/* Reader panel */}
         <section
           className="soft-card-tight"
           style={{
@@ -1023,19 +1074,37 @@ if (!currentUser || !documentData || !parsed) {
             <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
           ) : (
             <>
+              {/* Expand button when sidebar is collapsed */}
+              {!sidebarOpen && (
+                <div style={{ position: "absolute", top: 20, left: 20, zIndex: 10 }}>
+                  <button
+                    type="button"
+                    onClick={() => setSidebarOpen(true)}
+                    title="Open sections"
+                    style={{
+                      width: 32,
+                      height: 32,
+                      borderRadius: 999,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel-2)",
+                      color: "var(--muted)",
+                      cursor: "pointer",
+                      display: "grid",
+                      placeItems: "center",
+                      fontSize: 14,
+                      lineHeight: 1,
+                    }}
+                  >
+                    ›
+                  </button>
+                </div>
+              )}
+
               {activeSectionKey === "overview" && (
-                <div
-                  style={{
-                    minHeight: 0,
-                    height: "100%",
-                    overflowY: "auto",
-                    paddingRight: 8,
-                  }}
-                >
+                <div style={{ minHeight: 0, height: "100%", overflowY: "auto", paddingRight: 8 }}>
                   <div className="section-title" style={{ marginBottom: 16 }}>
                     Overview
                   </div>
-
                   <div
                     style={{
                       display: "grid",
@@ -1066,12 +1135,15 @@ if (!currentUser || !documentData || !parsed) {
                     formatted_body: fullSummaryText,
                   }}
                   text={fullSummaryText}
+                  fontSize={fontSize}
                   onCopy={() => copyText(fullSummaryText)}
                 />
               )}
 
-              {activeSectionKey !== "overview" && activeSectionKey !== "full_summary" && activeSectionKey !== "audit" && (
-                activeSection.key === "administrative_information" ? (
+              {activeSectionKey !== "overview" &&
+                activeSectionKey !== "full_summary" &&
+                activeSectionKey !== "audit" &&
+                (activeSection.key === "administrative_information" ? (
                   <AdminBoxesPanel
                     section={activeSection}
                     parsed={parsed}
@@ -1081,10 +1153,10 @@ if (!currentUser || !documentData || !parsed) {
                   <SectionTextPanel
                     section={activeSection}
                     text={getSectionBody(activeSection)}
+                    fontSize={fontSize}
                     onCopy={() => copyText(getSectionBody(activeSection))}
                   />
-                )
-              )}
+                ))}
 
               {activeSectionKey === "audit" && (
                 <div
@@ -1099,15 +1171,19 @@ if (!currentUser || !documentData || !parsed) {
                   <div className="section-title" style={{ marginBottom: 16 }}>
                     Audit trail
                   </div>
-
-                  <div style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}>
+                  <div
+                    style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}
+                  >
                     {(parsed.audit_logs || []).map((log, index) => (
-                      <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
+                      <div
+                        key={`${log.action}-${log.timestamp}-${index}`}
+                        className="soft-card-tight"
+                        style={{ padding: 16 }}
+                      >
                         <div style={{ fontWeight: 950 }}>{log.action}</div>
                         <div className="muted-text" style={{ marginTop: 5 }}>
                           {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                         </div>
-
                         {log.details && (
                           <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>
                             {log.details}
@@ -1115,9 +1191,11 @@ if (!currentUser || !documentData || !parsed) {
                         )}
                       </div>
                     ))}
-
                     {!parsed.audit_logs?.length && (
-                      <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
+                      <div
+                        className="soft-card-tight"
+                        style={{ padding: 18, background: "var(--panel-2)" }}
+                      >
                         <div className="muted-text">No audit activity yet.</div>
                       </div>
                     )}
