@@ -16,7 +16,7 @@ MODEL = os.getenv("OPENAI_DISCHARGE_LAYOUT_MODEL", "gpt-4.1")
 PAGE_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_PAGE_MAX_OUTPUT_TOKENS", "32000"))
 PDF_RENDER_ZOOM = float(os.getenv("OPENAI_DISCHARGE_RENDER_ZOOM", "2.6"))
 MAX_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PAGES", "90"))
-MAX_PARALLEL_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PARALLEL_PAGES", "6"))
+MAX_PARALLEL_PAGES = int(os.getenv("OPENAI_DISCHARGE_MAX_PARALLEL_PAGES", "3"))
 
 
 ALLOWED_SECTION_KEYS = {
@@ -171,7 +171,9 @@ def _client() -> OpenAI:
     if not api_key:
         raise RuntimeError("OPENAI_API_KEY is not set.")
 
-    return OpenAI(api_key=api_key)
+    # max_retries=8 handles transient 429 rate-limit bursts from parallel pages.
+    # The SDK uses exponential backoff automatically between retries.
+    return OpenAI(api_key=api_key, max_retries=8)
 
 
 def _extract_response_text(response: Any) -> str:
