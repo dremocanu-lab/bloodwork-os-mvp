@@ -339,8 +339,8 @@ function FontSizeControl({
         onClick={() => onChange(Math.max(FONT_SIZE_MIN, fontSize - 1))}
         disabled={fontSize <= FONT_SIZE_MIN}
         style={{
-          width: 26,
-          height: 26,
+          width: 28,
+          height: 28,
           borderRadius: 999,
           border: "none",
           background: "transparent",
@@ -348,8 +348,9 @@ function FontSizeControl({
           fontSize: 16,
           fontWeight: 700,
           cursor: fontSize <= FONT_SIZE_MIN ? "not-allowed" : "pointer",
-          display: "grid",
-          placeItems: "center",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           lineHeight: 1,
         }}
         title="Smaller text"
@@ -372,8 +373,8 @@ function FontSizeControl({
         onClick={() => onChange(Math.min(FONT_SIZE_MAX, fontSize + 1))}
         disabled={fontSize >= FONT_SIZE_MAX}
         style={{
-          width: 26,
-          height: 26,
+          width: 28,
+          height: 28,
           borderRadius: 999,
           border: "none",
           background: "transparent",
@@ -381,8 +382,9 @@ function FontSizeControl({
           fontSize: 16,
           fontWeight: 700,
           cursor: fontSize >= FONT_SIZE_MAX ? "not-allowed" : "pointer",
-          display: "grid",
-          placeItems: "center",
+          display: "flex",
+          alignItems: "center",
+          justifyContent: "center",
           lineHeight: 1,
         }}
         title="Larger text"
@@ -770,7 +772,14 @@ export default function DischargeStructuredPage() {
     );
   }
 
-  const showSidebar = readerMode === "structured" && sidebarOpen;
+  const showStructured = readerMode === "structured";
+
+  // Grid columns: collapsed strip | open sidebar | reader
+  const gridColumns = !showStructured
+    ? "minmax(0, 1fr)"
+    : sidebarOpen
+    ? "minmax(240px, 0.26fr) minmax(0, 1fr)"
+    : "48px minmax(0, 1fr)";
 
   return (
     <AppShell
@@ -925,12 +934,7 @@ export default function DischargeStructuredPage() {
         style={{
           padding: 16,
           display: "grid",
-          gridTemplateColumns:
-            readerMode === "original"
-              ? "minmax(0, 1fr)"
-              : showSidebar
-              ? "minmax(240px, 0.26fr) minmax(0, 1fr)"
-              : "minmax(0, 1fr)",
+          gridTemplateColumns: gridColumns,
           gap: 16,
           alignItems: "stretch",
           height: "calc(100vh - 185px)",
@@ -939,8 +943,8 @@ export default function DischargeStructuredPage() {
           transition: "grid-template-columns 0.2s ease",
         }}
       >
-        {/* Sidebar */}
-        {readerMode === "structured" && showSidebar && (
+        {/* Sidebar — open state */}
+        {showStructured && sidebarOpen && (
           <aside
             className="soft-card-tight"
             style={{
@@ -977,17 +981,18 @@ export default function DischargeStructuredPage() {
                 onClick={() => setSidebarOpen(false)}
                 title="Collapse sidebar"
                 style={{
-                  width: 28,
-                  height: 28,
+                  width: 36,
+                  height: 36,
                   borderRadius: 999,
                   border: "1px solid var(--border)",
                   background: "var(--panel)",
-                  color: "var(--muted)",
+                  color: "var(--foreground)",
                   cursor: "pointer",
-                  display: "grid",
-                  placeItems: "center",
-                  fontSize: 14,
-                  lineHeight: 1,
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "center",
+                  fontSize: 18,
+                  flexShrink: 0,
                 }}
               >
                 ‹
@@ -1031,8 +1036,9 @@ export default function DischargeStructuredPage() {
                         width: 36,
                         height: 36,
                         borderRadius: 13,
-                        display: "grid",
-                        placeItems: "center",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
                         background: active
                           ? "color-mix(in srgb, var(--primary) 18%, var(--panel-2))"
                           : "var(--panel-2)",
@@ -1040,6 +1046,7 @@ export default function DischargeStructuredPage() {
                         border: "1px solid var(--border)",
                         fontSize: 11,
                         fontWeight: 950,
+                        flexShrink: 0,
                       }}
                     >
                       {sectionIcon(section.key)}
@@ -1054,6 +1061,40 @@ export default function DischargeStructuredPage() {
               })}
             </div>
           </aside>
+        )}
+
+        {/* Collapsed sidebar strip — expand button */}
+        {showStructured && !sidebarOpen && (
+          <div
+            style={{
+              display: "flex",
+              flexDirection: "column",
+              alignItems: "center",
+              paddingTop: 10,
+            }}
+          >
+            <button
+              type="button"
+              onClick={() => setSidebarOpen(true)}
+              title="Open sections"
+              style={{
+                width: 40,
+                height: 40,
+                borderRadius: 999,
+                border: "1px solid var(--border)",
+                background: "var(--panel-2)",
+                color: "var(--foreground)",
+                cursor: "pointer",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 20,
+                flexShrink: 0,
+              }}
+            >
+              ›
+            </button>
+          </div>
         )}
 
         {/* Reader panel */}
@@ -1074,32 +1115,6 @@ export default function DischargeStructuredPage() {
             <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
           ) : (
             <>
-              {/* Expand button when sidebar is collapsed */}
-              {!sidebarOpen && (
-                <div style={{ position: "absolute", top: 20, left: 20, zIndex: 10 }}>
-                  <button
-                    type="button"
-                    onClick={() => setSidebarOpen(true)}
-                    title="Open sections"
-                    style={{
-                      width: 32,
-                      height: 32,
-                      borderRadius: 999,
-                      border: "1px solid var(--border)",
-                      background: "var(--panel-2)",
-                      color: "var(--muted)",
-                      cursor: "pointer",
-                      display: "grid",
-                      placeItems: "center",
-                      fontSize: 14,
-                      lineHeight: 1,
-                    }}
-                  >
-                    ›
-                  </button>
-                </div>
-              )}
-
               {activeSectionKey === "overview" && (
                 <div style={{ minHeight: 0, height: "100%", overflowY: "auto", paddingRight: 8 }}>
                   <div className="section-title" style={{ marginBottom: 16 }}>
