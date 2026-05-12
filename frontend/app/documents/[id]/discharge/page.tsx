@@ -225,94 +225,124 @@ function sectionAccent(key?: string) {
   return "var(--muted)";
 }
 
-function StatusPill({
-  children,
-  tone = "neutral",
-}: {
-  children: ReactNode;
-  tone?: "neutral" | "success" | "warn" | "danger";
-}) {
-  const style =
-    tone === "success"
-      ? { background: "var(--success-bg)", color: "var(--success-text)", borderColor: "var(--success-border)" }
-      : tone === "warn"
-      ? { background: "var(--warn-bg)", color: "var(--warn-text)", borderColor: "var(--warn-border)" }
-      : tone === "danger"
-      ? { background: "var(--danger-bg)", color: "var(--danger-text)", borderColor: "var(--danger-border)" }
-      : { background: "var(--panel-2)", color: "var(--muted)", borderColor: "var(--border)" };
-
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        padding: "7px 10px",
-        borderRadius: 999,
-        border: `1px solid ${style.borderColor}`,
-        background: style.background,
-        color: style.color,
-        fontSize: 12,
-        fontWeight: 950,
-        lineHeight: 1,
-        whiteSpace: "nowrap",
-      }}
-    >
-      {children}
-    </span>
-  );
+function copyText(text: string) {
+  if (!text) return;
+  void navigator.clipboard?.writeText(text);
 }
 
-function CompactMetaItem({ label, value }: { label: string; value?: string | number | null }) {
+function parseAdminLines(body: string): Array<{ label: string; value: string }> {
+  const results: Array<{ label: string; value: string }> = [];
+  const seen = new Set<string>();
+  for (const rawLine of body.split("\n")) {
+    const line = rawLine.trim();
+    if (!line) continue;
+    const colonIndex = line.indexOf(":");
+    if (colonIndex < 2 || colonIndex > 60) continue;
+    const label = line.slice(0, colonIndex).trim();
+    const value = line.slice(colonIndex + 1).trim();
+    if (!value || label.length < 2) continue;
+    const key = label.toLowerCase().replace(/\s+/g, " ");
+    if (seen.has(key)) continue;
+    seen.add(key);
+    results.push({ label, value });
+  }
+  return results;
+}
+
+function mergeFirstPageSections(rawSections: DischargeSection[]) {
+  return rawSections;
+}
+
+// ─── UI Components ────────────────────────────────────────────────────────────
+
+function MetaField({ label, value }: { label: string; value?: string | number | null }) {
   return (
-    <div
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 7,
-        minHeight: 34,
-        padding: "7px 10px",
-        borderRadius: 999,
-        border: "1px solid var(--border)",
-        background: "var(--panel-2)",
-      }}
-    >
-      <span className="muted-text" style={{ fontSize: 11, fontWeight: 900 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span
+        style={{
+          fontSize: 10,
+          fontWeight: 900,
+          textTransform: "uppercase",
+          letterSpacing: "0.09em",
+          color: "var(--muted)",
+          lineHeight: 1,
+        }}
+      >
         {label}
       </span>
-      <span style={{ fontSize: 12, fontWeight: 950 }}>{displayValue(value)}</span>
+      <span style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+        {displayValue(value)}
+      </span>
     </div>
   );
 }
 
-function ReaderToggle({
+function SegmentedControl({
+  options,
   active,
-  onClick,
-  children,
+  onChange,
 }: {
-  active: boolean;
-  onClick: () => void;
-  children: ReactNode;
+  options: { value: string; label: string }[];
+  active: string;
+  onChange: (v: string) => void;
 }) {
   return (
-    <button
-      type="button"
-      onClick={onClick}
+    <div
       style={{
-        border: active
-          ? "1px solid color-mix(in srgb, var(--primary) 55%, var(--border))"
-          : "1px solid var(--border)",
-        background: active
-          ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 20%, var(--panel)), var(--panel))"
-          : "var(--panel-2)",
-        color: active ? "var(--primary)" : "var(--foreground)",
+        display: "inline-flex",
+        border: "1px solid var(--border)",
         borderRadius: 999,
-        padding: "9px 12px",
-        fontSize: 12,
-        fontWeight: 950,
-        cursor: "pointer",
+        background: "var(--panel-2)",
+        padding: 3,
+        gap: 2,
       }}
     >
-      {children}
-    </button>
+      {options.map((opt) => {
+        const isActive = active === opt.value;
+        return (
+          <button
+            key={opt.value}
+            type="button"
+            onClick={() => onChange(opt.value)}
+            style={{
+              border: "none",
+              borderRadius: 999,
+              padding: "7px 14px",
+              fontSize: 12,
+              fontWeight: 950,
+              letterSpacing: "-0.01em",
+              background: isActive ? "var(--panel)" : "transparent",
+              color: isActive ? "var(--foreground)" : "var(--muted)",
+              cursor: "pointer",
+              boxShadow: isActive ? "0 1px 4px rgba(0,0,0,0.09)" : "none",
+              transition: "background 160ms ease, color 160ms ease, box-shadow 160ms ease",
+            }}
+          >
+            {opt.label}
+          </button>
+        );
+      })}
+    </div>
+  );
+}
+
+function StatusDot({ verified, t }: { verified: boolean; t: (k: string) => string }) {
+  const color = verified ? "var(--success-text)" : "var(--warn-text)";
+  return (
+    <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+      <span
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: 999,
+          background: color,
+          flexShrink: 0,
+        }}
+      />
+      <span style={{ fontSize: 12, fontWeight: 900, color, letterSpacing: "-0.01em" }}>
+        {verified ? t("verified") : t("unverified")}
+      </span>
+    </div>
   );
 }
 
@@ -418,6 +448,7 @@ function SectionTextPanel({
         height: "100%",
         display: "grid",
         gridTemplateRows: "auto minmax(0, 1fr)",
+        gap: 14,
         overflow: "hidden",
       }}
     >
@@ -427,19 +458,18 @@ function SectionTextPanel({
           justifyContent: "space-between",
           gap: 12,
           flexWrap: "wrap",
-          marginBottom: 14,
           alignItems: "flex-start",
         }}
       >
         <div>
           <div className="section-title">{section.title}</div>
           {section.original_titles?.length ? (
-            <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
+            <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 900, letterSpacing: "0.02em" }}>
               {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
             </div>
           ) : null}
           {section.formatting_method && section.formatting_method !== "raw_ocr" ? (
-            <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 800 }}>
+            <div className="muted-text" style={{ marginTop: 4, fontSize: 11, fontWeight: 800 }}>
               {t("aiLayoutFormatted")}
               {section.formatting_confidence !== null && section.formatting_confidence !== undefined
                 ? ` · ${Math.round(section.formatting_confidence * 100)}%`
@@ -448,13 +478,11 @@ function SectionTextPanel({
           ) : null}
         </div>
 
-        <div style={{ display: "flex", gap: 8, alignItems: "center", flexWrap: "wrap" }}>
-          {onCopy && (
-            <button className="secondary-btn" onClick={onCopy}>
-              {t("copySection")}
-            </button>
-          )}
-        </div>
+        {onCopy && (
+          <button className="secondary-btn" onClick={onCopy} style={{ flexShrink: 0 }}>
+            {t("copySection")}
+          </button>
+        )}
       </div>
 
       <div
@@ -464,7 +492,7 @@ function SectionTextPanel({
           background: "var(--panel-2)",
           minHeight: 0,
           overflow: "auto",
-          borderRadius: 24,
+          borderRadius: 20,
         }}
       >
         <pre
@@ -473,7 +501,7 @@ function SectionTextPanel({
             whiteSpace: "pre-wrap",
             fontFamily: READER_FONT,
             fontSize: fontSize,
-            lineHeight: 1.65,
+            lineHeight: 1.7,
             fontWeight: 450,
             color: "var(--foreground)",
             tabSize: 4,
@@ -486,30 +514,6 @@ function SectionTextPanel({
       </div>
     </div>
   );
-}
-
-function copyText(text: string) {
-  if (!text) return;
-  void navigator.clipboard?.writeText(text);
-}
-
-function parseAdminLines(body: string): Array<{ label: string; value: string }> {
-  const results: Array<{ label: string; value: string }> = [];
-  const seen = new Set<string>();
-  for (const rawLine of body.split("\n")) {
-    const line = rawLine.trim();
-    if (!line) continue;
-    const colonIndex = line.indexOf(":");
-    if (colonIndex < 2 || colonIndex > 60) continue;
-    const label = line.slice(0, colonIndex).trim();
-    const value = line.slice(colonIndex + 1).trim();
-    if (!value || label.length < 2) continue;
-    const key = label.toLowerCase().replace(/\s+/g, " ");
-    if (seen.has(key)) continue;
-    seen.add(key);
-    results.push({ label, value });
-  }
-  return results;
 }
 
 function AdminBoxesPanel({
@@ -547,29 +551,30 @@ function AdminBoxesPanel({
       <div style={{ marginBottom: 18 }}>
         <div className="section-title">{section.title}</div>
         {section.original_titles?.length ? (
-          <div className="muted-text" style={{ marginTop: 6, fontSize: 12, fontWeight: 850 }}>
+          <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 900, letterSpacing: "0.02em" }}>
             {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
           </div>
         ) : null}
       </div>
       <div
+        className="soft-card-tight"
         style={{
+          padding: 22,
+          background: "var(--panel-2)",
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(230px, 1fr))",
-          gap: 10,
+          gridTemplateColumns: "repeat(auto-fill, minmax(160px, 1fr))",
+          gap: 22,
         }}
       >
         {allFields.map((field) => (
-          <CompactMetaItem key={field.label} label={field.label} value={field.value} />
+          <MetaField key={field.label} label={field.label} value={field.value} />
         ))}
       </div>
     </div>
   );
 }
 
-function mergeFirstPageSections(rawSections: DischargeSection[]) {
-  return rawSections;
-}
+// ─── Page ─────────────────────────────────────────────────────────────────────
 
 export default function DischargeStructuredPage() {
   const params = useParams();
@@ -782,8 +787,8 @@ export default function DischargeStructuredPage() {
   const gridColumns = !showStructured
     ? "minmax(0, 1fr)"
     : sidebarOpen
-    ? "minmax(240px, 0.26fr) minmax(0, 1fr)"
-    : "48px minmax(0, 1fr)";
+    ? "minmax(220px, 0.24fr) minmax(0, 1fr)"
+    : "44px minmax(0, 1fr)";
 
   return (
     <AppShell
@@ -793,7 +798,7 @@ export default function DischargeStructuredPage() {
         parsed.is_verified ? t("verified") : t("unverified")
       }`}
       rightContent={
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end", alignItems: "center" }}>
           <button className="secondary-btn" onClick={openOriginal} disabled={openingOriginal}>
             {openingOriginal ? t("opening") : t("openOriginal")}
           </button>
@@ -819,6 +824,7 @@ export default function DischargeStructuredPage() {
         </div>
       }
     >
+      {/* Delete confirm modal */}
       {confirmDeleteOpen && (
         <div
           style={{
@@ -834,26 +840,22 @@ export default function DischargeStructuredPage() {
         >
           <div
             className="soft-card"
-            style={{ width: "min(520px, 100%)", padding: 24, boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)" }}
+            style={{ width: "min(520px, 100%)", padding: 28, boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)" }}
           >
-            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>
+            <div style={{ fontSize: 22, fontWeight: 950, letterSpacing: "-0.05em" }}>
               {t("deleteThisDischargeSummary")}
             </div>
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
               {t("deleteDischargeDesc")}
             </div>
-            <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
-              <div className="muted-text" style={{ marginTop: 5 }}>
+            <div className="soft-card-tight" style={{ marginTop: 18, padding: 16, background: "var(--panel-2)" }}>
+              <div style={{ fontWeight: 950 }}>{parsed.report_name || documentData.filename}</div>
+              <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
                 {t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)}
               </div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
-              <button
-                className="secondary-btn"
-                onClick={() => setConfirmDeleteOpen(false)}
-                disabled={deleting}
-              >
+              <button className="secondary-btn" onClick={() => setConfirmDeleteOpen(false)} disabled={deleting}>
                 {t("cancel")}
               </button>
               <button
@@ -864,7 +866,7 @@ export default function DischargeStructuredPage() {
                   background: "var(--danger-bg)",
                   color: "var(--danger-text)",
                   borderRadius: 14,
-                  padding: "11px 15px",
+                  padding: "11px 18px",
                   fontWeight: 950,
                   cursor: deleting ? "not-allowed" : "pointer",
                 }}
@@ -876,6 +878,7 @@ export default function DischargeStructuredPage() {
         </div>
       )}
 
+      {/* Error banner */}
       {error && (
         <div
           className="soft-card-tight"
@@ -891,43 +894,95 @@ export default function DischargeStructuredPage() {
         </div>
       )}
 
-      {/* Top toolbar */}
+      {/* Toolbar */}
       <div
         className="soft-card-tight"
         style={{
-          padding: 12,
-          marginBottom: 14,
+          padding: "10px 14px",
+          marginBottom: 12,
           display: "flex",
           justifyContent: "space-between",
           gap: 12,
           flexWrap: "wrap",
           alignItems: "center",
-          background:
-            "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
         }}
       >
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
-          <ReaderToggle active={readerMode === "structured"} onClick={() => setReaderMode("structured")}>
-            {t("structuredReader")}
-          </ReaderToggle>
-          <ReaderToggle active={readerMode === "original"} onClick={() => setReaderMode("original")}>
-            {t("originalLayoutLabel")}
-          </ReaderToggle>
-          <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
-            {parsed.is_verified ? t("verified") : t("unverified")}
-          </StatusPill>
-          <StatusPill>{sections.length} {t("sectionsSidebar").toLowerCase()}</StatusPill>
+        {/* Left: mode toggle + status + section count */}
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
+          <SegmentedControl
+            options={[
+              { value: "structured", label: t("structuredReader") },
+              { value: "original", label: t("originalLayoutLabel") },
+            ]}
+            active={readerMode}
+            onChange={(v) => setReaderMode(v as "structured" | "original")}
+          />
+
+          <div
+            style={{
+              width: 1,
+              height: 18,
+              background: "var(--border)",
+              flexShrink: 0,
+            }}
+          />
+
+          <StatusDot verified={Boolean(parsed.is_verified)} t={t} />
+
+          <span
+            style={{
+              fontSize: 12,
+              fontWeight: 900,
+              color: "var(--muted)",
+              letterSpacing: "-0.01em",
+            }}
+          >
+            {sections.length} {t("sectionsSidebar").toLowerCase()}
+          </span>
         </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center" }}>
+        {/* Right: font size + patient + dates */}
+        <div style={{ display: "flex", gap: 14, alignItems: "center", flexWrap: "wrap" }}>
           {readerMode === "structured" && (
-            <FontSizeControl fontSize={fontSize} onChange={setFontSize} />
+            <>
+              <FontSizeControl fontSize={fontSize} onChange={setFontSize} />
+              <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
+            </>
           )}
-          <CompactMetaItem label={t("patient")} value={parsed.patient_name} />
-          <CompactMetaItem
-            label={t("hospitalization")}
-            value={`${valueOrDash(parsed.collected_on)} → ${valueOrDash(parsed.reported_on)}`}
-          />
+
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 900,
+                textTransform: "uppercase",
+                letterSpacing: "0.09em",
+                color: "var(--muted)",
+              }}
+            >
+              {t("patient")}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 950, letterSpacing: "-0.02em" }}>
+              {valueOrDash(parsed.patient_name)}
+            </span>
+          </div>
+
+          <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+            <span
+              style={{
+                fontSize: 10,
+                fontWeight: 900,
+                textTransform: "uppercase",
+                letterSpacing: "0.09em",
+                color: "var(--muted)",
+              }}
+            >
+              {t("hospitalization")}
+            </span>
+            <span style={{ fontSize: 13, fontWeight: 950, letterSpacing: "-0.02em" }}>
+              {valueOrDash(parsed.collected_on)} — {valueOrDash(parsed.reported_on)}
+            </span>
+          </div>
         </div>
       </div>
 
@@ -935,45 +990,44 @@ export default function DischargeStructuredPage() {
       <div
         className="soft-card"
         style={{
-          padding: 16,
+          padding: 12,
           display: "grid",
           gridTemplateColumns: gridColumns,
-          gap: 16,
+          gap: 12,
           alignItems: "stretch",
-          height: "calc(100vh - 185px)",
+          height: "calc(100vh - 182px)",
           minHeight: 720,
           overflow: "hidden",
-          transition: "grid-template-columns 0.2s ease",
+          transition: "grid-template-columns 220ms cubic-bezier(0.22, 1, 0.36, 1)",
         }}
       >
-        {/* Sidebar — open state */}
+        {/* Sidebar — open */}
         {showStructured && sidebarOpen && (
           <aside
-            className="soft-card-tight"
             style={{
-              padding: 14,
-              background: "var(--panel-2)",
               height: "100%",
               overflowY: "auto",
               display: "grid",
               gridTemplateRows: "auto minmax(0, 1fr)",
+              gap: 8,
             }}
           >
+            {/* Sidebar header */}
             <div
               style={{
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "space-between",
-                padding: "4px 4px 12px",
+                padding: "2px 4px 2px 8px",
               }}
             >
               <span
-                className="muted-text"
                 style={{
-                  fontSize: 12,
-                  fontWeight: 950,
+                  fontSize: 10,
+                  fontWeight: 900,
                   textTransform: "uppercase",
-                  letterSpacing: "0.06em",
+                  letterSpacing: "0.1em",
+                  color: "var(--muted)",
                 }}
               >
                 {t("sectionsSidebar")}
@@ -983,17 +1037,17 @@ export default function DischargeStructuredPage() {
                 onClick={() => setSidebarOpen(false)}
                 title={t("collapseSidebarLabel")}
                 style={{
-                  width: 36,
-                  height: 36,
+                  width: 30,
+                  height: 30,
                   borderRadius: 999,
                   border: "1px solid var(--border)",
-                  background: "var(--panel)",
-                  color: "var(--foreground)",
+                  background: "transparent",
+                  color: "var(--muted)",
                   cursor: "pointer",
                   display: "flex",
                   alignItems: "center",
                   justifyContent: "center",
-                  fontSize: 18,
+                  fontSize: 16,
                   flexShrink: 0,
                 }}
               >
@@ -1001,7 +1055,8 @@ export default function DischargeStructuredPage() {
               </button>
             </div>
 
-            <div style={{ display: "grid", gap: 8, alignContent: "start", overflowY: "auto" }}>
+            {/* Section list */}
+            <div style={{ display: "grid", gap: 2, alignContent: "start", overflowY: "auto" }}>
               {navigationSections.map((section) => {
                 const active = activeSectionKey === section.key;
                 const accent = sectionAccent(section.key);
@@ -1011,52 +1066,47 @@ export default function DischargeStructuredPage() {
                     type="button"
                     onClick={() => setActiveSectionKey(section.key)}
                     style={{
-                      border: `1px solid ${
-                        active
-                          ? "color-mix(in srgb, var(--primary) 55%, var(--border))"
-                          : "var(--border)"
-                      }`,
+                      border: "none",
                       background: active
-                        ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 18%, var(--panel)), var(--panel))"
-                        : "var(--panel)",
-                      color: "var(--foreground)",
-                      borderRadius: 20,
-                      padding: 14,
+                        ? "color-mix(in srgb, var(--primary) 11%, var(--panel-2))"
+                        : "transparent",
+                      borderRadius: 10,
+                      padding: "9px 10px",
                       textAlign: "left",
                       cursor: "pointer",
                       display: "grid",
-                      gridTemplateColumns: "36px minmax(0, 1fr)",
-                      gap: 11,
+                      gridTemplateColumns: "24px minmax(0, 1fr)",
+                      gap: 8,
                       alignItems: "center",
-                      boxShadow: active
-                        ? "0 14px 34px color-mix(in srgb, var(--primary) 15%, transparent)"
-                        : "none",
+                      width: "100%",
+                      transition: "background 140ms ease",
                     }}
                   >
                     <span
                       style={{
-                        width: 36,
-                        height: 36,
-                        borderRadius: 13,
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        background: active
-                          ? "color-mix(in srgb, var(--primary) 18%, var(--panel-2))"
-                          : "var(--panel-2)",
-                        color: active ? "var(--primary)" : accent,
-                        border: "1px solid var(--border)",
-                        fontSize: 11,
+                        fontSize: 10,
                         fontWeight: 950,
-                        flexShrink: 0,
+                        letterSpacing: "0.03em",
+                        color: active ? "var(--primary)" : accent,
+                        lineHeight: 1,
+                        textAlign: "center",
                       }}
                     >
                       {sectionIcon(section.key)}
                     </span>
-                    <span style={{ minWidth: 0 }}>
-                      <span style={{ display: "block", fontWeight: 950, fontSize: 13 }}>
-                        {section.title}
-                      </span>
+                    <span
+                      style={{
+                        fontSize: 12,
+                        fontWeight: active ? 950 : 800,
+                        color: active ? "var(--foreground)" : "var(--muted)",
+                        lineHeight: 1.35,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                        transition: "color 140ms ease",
+                      }}
+                    >
+                      {section.title}
                     </span>
                   </button>
                 );
@@ -1065,14 +1115,14 @@ export default function DischargeStructuredPage() {
           </aside>
         )}
 
-        {/* Collapsed sidebar strip */}
+        {/* Sidebar — collapsed strip */}
         {showStructured && !sidebarOpen && (
           <div
             style={{
               display: "flex",
               flexDirection: "column",
               alignItems: "center",
-              paddingTop: 10,
+              paddingTop: 6,
             }}
           >
             <button
@@ -1080,18 +1130,17 @@ export default function DischargeStructuredPage() {
               onClick={() => setSidebarOpen(true)}
               title={t("openSectionsLabel")}
               style={{
-                width: 40,
-                height: 40,
+                width: 32,
+                height: 32,
                 borderRadius: 999,
                 border: "1px solid var(--border)",
-                background: "var(--panel-2)",
-                color: "var(--foreground)",
+                background: "transparent",
+                color: "var(--muted)",
                 cursor: "pointer",
                 display: "flex",
                 alignItems: "center",
                 justifyContent: "center",
-                fontSize: 20,
-                flexShrink: 0,
+                fontSize: 18,
               }}
             >
               ›
@@ -1103,9 +1152,9 @@ export default function DischargeStructuredPage() {
         <section
           className="soft-card-tight"
           style={{
-            padding: 26,
+            padding: 24,
             background: "var(--panel)",
-            borderRadius: 28,
+            borderRadius: 20,
             height: "100%",
             minHeight: 0,
             display: "grid",
@@ -1119,26 +1168,29 @@ export default function DischargeStructuredPage() {
             <>
               {activeSectionKey === "overview" && (
                 <div style={{ minHeight: 0, height: "100%", overflowY: "auto", paddingRight: 8 }}>
-                  <div className="section-title" style={{ marginBottom: 16 }}>
+                  <div className="section-title" style={{ marginBottom: 20 }}>
                     {t("overviewSection")}
                   </div>
                   <div
+                    className="soft-card-tight"
                     style={{
+                      padding: 24,
+                      background: "var(--panel-2)",
                       display: "grid",
-                      gridTemplateColumns: "repeat(auto-fit, minmax(220px, 1fr))",
-                      gap: 14,
+                      gridTemplateColumns: "repeat(auto-fill, minmax(155px, 1fr))",
+                      gap: 24,
                     }}
                   >
-                    <CompactMetaItem label={t("patient")} value={parsed.patient_name} />
-                    <CompactMetaItem label={t("dob")} value={parsed.date_of_birth} />
-                    <CompactMetaItem label={t("age")} value={parsed.age} />
-                    <CompactMetaItem label={t("sex")} value={parsed.sex} />
-                    <CompactMetaItem label={t("cnp")} value={parsed.cnp} />
-                    <CompactMetaItem label={t("patientId")} value={parsed.patient_identifier} />
-                    <CompactMetaItem label={t("admittedCapital")} value={parsed.collected_on} />
-                    <CompactMetaItem label={t("discharged")} value={parsed.reported_on} />
-                    <CompactMetaItem label={t("doctor")} value={parsed.referring_doctor} />
-                    <CompactMetaItem label={t("language")} value={parsed.source_language} />
+                    <MetaField label={t("patient")} value={parsed.patient_name} />
+                    <MetaField label={t("dob")} value={parsed.date_of_birth} />
+                    <MetaField label={t("age")} value={parsed.age} />
+                    <MetaField label={t("sex")} value={parsed.sex} />
+                    <MetaField label={t("cnp")} value={parsed.cnp} />
+                    <MetaField label={t("patientId")} value={parsed.patient_identifier} />
+                    <MetaField label={t("admittedCapital")} value={parsed.collected_on} />
+                    <MetaField label={t("discharged")} value={parsed.reported_on} />
+                    <MetaField label={t("doctor")} value={parsed.referring_doctor} />
+                    <MetaField label={t("language")} value={parsed.source_language} />
                   </div>
                 </div>
               )}
@@ -1182,15 +1234,12 @@ export default function DischargeStructuredPage() {
                     height: "100%",
                     display: "grid",
                     gridTemplateRows: "auto minmax(0, 1fr)",
+                    gap: 16,
                     overflow: "hidden",
                   }}
                 >
-                  <div className="section-title" style={{ marginBottom: 16 }}>
-                    {t("auditTrail")}
-                  </div>
-                  <div
-                    style={{ display: "grid", gap: 12, minHeight: 0, overflowY: "auto", paddingRight: 8 }}
-                  >
+                  <div className="section-title">{t("auditTrail")}</div>
+                  <div style={{ display: "grid", gap: 10, minHeight: 0, overflowY: "auto", paddingRight: 8, alignContent: "start" }}>
                     {(parsed.audit_logs || []).map((log, index) => (
                       <div
                         key={`${log.action}-${log.timestamp}-${index}`}
@@ -1198,7 +1247,7 @@ export default function DischargeStructuredPage() {
                         style={{ padding: 16 }}
                       >
                         <div style={{ fontWeight: 950 }}>{log.action}</div>
-                        <div className="muted-text" style={{ marginTop: 5 }}>
+                        <div className="muted-text" style={{ marginTop: 5, fontSize: 13 }}>
                           {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                         </div>
                         {log.details && (
@@ -1209,10 +1258,7 @@ export default function DischargeStructuredPage() {
                       </div>
                     ))}
                     {!parsed.audit_logs?.length && (
-                      <div
-                        className="soft-card-tight"
-                        style={{ padding: 18, background: "var(--panel-2)" }}
-                      >
+                      <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
                         <div className="muted-text">{t("noAuditActivity")}</div>
                       </div>
                     )}
