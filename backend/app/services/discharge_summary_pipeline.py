@@ -224,6 +224,14 @@ def _safe_json_loads(text: str) -> dict[str, Any]:
     return parsed
 
 
+_IMAGE_EXTENSIONS = {".jpg", ".jpeg", ".png", ".webp", ".tiff", ".tif", ".bmp", ".gif"}
+_IMAGE_MIME = {
+    ".jpg": "jpeg", ".jpeg": "jpeg", ".png": "png",
+    ".webp": "webp", ".tiff": "tiff", ".tif": "tiff",
+    ".bmp": "bmp", ".gif": "gif",
+}
+
+
 def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
     pages: list[dict[str, Any]] = []
 
@@ -249,6 +257,27 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
             )
 
     return pages
+
+
+def _render_image_as_single_page(path: Path) -> list[dict[str, Any]]:
+    mime = _IMAGE_MIME.get(path.suffix.lower(), "jpeg")
+    encoded = base64.b64encode(path.read_bytes()).decode("ascii")
+
+    return [
+        {
+            "page_number": 1,
+            "width": 0,
+            "height": 0,
+            "image_url": f"data:image/{mime};base64,{encoded}",
+            "native_text": "",  # No text layer for image files — vision-only path
+        }
+    ]
+
+
+def _render_pages_from_file(path: Path) -> list[dict[str, Any]]:
+    if path.suffix.lower() in _IMAGE_EXTENSIONS:
+        return _render_image_as_single_page(path)
+    return _render_pdf_pages_as_data_urls(path)
 
 
 def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any]:
@@ -674,10 +703,10 @@ def process_uploaded_discharge_summary(
         raise FileNotFoundError(f"Discharge PDF not found: {path}")
 
     client = _client()
-    rendered_pages = _render_pdf_pages_as_data_urls(path)
+    rendered_pages = _render_pages_from_file(path)
 
     if not rendered_pages:
-        raise RuntimeError("No PDF pages could be rendered for discharge extraction.")
+        raise RuntimeError("No pages could be rendered for discharge extraction.")
 
     page_payloads: list[dict[str, Any]] = []
 
