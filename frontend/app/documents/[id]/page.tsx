@@ -271,7 +271,7 @@ function getFlagStyle(flag?: string | null, value?: string | number | null) {
   };
 }
 
-function DetailField({
+function MetaField({
   label,
   value,
 }: {
@@ -279,21 +279,13 @@ function DetailField({
   value?: string | number | null;
 }) {
   return (
-    <div
-      style={{
-        padding: 14,
-        borderRadius: 18,
-        background: "var(--panel-2)",
-        border: "1px solid var(--border)",
-        minHeight: 68,
-      }}
-    >
-      <div className="muted-text" style={{ fontSize: 12, fontWeight: 850, marginBottom: 7 }}>
+    <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
+      <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", lineHeight: 1 }}>
         {label}
-      </div>
-      <div style={{ fontWeight: 900, lineHeight: 1.35, wordBreak: "break-word" }}>
+      </span>
+      <span style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.02em", lineHeight: 1.3, wordBreak: "break-word" }}>
         {value === null || value === undefined || value === "" ? "—" : String(value)}
-      </div>
+      </span>
     </div>
   );
 }
@@ -1027,20 +1019,39 @@ export default function DocumentStructuredPage() {
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", alignItems: "center" }}>
-              <StatusPill tone={parsed.is_verified ? "success" : "warn"}>
-                {t(parsed.is_verified ? "verified" : "unverified")}
-              </StatusPill>
+            <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 7, height: 7, borderRadius: 999, background: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)", flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 900, color: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)" }}>
+                  {t(parsed.is_verified ? "verified" : "unverified")}
+                </span>
+              </div>
 
-              <StatusPill>{documentData.section}</StatusPill>
+              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{documentData.section}</span>
+              </div>
 
               {!isNote && !isDischargeSummary && abnormalLabs.length > 0 && (
-                <StatusPill tone="danger">{abnormalLabs.length} {t("abnormalCountLabel")}</StatusPill>
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--danger-text)" }}>{abnormalLabs.length} {t("abnormalCountLabel")}</span>
+                </div>
               )}
 
-              {isNote && <StatusPill>{t("clinicalNote")}</StatusPill>}
+              {isNote && (
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{t("clinicalNote")}</span>
+                </div>
+              )}
 
-              {isDischargeSummary && <StatusPill>{t("dischargeSummaryLabel")}</StatusPill>}
+              {isDischargeSummary && (
+                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
+                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{t("dischargeSummaryLabel")}</span>
+                </div>
+              )}
             </div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
@@ -1153,38 +1164,35 @@ export default function DocumentStructuredPage() {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("patient")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("name")} value={parsed.patient_name} />
-                <DetailField label={t("dateOfBirth")} value={parsed.date_of_birth} />
-                <DetailField label={t("age")} value={parsed.age} />
-                <DetailField label={t("sex")} value={parsed.sex} />
-                <DetailField label={t("cnp")} value={parsed.cnp} />
-                <DetailField label={t("patientId")} value={parsed.patient_identifier} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("name")} value={parsed.patient_name} />
+                <MetaField label={t("dateOfBirth")} value={parsed.date_of_birth} />
+                <MetaField label={t("age")} value={parsed.age} />
+                <MetaField label={t("sex")} value={parsed.sex} />
+                <MetaField label={t("cnp")} value={parsed.cnp} />
+                <MetaField label={t("patientId")} value={parsed.patient_identifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("documentDetails")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("reportName")} value={parsed.report_name} />
-                <DetailField label={t("reportType")} value={parsed.report_type} />
-                <DetailField label={t("lab")} value={parsed.lab_name} />
-                <DetailField label={t("referringDoctor")} value={parsed.referring_doctor} />
-                <DetailField label={t("sourceLanguageLabel")} value={parsed.source_language} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("reportName")} value={parsed.report_name} />
+                <MetaField label={t("reportType")} value={parsed.report_type} />
+                <MetaField label={t("lab")} value={parsed.lab_name} />
+                <MetaField label={t("referringDoctor")} value={parsed.referring_doctor} />
+                <MetaField label={t("sourceLanguageLabel")} value={parsed.source_language} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("dates")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("collectedOn")} value={parsed.collected_on} />
-                <DetailField label={t("reportedOn")} value={parsed.reported_on} />
-                <DetailField label={t("registeredOn")} value={parsed.registered_on} />
-                <DetailField label={t("generatedOn")} value={parsed.generated_on} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("collectedOn")} value={parsed.collected_on} />
+                <MetaField label={t("reportedOn")} value={parsed.reported_on} />
+                <MetaField label={t("registeredOn")} value={parsed.registered_on} />
+                <MetaField label={t("generatedOn")} value={parsed.generated_on} />
               </div>
             </div>
           </div>
@@ -1456,40 +1464,37 @@ export default function DocumentStructuredPage() {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("patient")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("name")} value={parsed.patient_name} />
-                <DetailField label={t("dateOfBirth")} value={parsed.date_of_birth} />
-                <DetailField label={t("age")} value={parsed.age} />
-                <DetailField label={t("sex")} value={parsed.sex} />
-                <DetailField label={t("cnp")} value={parsed.cnp} />
-                <DetailField label={t("patientId")} value={parsed.patient_identifier} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("name")} value={parsed.patient_name} />
+                <MetaField label={t("dateOfBirth")} value={parsed.date_of_birth} />
+                <MetaField label={t("age")} value={parsed.age} />
+                <MetaField label={t("sex")} value={parsed.sex} />
+                <MetaField label={t("cnp")} value={parsed.cnp} />
+                <MetaField label={t("patientId")} value={parsed.patient_identifier} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("documentDetails")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("reportName")} value={parsed.report_name} />
-                <DetailField label={t("reportType")} value={parsed.report_type} />
-                <DetailField label={t("lab")} value={parsed.lab_name} />
-                <DetailField label={t("sampleType")} value={parsed.sample_type} />
-                <DetailField label={t("referringDoctor")} value={parsed.referring_doctor} />
-                <DetailField label={t("sourceLanguageLabel")} value={parsed.source_language} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("reportName")} value={parsed.report_name} />
+                <MetaField label={t("reportType")} value={parsed.report_type} />
+                <MetaField label={t("lab")} value={parsed.lab_name} />
+                <MetaField label={t("sampleType")} value={parsed.sample_type} />
+                <MetaField label={t("referringDoctor")} value={parsed.referring_doctor} />
+                <MetaField label={t("sourceLanguageLabel")} value={parsed.source_language} />
               </div>
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <SectionHeader title={t("dates")} />
-
-              <div style={{ display: "grid", gap: 12 }}>
-                <DetailField label={t("testDate")} value={parsed.test_date} />
-                <DetailField label={t("collectedOn")} value={parsed.collected_on} />
-                <DetailField label={t("reportedOn")} value={parsed.reported_on} />
-                <DetailField label={t("registeredOn")} value={parsed.registered_on} />
-                <DetailField label={t("generatedOn")} value={parsed.generated_on} />
+              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
+              <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
+                <MetaField label={t("testDate")} value={parsed.test_date} />
+                <MetaField label={t("collectedOn")} value={parsed.collected_on} />
+                <MetaField label={t("reportedOn")} value={parsed.reported_on} />
+                <MetaField label={t("registeredOn")} value={parsed.registered_on} />
+                <MetaField label={t("generatedOn")} value={parsed.generated_on} />
               </div>
             </div>
           </div>
@@ -1571,12 +1576,7 @@ export default function DocumentStructuredPage() {
                                       />
                                     )}
 
-                                    <div>
-                                      <div style={{ fontWeight: 950 }}>{bestDisplayName(lab)}</div>
-                                      <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
-                                        {t("rawName")}: {valueOrDash(lab.raw_test_name)}
-                                      </div>
-                                    </div>
+                                    <div style={{ fontWeight: 950 }}>{bestDisplayName(lab)}</div>
                                   </div>
                                 </td>
 

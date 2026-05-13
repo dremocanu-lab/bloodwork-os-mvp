@@ -972,8 +972,24 @@ export default function DischargeStructuredPage() {
         {/* Reader panel */}
         <section
           className="soft-card-tight"
-          style={{ padding: 24, background: "var(--panel)", borderRadius: 20, height: "100%", minHeight: 0, display: "grid", gridTemplateRows: "minmax(0, 1fr)", overflow: "hidden" }}
+          style={{ padding: 24, background: "var(--panel)", borderRadius: 20, height: "100%", minHeight: 0, display: "grid", gridTemplateRows: "minmax(0, 1fr)", overflow: "hidden", position: "relative" }}
         >
+          {/* Gradient hint when sidebar is collapsed */}
+          {showStructured && !sidebarOpen && (
+            <div
+              style={{
+                position: "absolute",
+                left: 0,
+                top: 0,
+                bottom: 0,
+                width: 52,
+                background: "linear-gradient(to right, color-mix(in srgb, var(--primary) 16%, var(--panel-2)), transparent)",
+                borderRadius: "20px 0 0 20px",
+                pointerEvents: "none",
+                zIndex: 2,
+              }}
+            />
+          )}
           {readerMode === "original" ? (
             <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
           ) : (
