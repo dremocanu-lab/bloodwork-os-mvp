@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
@@ -1126,14 +1126,12 @@ export default function MyRecordsPage() {
   }
 
   const calculatedAge = calculateAgeFromDob(profile.patient.date_of_birth);
+  const snap = snapshotData!;
 
   return (
     <AppShell
       user={currentUser}
       title={t("myRecords")}
-      subtitle={`${t("dob")} ${valueOrDash(profile.patient.date_of_birth)} · ${t("age")} ${calculatedAge} · ${t(
-        "sex"
-      )} ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <button
           type="button"
@@ -1149,7 +1147,7 @@ export default function MyRecordsPage() {
         <div
           className="soft-card-tight"
           style={{
-            marginBottom: 20,
+            marginBottom: 24,
             padding: 16,
             borderColor: "var(--danger-border)",
             background: "var(--danger-bg)",
@@ -1160,95 +1158,515 @@ export default function MyRecordsPage() {
         </div>
       )}
 
-      {/* Health snapshot strip */}
-      {snapshotData && (
-        <div style={{ display: "flex", gap: 10, marginBottom: 20, overflowX: "auto", paddingBottom: 2 }}>
-
-          {/* Total documents */}
-          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140 }}>
-            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Documents</div>
-            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px" }}>{snapshotData.totalDocs}</div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
-              {snapshotData.recentDocDate ? `Latest ${formatShortMonthYear(snapshotData.recentDocDate)}` : "None yet"}
-            </div>
-          </div>
-
-          {/* Bloodwork panels */}
-          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140, borderTop: "2px solid color-mix(in srgb, var(--primary) 55%, transparent)" }}>
-            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Bloodwork panels</div>
-            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: "var(--primary)" }}>{snapshotData.bloodworkCount}</div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
-              {snapshotData.recentBloodworkDate ? `Latest ${formatShortMonthYear(snapshotData.recentBloodworkDate)}` : "None yet"}
-            </div>
-          </div>
-
-          {/* Hospitalizations */}
-          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140, borderTop: "2px solid color-mix(in srgb, #8b5cf6 55%, transparent)" }}>
-            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Hospitalizations</div>
-            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px" }}>{snapshotData.hospitalizationCount}</div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
-              {snapshotData.hospitalizationCount > 0 && snapshotData.recentDischargeDate
-                ? `Last ${formatShortMonthYear(snapshotData.recentDischargeDate)}`
-                : snapshotData.hospitalizationCount > 0 ? "On record" : "None on record"}
-            </div>
-          </div>
-
-          {/* Abnormal results */}
+      {/* Stat cards row */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
+          gap: 14,
+          marginBottom: 24,
+        }}
+      >
+        {/* Total Documents */}
+        <div className="soft-card" style={{ padding: "22px 24px" }}>
           <div
-            className="soft-card-tight"
             style={{
-              padding: "14px 18px", flex: "0 0 auto", minWidth: 140,
-              borderTop: snapshotData.abnormalCount > 0
-                ? "2px solid var(--danger-border)"
-                : "2px solid color-mix(in srgb, var(--success-text) 40%, transparent)",
-              background: snapshotData.abnormalCount > 0
-                ? "color-mix(in srgb, var(--danger-bg) 42%, var(--panel))"
-                : undefined,
+              fontSize: 11,
+              fontWeight: 900,
+              textTransform: "uppercase",
+              letterSpacing: "0.09em",
+              color: "var(--muted)",
+              marginBottom: 14,
             }}
           >
-            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-              {snapshotData.abnormalCount > 0 && (
-                <span style={{ width: 5, height: 5, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
-              )}
-              <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)" }}>
-                Abnormal results
-              </span>
-            </div>
-            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
-              {snapshotData.abnormalCount}
-            </div>
-            <div style={{ fontSize: 11, fontWeight: 900, color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)", opacity: snapshotData.abnormalCount > 0 ? 1 : 0.8 }}>
-              {snapshotData.abnormalCount > 0 ? "Needs review" : "All clear"}
-            </div>
+            Total Documents
           </div>
+          <div
+            style={{
+              fontSize: 52,
+              fontWeight: 950,
+              letterSpacing: "-0.05em",
+              lineHeight: 1,
+            }}
+          >
+            {snap.totalDocs}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
+            {snap.recentDocDate ? `Latest ${formatShortMonthYear(snap.recentDocDate)}` : "None yet"}
+          </div>
+        </div>
 
-          {/* Trends CTA chip */}
-          {snapshotData.trendsCount > 0 && (
-            <button
-              type="button"
-              onClick={() => {
-                setActiveSection("bloodwork");
-                setTimeout(() => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
-              }}
+        {/* Bloodwork Panels */}
+        <div
+          className="soft-card"
+          style={{
+            padding: "22px 24px",
+            borderTop: "3px solid var(--primary)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 900,
+              textTransform: "uppercase",
+              letterSpacing: "0.09em",
+              color: "var(--muted)",
+              marginBottom: 14,
+            }}
+          >
+            Bloodwork Panels
+          </div>
+          <div
+            style={{
+              fontSize: 52,
+              fontWeight: 950,
+              letterSpacing: "-0.05em",
+              lineHeight: 1,
+              color: "var(--primary)",
+            }}
+          >
+            {snap.bloodworkCount}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
+            {snap.recentBloodworkDate
+              ? `Latest ${formatShortMonthYear(snap.recentBloodworkDate)}`
+              : "None yet"}
+          </div>
+        </div>
+
+        {/* Hospitalizations */}
+        <div
+          className="soft-card"
+          style={{
+            padding: "22px 24px",
+            borderTop: "3px solid color-mix(in srgb, #8b5cf6 60%, transparent)",
+          }}
+        >
+          <div
+            style={{
+              fontSize: 11,
+              fontWeight: 900,
+              textTransform: "uppercase",
+              letterSpacing: "0.09em",
+              color: "var(--muted)",
+              marginBottom: 14,
+            }}
+          >
+            Hospitalizations
+          </div>
+          <div
+            style={{
+              fontSize: 52,
+              fontWeight: 950,
+              letterSpacing: "-0.05em",
+              lineHeight: 1,
+            }}
+          >
+            {snap.hospitalizationCount}
+          </div>
+          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
+            {snap.hospitalizationCount > 0 && snap.recentDischargeDate
+              ? `Last ${formatShortMonthYear(snap.recentDischargeDate)}`
+              : snap.hospitalizationCount > 0
+              ? "On record"
+              : "None on record"}
+          </div>
+        </div>
+
+        {/* Abnormal Results */}
+        <div
+          className="soft-card"
+          style={{
+            padding: "22px 24px",
+            borderTop:
+              snap.abnormalCount > 0
+                ? "3px solid var(--danger-border)"
+                : "3px solid color-mix(in srgb, var(--success-text) 50%, transparent)",
+            background:
+              snap.abnormalCount > 0
+                ? "color-mix(in srgb, var(--danger-bg) 35%, var(--panel))"
+                : undefined,
+          }}
+        >
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              gap: 6,
+              marginBottom: 14,
+            }}
+          >
+            {snap.abnormalCount > 0 && (
+              <span
+                style={{
+                  width: 7,
+                  height: 7,
+                  borderRadius: 999,
+                  background: "var(--danger-text)",
+                  flexShrink: 0,
+                }}
+              />
+            )}
+            <span
               style={{
-                padding: "14px 18px", flex: "0 0 auto", minWidth: 140,
-                borderRadius: 18,
-                border: "1px solid var(--border)",
-                borderTop: "2px solid color-mix(in srgb, var(--primary) 55%, transparent)",
-                background: "linear-gradient(160deg, color-mix(in srgb, var(--primary) 9%, var(--panel)), var(--panel))",
-                cursor: "pointer",
-                textAlign: "left",
-                transition: "box-shadow 180ms ease",
+                fontSize: 11,
+                fontWeight: 900,
+                textTransform: "uppercase",
+                letterSpacing: "0.09em",
+                color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)",
               }}
             >
-              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Lab trends</div>
-              <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: "var(--primary)" }}>{snapshotData.trendsCount}</div>
-              <div style={{ fontSize: 11, fontWeight: 900, color: "var(--primary)" }}>View trends ↓</div>
-            </button>
+              Abnormal Results
+            </span>
+          </div>
+          <div
+            style={{
+              fontSize: 52,
+              fontWeight: 950,
+              letterSpacing: "-0.05em",
+              lineHeight: 1,
+              color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)",
+            }}
+          >
+            {snap.abnormalCount}
+          </div>
+          <div
+            style={{
+              fontSize: 12,
+              fontWeight: 900,
+              marginTop: 12,
+              color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)",
+            }}
+          >
+            {snap.abnormalCount > 0 ? "Needs review" : "All clear"}
+          </div>
+        </div>
+      </div>
+
+      {/* Featured chart + right column */}
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "minmax(0, 1fr) 290px",
+          gap: 14,
+          marginBottom: 24,
+          alignItems: "start",
+        }}
+      >
+        {/* Featured bloodwork trend */}
+        <div className="soft-card" style={{ padding: 28, overflow: "hidden" }}>
+          {sortedTrends.length > 0 ? (
+            <>
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "flex-start",
+                  marginBottom: 24,
+                  gap: 16,
+                }}
+              >
+                <div>
+                  <div
+                    style={{
+                      fontSize: 11,
+                      fontWeight: 900,
+                      textTransform: "uppercase",
+                      letterSpacing: "0.09em",
+                      color: "var(--muted)",
+                      marginBottom: 8,
+                    }}
+                  >
+                    Featured Lab Trend
+                  </div>
+                  <div
+                    style={{
+                      fontSize: 24,
+                      fontWeight: 950,
+                      letterSpacing: "-0.03em",
+                      lineHeight: 1.2,
+                    }}
+                  >
+                    {sortedTrends[0].display_name}
+                  </div>
+                  <div className="muted-text" style={{ marginTop: 6 }}>
+                    {valueOrDash(sortedTrends[0].category)} · {valueOrDash(sortedTrends[0].unit)}
+                  </div>
+                </div>
+                <div style={{ textAlign: "right", flexShrink: 0 }}>
+                  <div
+                    style={{
+                      fontSize: 46,
+                      fontWeight: 950,
+                      letterSpacing: "-0.05em",
+                      lineHeight: 1,
+                      color: "var(--primary)",
+                    }}
+                  >
+                    {valueOrDash(sortedTrends[0].latest?.value_display)}
+                  </div>
+                  <div className="muted-text" style={{ fontSize: 12, marginTop: 7 }}>
+                    Latest · {formatShortMonthYear(sortedTrends[0].latest?.date) ?? "—"}
+                  </div>
+                  {sortedTrends[0].delta !== null && sortedTrends[0].delta !== undefined && (
+                    <div
+                      style={{
+                        fontSize: 13,
+                        fontWeight: 900,
+                        marginTop: 5,
+                        color: "var(--muted)",
+                      }}
+                    >
+                      {sortedTrends[0].delta > 0
+                        ? `+${sortedTrends[0].delta}`
+                        : `${sortedTrends[0].delta}`}{" "}
+                      from prev
+                    </div>
+                  )}
+                </div>
+              </div>
+
+              <div style={{ height: 360 }}>
+                <TrendChart
+                  points={getMostRecentTrendPoints(sortedTrends[0].points, 8)}
+                  expanded
+                  unit={sortedTrends[0].unit}
+                />
+              </div>
+
+              <div
+                style={{
+                  marginTop: 20,
+                  paddingTop: 18,
+                  borderTop: "1px solid var(--border)",
+                  display: "flex",
+                  justifyContent: "space-between",
+                  alignItems: "center",
+                }}
+              >
+                <div className="muted-text" style={{ fontSize: 13 }}>
+                  {snap.trendsCount} tracked lab {snap.trendsCount === 1 ? "value" : "values"} total
+                </div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={() => {
+                    setActiveSection("bloodwork");
+                    setTimeout(
+                      () =>
+                        trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                      60
+                    );
+                  }}
+                >
+                  View all trends ↓
+                </button>
+              </div>
+            </>
+          ) : (
+            <div>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 900,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.09em",
+                  color: "var(--muted)",
+                  marginBottom: 14,
+                }}
+              >
+                Featured Lab Trend
+              </div>
+              <div className="muted-text" style={{ marginBottom: 18 }}>
+                No bloodwork data available yet. Upload a lab report to start tracking trends.
+              </div>
+              <button
+                type="button"
+                className="primary-btn"
+                onClick={() => router.push("/my-records/upload")}
+              >
+                Upload your first document
+              </button>
+            </div>
           )}
         </div>
-      )}
 
+        {/* Right column */}
+        <div style={{ display: "grid", gap: 14 }}>
+          {/* Patient profile card */}
+          <div
+            style={{
+              borderRadius: 20,
+              background:
+                "linear-gradient(160deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 48%, #7c3aed) 100%)",
+              padding: 24,
+              color: "#fff",
+            }}
+          >
+            <div
+              style={{
+                width: 58,
+                height: 58,
+                borderRadius: 999,
+                background: "rgba(255,255,255,0.22)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontWeight: 950,
+                fontSize: 24,
+                letterSpacing: "-0.02em",
+                marginBottom: 16,
+              }}
+            >
+              {profile.patient.full_name.charAt(0).toUpperCase()}
+            </div>
+
+            <div
+              style={{
+                fontSize: 20,
+                fontWeight: 950,
+                letterSpacing: "-0.03em",
+                lineHeight: 1.2,
+              }}
+            >
+              {profile.patient.full_name}
+            </div>
+
+            {profile.patient.patient_identifier && (
+              <div style={{ fontSize: 12, marginTop: 5, opacity: 0.65, fontWeight: 700 }}>
+                ID {profile.patient.patient_identifier}
+              </div>
+            )}
+
+            <div
+              style={{
+                marginTop: 18,
+                display: "grid",
+                gap: 11,
+                borderTop: "1px solid rgba(255,255,255,0.2)",
+                paddingTop: 16,
+              }}
+            >
+              {(
+                [
+                  ["Date of Birth", valueOrDash(profile.patient.date_of_birth)],
+                  ["Age", calculatedAge],
+                  ["Sex", valueOrDash(profile.patient.sex)],
+                ] as [string, string][]
+              ).map(([label, value]) => (
+                <div
+                  key={label}
+                  style={{
+                    display: "flex",
+                    justifyContent: "space-between",
+                    alignItems: "center",
+                    gap: 12,
+                  }}
+                >
+                  <span style={{ fontSize: 12, opacity: 0.65, fontWeight: 700 }}>{label}</span>
+                  <span style={{ fontSize: 13, fontWeight: 900 }}>{value}</span>
+                </div>
+              ))}
+            </div>
+
+            <button
+              type="button"
+              onClick={() => router.push("/my-records/upload")}
+              style={{
+                marginTop: 18,
+                width: "100%",
+                padding: "11px 16px",
+                borderRadius: 14,
+                background: "rgba(255,255,255,0.18)",
+                border: "1px solid rgba(255,255,255,0.28)",
+                color: "#fff",
+                fontWeight: 900,
+                fontSize: 13,
+                cursor: "pointer",
+                transition: "background 180ms ease",
+                textAlign: "center",
+              }}
+            >
+              ↑ Upload Documents
+            </button>
+          </div>
+
+          {/* Doctor access */}
+          {profile.doctor_access.length > 0 && (
+            <div className="soft-card" style={{ padding: 20 }}>
+              <div
+                style={{
+                  fontSize: 11,
+                  fontWeight: 900,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.09em",
+                  color: "var(--muted)",
+                  marginBottom: 14,
+                }}
+              >
+                Doctors with Access
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {profile.doctor_access.slice(0, 3).map((access) => (
+                  <div key={access.doctor_user_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
+                    <div
+                      style={{
+                        width: 34,
+                        height: 34,
+                        borderRadius: 999,
+                        background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
+                        color: "var(--primary)",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                        fontWeight: 950,
+                        fontSize: 13,
+                        flexShrink: 0,
+                      }}
+                    >
+                      {access.doctor_name.charAt(0).toUpperCase()}
+                    </div>
+                    <div style={{ minWidth: 0 }}>
+                      <div
+                        style={{
+                          fontWeight: 850,
+                          fontSize: 13,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                        }}
+                      >
+                        {access.doctor_name}
+                      </div>
+                      <div className="muted-text" style={{ fontSize: 11 }}>
+                        {valueOrDash(access.department)}
+                      </div>
+                    </div>
+                  </div>
+                ))}
+
+                {profile.doctor_access.length > 3 && (
+                  <div className="muted-text" style={{ fontSize: 12 }}>
+                    +{profile.doctor_access.length - 3} more
+                  </div>
+                )}
+              </div>
+
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ marginTop: 14, width: "100%", justifyContent: "center" }}
+                onClick={() => router.push("/my-records/access")}
+              >
+                Manage Access
+              </button>
+            </div>
+          )}
+        </div>
+      </div>
+
+      {/* Timeline */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
         <div
           style={{
@@ -1260,10 +1678,9 @@ export default function MyRecordsPage() {
           }}
         >
           <div>
-            <div className="section-title" style={{ marginBottom: 8 }}>
+            <div className="section-title" style={{ marginBottom: 6 }}>
               {t("myTimeline")}
             </div>
-
             <div className="muted-text" style={{ lineHeight: 1.6 }}>
               Recent records and admission episodes, grouped by hospitalization period when possible.
             </div>
@@ -1280,6 +1697,7 @@ export default function MyRecordsPage() {
         />
       </div>
 
+      {/* Section browser */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
           {SECTION_ORDER.map((section) => (
@@ -1414,7 +1832,9 @@ export default function MyRecordsPage() {
             </div>
           ))}
 
-          {!filteredDocsForSection.length && <div className="muted-text">{t("noRecordsInSection")}</div>}
+          {!filteredDocsForSection.length && (
+            <div className="muted-text">{t("noRecordsInSection")}</div>
+          )}
 
           {visibleCount < filteredDocsForSection.length && (
             <button
@@ -1434,6 +1854,7 @@ export default function MyRecordsPage() {
         </div>
       </div>
 
+      {/* Lab trends */}
       {activeSection === "bloodwork" && (
         <div className="soft-card" style={{ padding: 24 }} ref={trendsRef}>
           <div className="section-title" style={{ marginBottom: 8 }}>
@@ -1441,29 +1862,31 @@ export default function MyRecordsPage() {
           </div>
 
           <div className="muted-text" style={{ marginBottom: 16 }}>
-            Trends are sorted by clinical importance. Graphs show the most recent 5 collections by collected/test date.
+            Trends are sorted by clinical importance. Graphs show the most recent 5 collections by
+            collected/test date.
           </div>
 
           <div style={{ display: "grid", gap: 16 }}>
             {sortedTrends.map((trend) => {
               const expanded = expandedTrendKey === trend.test_key;
               const graphPoints = getMostRecentTrendPoints(trend.points, 5);
-              const allReportPoints = [...trend.points].sort((a, b) => compareDatesDescending(a.date, b.date));
+              const allReportPoints = [...trend.points].sort((a, b) =>
+                compareDatesDescending(a.date, b.date)
+              );
               const highlightedDocumentId = hoveredTrendPoint[trend.test_key] ?? null;
 
               return (
                 <div
                   key={trend.test_key}
                   className="soft-card-tight interactive-card"
-                  style={{
-                    padding: 18,
-                    overflow: "hidden",
-                  }}
+                  style={{ padding: 18, overflow: "hidden" }}
                 >
                   <div
                     className="trend-item-header"
                     style={{
-                      gridTemplateColumns: expanded ? "minmax(0, 1fr) auto" : "minmax(0, 1fr) 420px auto",
+                      gridTemplateColumns: expanded
+                        ? "minmax(0, 1fr) auto"
+                        : "minmax(0, 1fr) 420px auto",
                     }}
                   >
                     <div>
@@ -1523,10 +1946,8 @@ export default function MyRecordsPage() {
                         className="trend-sparkline-col"
                         style={{
                           justifySelf: "stretch",
-                          opacity: expanded ? 0 : 1,
-                          transform: expanded ? "scale(0.96) translateY(6px)" : "scale(1) translateY(0)",
-                          transformOrigin: "center",
-                          transition: "opacity 220ms ease, transform 300ms cubic-bezier(0.22, 1, 0.36, 1)",
+                          opacity: 1,
+                          transition: "opacity 220ms ease",
                         }}
                       >
                         <TrendChart
@@ -1537,7 +1958,10 @@ export default function MyRecordsPage() {
                       </div>
                     )}
 
-                    <button className="secondary-btn" onClick={() => setExpandedTrendKey(expanded ? null : trend.test_key)}>
+                    <button
+                      className="secondary-btn"
+                      onClick={() => setExpandedTrendKey(expanded ? null : trend.test_key)}
+                    >
                       {expanded ? "Collapse" : "Expand"}
                     </button>
                   </div>
@@ -1547,7 +1971,9 @@ export default function MyRecordsPage() {
                     style={{
                       gridTemplateRows: expanded ? "1fr" : "0fr",
                       opacity: expanded ? 1 : 0,
-                      transform: expanded ? "scale(1) translateY(0)" : "scale(0.985) translateY(-10px)",
+                      transform: expanded
+                        ? "scale(1) translateY(0)"
+                        : "scale(0.985) translateY(-10px)",
                     }}
                   >
                     <div style={{ overflow: "hidden" }}>
@@ -1605,7 +2031,9 @@ export default function MyRecordsPage() {
                             }
                             onClick={() => router.push(`/documents/${point.document_id}`)}
                             style={{
-                              border: `1px solid ${isHighlighted ? "var(--primary)" : "var(--border)"}`,
+                              border: `1px solid ${
+                                isHighlighted ? "var(--primary)" : "var(--border)"
+                              }`,
                               background: isHighlighted
                                 ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
                                 : "var(--panel)",
@@ -1641,7 +2069,9 @@ export default function MyRecordsPage() {
               );
             })}
 
-            {!sortedTrends.length && <div className="muted-text">{t("noNumericTrends")}</div>}
+            {!sortedTrends.length && (
+              <div className="muted-text">{t("noNumericTrends")}</div>
+            )}
           </div>
         </div>
       )}
