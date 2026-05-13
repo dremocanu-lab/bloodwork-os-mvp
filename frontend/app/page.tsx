@@ -143,7 +143,7 @@ export default function VideoLandingPage() {
         </p>
 
         <Link
-          href="/portal"
+          href="/login"
           style={{
             marginTop: 52,
             display: "inline-flex",
