@@ -1136,14 +1136,7 @@ export default function MyRecordsPage() {
       )}
 
       {/* Stat cards */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(4, 1fr)",
-          gap: 12,
-          marginBottom: 14,
-        }}
-      >
+      <div className="records-stat-grid">
         <div className="soft-card" style={{ padding: "16px 20px" }}>
           <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
             {t("totalDocuments")}
@@ -1214,15 +1207,7 @@ export default function MyRecordsPage() {
       </div>
 
       {/* Featured chart + pinned trends */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 252px",
-          gap: 12,
-          marginBottom: 16,
-          alignItems: "start",
-        }}
-      >
+      <div className="records-featured-grid">
         {/* Featured chart */}
         <div className="soft-card" style={{ padding: 20, overflow: "hidden" }}>
           {featuredTrend ? (
