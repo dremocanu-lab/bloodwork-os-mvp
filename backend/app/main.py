@@ -158,6 +158,7 @@ def ensure_patient_for_user(db: Session, user):
     db.add(patient)
     db.commit()
     db.refresh(patient)
+    return patient
 
     return patient
 

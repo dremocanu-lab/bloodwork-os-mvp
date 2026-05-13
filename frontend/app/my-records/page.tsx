@@ -1095,10 +1095,18 @@ export default function MyRecordsPage() {
     [pinnedTrendKeys, sortedTrends]
   );
 
-  if (loading || !currentUser || !profile) {
+  if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
         <p className="muted-text">{t("loadingYourRecords")}</p>
+      </main>
+    );
+  }
+
+  if (!currentUser || !profile) {
+    return (
+      <main className="app-page-bg" style={{ padding: 24 }}>
+        <p className="muted-text">{error || t("loadingYourRecords")}</p>
       </main>
     );
   }
