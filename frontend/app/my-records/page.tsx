@@ -1085,22 +1085,6 @@ export default function MyRecordsPage() {
       });
   }, [trends]);
 
-  const stats = useMemo(() => {
-    if (!profile) {
-      return {
-        records: 0,
-        bloodwork: 0,
-        scans: 0,
-      };
-    }
-
-    return {
-      records: allDocuments.length,
-      bloodwork: profile.sections.bloodwork.length,
-      scans: profile.sections.scans.length,
-    };
-  }, [profile, allDocuments]);
-
   if (loading || !currentUser || !profile) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
@@ -1118,6 +1102,16 @@ export default function MyRecordsPage() {
       subtitle={`${t("dob")} ${valueOrDash(profile.patient.date_of_birth)} · ${t("age")} ${calculatedAge} · ${t(
         "sex"
       )} ${valueOrDash(profile.patient.sex)}`}
+      rightContent={
+        <button
+          type="button"
+          className="primary-btn"
+          style={{ whiteSpace: "nowrap" }}
+          onClick={() => router.push("/my-records/upload")}
+        >
+          {t("uploadDocuments")}
+        </button>
+      }
     >
       {error && (
         <div
@@ -1133,60 +1127,6 @@ export default function MyRecordsPage() {
           {error}
         </div>
       )}
-
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
-        }}
-      >
-        <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">{t("totalRecords")}</div>
-          <div className="stat-card-value">{stats.records}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">{t("bloodwork")}</div>
-          <div className="stat-card-value">{stats.bloodwork}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-green">
-          <div className="stat-card-label">{t("scans")}</div>
-          <div className="stat-card-value">{stats.scans}</div>
-        </div>
-
-      </div>
-
-      <div
-        className="soft-card upload-banner-grid"
-        style={{ padding: 28, marginBottom: 24 }}
-      >
-        <div>
-          <div style={{ fontWeight: 950, fontSize: 28, letterSpacing: "-0.055em" }}>
-            {t("uploadMedicalDocuments")}
-          </div>
-          <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
-            {t("uploadMedicalDocumentsDesc")}
-          </div>
-        </div>
-
-        <button
-          type="button"
-          className="primary-btn"
-          style={{
-            padding: "15px 22px",
-            borderRadius: 18,
-            fontSize: 15,
-            fontWeight: 950,
-            whiteSpace: "nowrap",
-          }}
-          onClick={() => router.push("/my-records/upload")}
-        >
-          {t("uploadDocuments")}
-        </button>
-      </div>
 
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
         <div

@@ -240,6 +240,19 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
                 </Link>
               );
             })}
+
+            {user.role === "patient" && (
+              <>
+                <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
+                <Link
+                  href="/my-records/upload"
+                  onClick={onCloseMobile}
+                  className="sidebar-upload-btn"
+                >
+                  ↑ {t("uploadDocuments")}
+                </Link>
+              </>
+            )}
           </nav>
         </div>
       </aside>
