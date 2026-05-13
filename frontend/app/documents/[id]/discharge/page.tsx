@@ -850,122 +850,150 @@ export default function DischargeStructuredPage() {
           transition: "grid-template-columns 240ms cubic-bezier(0.22, 1, 0.36, 1)",
         }}
       >
-        {/* Sidebar — open */}
-        {showStructured && sidebarOpen && (
-          <aside style={{ height: "100%", overflowY: "auto", display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 10 }}>
-            {/* Sidebar header */}
-            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 2px 0 8px" }}>
-              <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)" }}>
-                {t("sectionsSidebar")}
-              </span>
-              {/* Clean collapse button */}
+        {/* Sidebar — both states always rendered, opacity-transitioned for smooth in/out */}
+        {showStructured && (
+          <div style={{ position: "relative", height: "100%", overflow: "hidden" }}>
+            {/* Open state */}
+            <aside
+              style={{
+                position: "absolute", inset: 0,
+                height: "100%", overflowY: "auto",
+                display: "grid", gridTemplateRows: "auto minmax(0, 1fr)", gap: 10,
+                opacity: sidebarOpen ? 1 : 0,
+                pointerEvents: sidebarOpen ? "auto" : "none",
+                transition: "opacity 220ms ease",
+              }}
+            >
+              <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 2px 0 8px" }}>
+                <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)" }}>
+                  {t("sectionsSidebar")}
+                </span>
+                <button
+                  type="button"
+                  onClick={() => setSidebarOpen(false)}
+                  title={t("collapseSidebarLabel")}
+                  style={{
+                    display: "flex",
+                    alignItems: "center",
+                    gap: 4,
+                    padding: "4px 10px 4px 8px",
+                    borderRadius: 999,
+                    border: "1px solid var(--border)",
+                    background: "var(--panel-2)",
+                    color: "var(--muted)",
+                    fontSize: 11,
+                    fontWeight: 900,
+                    letterSpacing: "0.02em",
+                    cursor: "pointer",
+                    transition: "color 160ms ease, background 160ms ease",
+                  }}
+                >
+                  <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span>
+                  <span>Hide</span>
+                </button>
+              </div>
+
+              <div style={{ display: "grid", gap: 3, alignContent: "start", overflowY: "auto" }}>
+                {navigationSections.map((section) => {
+                  const active = activeSectionKey === section.key;
+                  const color = sectionColor(section.key);
+                  return (
+                    <button
+                      key={section.key}
+                      type="button"
+                      onClick={() => setActiveSectionKey(section.key)}
+                      style={{
+                        border: "none",
+                        background: active ? "color-mix(in srgb, var(--primary) 10%, var(--panel-2))" : "transparent",
+                        borderRadius: 10,
+                        padding: "10px 10px",
+                        textAlign: "left",
+                        cursor: "pointer",
+                        display: "flex",
+                        alignItems: "center",
+                        gap: 10,
+                        width: "100%",
+                        transition: "background 140ms ease",
+                      }}
+                    >
+                      <span
+                        style={{
+                          width: 10,
+                          height: 10,
+                          borderRadius: 999,
+                          background: color,
+                          opacity: active ? 1 : 0.38,
+                          flexShrink: 0,
+                          transition: "opacity 140ms ease",
+                          boxShadow: active ? `0 0 7px ${color}80` : "none",
+                        }}
+                      />
+                      <span
+                        style={{
+                          fontSize: 12.5,
+                          fontWeight: active ? 950 : 800,
+                          color: active ? "var(--foreground)" : "var(--muted)",
+                          lineHeight: 1.35,
+                          overflow: "hidden",
+                          textOverflow: "ellipsis",
+                          whiteSpace: "nowrap",
+                          transition: "color 140ms ease, font-weight 140ms ease",
+                          flex: 1,
+                          minWidth: 0,
+                        }}
+                      >
+                        {section.title}
+                      </span>
+                    </button>
+                  );
+                })}
+              </div>
+            </aside>
+
+            {/* Collapsed strip */}
+            <div
+              style={{
+                position: "absolute", inset: 0,
+                display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 6,
+                opacity: sidebarOpen ? 0 : 1,
+                pointerEvents: sidebarOpen ? "none" : "auto",
+                transition: "opacity 220ms ease",
+              }}
+            >
               <button
                 type="button"
-                onClick={() => setSidebarOpen(false)}
-                title={t("collapseSidebarLabel")}
+                onClick={() => setSidebarOpen(true)}
+                title={t("openSectionsLabel")}
                 style={{
                   display: "flex",
+                  flexDirection: "column",
                   alignItems: "center",
-                  gap: 4,
-                  padding: "4px 10px 4px 8px",
+                  padding: "8px 6px",
                   borderRadius: 999,
                   border: "1px solid var(--border)",
                   background: "var(--panel-2)",
                   color: "var(--muted)",
-                  fontSize: 11,
-                  fontWeight: 900,
-                  letterSpacing: "0.02em",
                   cursor: "pointer",
                   transition: "color 160ms ease, background 160ms ease",
+                  position: "relative",
+                  zIndex: 1,
                 }}
               >
-                <span style={{ fontSize: 14, lineHeight: 1 }}>‹</span>
-                <span>Hide</span>
+                <span style={{ fontSize: 16, lineHeight: 1 }}>›</span>
               </button>
-            </div>
 
-            {/* Section list */}
-            <div style={{ display: "grid", gap: 3, alignContent: "start", overflowY: "auto" }}>
-              {navigationSections.map((section) => {
-                const active = activeSectionKey === section.key;
-                const color = sectionColor(section.key);
-                return (
-                  <button
-                    key={section.key}
-                    type="button"
-                    onClick={() => setActiveSectionKey(section.key)}
-                    style={{
-                      border: "none",
-                      background: active ? "color-mix(in srgb, var(--primary) 10%, var(--panel-2))" : "transparent",
-                      borderRadius: 10,
-                      padding: "10px 10px",
-                      textAlign: "left",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      gap: 10,
-                      width: "100%",
-                      transition: "background 140ms ease",
-                    }}
-                  >
-                    <span
-                      style={{
-                        width: 10,
-                        height: 10,
-                        borderRadius: 999,
-                        background: color,
-                        opacity: active ? 1 : 0.38,
-                        flexShrink: 0,
-                        transition: "opacity 140ms ease",
-                        boxShadow: active ? `0 0 7px ${color}80` : "none",
-                      }}
-                    />
-                    <span
-                      style={{
-                        fontSize: 12.5,
-                        fontWeight: active ? 950 : 800,
-                        color: active ? "var(--foreground)" : "var(--muted)",
-                        lineHeight: 1.35,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                        transition: "color 140ms ease, font-weight 140ms ease",
-                        flex: 1,
-                        minWidth: 0,
-                      }}
-                    >
-                      {section.title}
-                    </span>
-                  </button>
-                );
-              })}
+              {/* Gradient below the button hinting at hidden sections */}
+              <div
+                style={{
+                  position: "absolute",
+                  left: 0, right: 0,
+                  top: 50, bottom: 0,
+                  background: "linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary) 55%, transparent) 35%, color-mix(in srgb, var(--primary) 45%, transparent))",
+                  pointerEvents: "none",
+                  borderRadius: "0 0 6px 6px",
+                }}
+              />
             </div>
-          </aside>
-        )}
-
-        {/* Sidebar — collapsed strip */}
-        {showStructured && !sidebarOpen && (
-          <div style={{ display: "flex", flexDirection: "column", alignItems: "center", paddingTop: 6 }}>
-            <button
-              type="button"
-              onClick={() => setSidebarOpen(true)}
-              title={t("openSectionsLabel")}
-              style={{
-                display: "flex",
-                flexDirection: "column",
-                alignItems: "center",
-                gap: 4,
-                padding: "8px 6px",
-                borderRadius: 999,
-                border: "1px solid var(--border)",
-                background: "var(--panel-2)",
-                color: "var(--muted)",
-                cursor: "pointer",
-                transition: "color 160ms ease, background 160ms ease",
-              }}
-            >
-              <span style={{ fontSize: 16, lineHeight: 1 }}>›</span>
-            </button>
           </div>
         )}
 
@@ -974,22 +1002,6 @@ export default function DischargeStructuredPage() {
           className="soft-card-tight"
           style={{ padding: 24, background: "var(--panel)", borderRadius: 20, height: "100%", minHeight: 0, display: "grid", gridTemplateRows: "minmax(0, 1fr)", overflow: "hidden", position: "relative" }}
         >
-          {/* Gradient hint when sidebar is collapsed */}
-          {showStructured && !sidebarOpen && (
-            <div
-              style={{
-                position: "absolute",
-                left: 0,
-                top: 0,
-                bottom: 0,
-                width: 52,
-                background: "linear-gradient(to right, color-mix(in srgb, var(--primary) 16%, var(--panel-2)), transparent)",
-                borderRadius: "20px 0 0 20px",
-                pointerEvents: "none",
-                zIndex: 2,
-              }}
-            />
-          )}
           {readerMode === "original" ? (
             <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
           ) : (
