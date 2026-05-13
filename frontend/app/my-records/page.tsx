@@ -1,6 +1,6 @@
 ﻿"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { useUploadManager } from "@/components/upload-provider";
@@ -245,6 +245,13 @@ function formatAxisNumber(value: number) {
   if (Math.abs(value) >= 10) return value.toFixed(1);
   if (Math.abs(value) >= 1) return value.toFixed(2).replace(/\.?0+$/, "");
   return value.toFixed(3).replace(/\.?0+$/, "");
+}
+
+function formatShortMonthYear(value?: string | null) {
+  if (!value) return null;
+  const ts = new Date(value).getTime();
+  if (!ts || Number.isNaN(ts)) return null;
+  return new Date(ts).toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
 function calculateAgeFromDob(dateOfBirth?: string | null) {
@@ -1085,6 +1092,31 @@ export default function MyRecordsPage() {
       });
   }, [trends]);
 
+  const trendsRef = useRef<HTMLDivElement>(null);
+
+  const snapshotData = useMemo(() => {
+    if (!profile) return null;
+    const recentDoc = allDocuments[0];
+    const recentBloodwork = allDocuments.find((d) => d.section === "bloodwork");
+    const recentDischarge = allDocuments.find((d) => isDischargeDocument(d));
+    const abnormalCount = sortedTrends.filter((tr) => {
+      const flag = (tr.latest?.flag || "").toLowerCase().trim();
+      return flag && !["normal", "null", "none", "ok", ""].includes(flag);
+    }).length;
+    return {
+      totalDocs: allDocuments.length,
+      recentDocDate: recentDoc ? getDocumentClinicalDate(recentDoc) : null,
+      bloodworkCount: profile.sections.bloodwork.length,
+      recentBloodworkDate: recentBloodwork ? getDocumentClinicalDate(recentBloodwork) : null,
+      hospitalizationCount: profile.sections.discharge_summary.length,
+      recentDischargeDate: recentDischarge
+        ? (recentDischarge.reported_on || recentDischarge.collected_on || null)
+        : null,
+      abnormalCount,
+      trendsCount: sortedTrends.length,
+    };
+  }, [profile, allDocuments, sortedTrends]);
+
   if (loading || !currentUser || !profile) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
@@ -1125,6 +1157,95 @@ export default function MyRecordsPage() {
           }}
         >
           {error}
+        </div>
+      )}
+
+      {/* Health snapshot strip */}
+      {snapshotData && (
+        <div style={{ display: "flex", gap: 10, marginBottom: 20, overflowX: "auto", paddingBottom: 2 }}>
+
+          {/* Total documents */}
+          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140 }}>
+            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Documents</div>
+            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px" }}>{snapshotData.totalDocs}</div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
+              {snapshotData.recentDocDate ? `Latest ${formatShortMonthYear(snapshotData.recentDocDate)}` : "None yet"}
+            </div>
+          </div>
+
+          {/* Bloodwork panels */}
+          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140, borderTop: "2px solid color-mix(in srgb, var(--primary) 55%, transparent)" }}>
+            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Bloodwork panels</div>
+            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: "var(--primary)" }}>{snapshotData.bloodworkCount}</div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
+              {snapshotData.recentBloodworkDate ? `Latest ${formatShortMonthYear(snapshotData.recentBloodworkDate)}` : "None yet"}
+            </div>
+          </div>
+
+          {/* Hospitalizations */}
+          <div className="soft-card-tight" style={{ padding: "14px 18px", flex: "0 0 auto", minWidth: 140, borderTop: "2px solid color-mix(in srgb, #8b5cf6 55%, transparent)" }}>
+            <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Hospitalizations</div>
+            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px" }}>{snapshotData.hospitalizationCount}</div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)" }}>
+              {snapshotData.hospitalizationCount > 0 && snapshotData.recentDischargeDate
+                ? `Last ${formatShortMonthYear(snapshotData.recentDischargeDate)}`
+                : snapshotData.hospitalizationCount > 0 ? "On record" : "None on record"}
+            </div>
+          </div>
+
+          {/* Abnormal results */}
+          <div
+            className="soft-card-tight"
+            style={{
+              padding: "14px 18px", flex: "0 0 auto", minWidth: 140,
+              borderTop: snapshotData.abnormalCount > 0
+                ? "2px solid var(--danger-border)"
+                : "2px solid color-mix(in srgb, var(--success-text) 40%, transparent)",
+              background: snapshotData.abnormalCount > 0
+                ? "color-mix(in srgb, var(--danger-bg) 42%, var(--panel))"
+                : undefined,
+            }}
+          >
+            <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
+              {snapshotData.abnormalCount > 0 && (
+                <span style={{ width: 5, height: 5, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
+              )}
+              <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)" }}>
+                Abnormal results
+              </span>
+            </div>
+            <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
+              {snapshotData.abnormalCount}
+            </div>
+            <div style={{ fontSize: 11, fontWeight: 900, color: snapshotData.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)", opacity: snapshotData.abnormalCount > 0 ? 1 : 0.8 }}>
+              {snapshotData.abnormalCount > 0 ? "Needs review" : "All clear"}
+            </div>
+          </div>
+
+          {/* Trends CTA chip */}
+          {snapshotData.trendsCount > 0 && (
+            <button
+              type="button"
+              onClick={() => {
+                setActiveSection("bloodwork");
+                setTimeout(() => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }), 60);
+              }}
+              style={{
+                padding: "14px 18px", flex: "0 0 auto", minWidth: 140,
+                borderRadius: 18,
+                border: "1px solid var(--border)",
+                borderTop: "2px solid color-mix(in srgb, var(--primary) 55%, transparent)",
+                background: "linear-gradient(160deg, color-mix(in srgb, var(--primary) 9%, var(--panel)), var(--panel))",
+                cursor: "pointer",
+                textAlign: "left",
+                transition: "box-shadow 180ms ease",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>Lab trends</div>
+              <div style={{ fontSize: 28, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, margin: "7px 0 6px", color: "var(--primary)" }}>{snapshotData.trendsCount}</div>
+              <div style={{ fontSize: 11, fontWeight: 900, color: "var(--primary)" }}>View trends ↓</div>
+            </button>
+          )}
         </div>
       )}
 
@@ -1314,7 +1435,7 @@ export default function MyRecordsPage() {
       </div>
 
       {activeSection === "bloodwork" && (
-        <div className="soft-card" style={{ padding: 24 }}>
+        <div className="soft-card" style={{ padding: 24 }} ref={trendsRef}>
           <div className="section-title" style={{ marginBottom: 8 }}>
             {t("bloodworkTrends")}
           </div>
