@@ -46,6 +46,8 @@ class DoctorPatientAccess(Base):
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     granted_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     granted_at = Column(String, nullable=False)
+    is_active = Column(Integer, nullable=False, default=1, index=True)
+    ended_at = Column(String, nullable=True)
 
     doctor_user = relationship("User", foreign_keys=[doctor_user_id])
     patient = relationship("Patient", back_populates="doctor_access_links")

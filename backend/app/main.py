@@ -11,6 +11,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
+from sqlalchemy import or_
 from sqlalchemy.orm import Session
 
 from app import models
@@ -167,6 +168,7 @@ def doctor_has_patient_access(db: Session, doctor_user_id: int, patient_id: int)
         .filter(
             models.DoctorPatientAccess.doctor_user_id == doctor_user_id,
             models.DoctorPatientAccess.patient_id == patient_id,
+            models.DoctorPatientAccess.is_active == 1,
         )
         .first()
         is not None
@@ -1008,6 +1010,7 @@ def create_assignment(
         .filter(
             models.DoctorPatientAccess.doctor_user_id == payload.doctor_user_id,
             models.DoctorPatientAccess.patient_id == payload.patient_id,
+            models.DoctorPatientAccess.is_active == 1,
         )
         .first()
     )
@@ -1020,6 +1023,7 @@ def create_assignment(
         patient_id=payload.patient_id,
         granted_by_user_id=current_user.id,
         granted_at=now_iso(),
+        is_active=1,
     )
 
     db.add(assignment)
@@ -2309,6 +2313,279 @@ def unshare_document(
         db.delete(share)
         db.commit()
 
+    return {"ok": True}
+
+
+# ---------------------------------------------------------------------------
+# ADMIN PORTAL — scoped to admin's department + hospital
+# ---------------------------------------------------------------------------
+
+def _validate_doctor_in_admin_scope(admin_user, doctor) -> None:
+    if admin_user.department and doctor.department != admin_user.department:
+        raise HTTPException(status_code=403, detail="Doctor is not in your department.")
+    if admin_user.hospital_name and doctor.hospital_name != admin_user.hospital_name:
+        raise HTTPException(status_code=403, detail="Doctor is not in your hospital.")
+
+
+@app.get("/admin/patients/search")
+def admin_search_patients(
+    q: str = "",
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    if not q.strip():
+        return []
+    term = f"%{q.strip()}%"
+    patients = (
+        db.query(models.Patient)
+        .filter(
+            or_(
+                models.Patient.full_name.ilike(term),
+                models.Patient.cnp.ilike(term),
+            )
+        )
+        .limit(30)
+        .all()
+    )
+    return [
+        {
+            "id": p.id,
+            "full_name": p.full_name,
+            "date_of_birth": p.date_of_birth,
+            "cnp": p.cnp,
+            "patient_identifier": p.patient_identifier,
+        }
+        for p in patients
+    ]
+
+
+@app.get("/admin/doctors")
+def admin_get_doctors(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    query = db.query(models.User).filter(models.User.role == "doctor")
+    if current_user.department:
+        query = query.filter(models.User.department == current_user.department)
+    if current_user.hospital_name:
+        query = query.filter(models.User.hospital_name == current_user.hospital_name)
+    doctors = query.all()
+
+    result = []
+    for doc in doctors:
+        current_count = (
+            db.query(models.DoctorPatientAccess)
+            .filter(
+                models.DoctorPatientAccess.doctor_user_id == doc.id,
+                models.DoctorPatientAccess.is_active == 1,
+            )
+            .count()
+        )
+        result.append(
+            {
+                "id": doc.id,
+                "full_name": doc.full_name,
+                "email": doc.email,
+                "department": doc.department,
+                "hospital_name": doc.hospital_name,
+                "current_patient_count": current_count,
+            }
+        )
+    return result
+
+
+@app.get("/admin/doctors/{doctor_id}")
+def admin_get_doctor(
+    doctor_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == doctor_id, models.User.role == "doctor").first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found.")
+    _validate_doctor_in_admin_scope(current_user, doctor)
+
+    current_count = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor_id,
+            models.DoctorPatientAccess.is_active == 1,
+        )
+        .count()
+    )
+    historical_count = (
+        db.query(models.DoctorPatientAccess)
+        .filter(models.DoctorPatientAccess.doctor_user_id == doctor_id)
+        .count()
+    )
+    return {
+        "id": doctor.id,
+        "full_name": doctor.full_name,
+        "email": doctor.email,
+        "department": doctor.department,
+        "hospital_name": doctor.hospital_name,
+        "current_patient_count": current_count,
+        "historical_assignment_count": historical_count,
+    }
+
+
+@app.get("/admin/doctors/{doctor_id}/current-patients")
+def admin_doctor_current_patients(
+    doctor_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == doctor_id, models.User.role == "doctor").first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found.")
+    _validate_doctor_in_admin_scope(current_user, doctor)
+
+    assignments = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == doctor_id,
+            models.DoctorPatientAccess.is_active == 1,
+        )
+        .all()
+    )
+    return [
+        {
+            "assignment_id": a.id,
+            "patient_id": a.patient.id,
+            "full_name": a.patient.full_name,
+            "date_of_birth": a.patient.date_of_birth,
+            "cnp": a.patient.cnp,
+            "patient_identifier": a.patient.patient_identifier,
+            "assigned_at": a.granted_at,
+        }
+        for a in assignments
+    ]
+
+
+@app.get("/admin/doctors/{doctor_id}/patient-history")
+def admin_doctor_patient_history(
+    doctor_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    doctor = db.query(models.User).filter(models.User.id == doctor_id, models.User.role == "doctor").first()
+    if not doctor:
+        raise HTTPException(status_code=404, detail="Doctor not found.")
+    _validate_doctor_in_admin_scope(current_user, doctor)
+
+    assignments = (
+        db.query(models.DoctorPatientAccess)
+        .filter(models.DoctorPatientAccess.doctor_user_id == doctor_id)
+        .order_by(models.DoctorPatientAccess.granted_at.desc())
+        .all()
+    )
+    return [
+        {
+            "assignment_id": a.id,
+            "patient_id": a.patient.id,
+            "full_name": a.patient.full_name,
+            "date_of_birth": a.patient.date_of_birth,
+            "cnp": a.patient.cnp,
+            "patient_identifier": a.patient.patient_identifier,
+            "assigned_at": a.granted_at,
+            "ended_at": a.ended_at,
+            "is_active": bool(a.is_active),
+        }
+        for a in assignments
+    ]
+
+
+@app.get("/admin/patients/{patient_id}/assignments")
+def admin_get_patient_assignments(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    assignments = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.patient_id == patient_id,
+            models.DoctorPatientAccess.is_active == 1,
+        )
+        .all()
+    )
+    return [{"doctor_user_id": a.doctor_user_id} for a in assignments]
+
+
+class BatchAssignRequest(BaseModel):
+    patient_id: int
+    doctor_user_ids: list[int]
+
+
+@app.post("/admin/assignments/batch")
+def admin_batch_assign(
+    payload: BatchAssignRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+
+    created = 0
+    skipped = 0
+    for doctor_id in payload.doctor_user_ids:
+        doctor = db.query(models.User).filter(models.User.id == doctor_id, models.User.role == "doctor").first()
+        if not doctor:
+            raise HTTPException(status_code=400, detail=f"Doctor {doctor_id} not found.")
+        _validate_doctor_in_admin_scope(current_user, doctor)
+
+        existing = (
+            db.query(models.DoctorPatientAccess)
+            .filter(
+                models.DoctorPatientAccess.doctor_user_id == doctor_id,
+                models.DoctorPatientAccess.patient_id == payload.patient_id,
+                models.DoctorPatientAccess.is_active == 1,
+            )
+            .first()
+        )
+        if existing:
+            skipped += 1
+            continue
+
+        link = models.DoctorPatientAccess(
+            doctor_user_id=doctor_id,
+            patient_id=payload.patient_id,
+            granted_by_user_id=current_user.id,
+            granted_at=now_iso(),
+            is_active=1,
+        )
+        db.add(link)
+        created += 1
+
+    db.commit()
+    return {"created": created, "skipped": skipped}
+
+
+@app.post("/admin/assignments/{assignment_id}/end")
+def admin_end_assignment(
+    assignment_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    assignment = db.query(models.DoctorPatientAccess).filter(models.DoctorPatientAccess.id == assignment_id).first()
+    if not assignment:
+        raise HTTPException(status_code=404, detail="Assignment not found.")
+
+    doctor = db.query(models.User).filter(models.User.id == assignment.doctor_user_id).first()
+    if doctor:
+        _validate_doctor_in_admin_scope(current_user, doctor)
+
+    if not assignment.is_active:
+        raise HTTPException(status_code=400, detail="Assignment is already ended.")
+
+    assignment.is_active = 0
+    assignment.ended_at = now_iso()
+    db.commit()
     return {"ok": True}
 
 

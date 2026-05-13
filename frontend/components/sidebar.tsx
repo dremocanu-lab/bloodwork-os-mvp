@@ -42,9 +42,8 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
       { label: t("myAccess"), href: "/my-records/access" },
     ],
     admin: [
-      { label: t("assignments"), href: "/assignments" },
-      { label: t("searchPatients"), href: "/patients/search" },
-      { label: t("activityLog"), href: "/admin/logs" },
+      { label: t("assignPatients"), href: "/assignments" },
+      { label: t("adminDoctorsNav"), href: "/admin/doctors" },
     ],
     care_partner: [
       { label: t("sharedWithMe"), href: "/care-partner/shared" },

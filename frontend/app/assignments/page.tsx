@@ -1,549 +1,436 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
 
-type Doctor = {
+type AdminPatient = {
   id: number;
-  email: string;
   full_name: string;
-  role: "doctor";
+  date_of_birth?: string | null;
+  cnp?: string | null;
+  patient_identifier?: string | null;
+};
+
+type AdminDoctor = {
+  id: number;
+  full_name: string;
+  email: string;
   department?: string | null;
   hospital_name?: string | null;
+  current_patient_count: number;
 };
 
-type LabInsight = {
-  display_name?: string | null;
-  value?: string | null;
-  unit?: string | null;
-  flag?: string | null;
-};
-
-type TrendPreview = {
-  display_name?: string | null;
-  latest_value?: string | null;
-  previous_value?: string | null;
-  unit?: string | null;
-  direction?: "up" | "down" | "stable";
-};
-
-type AssignmentRow = {
-  patient: {
-    id: number;
-    full_name: string;
-    date_of_birth?: string | null;
-    age?: string | null;
-    sex?: string | null;
-    cnp?: string | null;
-    patient_identifier?: string | null;
-  };
-  doctors: Doctor[];
-  active_event?: {
-    id: number;
-    title: string;
-    status: string;
-  } | null;
-  is_unassigned: boolean;
-  abnormal_count?: number;
-  latest_abnormal_labs?: LabInsight[];
-  trend_preview?: TrendPreview[];
-};
-
-type FilterMode = "all" | "active" | "abnormal";
-
-function TrendArrow({ direction }: { direction?: "up" | "down" | "stable" }) {
-  if (direction === "up") return <span>↑</span>;
-  if (direction === "down") return <span>↓</span>;
-  return <span>→</span>;
+function maskCnp(cnp?: string | null): string {
+  if (!cnp) return "—";
+  if (cnp.length <= 6) return cnp;
+  return cnp.slice(0, 6) + "•".repeat(cnp.length - 6);
 }
 
-export default function AssignmentsPage() {
+function formatDate(v?: string | null) {
+  if (!v) return "—";
+  const d = new Date(v);
+  if (Number.isNaN(d.getTime())) return v;
+  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+export default function AssignPatientsPage() {
   const router = useRouter();
   const { t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [rows, setRows] = useState<AssignmentRow[]>([]);
-  const [query, setQuery] = useState("");
-  const [filterMode, setFilterMode] = useState<FilterMode>("all");
+  const [doctors, setDoctors] = useState<AdminDoctor[]>([]);
   const [loading, setLoading] = useState(true);
-  const [actionLoading, setActionLoading] = useState<string | null>(null);
-  const [error, setError] = useState("");
 
-  async function loadData() {
-    const meResponse = await api.get<CurrentUser>("/auth/me");
+  const [searchQuery, setSearchQuery] = useState("");
+  const [searchResults, setSearchResults] = useState<AdminPatient[]>([]);
+  const [searching, setSearching] = useState(false);
+  const searchTimer = useRef<ReturnType<typeof setTimeout> | null>(null);
 
-    if (meResponse.data.role !== "admin") {
-      router.push(meResponse.data.role === "doctor" ? "/my-patients" : "/my-records");
-      return;
-    }
+  const [selectedPatient, setSelectedPatient] = useState<AdminPatient | null>(null);
+  const [existingDoctorIds, setExistingDoctorIds] = useState<Set<number>>(new Set());
+  const [selectedDoctorIds, setSelectedDoctorIds] = useState<Set<number>>(new Set());
 
-    setCurrentUser(meResponse.data);
-
-    const assignmentsResponse = await api.get<AssignmentRow[]>("/admin/scoped-patient-assignments");
-    setRows(assignmentsResponse.data);
-  }
+  const [confirming, setConfirming] = useState(false);
+  const [confirmSuccess, setConfirmSuccess] = useState("");
+  const [confirmError, setConfirmError] = useState("");
 
   useEffect(() => {
     async function init() {
       try {
-        setError("");
-        await loadData();
-      } catch (err) {
-        setError(getErrorMessage(err, t("failedLoadAssignments")));
+        const me = await api.get<CurrentUser>("/auth/me");
+        if (me.data.role !== "admin") { router.replace("/login"); return; }
+        setCurrentUser(me.data);
+        const docs = await api.get<AdminDoctor[]>("/admin/doctors");
+        setDoctors(docs.data || []);
+      } catch {
+        // handled by AppShell auth redirect
       } finally {
         setLoading(false);
       }
     }
-
     init();
+  }, [router]);
+
+  const runSearch = useCallback(async (q: string) => {
+    if (!q.trim()) { setSearchResults([]); return; }
+    setSearching(true);
+    try {
+      const res = await api.get<AdminPatient[]>(`/admin/patients/search?q=${encodeURIComponent(q)}`);
+      setSearchResults(res.data || []);
+    } catch {
+      setSearchResults([]);
+    } finally {
+      setSearching(false);
+    }
   }, []);
 
-  async function unassign(patientId: number, doctorId: number) {
+  function handleSearchInput(value: string) {
+    setSearchQuery(value);
+    if (searchTimer.current) clearTimeout(searchTimer.current);
+    searchTimer.current = setTimeout(() => runSearch(value), 320);
+  }
+
+  async function selectPatient(patient: AdminPatient) {
+    setSelectedPatient(patient);
+    setConfirmSuccess("");
+    setConfirmError("");
     try {
-      setActionLoading(`unassign-${patientId}-${doctorId}`);
-      setError("");
-
-      await api.post("/admin/scoped-unassign-doctor", {
-        patient_id: patientId,
-        doctor_user_id: doctorId,
-      });
-
-      await loadData();
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedUnassignDoctor")));
-    } finally {
-      setActionLoading(null);
+      const res = await api.get<{ doctor_user_id: number }[]>(`/admin/patients/${patient.id}/assignments`);
+      const ids = new Set((res.data || []).map((a) => a.doctor_user_id));
+      setExistingDoctorIds(ids);
+      setSelectedDoctorIds(new Set(ids));
+    } catch {
+      setExistingDoctorIds(new Set());
+      setSelectedDoctorIds(new Set());
     }
   }
 
-  async function discharge(patientId: number) {
-    try {
-      setActionLoading(`discharge-${patientId}`);
-      setError("");
+  function toggleDoctor(doctorId: number) {
+    setSelectedDoctorIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(doctorId)) {
+        next.delete(doctorId);
+      } else {
+        next.add(doctorId);
+      }
+      return next;
+    });
+    setConfirmSuccess("");
+    setConfirmError("");
+  }
 
-      await api.post(`/admin/scoped-discharge/${patientId}`);
-      await loadData();
+  async function confirmAssignment() {
+    if (!selectedPatient) return;
+    const newIds = [...selectedDoctorIds].filter((id) => !existingDoctorIds.has(id));
+    if (newIds.length === 0) {
+      setConfirmError("No new doctors selected.");
+      return;
+    }
+    setConfirming(true);
+    setConfirmError("");
+    setConfirmSuccess("");
+    try {
+      const res = await api.post<{ created: number; skipped: number }>("/admin/assignments/batch", {
+        patient_id: selectedPatient.id,
+        doctor_user_ids: newIds,
+      });
+      const { created, skipped } = res.data;
+      if (skipped > 0) {
+        setConfirmSuccess(`${created} ${t("assignedSuccessfully")} ${skipped} ${t("partialAssignSuccess")}`);
+      } else {
+        setConfirmSuccess(t("assignedSuccessfully"));
+      }
+      setExistingDoctorIds(new Set(selectedDoctorIds));
+      const docs = await api.get<AdminDoctor[]>("/admin/doctors");
+      setDoctors(docs.data || []);
     } catch (err) {
-      setError(getErrorMessage(err, t("failedDischargePatient")));
+      setConfirmError(getErrorMessage(err, "Could not confirm assignment."));
     } finally {
-      setActionLoading(null);
+      setConfirming(false);
     }
   }
 
-  const stats = useMemo(() => {
-    return {
-      total: rows.length,
-      assigned: rows.filter((row) => row.doctors.length > 0).length,
-      active: rows.filter((row) => row.active_event).length,
-      abnormal: rows.filter((row) => (row.abnormal_count ?? 0) > 0).length,
-    };
-  }, [rows]);
+  const newSelectionsCount = [...selectedDoctorIds].filter((id) => !existingDoctorIds.has(id)).length;
 
-  const filteredRows = useMemo(() => {
-    const term = query.trim().toLowerCase();
-
-    return rows
-      .filter((row) => {
-        if (filterMode === "active" && !row.active_event) return false;
-        if (filterMode === "abnormal" && !(row.abnormal_count && row.abnormal_count > 0)) return false;
-
-        if (!term) return true;
-
-        const doctors = row.doctors.map((doctor) => doctor.full_name).join(" ");
-        const abnormal = (row.latest_abnormal_labs ?? []).map((lab) => lab.display_name).join(" ");
-
-        return [
-          row.patient.full_name,
-          row.patient.cnp,
-          row.patient.patient_identifier,
-          row.patient.date_of_birth,
-          doctors,
-          abnormal,
-          row.active_event?.title,
-        ]
-          .filter(Boolean)
-          .join(" ")
-          .toLowerCase()
-          .includes(term);
-      })
-      .sort((a, b) => {
-        if (a.active_event && !b.active_event) return -1;
-        if (!a.active_event && b.active_event) return 1;
-
-        const aAbnormal = a.abnormal_count ?? 0;
-        const bAbnormal = b.abnormal_count ?? 0;
-
-        if (aAbnormal > 0 && bAbnormal === 0) return -1;
-        if (aAbnormal === 0 && bAbnormal > 0) return 1;
-
-        return a.patient.full_name.localeCompare(b.patient.full_name);
-      });
-  }, [rows, query, filterMode]);
-
-  function getFilterLabel(mode: FilterMode) {
-    if (mode === "all") return t("all");
-    if (mode === "active") return t("active");
-    return t("abnormal");
-  }
-
-  if (loading) {
+  if (loading || !currentUser) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingAssignments")}</p>
-      </main>
-    );
-  }
-
-  if (!currentUser) {
-    return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <div className="soft-card-tight" style={{ padding: 16 }}>
-          {t("couldNotLoadAdminUser")}
-        </div>
+        <p className="muted-text">{t("loading")}</p>
       </main>
     );
   }
 
   return (
-    <AppShell
-      user={currentUser}
-      title={t("assignments")}
-      subtitle={`${t("assignmentsSubtitlePrefix")} ${valueOrDash(currentUser.department)} ${t(
-        "assignmentsSubtitleMiddle"
-      )} ${valueOrDash(currentUser.hospital_name)}.`}
-      rightContent={
-        <button className="secondary-btn" onClick={() => router.push("/patients/search")}>
-          {t("searchPatients")}
-        </button>
-      }
-    >
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
-
+    <AppShell user={currentUser} title={t("assignPatients")} subtitle={t("assignPatientsSubtitle")}>
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: 16,
-          marginBottom: 24,
+          gridTemplateColumns: "44% 56%",
+          gap: 20,
+          height: "calc(100dvh - 200px)",
+          minHeight: 500,
         }}
       >
-        <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">{t("scopedPatients")}</div>
-          <div className="stat-card-value">{stats.total}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-green">
-          <div className="stat-card-label">{t("assigned")}</div>
-          <div className="stat-card-value">{stats.assigned}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">{t("activeAdmissions")}</div>
-          <div className="stat-card-value">{stats.active}</div>
-        </div>
-
-        <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">{t("withAbnormalLabs")}</div>
-          <div className="stat-card-value">{stats.abnormal}</div>
-        </div>
-      </div>
-
-      <div className="soft-card" style={{ padding: 24 }}>
+        {/* ── LEFT: Patient search ── */}
         <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            marginBottom: 18,
-            flexWrap: "wrap",
-          }}
+          className="soft-card"
+          style={{ padding: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
         >
-          <div>
-            <div className="section-title">{t("currentAssignments")}</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("currentAssignmentsDesc")}
-            </div>
+          <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            <div style={{ fontWeight: 950, fontSize: 16, letterSpacing: "-0.03em" }}>{t("selectPatient")}</div>
+            <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>{t("selectPatientSubtitle")}</div>
+            <input
+              type="text"
+              className="form-input"
+              style={{ marginTop: 12 }}
+              placeholder={t("searchByNameOrCnp")}
+              value={searchQuery}
+              onChange={(e) => handleSearchInput(e.target.value)}
+              autoComplete="off"
+            />
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {(["all", "active", "abnormal"] as FilterMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={filterMode === mode ? "primary-btn" : "secondary-btn"}
-                onClick={() => setFilterMode(mode)}
-              >
-                {getFilterLabel(mode)}
-              </button>
-            ))}
-          </div>
-        </div>
+          <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
+            {searching && (
+              <div className="muted-text" style={{ padding: "12px 4px", fontSize: 13 }}>{t("loading")}</div>
+            )}
 
-        <div style={{ marginBottom: 18 }}>
-          <input
-            className="text-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("searchAssignmentsPlaceholder")}
-          />
-        </div>
+            {!searching && searchQuery.trim() && searchResults.length === 0 && (
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div className="muted-text" style={{ fontSize: 13 }}>{t("noPatientsFound")}</div>
+              </div>
+            )}
 
-        <div style={{ display: "grid", gap: 14 }}>
-          {filteredRows.map((row) => {
-            const abnormalCount = row.abnormal_count ?? 0;
-            const abnormalLabs = row.latest_abnormal_labs ?? [];
-            const trends = row.trend_preview ?? [];
-
-            return (
-              <div
-                key={row.patient.id}
-                className="soft-card-tight"
-                style={{
-                  padding: 18,
-                  borderColor: abnormalCount > 0 ? "var(--danger-border)" : "var(--border)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0, 1fr) auto",
-                    gap: 16,
-                    alignItems: "start",
-                  }}
-                >
-                  <div>
-                    <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                      {abnormalCount > 0 && (
-                        <span
-                          style={{
-                            width: 12,
-                            height: 12,
-                            borderRadius: 999,
-                            background: "var(--danger-text)",
-                          }}
-                        />
-                      )}
-
-                      <div style={{ fontWeight: 900, fontSize: 20 }}>{row.patient.full_name}</div>
-
-                      {row.active_event && (
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            padding: "6px 10px",
-                            borderRadius: 999,
-                            background: "var(--success-bg)",
-                            color: "var(--success-text)",
-                            fontWeight: 800,
-                            fontSize: 12,
-                          }}
-                        >
-                          {t("activeAdmission")}
-                        </span>
-                      )}
-
-                      {abnormalCount > 0 && (
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            padding: "6px 10px",
-                            borderRadius: 999,
-                            background: "var(--danger-bg)",
-                            color: "var(--danger-text)",
-                            border: "1px solid var(--danger-border)",
-                            fontWeight: 900,
-                            fontSize: 12,
-                          }}
-                        >
-                          {abnormalCount} {t("abnormalCountLabel")}
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
-                      {t("dob")} {valueOrDash(row.patient.date_of_birth)} · {t("age")}{" "}
-                      {valueOrDash(row.patient.age)} · {t("sex")} {valueOrDash(row.patient.sex)}
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 4 }}>
-                      {t("patientId")} {valueOrDash(row.patient.patient_identifier)} · {t("cnp")}{" "}
-                      {valueOrDash(row.patient.cnp)}
-                    </div>
-
-                    <div style={{ marginTop: 14, display: "grid", gap: 10 }}>
-                      {row.doctors.map((doctor) => (
-                        <div
-                          key={doctor.id}
-                          style={{
-                            display: "flex",
-                            alignItems: "center",
-                            justifyContent: "space-between",
-                            gap: 12,
-                            padding: 12,
-                            borderRadius: 16,
-                            background: "var(--panel-2)",
-                            border: "1px solid var(--border)",
-                            flexWrap: "wrap",
-                          }}
-                        >
-                          <div>
-                            <div style={{ fontWeight: 800 }}>{doctor.full_name}</div>
-                            <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                              {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
-                            </div>
-                          </div>
-
-                          <button
-                            className="secondary-btn"
-                            onClick={() => unassign(row.patient.id, doctor.id)}
-                            disabled={actionLoading === `unassign-${row.patient.id}-${doctor.id}`}
-                          >
-                            {actionLoading === `unassign-${row.patient.id}-${doctor.id}`
-                              ? t("unassigning")
-                              : t("unassign")}
-                          </button>
-                        </div>
-                      ))}
-                    </div>
-
-                    {abnormalLabs.length > 0 && (
-                      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginTop: 14 }}>
-                        {abnormalLabs.map((lab, index) => (
-                          <span
-                            key={`${lab.display_name}-${index}`}
-                            style={{
-                              display: "inline-flex",
-                              padding: "7px 10px",
-                              borderRadius: 999,
-                              background: "var(--danger-bg)",
-                              color: "var(--danger-text)",
-                              border: "1px solid var(--danger-border)",
-                              fontWeight: 800,
-                              fontSize: 12,
-                            }}
-                          >
-                            {valueOrDash(lab.display_name)} {valueOrDash(lab.value)}
-                            {lab.unit ? ` ${lab.unit}` : ""} · {valueOrDash(lab.flag)}
-                          </span>
-                        ))}
-                      </div>
-                    )}
-
-                    {trends.length > 0 && (
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))",
-                          gap: 10,
-                          marginTop: 14,
-                        }}
-                      >
-                        {trends.map((trend, index) => (
-                          <div
-                            key={`${trend.display_name}-${index}`}
-                            style={{
-                              padding: 12,
-                              borderRadius: 16,
-                              background: "var(--panel-2)",
-                              border: "1px solid var(--border)",
-                            }}
-                          >
-                            <div className="muted-text" style={{ fontSize: 12, fontWeight: 800 }}>
-                              {valueOrDash(trend.display_name)}
-                            </div>
-                            <div style={{ marginTop: 5, fontWeight: 900 }}>
-                              <TrendArrow direction={trend.direction} /> {valueOrDash(trend.latest_value)}
-                              {trend.unit ? ` ${trend.unit}` : ""}
-                            </div>
-                            <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                              {t("previousLabel")} {valueOrDash(trend.previous_value)}
-                            </div>
-                          </div>
-                        ))}
-                      </div>
-                    )}
-
-                    {row.active_event && (
-                      <div
-                        style={{
-                          marginTop: 14,
-                          padding: 12,
-                          borderRadius: 16,
-                          background: "var(--success-bg)",
-                          color: "var(--success-text)",
-                          fontWeight: 800,
-                        }}
-                      >
-                        {row.active_event.title}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                    <button
-                      className="primary-btn"
-                      onClick={() => router.push(`/patients/${row.patient.id}/assign`)}
-                    >
-                      {t("reassign")}
-                    </button>
-
-                    {row.active_event && (
-                      <button
-                        className="secondary-btn"
-                        onClick={() => discharge(row.patient.id)}
-                        disabled={actionLoading === `discharge-${row.patient.id}`}
-                      >
-                        {actionLoading === `discharge-${row.patient.id}` ? t("discharging") : t("discharge")}
-                      </button>
-                    )}
-                  </div>
+            {!searching && !searchQuery.trim() && (
+              <div style={{ padding: "20px 4px", textAlign: "center" }}>
+                <div className="muted-text" style={{ fontSize: 13 }}>
+                  {t("selectPatientSubtitle")}
                 </div>
               </div>
-            );
-          })}
+            )}
 
-          {!filteredRows.length && !error && (
-            <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{t("noAssignmentsMatch")}</div>
-              <div className="muted-text" style={{ marginTop: 8 }}>
-                {t("noAssignmentsMatchDesc")}
+            <div style={{ display: "grid", gap: 8 }}>
+              {searchResults.map((patient) => {
+                const isSelected = selectedPatient?.id === patient.id;
+                return (
+                  <button
+                    key={patient.id}
+                    type="button"
+                    onClick={() => selectPatient(patient)}
+                    style={{
+                      textAlign: "left",
+                      padding: "14px 16px",
+                      borderRadius: 14,
+                      border: isSelected
+                        ? "1.5px solid var(--primary)"
+                        : "1px solid var(--border)",
+                      background: isSelected
+                        ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
+                        : "var(--panel-2)",
+                      cursor: "pointer",
+                      transition: "background 160ms ease, border-color 160ms ease",
+                      width: "100%",
+                    }}
+                  >
+                    <div style={{ fontWeight: 950, fontSize: 14, letterSpacing: "-0.02em" }}>
+                      {patient.full_name}
+                    </div>
+                    <div className="muted-text" style={{ marginTop: 5, fontSize: 12, display: "flex", gap: 12, flexWrap: "wrap" }}>
+                      {patient.date_of_birth && (
+                        <span>DOB: {formatDate(patient.date_of_birth)}</span>
+                      )}
+                      {patient.cnp && (
+                        <span>CNP: {maskCnp(patient.cnp)}</span>
+                      )}
+                    </div>
+                  </button>
+                );
+              })}
+            </div>
+          </div>
+        </div>
+
+        {/* ── RIGHT: Doctor selection + confirmation ── */}
+        <div
+          className="soft-card"
+          style={{ padding: 0, display: "flex", flexDirection: "column", overflow: "hidden" }}
+        >
+          <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
+            <div style={{ fontWeight: 950, fontSize: 16, letterSpacing: "-0.03em" }}>{t("assignDoctors")}</div>
+            <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>{t("assignDoctorsSubtitle")}</div>
+          </div>
+
+          <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
+            {!selectedPatient ? (
+              <div style={{ padding: "32px 16px", textAlign: "center" }}>
+                <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+                  {t("selectPatientToContinue")}
+                </div>
               </div>
+            ) : doctors.length === 0 ? (
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div className="muted-text" style={{ fontSize: 13 }}>{t("noDoctorsInDepartment")}</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {doctors.map((doctor) => {
+                  const isExisting = existingDoctorIds.has(doctor.id);
+                  const isSelected = selectedDoctorIds.has(doctor.id);
+                  return (
+                    <button
+                      key={doctor.id}
+                      type="button"
+                      onClick={() => toggleDoctor(doctor.id)}
+                      style={{
+                        textAlign: "left",
+                        padding: "14px 16px",
+                        borderRadius: 14,
+                        border: isSelected
+                          ? "1.5px solid var(--primary)"
+                          : "1px solid var(--border)",
+                        background: isSelected
+                          ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
+                          : "var(--panel-2)",
+                        cursor: "pointer",
+                        transition: "background 160ms ease, border-color 160ms ease",
+                        width: "100%",
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0,1fr) auto",
+                        gap: 10,
+                        alignItems: "center",
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 950, fontSize: 14, letterSpacing: "-0.02em" }}>
+                          {doctor.full_name}
+                        </div>
+                        <div className="muted-text" style={{ marginTop: 3, fontSize: 12 }}>
+                          {doctor.email}
+                        </div>
+                      </div>
+
+                      <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 4, flexShrink: 0 }}>
+                        {isExisting && (
+                          <span
+                            style={{
+                              fontSize: 11,
+                              fontWeight: 900,
+                              padding: "3px 8px",
+                              borderRadius: 999,
+                              background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
+                              color: "var(--primary)",
+                              letterSpacing: "0.02em",
+                            }}
+                          >
+                            {t("alreadyAssigned")}
+                          </span>
+                        )}
+                        <div
+                          style={{
+                            width: 20,
+                            height: 20,
+                            borderRadius: 6,
+                            border: isSelected ? "none" : "1.5px solid var(--border)",
+                            background: isSelected ? "var(--primary)" : "transparent",
+                            display: "flex",
+                            alignItems: "center",
+                            justifyContent: "center",
+                            flexShrink: 0,
+                          }}
+                        >
+                          {isSelected && (
+                            <svg width="12" height="9" viewBox="0 0 12 9" fill="none">
+                              <path d="M1 4L4.5 7.5L11 1" stroke="#fff" strokeWidth="2" strokeLinecap="round" strokeLinejoin="round" />
+                            </svg>
+                          )}
+                        </div>
+                      </div>
+                    </button>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+
+          {/* Confirmation footer */}
+          <div
+            style={{
+              padding: "16px 24px",
+              borderTop: "1px solid var(--border)",
+              flexShrink: 0,
+              display: "flex",
+              flexDirection: "column",
+              gap: 10,
+            }}
+          >
+            {confirmSuccess && (
+              <div
+                className="soft-card-tight"
+                style={{
+                  padding: "10px 14px",
+                  borderColor: "var(--success-border)",
+                  background: "var(--success-bg)",
+                  color: "var(--success-text)",
+                  fontSize: 13,
+                  fontWeight: 800,
+                }}
+              >
+                {confirmSuccess}
+              </div>
+            )}
+            {confirmError && (
+              <div
+                className="soft-card-tight"
+                style={{
+                  padding: "10px 14px",
+                  borderColor: "var(--danger-border)",
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  fontSize: 13,
+                }}
+              >
+                {confirmError}
+              </div>
+            )}
+
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, flexWrap: "wrap" }}>
+              <div className="muted-text" style={{ fontSize: 13 }}>
+                {selectedPatient ? (
+                  <>
+                    <span style={{ fontWeight: 900, color: "var(--text)" }}>{selectedPatient.full_name}</span>
+                    {" · "}
+                    {newSelectionsCount > 0
+                      ? `${newSelectionsCount} new doctor${newSelectionsCount !== 1 ? "s" : ""} to assign`
+                      : "no new doctors selected"}
+                  </>
+                ) : (
+                  t("selectPatientToContinue")
+                )}
+              </div>
+
               <button
                 type="button"
                 className="primary-btn"
-                style={{ marginTop: 16 }}
-                onClick={() => router.push("/patients/search")}
+                onClick={confirmAssignment}
+                disabled={confirming || !selectedPatient || newSelectionsCount === 0}
+                style={{ whiteSpace: "nowrap", flexShrink: 0 }}
               >
-                {t("searchPatients")}
+                {confirming ? "Confirming..." : t("confirmAssignment")}
               </button>
             </div>
-          )}
+          </div>
         </div>
       </div>
     </AppShell>
