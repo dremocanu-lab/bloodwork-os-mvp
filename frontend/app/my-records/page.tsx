@@ -254,36 +254,6 @@ function formatShortMonthYear(value?: string | null) {
   return new Date(ts).toLocaleDateString(undefined, { month: "short", year: "numeric" });
 }
 
-function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "—";
-
-  const dob = new Date(dateOfBirth);
-  if (Number.isNaN(dob.getTime())) return "—";
-
-  const today = new Date();
-
-  let years = today.getFullYear() - dob.getFullYear();
-  let months = today.getMonth() - dob.getMonth();
-
-  if (today.getDate() < dob.getDate()) {
-    months -= 1;
-  }
-
-  if (months < 0) {
-    years -= 1;
-    months += 12;
-  }
-
-  if (years < 0) return "—";
-
-  if (years === 0) {
-    return `${months} ${months === 1 ? "month" : "months"}`;
-  }
-
-  return `${years} ${years === 1 ? "year" : "years"} ${months} ${
-    months === 1 ? "month" : "months"
-  }`;
-}
 
 function normalizeProfile(profile: MyProfileResponse): MyProfileResponse {
   return {
@@ -474,12 +444,7 @@ function TrendChart({
       height="100%"
       viewBox={`0 0 ${width} ${height}`}
       preserveAspectRatio="none"
-      style={{
-        display: "block",
-        width: "100%",
-        height: "100%",
-        overflow: "visible",
-      }}
+      style={{ display: "block", width: "100%", height: "100%", overflow: "visible" }}
     >
       {expanded && (
         <>
@@ -512,7 +477,6 @@ function TrendChart({
                   strokeWidth="1"
                   opacity={index === 0 ? 0.9 : 0.55}
                 />
-
                 <text
                   x={margin.left - 12}
                   y={y + 4}
@@ -535,7 +499,6 @@ function TrendChart({
             stroke="var(--border)"
             strokeWidth="1.25"
           />
-
           <line
             x1={margin.left}
             y1={margin.top + plotHeight}
@@ -555,7 +518,6 @@ function TrendChart({
                 stroke="var(--border)"
                 strokeWidth="1"
               />
-
               <text
                 x={coord.x}
                 y={margin.top + plotHeight + 28}
@@ -582,7 +544,6 @@ function TrendChart({
             strokeWidth="1"
             opacity="0.65"
           />
-
           <line
             x1={margin.left}
             y1={margin.top + plotHeight / 2}
@@ -616,10 +577,7 @@ function TrendChart({
             fill={highlighted ? "#f97316" : "var(--primary)"}
             stroke={highlighted ? "#fed7aa" : "var(--panel)"}
             strokeWidth={highlighted ? 6 : 3}
-            style={{
-              transition:
-                "r 180ms ease, fill 180ms ease, stroke-width 180ms ease, transform 180ms ease",
-            }}
+            style={{ transition: "r 180ms ease, fill 180ms ease, stroke-width 180ms ease" }}
           />
         );
       })}
@@ -636,7 +594,6 @@ function TrendChart({
             strokeDasharray="4 4"
             opacity="0.9"
           />
-
           <rect
             x={tooltipX}
             y={tooltipY}
@@ -648,7 +605,6 @@ function TrendChart({
             strokeWidth="1.6"
             filter="drop-shadow(0px 14px 28px rgba(0, 0, 0, 0.35))"
           />
-
           <text
             x={tooltipX + 13}
             y={tooltipY + (expanded ? 21 : 17)}
@@ -658,7 +614,6 @@ function TrendChart({
           >
             {highlightedCoord.point.value_display} {unit || ""}
           </text>
-
           <text
             x={tooltipX + 13}
             y={tooltipY + (expanded ? 40 : 33)}
@@ -763,9 +718,18 @@ export default function MyRecordsPage() {
 
   const [expandedTrendKey, setExpandedTrendKey] = useState<string | null>(null);
   const [hoveredTrendPoint, setHoveredTrendPoint] = useState<Record<string, number | null>>({});
+  const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+
+  function togglePin(testKey: string) {
+    setPinnedTrendKeys((prev) => {
+      if (prev.includes(testKey)) return prev.filter((k) => k !== testKey);
+      if (prev.length >= 3) return prev;
+      return [...prev, testKey];
+    });
+  }
 
   async function fetchMe() {
     try {
@@ -798,11 +762,7 @@ export default function MyRecordsPage() {
   async function refreshRecordsSilently() {
     try {
       const profileResponse = await fetchProfile();
-
-      await Promise.all([
-        fetchTrends(profileResponse.patient.id),
-        refreshUploadJobs(),
-      ]);
+      await Promise.all([fetchTrends(profileResponse.patient.id), refreshUploadJobs()]);
     } catch {
       // Silent refresh should never break the page.
     }
@@ -865,7 +825,6 @@ export default function MyRecordsPage() {
 
       try {
         setError("");
-
         const profileResponse = await fetchProfile();
         await fetchTrends(profileResponse.patient.id);
       } catch (err) {
@@ -885,10 +844,7 @@ export default function MyRecordsPage() {
     }
 
     window.addEventListener("bloodwork-upload-complete", handleUploadComplete);
-
-    return () => {
-      window.removeEventListener("bloodwork-upload-complete", handleUploadComplete);
-    };
+    return () => window.removeEventListener("bloodwork-upload-complete", handleUploadComplete);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
@@ -1110,12 +1066,34 @@ export default function MyRecordsPage() {
       recentBloodworkDate: recentBloodwork ? getDocumentClinicalDate(recentBloodwork) : null,
       hospitalizationCount: profile.sections.discharge_summary.length,
       recentDischargeDate: recentDischarge
-        ? (recentDischarge.reported_on || recentDischarge.collected_on || null)
+        ? recentDischarge.reported_on || recentDischarge.collected_on || null
         : null,
       abnormalCount,
       trendsCount: sortedTrends.length,
     };
   }, [profile, allDocuments, sortedTrends]);
+
+  // Trend with the largest absolute delta — this is the most "newsworthy" value
+  const featuredTrend = useMemo(() => {
+    if (!sortedTrends.length) return null;
+    const withDelta = sortedTrends.filter(
+      (t) => t.delta !== null && t.delta !== undefined && t.points.length > 1
+    );
+    if (withDelta.length) {
+      return withDelta.reduce((max, t) =>
+        Math.abs(t.delta!) > Math.abs(max.delta!) ? t : max
+      );
+    }
+    return sortedTrends[0];
+  }, [sortedTrends]);
+
+  const pinnedTrends = useMemo(
+    () =>
+      pinnedTrendKeys
+        .map((key) => sortedTrends.find((t) => t.test_key === key))
+        .filter((t): t is (typeof sortedTrends)[0] => Boolean(t)),
+    [pinnedTrendKeys, sortedTrends]
+  );
 
   if (loading || !currentUser || !profile) {
     return (
@@ -1125,7 +1103,6 @@ export default function MyRecordsPage() {
     );
   }
 
-  const calculatedAge = calculateAgeFromDob(profile.patient.date_of_birth);
   const snap = snapshotData!;
 
   return (
@@ -1147,7 +1124,7 @@ export default function MyRecordsPage() {
         <div
           className="soft-card-tight"
           style={{
-            marginBottom: 24,
+            marginBottom: 16,
             padding: 16,
             borderColor: "var(--danger-border)",
             background: "var(--danger-bg)",
@@ -1158,113 +1135,47 @@ export default function MyRecordsPage() {
         </div>
       )}
 
-      {/* Stat cards row */}
+      {/* Stat cards */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(190px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
+          gridTemplateColumns: "repeat(4, 1fr)",
+          gap: 12,
+          marginBottom: 14,
         }}
       >
-        {/* Total Documents */}
-        <div className="soft-card" style={{ padding: "22px 24px" }}>
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.09em",
-              color: "var(--muted)",
-              marginBottom: 14,
-            }}
-          >
+        <div className="soft-card" style={{ padding: "16px 20px" }}>
+          <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
             Total Documents
           </div>
-          <div
-            style={{
-              fontSize: 52,
-              fontWeight: 950,
-              letterSpacing: "-0.05em",
-              lineHeight: 1,
-            }}
-          >
+          <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1 }}>
             {snap.totalDocs}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
             {snap.recentDocDate ? `Latest ${formatShortMonthYear(snap.recentDocDate)}` : "None yet"}
           </div>
         </div>
 
-        {/* Bloodwork Panels */}
-        <div
-          className="soft-card"
-          style={{
-            padding: "22px 24px",
-            borderTop: "3px solid var(--primary)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.09em",
-              color: "var(--muted)",
-              marginBottom: 14,
-            }}
-          >
+        <div className="soft-card" style={{ padding: "16px 20px", borderTop: "3px solid var(--primary)" }}>
+          <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
             Bloodwork Panels
           </div>
-          <div
-            style={{
-              fontSize: 52,
-              fontWeight: 950,
-              letterSpacing: "-0.05em",
-              lineHeight: 1,
-              color: "var(--primary)",
-            }}
-          >
+          <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: "var(--primary)" }}>
             {snap.bloodworkCount}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
-            {snap.recentBloodworkDate
-              ? `Latest ${formatShortMonthYear(snap.recentBloodworkDate)}`
-              : "None yet"}
+          <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
+            {snap.recentBloodworkDate ? `Latest ${formatShortMonthYear(snap.recentBloodworkDate)}` : "None yet"}
           </div>
         </div>
 
-        {/* Hospitalizations */}
-        <div
-          className="soft-card"
-          style={{
-            padding: "22px 24px",
-            borderTop: "3px solid color-mix(in srgb, #8b5cf6 60%, transparent)",
-          }}
-        >
-          <div
-            style={{
-              fontSize: 11,
-              fontWeight: 900,
-              textTransform: "uppercase",
-              letterSpacing: "0.09em",
-              color: "var(--muted)",
-              marginBottom: 14,
-            }}
-          >
+        <div className="soft-card" style={{ padding: "16px 20px", borderTop: "3px solid color-mix(in srgb, #8b5cf6 55%, transparent)" }}>
+          <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
             Hospitalizations
           </div>
-          <div
-            style={{
-              fontSize: 52,
-              fontWeight: 950,
-              letterSpacing: "-0.05em",
-              lineHeight: 1,
-            }}
-          >
+          <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1 }}>
             {snap.hospitalizationCount}
           </div>
-          <div style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", marginTop: 12 }}>
+          <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
             {snap.hospitalizationCount > 0 && snap.recentDischargeDate
               ? `Last ${formatShortMonthYear(snap.recentDischargeDate)}`
               : snap.hospitalizationCount > 0
@@ -1273,188 +1184,96 @@ export default function MyRecordsPage() {
           </div>
         </div>
 
-        {/* Abnormal Results */}
         <div
           className="soft-card"
           style={{
-            padding: "22px 24px",
-            borderTop:
-              snap.abnormalCount > 0
-                ? "3px solid var(--danger-border)"
-                : "3px solid color-mix(in srgb, var(--success-text) 50%, transparent)",
-            background:
-              snap.abnormalCount > 0
-                ? "color-mix(in srgb, var(--danger-bg) 35%, var(--panel))"
-                : undefined,
+            padding: "16px 20px",
+            borderTop: snap.abnormalCount > 0
+              ? "3px solid var(--danger-border)"
+              : "3px solid color-mix(in srgb, var(--success-text) 50%, transparent)",
+            background: snap.abnormalCount > 0
+              ? "color-mix(in srgb, var(--danger-bg) 35%, var(--panel))"
+              : undefined,
           }}
         >
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              marginBottom: 14,
-            }}
-          >
+          <div style={{ display: "flex", alignItems: "center", gap: 5, marginBottom: 10 }}>
             {snap.abnormalCount > 0 && (
-              <span
-                style={{
-                  width: 7,
-                  height: 7,
-                  borderRadius: 999,
-                  background: "var(--danger-text)",
-                  flexShrink: 0,
-                }}
-              />
+              <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
             )}
-            <span
-              style={{
-                fontSize: 11,
-                fontWeight: 900,
-                textTransform: "uppercase",
-                letterSpacing: "0.09em",
-                color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)",
-              }}
-            >
+            <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)" }}>
               Abnormal Results
             </span>
           </div>
-          <div
-            style={{
-              fontSize: 52,
-              fontWeight: 950,
-              letterSpacing: "-0.05em",
-              lineHeight: 1,
-              color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)",
-            }}
-          >
+          <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
             {snap.abnormalCount}
           </div>
-          <div
-            style={{
-              fontSize: 12,
-              fontWeight: 900,
-              marginTop: 12,
-              color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)",
-            }}
-          >
+          <div style={{ fontSize: 11, fontWeight: 900, marginTop: 8, color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
             {snap.abnormalCount > 0 ? "Needs review" : "All clear"}
           </div>
         </div>
       </div>
 
-      {/* Featured chart + right column */}
+      {/* Featured chart + pinned trends */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "minmax(0, 1fr) 290px",
-          gap: 14,
-          marginBottom: 24,
+          gridTemplateColumns: "minmax(0, 1fr) 252px",
+          gap: 12,
+          marginBottom: 16,
           alignItems: "start",
         }}
       >
-        {/* Featured bloodwork trend */}
-        <div className="soft-card" style={{ padding: 28, overflow: "hidden" }}>
-          {sortedTrends.length > 0 ? (
+        {/* Featured chart */}
+        <div className="soft-card" style={{ padding: 20, overflow: "hidden" }}>
+          {featuredTrend ? (
             <>
-              <div
-                style={{
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "flex-start",
-                  marginBottom: 24,
-                  gap: 16,
-                }}
-              >
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
                 <div>
-                  <div
-                    style={{
-                      fontSize: 11,
-                      fontWeight: 900,
-                      textTransform: "uppercase",
-                      letterSpacing: "0.09em",
-                      color: "var(--muted)",
-                      marginBottom: 8,
-                    }}
-                  >
-                    Featured Lab Trend
+                  <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 6 }}>
+                    Largest Change · Featured Lab Trend
                   </div>
-                  <div
-                    style={{
-                      fontSize: 24,
-                      fontWeight: 950,
-                      letterSpacing: "-0.03em",
-                      lineHeight: 1.2,
-                    }}
-                  >
-                    {sortedTrends[0].display_name}
+                  <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.03em", lineHeight: 1.2 }}>
+                    {featuredTrend.display_name}
                   </div>
-                  <div className="muted-text" style={{ marginTop: 6 }}>
-                    {valueOrDash(sortedTrends[0].category)} · {valueOrDash(sortedTrends[0].unit)}
+                  <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
+                    {valueOrDash(featuredTrend.category)} · {valueOrDash(featuredTrend.unit)}
                   </div>
                 </div>
                 <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div
-                    style={{
-                      fontSize: 46,
-                      fontWeight: 950,
-                      letterSpacing: "-0.05em",
-                      lineHeight: 1,
-                      color: "var(--primary)",
-                    }}
-                  >
-                    {valueOrDash(sortedTrends[0].latest?.value_display)}
+                  <div style={{ fontSize: 40, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: "var(--primary)" }}>
+                    {valueOrDash(featuredTrend.latest?.value_display)}
                   </div>
-                  <div className="muted-text" style={{ fontSize: 12, marginTop: 7 }}>
-                    Latest · {formatShortMonthYear(sortedTrends[0].latest?.date) ?? "—"}
+                  <div className="muted-text" style={{ fontSize: 11, marginTop: 5 }}>
+                    Latest · {formatShortMonthYear(featuredTrend.latest?.date) ?? "—"}
                   </div>
-                  {sortedTrends[0].delta !== null && sortedTrends[0].delta !== undefined && (
-                    <div
-                      style={{
-                        fontSize: 13,
-                        fontWeight: 900,
-                        marginTop: 5,
-                        color: "var(--muted)",
-                      }}
-                    >
-                      {sortedTrends[0].delta > 0
-                        ? `+${sortedTrends[0].delta}`
-                        : `${sortedTrends[0].delta}`}{" "}
-                      from prev
+                  {featuredTrend.delta !== null && featuredTrend.delta !== undefined && (
+                    <div style={{ fontSize: 12, fontWeight: 900, marginTop: 4, color: "var(--muted)" }}>
+                      {featuredTrend.delta > 0 ? `+${featuredTrend.delta}` : `${featuredTrend.delta}`} from prev
                     </div>
                   )}
                 </div>
               </div>
 
-              <div style={{ height: 360 }}>
+              <div style={{ height: 300 }}>
                 <TrendChart
-                  points={getMostRecentTrendPoints(sortedTrends[0].points, 8)}
+                  points={getMostRecentTrendPoints(featuredTrend.points, 8)}
                   expanded
-                  unit={sortedTrends[0].unit}
+                  unit={featuredTrend.unit}
                 />
               </div>
 
-              <div
-                style={{
-                  marginTop: 20,
-                  paddingTop: 18,
-                  borderTop: "1px solid var(--border)",
-                  display: "flex",
-                  justifyContent: "space-between",
-                  alignItems: "center",
-                }}
-              >
-                <div className="muted-text" style={{ fontSize: 13 }}>
+              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
+                <div className="muted-text" style={{ fontSize: 12 }}>
                   {snap.trendsCount} tracked lab {snap.trendsCount === 1 ? "value" : "values"} total
                 </div>
                 <button
                   type="button"
                   className="secondary-btn"
+                  style={{ fontSize: 13 }}
                   onClick={() => {
                     setActiveSection("bloodwork");
                     setTimeout(
-                      () =>
-                        trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
+                      () => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
                       60
                     );
                   }}
@@ -1465,225 +1284,113 @@ export default function MyRecordsPage() {
             </>
           ) : (
             <div>
-              <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 900,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.09em",
-                  color: "var(--muted)",
-                  marginBottom: 14,
-                }}
-              >
+              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 12 }}>
                 Featured Lab Trend
               </div>
-              <div className="muted-text" style={{ marginBottom: 18 }}>
-                No bloodwork data available yet. Upload a lab report to start tracking trends.
+              <div className="muted-text" style={{ marginBottom: 16 }}>
+                No bloodwork data yet. Upload a lab report to start tracking trends.
               </div>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => router.push("/my-records/upload")}
-              >
+              <button type="button" className="primary-btn" onClick={() => router.push("/my-records/upload")}>
                 Upload your first document
               </button>
             </div>
           )}
         </div>
 
-        {/* Right column */}
-        <div style={{ display: "grid", gap: 14 }}>
-          {/* Patient profile card */}
-          <div
-            style={{
-              borderRadius: 20,
-              background:
-                "linear-gradient(160deg, var(--primary) 0%, color-mix(in srgb, var(--primary) 48%, #7c3aed) 100%)",
-              padding: 24,
-              color: "#fff",
-            }}
-          >
-            <div
-              style={{
-                width: 58,
-                height: 58,
-                borderRadius: 999,
-                background: "rgba(255,255,255,0.22)",
-                display: "flex",
-                alignItems: "center",
-                justifyContent: "center",
-                fontWeight: 950,
-                fontSize: 24,
-                letterSpacing: "-0.02em",
-                marginBottom: 16,
-              }}
-            >
-              {profile.patient.full_name.charAt(0).toUpperCase()}
-            </div>
-
-            <div
-              style={{
-                fontSize: 20,
-                fontWeight: 950,
-                letterSpacing: "-0.03em",
-                lineHeight: 1.2,
-              }}
-            >
-              {profile.patient.full_name}
-            </div>
-
-            {profile.patient.patient_identifier && (
-              <div style={{ fontSize: 12, marginTop: 5, opacity: 0.65, fontWeight: 700 }}>
-                ID {profile.patient.patient_identifier}
-              </div>
-            )}
-
-            <div
-              style={{
-                marginTop: 18,
-                display: "grid",
-                gap: 11,
-                borderTop: "1px solid rgba(255,255,255,0.2)",
-                paddingTop: 16,
-              }}
-            >
-              {(
-                [
-                  ["Date of Birth", valueOrDash(profile.patient.date_of_birth)],
-                  ["Age", calculatedAge],
-                  ["Sex", valueOrDash(profile.patient.sex)],
-                ] as [string, string][]
-              ).map(([label, value]) => (
-                <div
-                  key={label}
-                  style={{
-                    display: "flex",
-                    justifyContent: "space-between",
-                    alignItems: "center",
-                    gap: 12,
-                  }}
-                >
-                  <span style={{ fontSize: 12, opacity: 0.65, fontWeight: 700 }}>{label}</span>
-                  <span style={{ fontSize: 13, fontWeight: 900 }}>{value}</span>
-                </div>
-              ))}
-            </div>
-
-            <button
-              type="button"
-              onClick={() => router.push("/my-records/upload")}
-              style={{
-                marginTop: 18,
-                width: "100%",
-                padding: "11px 16px",
-                borderRadius: 14,
-                background: "rgba(255,255,255,0.18)",
-                border: "1px solid rgba(255,255,255,0.28)",
-                color: "#fff",
-                fontWeight: 900,
-                fontSize: 13,
-                cursor: "pointer",
-                transition: "background 180ms ease",
-                textAlign: "center",
-              }}
-            >
-              ↑ Upload Documents
-            </button>
-          </div>
-
-          {/* Doctor access */}
-          {profile.doctor_access.length > 0 && (
-            <div className="soft-card" style={{ padding: 20 }}>
+        {/* Pinned trends column */}
+        <div style={{ display: "grid", gap: 10 }}>
+          {pinnedTrends.length > 0 ? (
+            pinnedTrends.map((trend) => (
               <div
-                style={{
-                  fontSize: 11,
-                  fontWeight: 900,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.09em",
-                  color: "var(--muted)",
-                  marginBottom: 14,
-                }}
+                key={trend.test_key}
+                className="soft-card"
+                style={{ padding: 14, position: "relative" }}
               >
-                Doctors with Access
-              </div>
-
-              <div style={{ display: "grid", gap: 12 }}>
-                {profile.doctor_access.slice(0, 3).map((access) => (
-                  <div key={access.doctor_user_id} style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                    <div
-                      style={{
-                        width: 34,
-                        height: 34,
-                        borderRadius: 999,
-                        background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
-                        color: "var(--primary)",
-                        display: "flex",
-                        alignItems: "center",
-                        justifyContent: "center",
-                        fontWeight: 950,
-                        fontSize: 13,
-                        flexShrink: 0,
-                      }}
-                    >
-                      {access.doctor_name.charAt(0).toUpperCase()}
-                    </div>
-                    <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 850,
-                          fontSize: 13,
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                          whiteSpace: "nowrap",
-                        }}
-                      >
-                        {access.doctor_name}
-                      </div>
-                      <div className="muted-text" style={{ fontSize: 11 }}>
-                        {valueOrDash(access.department)}
-                      </div>
-                    </div>
+                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
+                  <div style={{ fontWeight: 900, fontSize: 13, lineHeight: 1.3, minWidth: 0 }}>
+                    {trend.display_name}
                   </div>
-                ))}
+                  <button
+                    type="button"
+                    onClick={() => togglePin(trend.test_key)}
+                    style={{
+                      flexShrink: 0,
+                      width: 22,
+                      height: 22,
+                      borderRadius: 999,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel-2)",
+                      color: "var(--muted)",
+                      cursor: "pointer",
+                      display: "flex",
+                      alignItems: "center",
+                      justifyContent: "center",
+                      fontSize: 13,
+                      lineHeight: 1,
+                      padding: 0,
+                    }}
+                    title="Unpin"
+                  >
+                    ×
+                  </button>
+                </div>
 
-                {profile.doctor_access.length > 3 && (
-                  <div className="muted-text" style={{ fontSize: 12 }}>
-                    +{profile.doctor_access.length - 3} more
-                  </div>
-                )}
+                <div style={{ fontSize: 30, fontWeight: 950, letterSpacing: "-0.04em", lineHeight: 1, color: "var(--primary)" }}>
+                  {valueOrDash(trend.latest?.value_display)}
+                </div>
+
+                <div className="muted-text" style={{ fontSize: 11, marginTop: 5, display: "flex", gap: 6 }}>
+                  <span>
+                    {trend.delta !== null && trend.delta !== undefined
+                      ? trend.delta > 0
+                        ? `↑ +${trend.delta}`
+                        : `↓ ${trend.delta}`
+                      : "—"}
+                  </span>
+                  <span>·</span>
+                  <span>{formatShortMonthYear(trend.latest?.date) ?? "—"}</span>
+                </div>
+
+                <div style={{ height: 62, marginTop: 10 }}>
+                  <TrendChart points={getMostRecentTrendPoints(trend.points, 5)} unit={trend.unit} />
+                </div>
               </div>
+            ))
+          ) : (
+            <div
+              className="soft-card"
+              style={{
+                padding: 18,
+                borderStyle: "dashed",
+                borderColor: "var(--border)",
+              }}
+            >
+              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
+                Pinned Trends
+              </div>
+              <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
+                Pin up to 3 lab values from the trends section below to track them here at a glance.
+              </div>
+            </div>
+          )}
 
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ marginTop: 14, width: "100%", justifyContent: "center" }}
-                onClick={() => router.push("/my-records/access")}
-              >
-                Manage Access
-              </button>
+          {pinnedTrends.length > 0 && pinnedTrends.length < 3 && (
+            <div
+              className="muted-text"
+              style={{ fontSize: 11, textAlign: "center", padding: "6px 0" }}
+            >
+              {3 - pinnedTrends.length} slot{3 - pinnedTrends.length !== 1 ? "s" : ""} remaining
             </div>
           )}
         </div>
       </div>
 
       {/* Timeline */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            marginBottom: 18,
-          }}
-        >
-          <div>
-            <div className="section-title" style={{ marginBottom: 6 }}>
-              {t("myTimeline")}
-            </div>
-            <div className="muted-text" style={{ lineHeight: 1.6 }}>
-              Recent records and admission episodes, grouped by hospitalization period when possible.
-            </div>
+      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
+        <div style={{ marginBottom: 16 }}>
+          <div className="section-title" style={{ marginBottom: 4 }}>{t("myTimeline")}</div>
+          <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+            Recent records and admission episodes, grouped by hospitalization period when possible.
           </div>
         </div>
 
@@ -1698,8 +1405,8 @@ export default function MyRecordsPage() {
       </div>
 
       {/* Section browser */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {SECTION_ORDER.map((section) => (
             <button
               key={section}
@@ -1714,8 +1421,8 @@ export default function MyRecordsPage() {
         <div
           className="soft-card-tight"
           style={{
-            padding: 16,
-            marginBottom: 18,
+            padding: 14,
+            marginBottom: 16,
             background: "var(--panel-2)",
             display: "flex",
             gap: 12,
@@ -1727,81 +1434,61 @@ export default function MyRecordsPage() {
             label="Department"
             value={departmentFilter}
             options={filterOptions.departments}
-            onChange={(value) => {
-              setDepartmentFilter(value);
-              setVisibleCount(PAGE_SIZE);
-            }}
+            onChange={(value) => { setDepartmentFilter(value); setVisibleCount(PAGE_SIZE); }}
           />
-
           <SelectFilter
             label="Hospital"
             value={hospitalFilter}
             options={filterOptions.hospitals}
-            onChange={(value) => {
-              setHospitalFilter(value);
-              setVisibleCount(PAGE_SIZE);
-            }}
+            onChange={(value) => { setHospitalFilter(value); setVisibleCount(PAGE_SIZE); }}
           />
-
           <SelectFilter
             label="Year"
             value={yearFilter}
             options={filterOptions.years}
             calendarLike
-            onChange={(value) => {
-              setYearFilter(value);
-              setVisibleCount(PAGE_SIZE);
-            }}
+            onChange={(value) => { setYearFilter(value); setVisibleCount(PAGE_SIZE); }}
           />
-
           {(departmentFilter || hospitalFilter || yearFilter) && (
             <button
               className="secondary-btn"
-              onClick={() => {
-                setDepartmentFilter("");
-                setHospitalFilter("");
-                setYearFilter("");
-                setVisibleCount(PAGE_SIZE);
-              }}
+              onClick={() => { setDepartmentFilter(""); setHospitalFilter(""); setYearFilter(""); setVisibleCount(PAGE_SIZE); }}
             >
               Clear filters
             </button>
           )}
         </div>
 
-        <div style={{ display: "grid", gap: 14 }}>
+        <div style={{ display: "grid", gap: 12 }}>
           {visibleDocsForSection.map((doc) => (
-            <div key={doc.id} className="soft-card-tight interactive-card" style={{ padding: 18 }}>
+            <div key={doc.id} className="soft-card-tight interactive-card" style={{ padding: 16 }}>
               <div className="doc-card-grid">
                 <div>
-                  <div style={{ fontWeight: 800, fontSize: 18 }}>
+                  <div style={{ fontWeight: 800, fontSize: 16 }}>
                     {valueOrDash(doc.report_name || doc.filename)}
                   </div>
-
-                  <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.5 }}>
+                  <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5, fontSize: 13 }}>
                     {uploaderSubtitle(doc)}
                   </div>
-
-                  <div style={{ marginTop: 10 }}>
+                  <div style={{ marginTop: 8 }}>
                     <span
                       style={{
                         display: "inline-flex",
-                        padding: "5px 10px",
+                        padding: "4px 9px",
                         borderRadius: 999,
                         background: doc.is_verified ? "var(--success-bg)" : "var(--warn-bg)",
                         color: doc.is_verified ? "var(--success-text)" : "var(--warn-text)",
-                        fontSize: 12,
+                        fontSize: 11,
                         fontWeight: 800,
                       }}
                     >
                       {doc.is_verified ? t("verified") : t("unverified")}
                     </span>
                   </div>
-
-                  <div className="muted-text" style={{ marginTop: 10 }}>
+                  <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
                     {valueOrDash(doc.report_type)} · {getDocumentDateLabel(doc)}
                   </div>
-                  <div className="muted-text" style={{ marginTop: 6 }}>
+                  <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
                     {doc.section === "discharge_summary"
                       ? "Narrative discharge record"
                       : `${valueOrDash(doc.lab_name)} · ${valueOrDash(doc.sample_type)}`}
@@ -1809,18 +1496,16 @@ export default function MyRecordsPage() {
                 </div>
 
                 <div>
-                  <div className="muted-text" style={{ fontSize: 13 }}>
-                    Source
-                  </div>
-                  <div style={{ marginTop: 6, fontWeight: 700 }}>
+                  <div className="muted-text" style={{ fontSize: 12 }}>Source</div>
+                  <div style={{ marginTop: 5, fontWeight: 700, fontSize: 14 }}>
                     {sectionLabels[doc.section] || doc.section}
                   </div>
-                  <div className="muted-text" style={{ marginTop: 4 }}>
+                  <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
                     {valueOrDash(doc.referring_doctor)}
                   </div>
                 </div>
 
-                <div style={{ display: "grid", gap: 8, minWidth: 150 }}>
+                <div style={{ display: "grid", gap: 8, minWidth: 140 }}>
                   <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
                     {t("openOriginal")}
                   </button>
@@ -1839,13 +1524,7 @@ export default function MyRecordsPage() {
           {visibleCount < filteredDocsForSection.length && (
             <button
               className="secondary-btn"
-              style={{
-                justifySelf: "center",
-                marginTop: 6,
-                padding: "13px 18px",
-                borderRadius: 16,
-                fontWeight: 950,
-              }}
+              style={{ justifySelf: "center", marginTop: 4, padding: "11px 18px", borderRadius: 16, fontWeight: 950 }}
               onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}
             >
               Show More
@@ -1856,17 +1535,33 @@ export default function MyRecordsPage() {
 
       {/* Lab trends */}
       {activeSection === "bloodwork" && (
-        <div className="soft-card" style={{ padding: 24 }} ref={trendsRef}>
-          <div className="section-title" style={{ marginBottom: 8 }}>
-            {t("bloodworkTrends")}
+        <div className="soft-card" style={{ padding: 20 }} ref={trendsRef}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
+            <div>
+              <div className="section-title" style={{ marginBottom: 4 }}>{t("bloodworkTrends")}</div>
+              <div className="muted-text" style={{ fontSize: 13 }}>
+                Sorted by clinical importance. Pin up to 3 to the snapshot above.
+              </div>
+            </div>
+            {pinnedTrendKeys.length > 0 && (
+              <div
+                className="muted-text"
+                style={{
+                  fontSize: 12,
+                  fontWeight: 900,
+                  padding: "4px 10px",
+                  borderRadius: 999,
+                  background: "color-mix(in srgb, var(--primary) 10%, var(--panel-2))",
+                  color: "var(--primary)",
+                  flexShrink: 0,
+                }}
+              >
+                {pinnedTrendKeys.length}/3 pinned
+              </div>
+            )}
           </div>
 
-          <div className="muted-text" style={{ marginBottom: 16 }}>
-            Trends are sorted by clinical importance. Graphs show the most recent 5 collections by
-            collected/test date.
-          </div>
-
-          <div style={{ display: "grid", gap: 16 }}>
+          <div style={{ display: "grid", gap: 14 }}>
             {sortedTrends.map((trend) => {
               const expanded = expandedTrendKey === trend.test_key;
               const graphPoints = getMostRecentTrendPoints(trend.points, 5);
@@ -1874,6 +1569,8 @@ export default function MyRecordsPage() {
                 compareDatesDescending(a.date, b.date)
               );
               const highlightedDocumentId = hoveredTrendPoint[trend.test_key] ?? null;
+              const isPinned = pinnedTrendKeys.includes(trend.test_key);
+              const canPin = isPinned || pinnedTrendKeys.length < 3;
 
               return (
                 <div
@@ -1885,12 +1582,30 @@ export default function MyRecordsPage() {
                     className="trend-item-header"
                     style={{
                       gridTemplateColumns: expanded
-                        ? "minmax(0, 1fr) auto"
-                        : "minmax(0, 1fr) 420px auto",
+                        ? "minmax(0, 1fr) auto auto"
+                        : "minmax(0, 1fr) 420px auto auto",
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 800, fontSize: 18 }}>{trend.display_name}</div>
+                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+                        <div style={{ fontWeight: 800, fontSize: 18 }}>{trend.display_name}</div>
+                        {isPinned && (
+                          <span
+                            style={{
+                              fontSize: 10,
+                              fontWeight: 900,
+                              letterSpacing: "0.06em",
+                              textTransform: "uppercase",
+                              padding: "2px 7px",
+                              borderRadius: 999,
+                              background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
+                              color: "var(--primary)",
+                            }}
+                          >
+                            Pinned
+                          </span>
+                        )}
+                      </div>
                       <div className="muted-text" style={{ marginTop: 4 }}>
                         {valueOrDash(trend.category)} · {t("unit")} {valueOrDash(trend.unit)}
                       </div>
@@ -1904,27 +1619,19 @@ export default function MyRecordsPage() {
                         }}
                       >
                         <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>
-                            {t("latest")}
-                          </div>
+                          <div className="muted-text" style={{ fontSize: 12 }}>{t("latest")}</div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
                             {valueOrDash(trend.latest?.value_display)}
                           </div>
                         </div>
-
                         <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>
-                            {t("previous")}
-                          </div>
+                          <div className="muted-text" style={{ fontSize: 12 }}>{t("previous")}</div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
                             {trend.previous ? valueOrDash(trend.previous.value_display) : "—"}
                           </div>
                         </div>
-
                         <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>
-                            {t("delta")}
-                          </div>
+                          <div className="muted-text" style={{ fontSize: 12 }}>{t("delta")}</div>
                           <div style={{ fontWeight: 800, fontSize: 24 }}>
                             {trend.delta === null || trend.delta === undefined
                               ? "—"
@@ -1944,11 +1651,7 @@ export default function MyRecordsPage() {
                     {!expanded && (
                       <div
                         className="trend-sparkline-col"
-                        style={{
-                          justifySelf: "stretch",
-                          opacity: 1,
-                          transition: "opacity 220ms ease",
-                        }}
+                        style={{ justifySelf: "stretch", opacity: 1, transition: "opacity 220ms ease" }}
                       >
                         <TrendChart
                           points={graphPoints}
@@ -1958,8 +1661,30 @@ export default function MyRecordsPage() {
                       </div>
                     )}
 
+                    {/* Pin button */}
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      disabled={!canPin}
+                      onClick={() => togglePin(trend.test_key)}
+                      style={{
+                        fontSize: 12,
+                        opacity: !canPin ? 0.4 : 1,
+                        background: isPinned
+                          ? "color-mix(in srgb, var(--primary) 10%, var(--panel-2))"
+                          : undefined,
+                        color: isPinned ? "var(--primary)" : undefined,
+                        borderColor: isPinned
+                          ? "color-mix(in srgb, var(--primary) 30%, transparent)"
+                          : undefined,
+                      }}
+                    >
+                      {isPinned ? "Unpin" : "Pin"}
+                    </button>
+
                     <button
                       className="secondary-btn"
+                      style={{ fontSize: 12 }}
                       onClick={() => setExpandedTrendKey(expanded ? null : trend.test_key)}
                     >
                       {expanded ? "Collapse" : "Expand"}
@@ -2031,9 +1756,7 @@ export default function MyRecordsPage() {
                             }
                             onClick={() => router.push(`/documents/${point.document_id}`)}
                             style={{
-                              border: `1px solid ${
-                                isHighlighted ? "var(--primary)" : "var(--border)"
-                              }`,
+                              border: `1px solid ${isHighlighted ? "var(--primary)" : "var(--border)"}`,
                               background: isHighlighted
                                 ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
                                 : "var(--panel)",
@@ -2056,7 +1779,6 @@ export default function MyRecordsPage() {
                                 {valueOrDash(point.date)} · Ref {valueOrDash(point.reference_range)}
                               </div>
                             </div>
-
                             <div style={{ fontWeight: 950 }}>
                               {valueOrDash(point.value_display)} {trend.unit || ""}
                             </div>
@@ -2069,9 +1791,7 @@ export default function MyRecordsPage() {
               );
             })}
 
-            {!sortedTrends.length && (
-              <div className="muted-text">{t("noNumericTrends")}</div>
-            )}
+            {!sortedTrends.length && <div className="muted-text">{t("noNumericTrends")}</div>}
           </div>
         </div>
       )}
