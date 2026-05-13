@@ -1,7 +1,8 @@
 import os
-import shutil
 import re
 import json
+import secrets
+import shutil
 import traceback
 from datetime import UTC, datetime
 from pathlib import Path
@@ -183,7 +184,42 @@ def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
         patient = get_patient_for_user(db, current_user.id)
         return patient is not None and patient.id == patient_id
 
+    # care_partners have no general patient record access; document-level access
+    # is checked separately via care_partner_can_access_document
     return False
+
+
+def care_partner_can_access_document(db: Session, care_partner_user_id: int, document_id: int) -> bool:
+    return (
+        db.query(models.SharedStructuredPage)
+        .filter(
+            models.SharedStructuredPage.care_partner_user_id == care_partner_user_id,
+            models.SharedStructuredPage.document_id == document_id,
+        )
+        .first()
+        is not None
+    )
+
+
+_CODE_ALPHABET = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789"
+
+
+def _generate_unique_care_partner_code(db: Session) -> str:
+    for _ in range(20):
+        code = (
+            "BW-"
+            + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(4))
+            + "-"
+            + "".join(secrets.choice(_CODE_ALPHABET) for _ in range(4))
+        )
+        exists = (
+            db.query(models.PatientCarePartnerCode)
+            .filter(models.PatientCarePartnerCode.code == code)
+            .first()
+        )
+        if not exists:
+            return code
+    raise HTTPException(status_code=500, detail="Could not generate unique code.")
 
 
 def lab_flag_is_abnormal(flag: str | None) -> bool:
@@ -738,6 +774,7 @@ class SignupRequest(BaseModel):
     sex: str | None = None
     cnp: str | None = None
     patient_identifier: str | None = None
+    care_partner_code: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -819,7 +856,7 @@ def root():
 
 @app.post("/auth/signup")
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
-    if payload.role not in {"patient", "doctor", "admin"}:
+    if payload.role not in {"patient", "doctor", "admin", "care_partner"}:
         raise HTTPException(status_code=400, detail="Invalid role")
 
     existing = db.query(models.User).filter(models.User.email == payload.email).first()
@@ -851,6 +888,27 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             patient_identifier=payload.patient_identifier,
         )
         db.add(patient)
+        db.commit()
+
+    if payload.role == "care_partner":
+        if not payload.care_partner_code:
+            raise HTTPException(status_code=400, detail="Patient access code is required.")
+
+        code_record = (
+            db.query(models.PatientCarePartnerCode)
+            .filter(models.PatientCarePartnerCode.code == payload.care_partner_code.upper().strip())
+            .first()
+        )
+
+        if not code_record:
+            raise HTTPException(status_code=400, detail="Invalid patient access code.")
+
+        link = models.CarePartnerPatientLink(
+            care_partner_user_id=user.id,
+            patient_id=code_record.patient_id,
+            linked_at=now_iso(),
+        )
+        db.add(link)
         db.commit()
 
     token = create_access_token({"sub": str(user.id), "role": user.role})
@@ -1458,6 +1516,33 @@ def resolve_upload_patient(db: Session, current_user: models.User, patient_id: i
 
         return patient
 
+    if current_user.role == "care_partner":
+        if not patient_id:
+            raise HTTPException(status_code=400, detail="patient_id is required for care partner uploads.")
+
+        patient = (
+            db.query(models.Patient)
+            .filter(models.Patient.id == patient_id)
+            .first()
+        )
+
+        if not patient:
+            raise HTTPException(status_code=404, detail="Patient not found.")
+
+        link = (
+            db.query(models.CarePartnerPatientLink)
+            .filter(
+                models.CarePartnerPatientLink.care_partner_user_id == current_user.id,
+                models.CarePartnerPatientLink.patient_id == patient_id,
+            )
+            .first()
+        )
+
+        if not link:
+            raise HTTPException(status_code=403, detail="You are not linked to this patient.")
+
+        return patient
+
     raise HTTPException(status_code=403, detail="Invalid user role.")
 
 @app.post("/upload/background")
@@ -1579,7 +1664,10 @@ def get_document(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if not can_access_patient(db, current_user, document.patient_id):
+    if current_user.role == "care_partner":
+        if not care_partner_can_access_document(db, current_user.id, document_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if current_user.role == "doctor":
@@ -1603,7 +1691,9 @@ def get_document_file(
     if not document:
         raise HTTPException(status_code=404, detail="Document not found")
 
-    if not can_access_patient(db, current_user, document.patient_id):
+    if current_user.role == "care_partner":
+        raise HTTPException(status_code=403, detail="Care partners cannot access raw document files.")
+    elif not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
     if not document.saved_to:
@@ -1961,5 +2051,264 @@ def discharge_patient_event(
 
     db.commit()
     db.refresh(event)
+
+
+# ── Care Partner endpoints ────────────────────────────────────────────────────
+
+
+@app.get("/my/care-partner-code")
+def get_care_partner_code(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = ensure_patient_for_user(db, current_user)
+
+    code_record = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.patient_id == patient.id)
+        .first()
+    )
+
+    if not code_record:
+        code = _generate_unique_care_partner_code(db)
+        code_record = models.PatientCarePartnerCode(
+            patient_id=patient.id,
+            code=code,
+            created_at=now_iso(),
+        )
+        db.add(code_record)
+        db.commit()
+        db.refresh(code_record)
+
+    return {"code": code_record.code, "created_at": code_record.created_at}
+
+
+@app.post("/my/care-partner-code/regenerate")
+def regenerate_care_partner_code(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = ensure_patient_for_user(db, current_user)
+
+    code_record = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.patient_id == patient.id)
+        .first()
+    )
+
+    new_code = _generate_unique_care_partner_code(db)
+
+    if code_record:
+        code_record.code = new_code
+        code_record.created_at = now_iso()
+    else:
+        code_record = models.PatientCarePartnerCode(
+            patient_id=patient.id,
+            code=new_code,
+            created_at=now_iso(),
+        )
+        db.add(code_record)
+
+    db.commit()
+    db.refresh(code_record)
+
+    return {"code": code_record.code, "created_at": code_record.created_at}
+
+
+@app.get("/my/care-partners")
+def get_my_care_partners(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+
+    if not patient:
+        return []
+
+    links = (
+        db.query(models.CarePartnerPatientLink)
+        .filter(models.CarePartnerPatientLink.patient_id == patient.id)
+        .all()
+    )
+
+    return [
+        {
+            "care_partner_user_id": link.care_partner_user.id,
+            "care_partner_name": link.care_partner_user.full_name,
+            "care_partner_email": link.care_partner_user.email,
+            "linked_at": link.linked_at,
+        }
+        for link in links
+    ]
+
+
+@app.get("/my/dependants")
+def get_my_dependants(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("care_partner")),
+):
+    links = (
+        db.query(models.CarePartnerPatientLink)
+        .filter(models.CarePartnerPatientLink.care_partner_user_id == current_user.id)
+        .all()
+    )
+
+    return [
+        {
+            "patient_id": link.patient.id,
+            "full_name": link.patient.full_name,
+            "date_of_birth": link.patient.date_of_birth,
+            "sex": link.patient.sex,
+            "linked_at": link.linked_at,
+        }
+        for link in links
+    ]
+
+
+@app.get("/my/shared-pages")
+def get_my_shared_pages(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("care_partner")),
+):
+    shares = (
+        db.query(models.SharedStructuredPage)
+        .filter(models.SharedStructuredPage.care_partner_user_id == current_user.id)
+        .all()
+    )
+
+    result = []
+    for share in shares:
+        doc = share.document
+        patient = doc.patient if doc else None
+        result.append(
+            {
+                "document_id": doc.id if doc else None,
+                "patient_full_name": patient.full_name if patient else None,
+                "section": doc.section if doc else None,
+                "test_date": doc.test_date if doc else None,
+                "report_name": doc.report_name if doc else None,
+                "filename": doc.filename if doc else None,
+                "shared_at": share.shared_at,
+            }
+        )
+
+    return result
+
+
+@app.get("/documents/{document_id}/shares")
+def get_document_shares(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    shares = (
+        db.query(models.SharedStructuredPage)
+        .filter(models.SharedStructuredPage.document_id == document_id)
+        .all()
+    )
+
+    return [
+        {
+            "care_partner_user_id": share.care_partner_user.id,
+            "care_partner_name": share.care_partner_user.full_name,
+            "care_partner_email": share.care_partner_user.email,
+            "shared_at": share.shared_at,
+        }
+        for share in shares
+    ]
+
+
+class ShareDocumentRequest(BaseModel):
+    care_partner_user_id: int
+
+
+@app.post("/documents/{document_id}/share")
+def share_document(
+    document_id: int,
+    payload: ShareDocumentRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    patient = get_patient_for_user(db, current_user.id)
+
+    link = (
+        db.query(models.CarePartnerPatientLink)
+        .filter(
+            models.CarePartnerPatientLink.care_partner_user_id == payload.care_partner_user_id,
+            models.CarePartnerPatientLink.patient_id == patient.id,
+        )
+        .first()
+    )
+
+    if not link:
+        raise HTTPException(status_code=400, detail="This person is not your care partner.")
+
+    existing = (
+        db.query(models.SharedStructuredPage)
+        .filter(
+            models.SharedStructuredPage.document_id == document_id,
+            models.SharedStructuredPage.care_partner_user_id == payload.care_partner_user_id,
+        )
+        .first()
+    )
+
+    if not existing:
+        share = models.SharedStructuredPage(
+            document_id=document_id,
+            care_partner_user_id=payload.care_partner_user_id,
+            shared_by_patient_user_id=current_user.id,
+            shared_at=now_iso(),
+        )
+        db.add(share)
+        db.commit()
+
+    return {"ok": True}
+
+
+@app.delete("/documents/{document_id}/share/{care_partner_user_id}")
+def unshare_document(
+    document_id: int,
+    care_partner_user_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    share = (
+        db.query(models.SharedStructuredPage)
+        .filter(
+            models.SharedStructuredPage.document_id == document_id,
+            models.SharedStructuredPage.care_partner_user_id == care_partner_user_id,
+        )
+        .first()
+    )
+
+    if share:
+        db.delete(share)
+        db.commit()
+
+    return {"ok": True}
 
     return serialize_patient_event(event)

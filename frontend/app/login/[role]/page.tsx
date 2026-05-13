@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -8,15 +8,16 @@ import LanguageToggle from "@/components/language-toggle";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
-type Role = "doctor" | "patient" | "admin";
+type Role = "doctor" | "patient" | "admin" | "care_partner";
 
 function isRole(value: string): value is Role {
-  return value === "doctor" || value === "patient" || value === "admin";
+  return value === "doctor" || value === "patient" || value === "admin" || value === "care_partner";
 }
 
 function getPostLoginPath(role: Role) {
   if (role === "patient") return "/my-records";
   if (role === "doctor") return "/my-patients";
+  if (role === "care_partner") return "/care-partner";
   return "/assignments";
 }
 
@@ -51,6 +52,15 @@ export default function RoleLoginPage() {
         title: t("patientLogin"),
         subtitle: t("patientLoginSubtitle"),
         helper: t("patientLoginHelper"),
+      };
+    }
+
+    if (role === "care_partner") {
+      return {
+        badge: t("carePartnerAccess"),
+        title: t("carePartnerLogin"),
+        subtitle: t("carePartnerLoginSubtitle"),
+        helper: t("carePartnerLoginHelper"),
       };
     }
 

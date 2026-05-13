@@ -10,7 +10,7 @@ type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -36,6 +36,18 @@ type AccessRequest = {
   responded_at?: string | null;
 };
 
+type CarePartnerLink = {
+  care_partner_user_id: number;
+  care_partner_name: string;
+  care_partner_email: string;
+  linked_at: string;
+};
+
+type CarePartnerCodeResponse = {
+  code: string;
+  created_at: string;
+};
+
 type MyProfileResponse = {
   patient: { id: number; full_name: string };
   doctor_access: DoctorAccess[];
@@ -57,6 +69,8 @@ export default function MyAccessPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [doctorAccess, setDoctorAccess] = useState<DoctorAccess[]>([]);
   const [requests, setRequests] = useState<AccessRequest[]>([]);
+  const [carePartners, setCarePartners] = useState<CarePartnerLink[]>([]);
+  const [carePartnerCode, setCarePartnerCode] = useState<CarePartnerCodeResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -64,13 +78,11 @@ export default function MyAccessPage() {
   const [revoking, setRevoking] = useState(false);
 
   const [respondingId, setRespondingId] = useState<number | null>(null);
+  const [regenerating, setRegenerating] = useState(false);
+  const [codeCopied, setCodeCopied] = useState(false);
 
   async function load() {
-    const [meResponse, profileResponse, requestsResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<MyProfileResponse>("/my/profile"),
-      api.get<AccessRequest[]>("/my/access-requests"),
-    ]);
+    const meResponse = await api.get<CurrentUser>("/auth/me");
 
     if (meResponse.data.role !== "patient") {
       router.replace(meResponse.data.role === "doctor" ? "/my-patients" : "/assignments");
@@ -78,8 +90,19 @@ export default function MyAccessPage() {
     }
 
     setCurrentUser(meResponse.data);
+
+    const [profileResponse, requestsResponse, carePartnersResponse, codeResponse] =
+      await Promise.all([
+        api.get<MyProfileResponse>("/my/profile"),
+        api.get<AccessRequest[]>("/my/access-requests"),
+        api.get<CarePartnerLink[]>("/my/care-partners"),
+        api.get<CarePartnerCodeResponse>("/my/care-partner-code"),
+      ]);
+
     setDoctorAccess(profileResponse.data.doctor_access || []);
     setRequests(requestsResponse.data || []);
+    setCarePartners(carePartnersResponse.data || []);
+    setCarePartnerCode(codeResponse.data);
   }
 
   useEffect(() => {
@@ -123,6 +146,27 @@ export default function MyAccessPage() {
     } finally {
       setRevoking(false);
     }
+  }
+
+  async function regenerateCode() {
+    try {
+      setRegenerating(true);
+      setError("");
+      const response = await api.post<CarePartnerCodeResponse>("/my/care-partner-code/regenerate");
+      setCarePartnerCode(response.data);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not regenerate code."));
+    } finally {
+      setRegenerating(false);
+    }
+  }
+
+  function copyCode() {
+    if (!carePartnerCode) return;
+    navigator.clipboard.writeText(carePartnerCode.code).then(() => {
+      setCodeCopied(true);
+      setTimeout(() => setCodeCopied(false), 2000);
+    });
   }
 
   if (loading || !currentUser) {
@@ -218,6 +262,109 @@ export default function MyAccessPage() {
       )}
 
       <div style={{ display: "grid", gap: 24 }}>
+        {/* Care Partner Code */}
+        <div className="soft-card" style={{ padding: 24 }}>
+          <div style={{ marginBottom: 18 }}>
+            <div className="section-title">{t("carePartnerCode")}</div>
+            <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
+              {t("carePartnerCodeDesc")}
+            </div>
+          </div>
+
+          {carePartnerCode ? (
+            <div style={{ display: "grid", gap: 16 }}>
+              <div
+                className="soft-card-tight"
+                style={{
+                  padding: "18px 20px",
+                  background: "var(--panel-2)",
+                  display: "flex",
+                  alignItems: "center",
+                  justifyContent: "space-between",
+                  gap: 16,
+                  flexWrap: "wrap",
+                }}
+              >
+                <div
+                  style={{
+                    fontFamily: "monospace",
+                    fontSize: 28,
+                    fontWeight: 900,
+                    letterSpacing: "0.1em",
+                    color: "var(--primary)",
+                  }}
+                >
+                  {carePartnerCode.code}
+                </div>
+
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={copyCode}
+                  style={{ whiteSpace: "nowrap" }}
+                >
+                  {codeCopied ? t("copied") : t("copyCode")}
+                </button>
+              </div>
+
+              <div className="muted-text" style={{ fontSize: 12 }}>
+                {t("codeGeneratedAt")} {formatDate(carePartnerCode.created_at)}
+              </div>
+
+              <div>
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  onClick={regenerateCode}
+                  disabled={regenerating}
+                >
+                  {regenerating ? t("working") : t("regenerateCode")}
+                </button>
+                <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
+                  {t("regenerateCodeWarning")}
+                </div>
+              </div>
+            </div>
+          ) : (
+            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+              <div className="muted-text">{t("loadingCode")}</div>
+            </div>
+          )}
+        </div>
+
+        {/* Active Care Partners */}
+        <div className="soft-card" style={{ padding: 24 }}>
+          <div style={{ marginBottom: 18 }}>
+            <div className="section-title">{t("myCarePartners")}</div>
+            <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
+              {t("myCarePartnersDesc")}
+            </div>
+          </div>
+
+          {carePartners.length === 0 ? (
+            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+              <div className="muted-text">{t("noCarePartnersDesc")}</div>
+            </div>
+          ) : (
+            <div style={{ display: "grid", gap: 12 }}>
+              {carePartners.map((cp) => (
+                <div
+                  key={cp.care_partner_user_id}
+                  className="soft-card-tight"
+                  style={{ padding: 18 }}
+                >
+                  <div style={{ fontWeight: 900, fontSize: 16 }}>{cp.care_partner_name}</div>
+                  <div className="muted-text" style={{ marginTop: 4 }}>{cp.care_partner_email}</div>
+                  <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
+                    {t("linkedAt")} {formatDate(cp.linked_at)}
+                  </div>
+                </div>
+              ))}
+            </div>
+          )}
+        </div>
+
+        {/* Pending Doctor Requests */}
         <div className="soft-card" style={{ padding: 24 }}>
           <div
             style={{
@@ -316,6 +463,7 @@ export default function MyAccessPage() {
           )}
         </div>
 
+        {/* Active Doctor Access */}
         <div className="soft-card" style={{ padding: 24 }}>
           <div style={{ marginBottom: 18 }}>
             <div className="section-title">{t("activeAccess")}</div>

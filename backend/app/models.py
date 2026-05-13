@@ -258,3 +258,40 @@ class DoctorDocumentReview(Base):
 
     doctor_user = relationship("User", foreign_keys=[doctor_user_id])
     document = relationship("Document")
+
+
+class PatientCarePartnerCode(Base):
+    __tablename__ = "patient_care_partner_codes"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, unique=True, index=True)
+    code = Column(String, nullable=False, unique=True, index=True)
+    created_at = Column(String, nullable=False)
+
+    patient = relationship("Patient")
+
+
+class CarePartnerPatientLink(Base):
+    __tablename__ = "care_partner_patient_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    care_partner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    linked_at = Column(String, nullable=False)
+
+    care_partner_user = relationship("User", foreign_keys=[care_partner_user_id])
+    patient = relationship("Patient")
+
+
+class SharedStructuredPage(Base):
+    __tablename__ = "shared_structured_pages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    care_partner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    shared_by_patient_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    shared_at = Column(String, nullable=False)
+
+    document = relationship("Document")
+    care_partner_user = relationship("User", foreign_keys=[care_partner_user_id])
+    shared_by_patient_user = relationship("User", foreign_keys=[shared_by_patient_user_id])

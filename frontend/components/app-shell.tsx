@@ -8,7 +8,7 @@ type ShellUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -47,6 +47,7 @@ export default function AppShell({ user, title, subtitle, children, rightContent
   function getWorkspaceLabel() {
     if (user.role === "doctor") return t("doctorWorkspace");
     if (user.role === "admin") return t("adminWorkspace");
+    if (user.role === "care_partner") return t("carePartnerWorkspace");
     return t("patientPortal");
   }
 

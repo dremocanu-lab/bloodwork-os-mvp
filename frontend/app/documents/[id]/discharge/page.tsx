@@ -13,7 +13,7 @@ type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -22,9 +22,23 @@ type UploadedBy = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
+};
+
+type CarePartnerLink = {
+  care_partner_user_id: number;
+  care_partner_name: string;
+  care_partner_email: string;
+  linked_at: string;
+};
+
+type DocumentShare = {
+  care_partner_user_id: number;
+  care_partner_name: string;
+  care_partner_email: string;
+  shared_at: string;
 };
 
 type AuditLog = {
@@ -602,6 +616,10 @@ export default function DischargeStructuredPage() {
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
   const [error, setError] = useState("");
 
+  const [carePartners, setCarePartners] = useState<CarePartnerLink[]>([]);
+  const [documentShares, setDocumentShares] = useState<DocumentShare[]>([]);
+  const [sharingId, setSharingId] = useState<number | null>(null);
+
   // Auto-collapse sidebar on mobile
   useEffect(() => {
     function onResize() {
@@ -625,6 +643,15 @@ export default function DischargeStructuredPage() {
       documentResponse.data.parsed_data?.report_type === "discharge_summary";
     if (!isDischarge) { router.replace(`/documents/${documentId}`); return; }
     setDocumentData(documentResponse.data);
+
+    if (meResponse.data.role === "patient") {
+      const [cpResponse, sharesResponse] = await Promise.all([
+        api.get<CarePartnerLink[]>("/my/care-partners"),
+        api.get<DocumentShare[]>(`/documents/${documentId}/shares`),
+      ]);
+      setCarePartners(cpResponse.data || []);
+      setDocumentShares(sharesResponse.data || []);
+    }
   }
 
   useEffect(() => {
@@ -666,6 +693,29 @@ export default function DischargeStructuredPage() {
   const canDelete =
     Boolean(currentUser && documentData && currentUser.id === documentData.uploaded_by_user_id) ||
     currentUser?.role === "admin";
+
+  async function toggleShare(cpUserId: number) {
+    if (!documentData) return;
+    const isShared = documentShares.some((s) => s.care_partner_user_id === cpUserId);
+    try {
+      setSharingId(cpUserId);
+      setError("");
+      if (isShared) {
+        await api.delete(`/documents/${documentData.document_id}/share/${cpUserId}`);
+        setDocumentShares((prev) => prev.filter((s) => s.care_partner_user_id !== cpUserId));
+      } else {
+        await api.post(`/documents/${documentData.document_id}/share`, {
+          care_partner_user_id: cpUserId,
+        });
+        const sharesResponse = await api.get<DocumentShare[]>(`/documents/${documentData.document_id}/shares`);
+        setDocumentShares(sharesResponse.data || []);
+      }
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not update share."));
+    } finally {
+      setSharingId(null);
+    }
+  }
 
   async function openOriginal() {
     if (!documentData) return;
@@ -1070,6 +1120,67 @@ export default function DischargeStructuredPage() {
           )}
         </section>
       </div>
+
+      {currentUser?.role === "patient" && (
+        <div style={{ padding: "0 0 24px" }}>
+          <div className="soft-card" style={{ padding: 24 }}>
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title">{t("shareThisPage")}</div>
+              <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
+                {t("shareThisPageDesc")}
+              </div>
+            </div>
+
+            {carePartners.length === 0 ? (
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div className="muted-text">{t("noCarePartnersToShare")}</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {carePartners.map((cp) => {
+                  const isShared = documentShares.some((s) => s.care_partner_user_id === cp.care_partner_user_id);
+                  const isWorking = sharingId === cp.care_partner_user_id;
+                  return (
+                    <div
+                      key={cp.care_partner_user_id}
+                      className="soft-card-tight"
+                      style={{
+                        padding: "12px 16px",
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0,1fr) auto",
+                        gap: 12,
+                        alignItems: "center",
+                        background: isShared
+                          ? "color-mix(in srgb, var(--primary) 6%, var(--panel))"
+                          : undefined,
+                        borderColor: isShared
+                          ? "color-mix(in srgb, var(--primary) 25%, transparent)"
+                          : undefined,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 900 }}>{cp.care_partner_name}</div>
+                        <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
+                          {cp.care_partner_email}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={isShared ? "primary-btn" : "secondary-btn"}
+                        onClick={() => toggleShare(cp.care_partner_user_id)}
+                        disabled={isWorking}
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        {isWorking ? t("working") : isShared ? t("unshare") : t("share")}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
     </AppShell>
   );
 }

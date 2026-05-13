@@ -30,14 +30,14 @@ export default function LoginChooserPage() {
       artClass: "portal-art-patient",
     },
     {
-      key: "admin",
-      initial: "A",
-      tag: t("operationsControl"),
-      title: t("adminLogin"),
-      description: t("adminLoginDesc"),
-      loginHref: "/login/admin",
-      signupHref: "/signup/admin",
-      artClass: "portal-art-admin",
+      key: "care_partner",
+      initial: "C",
+      tag: t("carePartnerPortal"),
+      title: t("carePartnerLogin"),
+      description: t("carePartnerLoginDesc"),
+      loginHref: "/login/care_partner",
+      signupHref: "/signup/care_partner",
+      artClass: "portal-art-care-partner",
     },
   ];
 
@@ -112,6 +112,29 @@ export default function LoginChooserPage() {
               </article>
             ))}
           </section>
+        </div>
+
+        <div
+          style={{
+            marginTop: 40,
+            paddingTop: 24,
+            borderTop: "1px solid var(--border)",
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "center",
+            gap: 6,
+          }}
+        >
+          <span className="muted-text" style={{ fontSize: 13 }}>
+            {t("adminPortalLabel")}
+          </span>
+          <Link href="/login/admin" className="portal-top-link" style={{ fontSize: 13 }}>
+            {t("adminSignIn")}
+          </Link>
+          <span className="muted-text" style={{ fontSize: 13 }}>·</span>
+          <Link href="/signup/admin" className="portal-top-link" style={{ fontSize: 13 }}>
+            {t("adminSignUp")}
+          </Link>
         </div>
       </div>
     </main>

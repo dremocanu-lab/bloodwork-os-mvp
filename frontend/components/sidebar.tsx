@@ -9,7 +9,7 @@ type SidebarUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -23,6 +23,7 @@ type SidebarProps = {
 function getHomeHref(user: SidebarUser) {
   if (user.role === "patient") return "/my-records";
   if (user.role === "doctor") return "/my-patients";
+  if (user.role === "care_partner") return "/care-partner";
   return "/assignments";
 }
 
@@ -45,6 +46,10 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
       { label: t("searchPatients"), href: "/patients/search" },
       { label: t("activityLog"), href: "/admin/logs" },
     ],
+    care_partner: [
+      { label: t("sharedWithMe"), href: "/care-partner/shared" },
+      { label: t("myDependants"), href: "/care-partner/dependants" },
+    ],
   };
 
   const navItems = navByRole[user.role];
@@ -64,12 +69,15 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
       return `${user.department || t("department")} ${t("admin")} · ${user.hospital_name || t("hospital")}`;
     }
 
+    if (user.role === "care_partner") return t("carePartnerPortal");
+
     return t("patientPortal");
   }
 
   function getRoleLabel() {
     if (user.role === "doctor") return t("doctorWorkspace");
     if (user.role === "admin") return t("adminWorkspace");
+    if (user.role === "care_partner") return t("carePartnerWorkspace");
     return t("patientPortal");
   }
 
@@ -246,6 +254,19 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
                 <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
                 <Link
                   href="/my-records/upload"
+                  onClick={onCloseMobile}
+                  className="sidebar-upload-btn"
+                >
+                  ↑ {t("uploadDocuments")}
+                </Link>
+              </>
+            )}
+
+            {user.role === "care_partner" && (
+              <>
+                <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
+                <Link
+                  href="/care-partner/upload"
                   onClick={onCloseMobile}
                   className="sidebar-upload-btn"
                 >

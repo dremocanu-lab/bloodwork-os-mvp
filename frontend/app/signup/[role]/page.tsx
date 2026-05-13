@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
@@ -8,15 +8,16 @@ import LanguageToggle from "@/components/language-toggle";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
-type Role = "doctor" | "patient" | "admin";
+type Role = "doctor" | "patient" | "admin" | "care_partner";
 
 function isRole(value: string): value is Role {
-  return value === "doctor" || value === "patient" || value === "admin";
+  return value === "doctor" || value === "patient" || value === "admin" || value === "care_partner";
 }
 
 function getPostSignupPath(role: Role) {
   if (role === "patient") return "/my-records";
   if (role === "doctor") return "/my-patients";
+  if (role === "care_partner") return "/care-partner";
   return "/assignments";
 }
 
@@ -40,6 +41,8 @@ export default function RoleSignupPage() {
   const [cnp, setCnp] = useState("");
   const [patientIdentifier, setPatientIdentifier] = useState("");
 
+  const [carePartnerCode, setCarePartnerCode] = useState("");
+
   const [submitting, setSubmitting] = useState(false);
   const [error, setError] = useState("");
 
@@ -61,6 +64,15 @@ export default function RoleSignupPage() {
         title: t("patientSignup"),
         subtitle: t("patientSignupSubtitle"),
         helper: t("patientSignupHelper"),
+      };
+    }
+
+    if (role === "care_partner") {
+      return {
+        badge: t("carePartnerRegistration"),
+        title: t("carePartnerSignup"),
+        subtitle: t("carePartnerSignupSubtitle"),
+        helper: t("carePartnerSignupHelper"),
       };
     }
 
@@ -98,6 +110,10 @@ export default function RoleSignupPage() {
         payload.sex = sex || null;
         payload.cnp = cnp || null;
         payload.patient_identifier = patientIdentifier || null;
+      }
+
+      if (role === "care_partner") {
+        payload.care_partner_code = carePartnerCode.trim().toUpperCase() || null;
       }
 
       const response = await api.post("/auth/signup", payload);
@@ -281,6 +297,23 @@ export default function RoleSignupPage() {
                     />
                   </label>
                 </>
+              )}
+
+              {role === "care_partner" && (
+                <label className="auth-label">
+                  <span>{t("patientAccessCode")}</span>
+                  <input
+                    className="auth-input"
+                    value={carePartnerCode}
+                    onChange={(e) => setCarePartnerCode(e.target.value.toUpperCase())}
+                    placeholder="BW-XXXX-XXXX"
+                    required
+                    style={{ fontFamily: "monospace", letterSpacing: "0.08em" }}
+                  />
+                  <span className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>
+                    {t("patientAccessCodeHint")}
+                  </span>
+                </label>
               )}
 
               <label className="auth-label">
