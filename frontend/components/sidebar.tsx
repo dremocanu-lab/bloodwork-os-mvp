@@ -230,7 +230,14 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
 
           <nav style={{ display: "grid", gap: 10 }}>
             {navItems.map((item) => {
-              const active = pathname === item.href || pathname.startsWith(`${item.href}/`);
+              const active =
+            pathname === item.href ||
+            (pathname.startsWith(`${item.href}/`) &&
+              !navItems.some(
+                (other) =>
+                  other.href !== item.href &&
+                  (pathname === other.href || pathname.startsWith(`${other.href}/`))
+              ));
 
               return (
                 <Link
