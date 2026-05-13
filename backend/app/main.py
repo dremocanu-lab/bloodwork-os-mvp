@@ -11,7 +11,7 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import or_
+from sqlalchemy import or_, text
 from sqlalchemy.orm import Session
 
 from app import models
@@ -23,6 +23,14 @@ from app.services.discharge_summary_pipeline import process_uploaded_discharge_s
 app = FastAPI()
 
 models.Base.metadata.create_all(bind=engine)
+
+def run_migrations():
+    with engine.connect() as conn:
+        conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1"))
+        conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS ended_at VARCHAR"))
+        conn.commit()
+
+run_migrations()
 
 frontend_origins_raw = os.getenv(
     "FRONTEND_ORIGINS",
