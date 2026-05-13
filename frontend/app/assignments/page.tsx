@@ -191,15 +191,33 @@ export default function AssignPatientsPage() {
           <div style={{ padding: "20px 24px 16px", borderBottom: "1px solid var(--border)", flexShrink: 0 }}>
             <div style={{ fontWeight: 950, fontSize: 16, letterSpacing: "-0.03em" }}>{t("selectPatient")}</div>
             <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>{t("selectPatientSubtitle")}</div>
-            <input
-              type="text"
-              className="form-input"
-              style={{ marginTop: 12 }}
-              placeholder={t("searchByNameOrCnp")}
-              value={searchQuery}
-              onChange={(e) => handleSearchInput(e.target.value)}
-              autoComplete="off"
-            />
+            <div style={{ position: "relative", marginTop: 12 }}>
+              <span
+                style={{
+                  position: "absolute",
+                  left: 12,
+                  top: "50%",
+                  transform: "translateY(-50%)",
+                  color: "var(--muted)",
+                  pointerEvents: "none",
+                  display: "flex",
+                }}
+              >
+                <svg width="15" height="15" viewBox="0 0 15 15" fill="none">
+                  <circle cx="6.5" cy="6.5" r="5" stroke="currentColor" strokeWidth="1.6" />
+                  <path d="M10.5 10.5L13.5 13.5" stroke="currentColor" strokeWidth="1.6" strokeLinecap="round" />
+                </svg>
+              </span>
+              <input
+                type="text"
+                className="form-input"
+                style={{ paddingLeft: 34 }}
+                placeholder={t("searchByNameOrCnp")}
+                value={searchQuery}
+                onChange={(e) => handleSearchInput(e.target.value)}
+                autoComplete="off"
+              />
+            </div>
           </div>
 
           <div style={{ flex: 1, overflowY: "auto", padding: "12px" }}>
@@ -213,13 +231,6 @@ export default function AssignPatientsPage() {
               </div>
             )}
 
-            {!searching && !searchQuery.trim() && (
-              <div style={{ padding: "20px 4px", textAlign: "center" }}>
-                <div className="muted-text" style={{ fontSize: 13 }}>
-                  {t("selectPatientSubtitle")}
-                </div>
-              </div>
-            )}
 
             <div style={{ display: "grid", gap: 8 }}>
               {searchResults.map((patient) => {
