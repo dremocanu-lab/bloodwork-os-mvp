@@ -885,6 +885,67 @@ export default function DischargeStructuredPage() {
         </div>
       </div>
 
+      {currentUser?.role === "patient" && (
+        <div style={{ marginBottom: 16 }}>
+          <div className="soft-card" style={{ padding: 24 }}>
+            <div style={{ marginBottom: 16 }}>
+              <div className="section-title">{t("shareThisPage")}</div>
+              <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
+                {t("shareThisPageDesc")}
+              </div>
+            </div>
+
+            {carePartners.length === 0 ? (
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div className="muted-text">{t("noCarePartnersToShare")}</div>
+              </div>
+            ) : (
+              <div style={{ display: "grid", gap: 10 }}>
+                {carePartners.map((cp) => {
+                  const isShared = documentShares.some((s) => s.care_partner_user_id === cp.care_partner_user_id);
+                  const isWorking = sharingId === cp.care_partner_user_id;
+                  return (
+                    <div
+                      key={cp.care_partner_user_id}
+                      className="soft-card-tight"
+                      style={{
+                        padding: "12px 16px",
+                        display: "grid",
+                        gridTemplateColumns: "minmax(0,1fr) auto",
+                        gap: 12,
+                        alignItems: "center",
+                        background: isShared
+                          ? "color-mix(in srgb, var(--primary) 6%, var(--panel))"
+                          : undefined,
+                        borderColor: isShared
+                          ? "color-mix(in srgb, var(--primary) 25%, transparent)"
+                          : undefined,
+                      }}
+                    >
+                      <div>
+                        <div style={{ fontWeight: 900 }}>{cp.care_partner_name}</div>
+                        <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
+                          {cp.care_partner_email}
+                        </div>
+                      </div>
+                      <button
+                        type="button"
+                        className={isShared ? "primary-btn" : "secondary-btn"}
+                        onClick={() => toggleShare(cp.care_partner_user_id)}
+                        disabled={isWorking}
+                        style={{ whiteSpace: "nowrap" }}
+                      >
+                        {isWorking ? t("working") : isShared ? t("unshare") : t("share")}
+                      </button>
+                    </div>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        </div>
+      )}
+
       {/* Main reader */}
       <div
         className="soft-card"
@@ -1121,66 +1182,6 @@ export default function DischargeStructuredPage() {
         </section>
       </div>
 
-      {currentUser?.role === "patient" && (
-        <div style={{ padding: "0 0 24px" }}>
-          <div className="soft-card" style={{ padding: 24 }}>
-            <div style={{ marginBottom: 16 }}>
-              <div className="section-title">{t("shareThisPage")}</div>
-              <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-                {t("shareThisPageDesc")}
-              </div>
-            </div>
-
-            {carePartners.length === 0 ? (
-              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                <div className="muted-text">{t("noCarePartnersToShare")}</div>
-              </div>
-            ) : (
-              <div style={{ display: "grid", gap: 10 }}>
-                {carePartners.map((cp) => {
-                  const isShared = documentShares.some((s) => s.care_partner_user_id === cp.care_partner_user_id);
-                  const isWorking = sharingId === cp.care_partner_user_id;
-                  return (
-                    <div
-                      key={cp.care_partner_user_id}
-                      className="soft-card-tight"
-                      style={{
-                        padding: "12px 16px",
-                        display: "grid",
-                        gridTemplateColumns: "minmax(0,1fr) auto",
-                        gap: 12,
-                        alignItems: "center",
-                        background: isShared
-                          ? "color-mix(in srgb, var(--primary) 6%, var(--panel))"
-                          : undefined,
-                        borderColor: isShared
-                          ? "color-mix(in srgb, var(--primary) 25%, transparent)"
-                          : undefined,
-                      }}
-                    >
-                      <div>
-                        <div style={{ fontWeight: 900 }}>{cp.care_partner_name}</div>
-                        <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
-                          {cp.care_partner_email}
-                        </div>
-                      </div>
-                      <button
-                        type="button"
-                        className={isShared ? "primary-btn" : "secondary-btn"}
-                        onClick={() => toggleShare(cp.care_partner_user_id)}
-                        disabled={isWorking}
-                        style={{ whiteSpace: "nowrap" }}
-                      >
-                        {isWorking ? t("working") : isShared ? t("unshare") : t("share")}
-                      </button>
-                    </div>
-                  );
-                })}
-              </div>
-            )}
-          </div>
-        </div>
-      )}
     </AppShell>
   );
 }

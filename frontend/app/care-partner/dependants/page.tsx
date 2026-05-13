@@ -38,6 +38,10 @@ export default function MyDependantsPage() {
   const [dependants, setDependants] = useState<Dependant[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
+  const [linkCode, setLinkCode] = useState("");
+  const [linking, setLinking] = useState(false);
+  const [linkError, setLinkError] = useState("");
+  const [linkSuccess, setLinkSuccess] = useState("");
 
   useEffect(() => {
     async function init() {
@@ -61,6 +65,24 @@ export default function MyDependantsPage() {
     }
     init();
   }, [router]);
+
+  async function handleLinkPatient(e: React.FormEvent) {
+    e.preventDefault();
+    setLinkError("");
+    setLinkSuccess("");
+    if (!linkCode.trim()) return;
+    setLinking(true);
+    try {
+      const res = await api.post<Dependant>("/my/link-patient", { care_partner_code: linkCode.trim().toUpperCase() });
+      setDependants((prev) => [...prev, res.data]);
+      setLinkCode("");
+      setLinkSuccess(t("patientLinkedSuccess"));
+    } catch (err) {
+      setLinkError(getErrorMessage(err, "Could not link patient."));
+    } finally {
+      setLinking(false);
+    }
+  }
 
   if (loading || !currentUser) {
     return (
@@ -126,13 +148,48 @@ export default function MyDependantsPage() {
           </div>
         )}
 
-        <div
-          className="soft-card-tight"
-          style={{ marginTop: 20, padding: 16, background: "var(--panel-2)" }}
-        >
-          <div className="muted-text" style={{ lineHeight: 1.6 }}>
-            {t("addDependantHint")}
+        <div className="soft-card-tight" style={{ marginTop: 20, padding: 20 }}>
+          <div style={{ marginBottom: 14 }}>
+            <div style={{ fontWeight: 950, fontSize: 14, letterSpacing: "-0.02em" }}>
+              {t("addAnotherDependant")}
+            </div>
+            <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>
+              {t("addAnotherDependantDesc")}
+            </div>
           </div>
+
+          {linkError && (
+            <div
+              className="soft-card-tight"
+              style={{ marginBottom: 12, padding: 12, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13 }}
+            >
+              {linkError}
+            </div>
+          )}
+
+          {linkSuccess && (
+            <div
+              className="soft-card-tight"
+              style={{ marginBottom: 12, padding: 12, borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)", fontSize: 13 }}
+            >
+              {linkSuccess}
+            </div>
+          )}
+
+          <form onSubmit={handleLinkPatient} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
+            <input
+              type="text"
+              className="form-input"
+              value={linkCode}
+              onChange={(e) => setLinkCode(e.target.value)}
+              placeholder="BW-XXXX-XXXX"
+              style={{ fontFamily: "monospace", flex: "1 1 180px", minWidth: 0 }}
+              disabled={linking}
+            />
+            <button type="submit" className="primary-btn" disabled={linking || !linkCode.trim()}>
+              {linking ? t("linking") : t("linkPatient")}
+            </button>
+          </form>
         </div>
       </div>
     </AppShell>

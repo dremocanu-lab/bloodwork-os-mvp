@@ -2311,4 +2311,53 @@ def unshare_document(
 
     return {"ok": True}
 
+
+class LinkPatientRequest(BaseModel):
+    care_partner_code: str
+
+
+@app.post("/my/link-patient")
+def link_patient(
+    payload: LinkPatientRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("care_partner")),
+):
+    code_record = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.code == payload.care_partner_code.strip().upper())
+        .first()
+    )
+
+    if not code_record:
+        raise HTTPException(status_code=400, detail="Invalid access code.")
+
+    existing = (
+        db.query(models.CarePartnerPatientLink)
+        .filter(
+            models.CarePartnerPatientLink.care_partner_user_id == current_user.id,
+            models.CarePartnerPatientLink.patient_id == code_record.patient_id,
+        )
+        .first()
+    )
+
+    if existing:
+        raise HTTPException(status_code=400, detail="You are already linked to this patient.")
+
+    link = models.CarePartnerPatientLink(
+        care_partner_user_id=current_user.id,
+        patient_id=code_record.patient_id,
+        linked_at=now_iso(),
+    )
+    db.add(link)
+    db.commit()
+
+    patient = code_record.patient
+    return {
+        "patient_id": patient.id,
+        "full_name": patient.full_name,
+        "date_of_birth": patient.date_of_birth,
+        "sex": patient.sex,
+        "linked_at": link.linked_at,
+    }
+
     return serialize_patient_event(event)

@@ -667,6 +667,8 @@ const en = {
   adminPortalLabel: "Hospital administration?",
   adminSignIn: "Admin sign in",
   adminSignUp: "Admin sign up",
+  adminBannerTitle: "Need the admin workspace?",
+  adminBannerDesc: "Manage hospital assignments, user access, and system-level configuration.",
   carePartnerDashboard: "Care Partner Dashboard",
   carePartnerDashboardDesc: "Overview of your linked patients and shared records.",
   carePartnerUploadDesc: "Upload documents for your linked patients.",
@@ -681,7 +683,12 @@ const en = {
   noDependantsUploadDesc:
     "You are not linked to any patients. Ask a patient to share their access code with you.",
   addDependantHint:
-    "To link a new patient, create a new account using that patient's access code, or ask the patient to share their code.",
+    "To link a new patient, enter their access code below. You can obtain the code from the patient's My Access page.",
+  addAnotherDependant: "Link Another Patient",
+  addAnotherDependantDesc: "Enter a patient's access code to link them to your care partner account.",
+  linkPatient: "Link Patient",
+  linking: "Linking...",
+  patientLinkedSuccess: "Patient linked successfully.",
   carePartnerCode: "Care Partner Access Code",
   carePartnerCodeDesc:
     "Share this code with a care partner when they create their account. Each code links them to your records and grants upload rights.",
@@ -1377,6 +1384,8 @@ const ro: Record<keyof typeof en, string> = {
   adminPortalLabel: "Administrație spital?",
   adminSignIn: "Autentificare admin",
   adminSignUp: "Înregistrare admin",
+  adminBannerTitle: "Aveți nevoie de spațiul de admin?",
+  adminBannerDesc: "Gestionați misiunile, accesul utilizatorilor și configurația sistemului.",
   carePartnerDashboard: "Panou împuternicit",
   carePartnerDashboardDesc: "Rezumat pacienți și documente partajate.",
   carePartnerUploadDesc: "Încărcați documente pentru pacienții dvs. legați.",
@@ -1391,7 +1400,12 @@ const ro: Record<keyof typeof en, string> = {
   noDependantsUploadDesc:
     "Nu ești legat de niciun pacient. Cere unui pacient să îți partajeze codul de acces.",
   addDependantHint:
-    "Pentru a lega un pacient nou, creați un cont nou folosind codul de acces al acelui pacient.",
+    "Pentru a lega un pacient nou, introduceți codul de acces al acestuia mai jos.",
+  addAnotherDependant: "Legați un alt pacient",
+  addAnotherDependantDesc: "Introduceți codul de acces al pacientului pentru a-l lega de contul dvs.",
+  linkPatient: "Legați pacientul",
+  linking: "Se leagă...",
+  patientLinkedSuccess: "Pacient legat cu succes.",
   carePartnerCode: "Cod de acces împuternicit",
   carePartnerCodeDesc:
     "Partajați acest cod unui împuternicit când își creează contul. Codul le acordă drepturi de încărcare.",

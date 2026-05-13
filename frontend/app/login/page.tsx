@@ -115,31 +115,71 @@ export default function LoginChooserPage() {
         </div>
 
         <div
+          className="soft-card-tight"
           style={{
             marginTop: 40,
-            paddingTop: 28,
-            borderTop: "1px solid var(--border)",
+            padding: "22px 28px",
             display: "flex",
             alignItems: "center",
-            justifyContent: "center",
-            gap: 16,
+            justifyContent: "space-between",
+            gap: 24,
+            flexWrap: "wrap",
+            background: "color-mix(in srgb, var(--primary) 5%, var(--panel))",
+            borderColor: "color-mix(in srgb, var(--primary) 18%, transparent)",
           }}
         >
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--muted)" }}>
-            {t("adminPortalLabel")}
-          </span>
-          <div style={{ display: "flex", gap: 8 }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 16, minWidth: 0 }}>
+            <div
+              style={{
+                width: 44,
+                height: 44,
+                borderRadius: 12,
+                background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
+                border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)",
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "center",
+                fontSize: 22,
+                flexShrink: 0,
+              }}
+            >
+              🛡️
+            </div>
+
+            <div style={{ minWidth: 0 }}>
+              <div
+                style={{
+                  fontSize: 10,
+                  fontWeight: 900,
+                  textTransform: "uppercase",
+                  letterSpacing: "0.1em",
+                  color: "var(--primary)",
+                  marginBottom: 3,
+                }}
+              >
+                Hospital Administration
+              </div>
+              <div style={{ fontWeight: 950, fontSize: 15, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+                {t("adminBannerTitle")}
+              </div>
+              <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.4 }}>
+                {t("adminBannerDesc")}
+              </div>
+            </div>
+          </div>
+
+          <div style={{ display: "flex", gap: 10, flexShrink: 0, flexWrap: "wrap" }}>
             <Link
               href="/login/admin"
-              className="secondary-btn"
-              style={{ fontSize: 13, padding: "8px 16px", textDecoration: "none" }}
+              className="primary-btn"
+              style={{ textDecoration: "none", whiteSpace: "nowrap" }}
             >
               {t("adminSignIn")}
             </Link>
             <Link
               href="/signup/admin"
               className="secondary-btn"
-              style={{ fontSize: 13, padding: "8px 16px", textDecoration: "none" }}
+              style={{ textDecoration: "none", whiteSpace: "nowrap" }}
             >
               {t("adminSignUp")}
             </Link>
