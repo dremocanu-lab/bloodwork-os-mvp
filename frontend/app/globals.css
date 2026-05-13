@@ -815,6 +815,15 @@ body.dark .portal-role-pill,
   background: linear-gradient(135deg, #1e40af 0%, #93c5fd 100%);
 }
 
+.portal-art-care-partner {
+  background: linear-gradient(135deg, #b45309 0%, #fcd34d 100%);
+}
+
+.portal-role-card:has(.portal-art-care-partner) {
+  border-top: 2.5px solid rgba(217, 119, 6, 0.6);
+  background: linear-gradient(160deg, color-mix(in srgb, #d97706 9%, var(--portal-card)) 0%, var(--portal-card) 52%);
+}
+
 .portal-illustration {
   width: 88%;
   height: auto;

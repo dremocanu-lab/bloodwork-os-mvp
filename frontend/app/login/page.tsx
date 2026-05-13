@@ -117,24 +117,33 @@ export default function LoginChooserPage() {
         <div
           style={{
             marginTop: 40,
-            paddingTop: 24,
+            paddingTop: 28,
             borderTop: "1px solid var(--border)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            gap: 6,
+            gap: 16,
           }}
         >
-          <span className="muted-text" style={{ fontSize: 13 }}>
+          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--muted)" }}>
             {t("adminPortalLabel")}
           </span>
-          <Link href="/login/admin" className="portal-top-link" style={{ fontSize: 13 }}>
-            {t("adminSignIn")}
-          </Link>
-          <span className="muted-text" style={{ fontSize: 13 }}>·</span>
-          <Link href="/signup/admin" className="portal-top-link" style={{ fontSize: 13 }}>
-            {t("adminSignUp")}
-          </Link>
+          <div style={{ display: "flex", gap: 8 }}>
+            <Link
+              href="/login/admin"
+              className="secondary-btn"
+              style={{ fontSize: 13, padding: "8px 16px", textDecoration: "none" }}
+            >
+              {t("adminSignIn")}
+            </Link>
+            <Link
+              href="/signup/admin"
+              className="secondary-btn"
+              style={{ fontSize: 13, padding: "8px 16px", textDecoration: "none" }}
+            >
+              {t("adminSignUp")}
+            </Link>
+          </div>
         </div>
       </div>
     </main>

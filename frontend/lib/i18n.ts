@@ -651,7 +651,7 @@ const en = {
   // Care Partner role
   carePartnerPortal: "Care Partner Portal",
   carePartnerWorkspace: "Împuternicit al pacientului",
-  carePartnerLogin: "Care Partner Sign In",
+  carePartnerLogin: "Care Partner Login",
   carePartnerLoginDesc: "Access and upload documents for patients who have shared their access code with you.",
   carePartnerLoginSubtitle: "Sign in to your care partner account.",
   carePartnerLoginHelper:
