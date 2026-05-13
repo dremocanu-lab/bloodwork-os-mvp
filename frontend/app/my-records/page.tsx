@@ -1146,41 +1146,41 @@ export default function MyRecordsPage() {
       >
         <div className="soft-card" style={{ padding: "16px 20px" }}>
           <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
-            Total Documents
+            {t("totalDocuments")}
           </div>
           <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1 }}>
             {snap.totalDocs}
           </div>
           <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
-            {snap.recentDocDate ? `Latest ${formatShortMonthYear(snap.recentDocDate)}` : "None yet"}
+            {snap.recentDocDate ? `${t("latest")} ${formatShortMonthYear(snap.recentDocDate)}` : t("noneYet")}
           </div>
         </div>
 
         <div className="soft-card" style={{ padding: "16px 20px", borderTop: "3px solid var(--primary)" }}>
           <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
-            Bloodwork Panels
+            {t("bloodworkPanels")}
           </div>
           <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: "var(--primary)" }}>
             {snap.bloodworkCount}
           </div>
           <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
-            {snap.recentBloodworkDate ? `Latest ${formatShortMonthYear(snap.recentBloodworkDate)}` : "None yet"}
+            {snap.recentBloodworkDate ? `${t("latest")} ${formatShortMonthYear(snap.recentBloodworkDate)}` : t("noneYet")}
           </div>
         </div>
 
         <div className="soft-card" style={{ padding: "16px 20px", borderTop: "3px solid color-mix(in srgb, #8b5cf6 55%, transparent)" }}>
           <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
-            Hospitalizations
+            {t("hospitalizations")}
           </div>
           <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1 }}>
             {snap.hospitalizationCount}
           </div>
           <div style={{ fontSize: 11, fontWeight: 900, color: "var(--muted)", marginTop: 8 }}>
             {snap.hospitalizationCount > 0 && snap.recentDischargeDate
-              ? `Last ${formatShortMonthYear(snap.recentDischargeDate)}`
+              ? `${t("latest")} ${formatShortMonthYear(snap.recentDischargeDate)}`
               : snap.hospitalizationCount > 0
-              ? "On record"
-              : "None on record"}
+              ? t("onRecord")
+              : t("noneOnRecord")}
           </div>
         </div>
 
@@ -1201,14 +1201,14 @@ export default function MyRecordsPage() {
               <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
             )}
             <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)" }}>
-              Abnormal Results
+              {t("abnormalResults")}
             </span>
           </div>
           <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
             {snap.abnormalCount}
           </div>
           <div style={{ fontSize: 11, fontWeight: 900, marginTop: 8, color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>
-            {snap.abnormalCount > 0 ? "Needs review" : "All clear"}
+            {snap.abnormalCount > 0 ? t("needsReview") : t("allClear")}
           </div>
         </div>
       </div>
@@ -1230,7 +1230,7 @@ export default function MyRecordsPage() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
                 <div>
                   <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 6 }}>
-                    Largest Change · Featured Lab Trend
+                    {t("featuredLabTrendLabel")}
                   </div>
                   <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.03em", lineHeight: 1.2 }}>
                     {featuredTrend.display_name}
@@ -1244,11 +1244,11 @@ export default function MyRecordsPage() {
                     {valueOrDash(featuredTrend.latest?.value_display)}
                   </div>
                   <div className="muted-text" style={{ fontSize: 11, marginTop: 5 }}>
-                    Latest · {formatShortMonthYear(featuredTrend.latest?.date) ?? "—"}
+                    {t("latest")} · {formatShortMonthYear(featuredTrend.latest?.date) ?? "—"}
                   </div>
                   {featuredTrend.delta !== null && featuredTrend.delta !== undefined && (
                     <div style={{ fontSize: 12, fontWeight: 900, marginTop: 4, color: "var(--muted)" }}>
-                      {featuredTrend.delta > 0 ? `+${featuredTrend.delta}` : `${featuredTrend.delta}`} from prev
+                      {featuredTrend.delta > 0 ? `+${featuredTrend.delta}` : `${featuredTrend.delta}`} {t("fromPrev")}
                     </div>
                   )}
                 </div>
@@ -1264,7 +1264,7 @@ export default function MyRecordsPage() {
 
               <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
                 <div className="muted-text" style={{ fontSize: 12 }}>
-                  {snap.trendsCount} tracked lab {snap.trendsCount === 1 ? "value" : "values"} total
+                  {snap.trendsCount} {t("labTrendsTracked")}
                 </div>
                 <button
                   type="button"
@@ -1278,20 +1278,20 @@ export default function MyRecordsPage() {
                     );
                   }}
                 >
-                  View all trends ↓
+                  {t("viewAllTrends")}
                 </button>
               </div>
             </>
           ) : (
             <div>
               <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 12 }}>
-                Featured Lab Trend
+                {t("featuredLabTrendEmpty")}
               </div>
               <div className="muted-text" style={{ marginBottom: 16 }}>
-                No bloodwork data yet. Upload a lab report to start tracking trends.
+                {t("noBloodworkDataYet")}
               </div>
               <button type="button" className="primary-btn" onClick={() => router.push("/my-records/upload")}>
-                Upload your first document
+                {t("uploadFirstDocument")}
               </button>
             </div>
           )}
@@ -1329,7 +1329,7 @@ export default function MyRecordsPage() {
                       lineHeight: 1,
                       padding: 0,
                     }}
-                    title="Unpin"
+                    title={t("unpin")}
                   >
                     ×
                   </button>
@@ -1366,10 +1366,10 @@ export default function MyRecordsPage() {
               }}
             >
               <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
-                Pinned Trends
+                {t("pinnedTrends")}
               </div>
               <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-                Pin up to 3 lab values from the trends section below to track them here at a glance.
+                {t("pinnedTrendsHint")}
               </div>
             </div>
           )}
@@ -1379,7 +1379,7 @@ export default function MyRecordsPage() {
               className="muted-text"
               style={{ fontSize: 11, textAlign: "center", padding: "6px 0" }}
             >
-              {3 - pinnedTrends.length} slot{3 - pinnedTrends.length !== 1 ? "s" : ""} remaining
+              {3 - pinnedTrends.length} {3 - pinnedTrends.length === 1 ? t("slotRemaining") : t("slotsRemaining")}
             </div>
           )}
         </div>
@@ -1390,7 +1390,7 @@ export default function MyRecordsPage() {
         <div style={{ marginBottom: 16 }}>
           <div className="section-title" style={{ marginBottom: 4 }}>{t("myTimeline")}</div>
           <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-            Recent records and admission episodes, grouped by hospitalization period when possible.
+            {t("timelineCardDesc")}
           </div>
         </div>
 
@@ -1540,7 +1540,7 @@ export default function MyRecordsPage() {
             <div>
               <div className="section-title" style={{ marginBottom: 4 }}>{t("bloodworkTrends")}</div>
               <div className="muted-text" style={{ fontSize: 13 }}>
-                Sorted by clinical importance. Pin up to 3 to the snapshot above.
+                {t("pinSortedHint")}
               </div>
             </div>
             {pinnedTrendKeys.length > 0 && (
@@ -1556,7 +1556,7 @@ export default function MyRecordsPage() {
                   flexShrink: 0,
                 }}
               >
-                {pinnedTrendKeys.length}/3 pinned
+                {pinnedTrendKeys.length}/3 {t("pinnedBadge").toLowerCase()}
               </div>
             )}
           </div>
@@ -1602,7 +1602,7 @@ export default function MyRecordsPage() {
                               color: "var(--primary)",
                             }}
                           >
-                            Pinned
+                            {t("pinnedBadge")}
                           </span>
                         )}
                       </div>
@@ -1679,7 +1679,7 @@ export default function MyRecordsPage() {
                           : undefined,
                       }}
                     >
-                      {isPinned ? "Unpin" : "Pin"}
+                      {isPinned ? t("unpin") : t("pin")}
                     </button>
 
                     <button
