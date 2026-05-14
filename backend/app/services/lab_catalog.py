@@ -833,6 +833,7 @@ CATEGORY_KEYWORDS: dict[str, tuple[str, ...]] = {
 
 CATEGORY_ORDER = [
     "Hematologie",
+    "Citomorfologie Manuala",
     "Coagulare",
     "Biochimie generala",
     "Endocrinologie",
@@ -842,6 +843,19 @@ CATEGORY_ORDER = [
     "Microbiologie",
     "Alte analize",
 ]
+
+CATEGORY_DISPLAY_NAMES: dict[str, str] = {
+    "Hematologie": "Hemogramă",
+    "Citomorfologie Manuala": "Citomorfologie",
+    "Coagulare": "Coagulogramă",
+    "Biochimie generala": "Biochimie",
+    "Endocrinologie": "Endocrinologie",
+    "Imunologie": "Imunologie",
+    "Markeri tumorali": "Markeri tumorali",
+    "Biologie moleculara generala": "Biologie moleculară",
+    "Microbiologie": "Microbiologie",
+    "Alte analize": "Analize medicale",
+}
 
 
 # -----------------------------
@@ -1035,6 +1049,10 @@ def group_rows_by_category(rows: list[dict[str, Any]]) -> dict[str, list[dict[st
 
 def parse_date_for_title(*values: str | None) -> datetime | None:
     formats = (
+        "%d %b %Y %H:%M",
+        "%d %B %Y %H:%M",
+        "%d %b %Y",
+        "%d %B %Y",
         "%Y-%m-%dT%H:%M:%S.%f%z",
         "%Y-%m-%dT%H:%M:%S%z",
         "%Y-%m-%dT%H:%M:%S.%f",
@@ -1075,12 +1093,15 @@ def parse_date_for_title(*values: str | None) -> datetime | None:
     return None
 
 
-def format_report_datetime(*values: str | None) -> str:
+def format_report_datetime(*values: str | None) -> str | None:
     parsed = parse_date_for_title(*values)
     if not parsed:
-        return datetime.now().strftime("%d/%m/%Y %H:%M")
+        return None
 
-    return parsed.strftime("%d/%m/%Y %H:%M")
+    if parsed.hour == 0 and parsed.minute == 0:
+        return parsed.strftime("%d %b %Y")
+
+    return parsed.strftime("%d %b %Y %H:%M")
 
 
 def build_report_name_from_categories(
@@ -1095,15 +1116,18 @@ def build_report_name_from_categories(
     fallback_name: str = "Analize medicale",
 ) -> str:
     categories = get_detected_categories(rows)
+    display_cats = list(dict.fromkeys(
+        CATEGORY_DISPLAY_NAMES.get(c, c) for c in categories
+    ))
 
-    if not categories:
+    if not display_cats:
         base = fallback_name
-    elif len(categories) == 1:
-        base = categories[0]
-    elif len(categories) == 2:
-        base = f"{categories[0]} & {categories[1]}"
+    elif len(display_cats) == 1:
+        base = display_cats[0]
+    elif len(display_cats) == 2:
+        base = f"{display_cats[0]} + {display_cats[1]}"
     else:
-        base = f"{', '.join(categories[:-1])} & {categories[-1]}"
+        base = f"{display_cats[0]} + {display_cats[1]} + altele"
 
     date_label = format_report_datetime(
         collected_on,
@@ -1114,7 +1138,10 @@ def build_report_name_from_categories(
         created_at,
     )
 
-    return f"{base} {date_label}"
+    if date_label:
+        return f"{base} · {date_label}"
+
+    return base
 
 
 def extract_category_from_raw_text(raw_text: str | None) -> str | None:

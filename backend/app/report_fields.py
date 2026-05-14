@@ -465,16 +465,18 @@ def extract_report_name(text: str, collected_on: str | None = None) -> str:
     lowered = normalize_ocr_text(text).lower()
 
     if "hematologie" in lowered or "hemograma" in lowered or "hemogram" in lowered or "citomorfologie" in lowered:
-        base = "Hematologie"
+        base = "Hemogramă"
     elif "biochimie" in lowered:
         base = "Biochimie"
+    elif "coagulare" in lowered or "coagulograma" in lowered:
+        base = "Coagulogramă"
     elif "urina" in lowered:
         base = "Urinalysis"
     else:
         base = "Analize medicale"
 
     if collected_on:
-        return f"{base} {collected_on}"
+        return f"{base} · {collected_on}"
 
     return base
 

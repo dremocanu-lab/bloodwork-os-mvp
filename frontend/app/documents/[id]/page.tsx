@@ -140,6 +140,7 @@ type DischargeNotePayload = {
 
 const CATEGORY_ORDER = [
   "Hematologie",
+  "Citomorfologie Manuala",
   "Coagulare",
   "Biochimie generala",
   "Endocrinologie",

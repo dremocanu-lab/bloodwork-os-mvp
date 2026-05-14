@@ -172,6 +172,15 @@ ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
 
 NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
 
+# Compact differential notation: "N4 S63 L22 M11" — at least 2 letter-digit pairs
+COMPACT_DIFF_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z]\d{1,3})(?:\s+[A-Z]\d{1,3})+")
+
+# Triggers that confirm we're in a manual morphology section
+MORPHOLOGY_SECTION_RE = re.compile(
+    r"frotiu|blood\s*smear|citomorfologie\s*manual|manual\s*citomorfologie",
+    re.IGNORECASE,
+)
+
 
 def clean_text(value: Any) -> str:
     if value is None:
@@ -999,13 +1008,67 @@ def dedupe_labs(lab_lists: list[list[dict]]) -> list[dict]:
     return ordered
 
 
+def parse_manual_morphology(text: str) -> list[dict]:
+    """
+    Captures manual blood smear / cytomorphology results verbatim.
+    Detects compact differential notation such as 'N4 S63 L22 M11'.
+    Only runs when the document contains a morphology section marker (frotiu, etc.).
+    """
+    if not text:
+        return []
+
+    flat = clean_text(text)
+
+    # Bail early if this document has no morphology section at all.
+    if not MORPHOLOGY_SECTION_RE.search(flat):
+        return []
+
+    results = []
+    seen: set[str] = set()
+
+    for match in COMPACT_DIFF_RE.finditer(flat):
+        full_value = match.group(0).strip()
+
+        # Validate that every token is exactly one letter followed by digits.
+        pairs = full_value.split()
+        pair_re = re.compile(r"^[A-Za-z]{1}\d{1,3}$")
+        if not all(pair_re.match(p) for p in pairs):
+            continue
+
+        key = full_value.lower()
+        if key in seen:
+            continue
+        seen.add(key)
+
+        # Find the nearest "Frotiu ..." label before this match.
+        context_before = flat[max(0, match.start() - 350): match.start()]
+        frotiu_match = re.search(r"[Ff]rotiu\s+\S+(?:\s+\([^)]+\))?", context_before)
+        display = clean_text(frotiu_match.group(0)) if frotiu_match else "Frotiu Tub"
+
+        results.append({
+            "raw_test_name": "Frotiu Tub",
+            "canonical_name": "Blood Smear Differential",
+            "display_name": display,
+            "category": "Citomorfologie Manuala",
+            "value": full_value,
+            "flag": None,
+            "reference_range": None,
+            "unit": None,
+            "confidence": 0.85,
+        })
+
+    return results
+
+
 def parse_bloodwork_text(text: str) -> dict:
     metadata = extract_report_metadata(text or "")
 
     table_labs = parse_google_document_ai_tables(text or "")
     flat_labs = parse_flat_known_cbc_rows(text or "")
+    morphology_labs = parse_manual_morphology(text or "")
 
     labs = dedupe_labs([table_labs, flat_labs])
+    labs.extend(morphology_labs)
 
     warnings = []
 
