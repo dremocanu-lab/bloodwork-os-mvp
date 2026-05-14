@@ -40,10 +40,12 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
     patient: [
       { label: t("myRecords"), href: "/my-records" },
       { label: t("myAccess"), href: "/my-records/access" },
+      { label: t("patientSettings"), href: "/my-records/settings" },
     ],
     admin: [
       { label: t("assignPatients"), href: "/assignments" },
       { label: t("adminDoctorsNav"), href: "/admin/doctors" },
+      { label: "Analyte gaps", href: "/admin/analytes" },
     ],
     care_partner: [
       { label: t("sharedWithMe"), href: "/care-partner/shared" },

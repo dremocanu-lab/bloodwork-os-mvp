@@ -1071,8 +1071,8 @@ export default function DocumentStructuredPage() {
           <div>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
               <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 7, height: 7, borderRadius: 999, background: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)", flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 900, color: parsed.is_verified ? "var(--success-text)" : "var(--warn-text)" }}>
+                <span style={{ width: 7, height: 7, borderRadius: 999, background: parsed.is_verified ? "var(--success-text)" : "var(--muted)", flexShrink: 0 }} />
+                <span style={{ fontSize: 12, fontWeight: 900, color: parsed.is_verified ? "var(--success-text)" : "var(--muted)" }}>
                   {t(parsed.is_verified ? "verified" : "unverified")}
                 </span>
               </div>

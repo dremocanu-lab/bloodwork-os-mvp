@@ -1202,7 +1202,7 @@ export default function MyRecordsPage() {
               <span style={{ width: 6, height: 6, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
             )}
             <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--muted)" }}>
-              {t("abnormalResults")}
+              {t("outsideLabRange")}
             </span>
           </div>
           <div style={{ fontSize: 44, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: snap.abnormalCount > 0 ? "var(--danger-text)" : "var(--success-text)" }}>

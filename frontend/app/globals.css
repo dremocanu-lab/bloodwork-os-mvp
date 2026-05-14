@@ -23,6 +23,22 @@
   --danger-border: #fecaca;
   --danger-text: #b91c1c;
 
+  --sev-critical-bg: #fff0f0;
+  --sev-critical-border: #f87171;
+  --sev-critical-text: #7f1d1d;
+
+  --sev-abnormal-bg: var(--danger-bg);
+  --sev-abnormal-border: var(--danger-border);
+  --sev-abnormal-text: var(--danger-text);
+
+  --sev-borderline-bg: var(--warn-bg);
+  --sev-borderline-border: #fed7aa;
+  --sev-borderline-text: var(--warn-text);
+
+  --sev-normal-bg: var(--success-bg);
+  --sev-normal-border: #bbf7d0;
+  --sev-normal-text: var(--success-text);
+
   --shadow-soft: 0 18px 50px rgba(15, 23, 42, 0.08);
   --shadow-card: 0 10px 30px rgba(15, 23, 42, 0.06);
 
@@ -63,6 +79,22 @@ body.dark,
   --danger-bg: rgba(239, 68, 68, 0.16);
   --danger-border: rgba(248, 113, 113, 0.28);
   --danger-text: #fca5a5;
+
+  --sev-critical-bg: rgba(239, 68, 68, 0.22);
+  --sev-critical-border: rgba(239, 68, 68, 0.50);
+  --sev-critical-text: #fc8181;
+
+  --sev-abnormal-bg: var(--danger-bg);
+  --sev-abnormal-border: var(--danger-border);
+  --sev-abnormal-text: var(--danger-text);
+
+  --sev-borderline-bg: var(--warn-bg);
+  --sev-borderline-border: rgba(245, 158, 11, 0.35);
+  --sev-borderline-text: var(--warn-text);
+
+  --sev-normal-bg: var(--success-bg);
+  --sev-normal-border: rgba(16, 185, 129, 0.30);
+  --sev-normal-text: var(--success-text);
 
   --shadow-soft: 0 18px 50px rgba(0, 0, 0, 0.28);
   --shadow-card: 0 10px 30px rgba(0, 0, 0, 0.24);

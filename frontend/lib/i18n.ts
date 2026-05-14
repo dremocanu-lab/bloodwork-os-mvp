@@ -289,7 +289,7 @@ const en = {
   currentAssignments: "Current Assignments",
   currentAssignmentsDesc:
     "Review assigned patients, abnormal lab flags, trend previews, and active admissions.",
-  searchAssignmentsPlaceholder: "Search by patient, CNP, doctor, or abnormal lab...",
+  searchAssignmentsPlaceholder: "Search by patient, patient code, doctor, or abnormal lab...",
   unassign: "Unassign",
   unassigning: "Unassigning...",
   discharging: "Discharging...",
@@ -672,7 +672,7 @@ const en = {
   assignPatients: "Assign Patients",
   assignPatientsSubtitle: "Link patients to doctors in your department or clinic.",
   selectPatient: "Select a Patient",
-  selectPatientSubtitle: "Search by name or CNP.",
+  selectPatientSubtitle: "Search by name or patient code.",
   assignDoctors: "Assign Doctors",
   assignDoctorsSubtitle: "Choose one or more doctors from your department or clinic.",
   confirmAssignment: "Confirm Assignment",
@@ -694,7 +694,7 @@ const en = {
   viewPatients: "View Patients",
   currentPatientsCount: "current patients",
   historicalAssignmentsCount: "historical assignments",
-  searchByNameOrCnp: "Search by name or CNP...",
+  searchByNameOrCnp: "Search by name or patient code...",
   selectPatientToContinue: "Select a patient on the left to see available doctors.",
   noDoctorsInDepartment: "No doctors found in your department.",
   noPatientsFound: "No patients match your search.",
@@ -752,6 +752,23 @@ const en = {
   share: "Share",
   unshare: "Unshare",
   loading: "Loading...",
+
+  // Patient settings
+  patientSettings: "Settings",
+  accountAndPrivacy: "Account & Privacy",
+  deleteAccount: "Delete Account",
+  deleteAccountDesc: "Permanently delete your account and all associated records. This action cannot be undone.",
+  confirmDeleteAccount: "Delete my account",
+  confirmDeleteAccountWarning: "This will permanently delete all your records, documents, access history, and account data. This cannot be reversed.",
+  deletingAccount: "Deleting account...",
+  sharingAndVisibility: "Sharing & Visibility",
+  sharingAndVisibilityDesc: "Control which doctors and care partners can access your records.",
+  openSharingDashboard: "Open Sharing Dashboard",
+  displayPreferences: "Display Preferences",
+  regenerateCodeConfirmTitle: "Regenerate access code?",
+  regenerateCodeConfirmDesc: "Your existing care partners keep their access. The old code will no longer work for creating new care partner accounts.",
+  outsideLabRange: "Outside lab range",
+  extractedFromReport: "Extracted from uploaded report",
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
@@ -1036,7 +1053,7 @@ const ro: Record<keyof typeof en, string> = {
   currentAssignments: "Alocări curente",
   currentAssignmentsDesc:
     "Revizuiește pacienții alocați, rezultatele anormale, tendințele și internările active.",
-  searchAssignmentsPlaceholder: "Caută după pacient, CNP, medic sau analiză anormală...",
+  searchAssignmentsPlaceholder: "Caută după pacient, cod pacient, medic sau analiză anormală...",
   unassign: "Elimină alocarea",
   unassigning: "Se elimină alocarea...",
   discharging: "Se externează...",
@@ -1419,7 +1436,7 @@ const ro: Record<keyof typeof en, string> = {
   assignPatients: "Alocați pacienți",
   assignPatientsSubtitle: "Legați pacienți de medici din departamentul sau clinica dvs.",
   selectPatient: "Selectați un pacient",
-  selectPatientSubtitle: "Căutați după nume sau CNP.",
+  selectPatientSubtitle: "Căutați după nume sau cod pacient.",
   assignDoctors: "Alocați medici",
   assignDoctorsSubtitle: "Alegeți unul sau mai mulți medici din departamentul sau clinica dvs.",
   confirmAssignment: "Confirmați alocarea",
@@ -1441,7 +1458,7 @@ const ro: Record<keyof typeof en, string> = {
   viewPatients: "Vezi pacienți",
   currentPatientsCount: "pacienți actuali",
   historicalAssignmentsCount: "alocări istorice",
-  searchByNameOrCnp: "Căutați după nume sau CNP...",
+  searchByNameOrCnp: "Căutați după nume sau cod pacient...",
   selectPatientToContinue: "Selectați un pacient din stânga pentru a vedea medicii disponibili.",
   noDoctorsInDepartment: "Niciun medic găsit în departamentul dvs.",
   noPatientsFound: "Niciun pacient nu corespunde căutării.",
@@ -1499,6 +1516,23 @@ const ro: Record<keyof typeof en, string> = {
   share: "Partajează",
   unshare: "Retrage accesul",
   loading: "Se încarcă...",
+
+  // Patient settings
+  patientSettings: "Setări",
+  accountAndPrivacy: "Cont și confidențialitate",
+  deleteAccount: "Șterge contul",
+  deleteAccountDesc: "Șterge definitiv contul și toate documentele asociate. Această acțiune nu poate fi anulată.",
+  confirmDeleteAccount: "Șterge contul meu",
+  confirmDeleteAccountWarning: "Aceasta va șterge definitiv toate documentele, fișierele, istoricul de acces și datele contului. Acțiunea nu poate fi inversată.",
+  deletingAccount: "Se șterge contul...",
+  sharingAndVisibility: "Partajare și vizibilitate",
+  sharingAndVisibilityDesc: "Controlează cine poate accesa documentele tale.",
+  openSharingDashboard: "Deschide panoul de partajare",
+  displayPreferences: "Preferințe de afișare",
+  regenerateCodeConfirmTitle: "Regenerezi codul de acces?",
+  regenerateCodeConfirmDesc: "Împuterniciții existenți își păstrează accesul. Codul vechi nu va mai putea fi folosit pentru crearea de conturi noi.",
+  outsideLabRange: "În afara intervalului normal",
+  extractedFromReport: "Extras din raportul încărcat",
 };
 
 const dictionaries = {

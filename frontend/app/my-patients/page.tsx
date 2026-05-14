@@ -1,16 +1,18 @@
-﻿"use client";
+"use client";
 
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { api, valueOrDash } from "@/lib/api";
+import { api } from "@/lib/api";
+import type { AppLanguage } from "@/lib/i18n";
 import { useLanguage } from "@/lib/i18n";
+import { formatPatientAge } from "@/lib/patient-age";
 
 type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -57,11 +59,8 @@ function Spinner({ size = 18 }: { size?: number }) {
     <>
       <style jsx>{`
         @keyframes bloodworkSpin {
-          to {
-            transform: rotate(360deg);
-          }
+          to { transform: rotate(360deg); }
         }
-
         .bloodwork-spinner {
           width: ${size}px;
           height: ${size}px;
@@ -79,63 +78,276 @@ function Spinner({ size = 18 }: { size?: number }) {
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
   if (!parts.length) return "P";
-  return parts.map((part) => part[0]?.toUpperCase()).join("");
+  return parts.map((p) => p[0]?.toUpperCase()).join("");
 }
 
 function getCareLabel(item: PatientCard) {
   if (item.care_context_label) return item.care_context_label;
   if (item.care_context === "active_admission") return "Active admission";
   if (item.care_context === "past_admission") return "Past admission";
-  return "Outpatient follow-up";
+  return "Outpatient";
 }
 
-function getCardTheme(item: PatientCard) {
+function rowAccent(item: PatientCard): string {
+  if ((item.abnormal_count ?? 0) > 0) return "var(--danger-text)";
+  if (item.care_context === "active_admission") return "var(--success-text)";
+  return "var(--primary)";
+}
+
+function avatarColors(item: PatientCard): { bg: string; color: string } {
+  if ((item.abnormal_count ?? 0) > 0)
+    return { bg: "var(--danger-bg)", color: "var(--danger-text)" };
+  if (item.care_context === "active_admission")
+    return { bg: "var(--success-bg)", color: "var(--success-text)" };
+  return { bg: "var(--primary-soft)", color: "var(--primary)" };
+}
+
+type PatientRowProps = {
+  item: PatientCard;
+  labels: ReturnType<typeof buildLabels>;
+  language: AppLanguage;
+  onClick: () => void;
+};
+
+function PatientRow({ item, labels, language, onClick }: PatientRowProps) {
   const abnormalCount = item.abnormal_count ?? 0;
+  const newCount = item.new_records_count ?? 0;
+  const labs = item.latest_abnormal_labs ?? [];
+  const accent = rowAccent(item);
+  const av = avatarColors(item);
+  const careLabel = getCareLabel(item);
+  const isActive = item.care_context === "active_admission";
 
-  if (abnormalCount > 0) {
+  return (
+    <button
+      type="button"
+      onClick={onClick}
+      style={{
+        display: "grid",
+        gridTemplateColumns: "4px 52px 1fr auto auto",
+        alignItems: "center",
+        gap: "0 14px",
+        width: "100%",
+        minHeight: 68,
+        padding: "10px 16px 10px 0",
+        background: "none",
+        border: "none",
+        borderBottom: "1px solid var(--border)",
+        cursor: "pointer",
+        textAlign: "left",
+      }}
+    >
+      {/* Left accent bar */}
+      <span
+        style={{
+          alignSelf: "stretch",
+          width: 4,
+          borderRadius: "0 2px 2px 0",
+          background: accent,
+          flexShrink: 0,
+        }}
+      />
+
+      {/* Avatar */}
+      <span
+        style={{
+          width: 40,
+          height: 40,
+          borderRadius: 12,
+          display: "grid",
+          placeItems: "center",
+          background: av.bg,
+          color: av.color,
+          fontWeight: 800,
+          fontSize: 14,
+          letterSpacing: "-0.03em",
+          flexShrink: 0,
+          border: `1px solid color-mix(in srgb, ${av.color} 22%, transparent)`,
+        }}
+      >
+        {getInitials(item.patient.full_name)}
+      </span>
+
+      {/* Name + meta */}
+      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
+        <span
+          style={{
+            fontWeight: 700,
+            fontSize: 14,
+            color: "var(--text)",
+            whiteSpace: "nowrap",
+            overflow: "hidden",
+            textOverflow: "ellipsis",
+          }}
+        >
+          {item.patient.full_name}
+        </span>
+        <span
+          style={{
+            fontSize: 12,
+            color: "var(--muted)",
+            display: "flex",
+            gap: 6,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
+        >
+          <span>{formatPatientAge(item.patient.date_of_birth, language)}</span>
+          {item.patient.sex && (
+            <>
+              <span style={{ opacity: 0.4 }}>·</span>
+              <span>{item.patient.sex}</span>
+            </>
+          )}
+          <span style={{ opacity: 0.4 }}>·</span>
+          <span
+            style={{
+              padding: "1px 7px",
+              borderRadius: 4,
+              fontSize: 11,
+              fontWeight: 600,
+              background: isActive ? "var(--success-bg)" : "var(--panel-2)",
+              color: isActive ? "var(--success-text)" : "var(--muted)",
+              border: `1px solid ${isActive ? "color-mix(in srgb, var(--success-text) 24%, transparent)" : "var(--border)"}`,
+            }}
+          >
+            {careLabel}
+          </span>
+          {item.active_event && (
+            <span style={{ opacity: 0.72, fontStyle: "italic" }}>{item.active_event.title}</span>
+          )}
+        </span>
+      </span>
+
+      {/* Badges: new records + abnormal labs */}
+      <span
+        style={{
+          display: "flex",
+          flexDirection: "column",
+          gap: 4,
+          alignItems: "flex-end",
+          flexShrink: 0,
+        }}
+      >
+        {newCount > 0 && (
+          <span
+            style={{
+              padding: "2px 8px",
+              borderRadius: 4,
+              fontSize: 11,
+              fontWeight: 700,
+              background: "var(--primary-soft)",
+              color: "var(--primary)",
+              border: "1px solid color-mix(in srgb, var(--primary) 28%, transparent)",
+              whiteSpace: "nowrap",
+            }}
+          >
+            {newCount} {newCount === 1 ? labels.newRecord : labels.newRecords}
+          </span>
+        )}
+        {abnormalCount > 0 && (
+          <span
+            style={{
+              display: "flex",
+              gap: 4,
+              alignItems: "center",
+              flexWrap: "nowrap",
+            }}
+          >
+            {labs.slice(0, 2).map((lab, i) => (
+              <span
+                key={`${lab.display_name}-${i}`}
+                style={{
+                  padding: "2px 7px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 600,
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  border: "1px solid var(--danger-border)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                {lab.display_name ?? "?"}{lab.value ? ` ${lab.value}` : ""}
+                {lab.unit ? ` ${lab.unit}` : ""}
+              </span>
+            ))}
+            {abnormalCount > 2 && (
+              <span
+                style={{
+                  padding: "2px 7px",
+                  borderRadius: 4,
+                  fontSize: 11,
+                  fontWeight: 700,
+                  background: "var(--danger-bg)",
+                  color: "var(--danger-text)",
+                  border: "1px solid var(--danger-border)",
+                  whiteSpace: "nowrap",
+                }}
+              >
+                +{abnormalCount - 2}
+              </span>
+            )}
+          </span>
+        )}
+      </span>
+
+      {/* Chevron */}
+      <svg
+        width="16"
+        height="16"
+        viewBox="0 0 16 16"
+        fill="none"
+        style={{ flexShrink: 0, color: "var(--muted)", opacity: 0.5 }}
+      >
+        <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
+      </svg>
+    </button>
+  );
+}
+
+function buildLabels(language: AppLanguage) {
+  if (language === "ro") {
     return {
-      band: "var(--danger-text)",
-      badgeBg: "var(--danger-bg)",
-      badgeText: "var(--danger-text)",
-      badgeBorder: "var(--danger-border)",
-      avatarBg: "linear-gradient(135deg, var(--danger-bg), var(--panel-2))",
-      avatarText: "var(--danger-text)",
-      border: "var(--danger-border)",
-      buttonBg: "linear-gradient(135deg, var(--danger-text), #ef4444)",
-      buttonText: "white",
-      glow: "rgba(220, 38, 38, 0.22)",
-      cardBg: "linear-gradient(180deg, var(--danger-bg) 0%, var(--panel) 42%)",
+      newRecords: "Documente noi",
+      newRecord: "Document nou",
+      noNewRecords: "Fără documente noi",
+      activeAdmission: "Internare activă",
+      abnormalUnreviewed: "Rezultate anormale nerevizuite",
+      searchPlaceholder: "Caută după nume, CNP sau ID pacient...",
+      searchAllPatients: "Caută toți pacienții",
+      totalUnderCare: "Pacienți în grijă",
+      patientsWithNewRecords: "Cu documente noi",
+      activeAdmissions: "Internări active",
+      abnormalAttention: "Cu rezultate anormale",
+      all: "Toți",
+      active: "Internați",
+      new: "Noi",
+      abnormal: "Anormale",
+      inactive: "Fără internare activă",
+      helper:
+        "Documentele noi sunt specifice medicului. În internare se afișează doar documentele noi din episodul curent; în ambulatoriu se afișează documentele nerevizuite ale pacienților alocați.",
     };
   }
-
-  if (item.care_context === "active_admission") {
-    return {
-      band: "var(--success-text)",
-      badgeBg: "var(--success-bg)",
-      badgeText: "var(--success-text)",
-      badgeBorder: "var(--success-border)",
-      avatarBg: "linear-gradient(135deg, var(--success-bg), var(--panel-2))",
-      avatarText: "var(--success-text)",
-      border: "var(--success-border)",
-      buttonBg: "linear-gradient(135deg, var(--success-text), #22c55e)",
-      buttonText: "white",
-      glow: "rgba(22, 163, 74, 0.2)",
-      cardBg: "linear-gradient(180deg, var(--success-bg) 0%, var(--panel) 42%)",
-    };
-  }
-
   return {
-    band: "var(--primary)",
-    badgeBg: "color-mix(in srgb, var(--primary) 16%, var(--panel-2))",
-    badgeText: "var(--primary)",
-    badgeBorder: "color-mix(in srgb, var(--primary) 38%, var(--border))",
-    avatarBg: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 24%, var(--panel-2)), var(--panel-2))",
-    avatarText: "var(--primary)",
-    border: "color-mix(in srgb, var(--primary) 30%, var(--border))",
-    buttonBg: "linear-gradient(135deg, var(--primary), color-mix(in srgb, var(--primary) 72%, #ffffff))",
-    buttonText: "white",
-    glow: "color-mix(in srgb, var(--primary) 24%, transparent)",
-    cardBg: "linear-gradient(180deg, color-mix(in srgb, var(--primary) 14%, var(--panel)) 0%, var(--panel) 44%)",
+    newRecords: "new records",
+    newRecord: "new record",
+    noNewRecords: "No new records",
+    activeAdmission: "Active admission",
+    abnormalUnreviewed: "Unreviewed abnormal results",
+    searchPlaceholder: "Search by name, CNP, or patient ID...",
+    searchAllPatients: "Search all patients",
+    totalUnderCare: "Patients under care",
+    patientsWithNewRecords: "With new records",
+    activeAdmissions: "Active admissions",
+    abnormalAttention: "With abnormal results",
+    all: "All",
+    active: "Active",
+    new: "New",
+    abnormal: "Abnormal",
+    inactive: "No active stay",
+    helper:
+      "New records are doctor-specific. Active admission doctors only see new records from the current stay; outpatient doctors see unreviewed records for their assigned patients.",
   };
 }
 
@@ -150,55 +362,7 @@ export default function MyPatientsPage() {
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  const labels = useMemo(() => {
-    if (language === "ro") {
-      return {
-        newRecords: "Documente noi",
-        newRecord: "Document nou",
-        noNewRecords: "Fără documente noi",
-        activeAdmission: "Internare activă",
-        abnormalUnreviewed: "Rezultate anormale nerevizuite",
-        searchPlaceholder: "Caută după nume, CNP sau ID pacient...",
-        patientDetails: "Detalii pacient",
-        openChart: "Deschide fișa",
-        searchAllPatients: "Caută toți pacienții",
-        totalUnderCare: "Pacienți în grijă",
-        patientsWithNewRecords: "Cu documente noi",
-        activeAdmissions: "Internări active",
-        abnormalAttention: "Cu rezultate anormale",
-        all: "Toți",
-        active: "Internați",
-        new: "Noi",
-        abnormal: "Anormale",
-        inactive: "Fără internare activă",
-        helper:
-          "Documentele noi sunt specifice medicului. În internare se afișează doar documentele noi din episodul curent; în ambulatoriu se afișează documentele nerevizuite ale pacienților alocați.",
-      };
-    }
-
-    return {
-      newRecords: "New records",
-      newRecord: "New record",
-      noNewRecords: "No new records",
-      activeAdmission: "Active admission",
-      abnormalUnreviewed: "Unreviewed abnormal results",
-      searchPlaceholder: "Search by name, CNP, or patient ID...",
-      patientDetails: "Patient details",
-      openChart: "Open chart",
-      searchAllPatients: "Search all patients",
-      totalUnderCare: "Patients under care",
-      patientsWithNewRecords: "With new records",
-      activeAdmissions: "Active admissions",
-      abnormalAttention: "With abnormal results",
-      all: "All",
-      active: "Active",
-      new: "New",
-      abnormal: "Abnormal",
-      inactive: "No active stay",
-      helper:
-        "New records are doctor-specific. Active admission doctors only see new records from the current stay; outpatient doctors see unreviewed records for their assigned patients.",
-    };
-  }, [language]);
+  const labels = useMemo(() => buildLabels(language), [language]);
 
   async function fetchData() {
     const [meResponse, patientsResponse] = await Promise.all([
@@ -227,7 +391,6 @@ export default function MyPatientsPage() {
         setLoading(false);
       }
     }
-
     init();
   }, []);
 
@@ -235,35 +398,20 @@ export default function MyPatientsPage() {
     const active = patients.filter((item) => item.active_event).length;
     const withNewRecords = patients.filter((item) => (item.new_records_count ?? 0) > 0).length;
     const abnormalPatients = patients.filter((item) => (item.abnormal_count ?? 0) > 0).length;
-
-    return {
-      total: patients.length,
-      active,
-      withNewRecords,
-      abnormalPatients,
-    };
+    return { total: patients.length, active, withNewRecords, abnormalPatients };
   }, [patients]);
 
   const filteredPatients = useMemo(() => {
     const term = query.trim().toLowerCase();
-
     return patients
       .filter((item) => {
         const newCount = item.new_records_count ?? 0;
         const abnormalCount = item.abnormal_count ?? 0;
-
         if (filterMode === "active" && !item.active_event) return false;
         if (filterMode === "inactive" && item.active_event) return false;
         if (filterMode === "new" && newCount <= 0) return false;
         if (filterMode === "abnormal" && abnormalCount <= 0) return false;
-
         if (!term) return true;
-
-        const abnormalNames = (item.latest_abnormal_labs ?? [])
-          .map((lab) => lab.display_name)
-          .filter(Boolean)
-          .join(" ");
-
         const haystack = [
           item.patient.full_name,
           item.patient.date_of_birth,
@@ -273,12 +421,11 @@ export default function MyPatientsPage() {
           item.patient.patient_identifier,
           item.active_event?.title,
           getCareLabel(item),
-          abnormalNames,
+          ...(item.latest_abnormal_labs ?? []).map((l) => l.display_name),
         ]
           .filter(Boolean)
           .join(" ")
           .toLowerCase();
-
         return haystack.includes(term);
       })
       .sort((a, b) => {
@@ -286,46 +433,23 @@ export default function MyPatientsPage() {
         const bAbnormal = b.abnormal_count ?? 0;
         const aNew = a.new_records_count ?? 0;
         const bNew = b.new_records_count ?? 0;
-
         if (a.active_event && !b.active_event) return -1;
         if (!a.active_event && b.active_event) return 1;
         if (aAbnormal > 0 && bAbnormal === 0) return -1;
         if (aAbnormal === 0 && bAbnormal > 0) return 1;
         if (aNew > 0 && bNew === 0) return -1;
         if (aNew === 0 && bNew > 0) return 1;
-
         return a.patient.full_name.localeCompare(b.patient.full_name);
       });
   }, [patients, query, filterMode]);
-
-  function getFilterLabel(mode: FilterMode) {
-    if (mode === "all") return labels.all;
-    if (mode === "active") return labels.active;
-    if (mode === "new") return labels.new;
-    if (mode === "abnormal") return labels.abnormal;
-    return labels.inactive;
-  }
 
   if (loading || !currentUser) {
     return (
       <main
         className="app-page-bg"
-        style={{
-          minHeight: "100vh",
-          padding: 24,
-          display: "grid",
-          placeItems: "center",
-        }}
+        style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}
       >
-        <div
-          className="soft-card-tight"
-          style={{
-            padding: 22,
-            display: "flex",
-            alignItems: "center",
-            gap: 12,
-          }}
-        >
+        <div className="soft-card-tight" style={{ padding: 22, display: "flex", alignItems: "center", gap: 12 }}>
           <Spinner size={20} />
           <span className="muted-text">{t("loadingPatients")}</span>
         </div>
@@ -359,6 +483,7 @@ export default function MyPatientsPage() {
         </div>
       )}
 
+      {/* Stat strip */}
       <div
         style={{
           display: "grid",
@@ -371,23 +496,21 @@ export default function MyPatientsPage() {
           <div className="stat-card-label">{labels.totalUnderCare}</div>
           <div className="stat-card-value">{stats.total}</div>
         </div>
-
         <div className="stat-card stat-card-accent-blue">
           <div className="stat-card-label">{labels.patientsWithNewRecords}</div>
           <div className="stat-card-value">{stats.withNewRecords}</div>
         </div>
-
         <div className="stat-card stat-card-accent-green">
           <div className="stat-card-label">{labels.activeAdmissions}</div>
           <div className="stat-card-value">{stats.active}</div>
         </div>
-
         <div className="stat-card stat-card-accent-orange">
           <div className="stat-card-label">{labels.abnormalAttention}</div>
           <div className="stat-card-value">{stats.abnormalPatients}</div>
         </div>
       </div>
 
+      {/* Patient list */}
       <div className="soft-card" style={{ padding: 24 }}>
         <div
           style={{
@@ -401,26 +524,34 @@ export default function MyPatientsPage() {
         >
           <div>
             <div className="section-title">{t("patientList")}</div>
-            <div className="muted-text" style={{ marginTop: 6, maxWidth: 740, lineHeight: 1.6 }}>
+            <div className="muted-text" style={{ marginTop: 6, maxWidth: 680, lineHeight: 1.6 }}>
               {labels.helper}
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            {(["all", "active", "new", "abnormal", "inactive"] as FilterMode[]).map((mode) => (
-              <button
-                key={mode}
-                type="button"
-                className={filterMode === mode ? "primary-btn" : "secondary-btn"}
-                onClick={() => setFilterMode(mode)}
-              >
-                {getFilterLabel(mode)}
-              </button>
-            ))}
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
+            {(["all", "active", "new", "abnormal", "inactive"] as FilterMode[]).map((mode) => {
+              const label =
+                mode === "all" ? labels.all :
+                mode === "active" ? labels.active :
+                mode === "new" ? labels.new :
+                mode === "abnormal" ? labels.abnormal :
+                labels.inactive;
+              return (
+                <button
+                  key={mode}
+                  type="button"
+                  className={filterMode === mode ? "primary-btn" : "secondary-btn"}
+                  onClick={() => setFilterMode(mode)}
+                >
+                  {label}
+                </button>
+              );
+            })}
           </div>
         </div>
 
-        <div style={{ marginBottom: 22 }}>
+        <div style={{ marginBottom: 16 }}>
           <input
             className="text-input"
             value={query}
@@ -429,286 +560,29 @@ export default function MyPatientsPage() {
           />
         </div>
 
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fill, minmax(290px, 1fr))",
-            gap: 20,
-          }}
-        >
-          {filteredPatients.map((item) => {
-            const abnormalCount = item.abnormal_count ?? 0;
-            const newCount = item.new_records_count ?? 0;
-            const latestAbnormalLabs = item.latest_abnormal_labs ?? [];
-            const theme = getCardTheme(item);
-
-            return (
-              <article
-                key={item.patient.id}
-                className="soft-card-tight"
-                style={{
-                  padding: 0,
-                  minHeight: 440,
-                  borderRadius: 32,
-                  borderColor: theme.border,
-                  background: theme.cardBg,
-                  display: "grid",
-                  gridTemplateRows: "auto auto 1fr auto",
-                  gap: 14,
-                  position: "relative",
-                  overflow: "hidden",
-                  boxShadow: `0 22px 55px ${theme.glow}`,
-                }}
-              >
-                <div style={{ height: 9, background: theme.band }} />
-
-                {abnormalCount > 0 && (
-                  <span
-                    title={labels.abnormalUnreviewed}
-                    style={{
-                      position: "absolute",
-                      top: 23,
-                      right: 18,
-                      width: 14,
-                      height: 14,
-                      borderRadius: 999,
-                      background: "var(--danger-text)",
-                      boxShadow: "0 0 0 6px var(--danger-bg)",
-                    }}
-                  />
-                )}
-
-                <div
-                  style={{
-                    padding: "12px 18px 0",
-                    display: "grid",
-                    gap: 14,
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "flex",
-                      justifyContent: "space-between",
-                      gap: 10,
-                      alignItems: "center",
-                      paddingRight: abnormalCount > 0 ? 28 : 0,
-                    }}
-                  >
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        padding: "8px 11px",
-                        borderRadius: 999,
-                        background: theme.badgeBg,
-                        color: theme.badgeText,
-                        border: `1px solid ${theme.badgeBorder}`,
-                        fontWeight: 950,
-                        fontSize: 12,
-                      }}
-                    >
-                      {getCareLabel(item)}
-                    </span>
-
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        padding: "8px 11px",
-                        borderRadius: 999,
-                        background: theme.badgeBg,
-                        color: theme.badgeText,
-                        border: `1px solid ${theme.badgeBorder}`,
-                        fontWeight: 950,
-                        fontSize: 12,
-                      }}
-                    >
-                      {newCount > 0
-                        ? `${newCount} ${newCount === 1 ? labels.newRecord : labels.newRecords}`
-                        : labels.noNewRecords}
-                    </span>
-                  </div>
-
-                  <div style={{ textAlign: "center", padding: "4px 6px 0" }}>
-                    <div
-                      style={{
-                        width: 96,
-                        height: 96,
-                        borderRadius: 32,
-                        margin: "0 auto 15px",
-                        display: "grid",
-                        placeItems: "center",
-                        background: theme.avatarBg,
-                        color: theme.avatarText,
-                        border: `1px solid ${theme.badgeBorder}`,
-                        fontSize: 30,
-                        fontWeight: 950,
-                        letterSpacing: "-0.08em",
-                        boxShadow: `0 18px 38px ${theme.glow}, inset 0 1px 0 rgba(255,255,255,0.4)`,
-                      }}
-                    >
-                      {getInitials(item.patient.full_name)}
-                    </div>
-
-                    <div
-                      style={{
-                        fontWeight: 950,
-                        fontSize: 24,
-                        letterSpacing: "-0.055em",
-                        lineHeight: 1.05,
-                      }}
-                    >
-                      {item.patient.full_name}
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 8, fontSize: 13, lineHeight: 1.6 }}>
-                      {t("age")} {valueOrDash(item.patient.age)} · {t("sex")} {valueOrDash(item.patient.sex)}
-                    </div>
-                  </div>
-
-                  <div style={{ display: "grid", gap: 10, alignContent: "start" }}>
-                    <div
-                      style={{
-                        padding: 13,
-                        borderRadius: 20,
-                        background: "color-mix(in srgb, var(--panel-2) 88%, var(--primary))",
-                        border: `1px solid ${theme.badgeBorder}`,
-                      }}
-                    >
-                      <div
-                        className="muted-text"
-                        style={{
-                          fontSize: 11,
-                          fontWeight: 950,
-                          textTransform: "uppercase",
-                          letterSpacing: "0.05em",
-                        }}
-                      >
-                        {labels.patientDetails}
-                      </div>
-
-                      <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.75, fontSize: 13 }}>
-                        {t("dob")} {valueOrDash(item.patient.date_of_birth)}
-                        <br />
-                        CNP {valueOrDash(item.patient.cnp)}
-                        <br />
-                        ID {valueOrDash(item.patient.patient_identifier)}
-                      </div>
-                    </div>
-
-                    {item.active_event && (
-                      <div
-                        style={{
-                          padding: 13,
-                          borderRadius: 20,
-                          background: "var(--success-bg)",
-                          color: "var(--success-text)",
-                          border: "1px solid var(--success-border)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 950,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          {labels.activeAdmission}
-                        </div>
-                        <div style={{ marginTop: 7, fontWeight: 900, lineHeight: 1.35 }}>
-                          {item.active_event.title}
-                        </div>
-                        <div style={{ marginTop: 6, fontSize: 12, opacity: 0.82 }}>
-                          {t("admitted")} {valueOrDash(item.active_event.admitted_at)}
-                        </div>
-                      </div>
-                    )}
-
-                    {latestAbnormalLabs.length > 0 && (
-                      <div
-                        style={{
-                          padding: 13,
-                          borderRadius: 20,
-                          background: "var(--danger-bg)",
-                          color: "var(--danger-text)",
-                          border: "1px solid var(--danger-border)",
-                        }}
-                      >
-                        <div
-                          style={{
-                            fontSize: 11,
-                            fontWeight: 950,
-                            textTransform: "uppercase",
-                            letterSpacing: "0.05em",
-                          }}
-                        >
-                          {labels.abnormalUnreviewed}
-                        </div>
-
-                        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginTop: 8 }}>
-                          {latestAbnormalLabs.slice(0, 3).map((lab, index) => (
-                            <span
-                              key={`${lab.display_name}-${index}`}
-                              style={{
-                                display: "inline-flex",
-                                padding: "6px 8px",
-                                borderRadius: 999,
-                                background: "var(--panel)",
-                                color: "var(--danger-text)",
-                                border: "1px solid var(--danger-border)",
-                                fontWeight: 850,
-                                fontSize: 11,
-                              }}
-                            >
-                              {valueOrDash(lab.display_name)} {valueOrDash(lab.value)}
-                              {lab.unit ? ` ${lab.unit}` : ""}
-                            </span>
-                          ))}
-                        </div>
-                      </div>
-                    )}
-                  </div>
-                </div>
-
-                <button
-                  type="button"
-                  onClick={() => router.push(`/patients/${item.patient.id}`)}
-                  style={{
-                    width: "calc(100% - 36px)",
-                    margin: "0 18px 18px",
-                    justifyContent: "center",
-                    padding: "15px 16px",
-                    borderRadius: 20,
-                    fontWeight: 950,
-                    border: "1px solid color-mix(in srgb, var(--primary) 65%, var(--border))",
-                    background: theme.buttonBg,
-                    color: theme.buttonText,
-                    boxShadow: `0 16px 34px ${theme.glow}`,
-                    cursor: "pointer",
-                  }}
-                >
-                  {labels.openChart}
-                </button>
-              </article>
-            );
-          })}
+        {/* Dense row list */}
+        <div style={{ borderTop: "1px solid var(--border)" }}>
+          {filteredPatients.map((item) => (
+            <PatientRow
+              key={item.patient.id}
+              item={item}
+              labels={labels}
+              language={language}
+              onClick={() => router.push(`/patients/${item.patient.id}`)}
+            />
+          ))}
 
           {!filteredPatients.length && (
-            <div
-              className="soft-card-tight"
-              style={{
-                padding: 22,
-                background: "var(--panel-2)",
-                gridColumn: "1 / -1",
-              }}
-            >
-              <div style={{ fontWeight: 900 }}>{t("noPatientsMatch")}</div>
-              <div className="muted-text" style={{ marginTop: 8 }}>
+            <div style={{ padding: "32px 0", textAlign: "center" }}>
+              <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
+                {t("noPatientsMatch")}
+              </div>
+              <div className="muted-text" style={{ marginBottom: 16 }}>
                 {t("noPatientsMatchDesc")}
               </div>
               <button
                 type="button"
                 className="primary-btn"
-                style={{ marginTop: 16 }}
                 onClick={() => router.push("/patients/search")}
               >
                 {labels.searchAllPatients}

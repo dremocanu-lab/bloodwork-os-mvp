@@ -11,13 +11,14 @@ from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPE
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
-from sqlalchemy import or_, text
+from sqlalchemy import func, or_, text
 from sqlalchemy.orm import Session
 
 from app import models
 from app.auth import create_access_token, decode_access_token, hash_password, verify_password
 from app.db import SessionLocal, engine
 from app.services.document_pipeline import process_uploaded_document
+from app.services.lab_catalog import find_lab_definition
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 
 app = FastAPI()
@@ -151,6 +152,7 @@ def ensure_patient_for_user(db: Session, user):
     patient = get_patient_for_user(db, user.id)
 
     if patient:
+        _ensure_patient_code(db, patient.id)
         return patient
 
     patient = models.Patient(
@@ -166,7 +168,21 @@ def ensure_patient_for_user(db: Session, user):
     db.add(patient)
     db.commit()
     db.refresh(patient)
+    _ensure_patient_code(db, patient.id)
     return patient
+
+
+def _ensure_patient_code(db: Session, patient_id: int) -> str:
+    existing = db.query(models.PatientCarePartnerCode).filter(
+        models.PatientCarePartnerCode.patient_id == patient_id
+    ).first()
+    if existing:
+        return existing.code
+    code = _generate_unique_care_partner_code(db)
+    record = models.PatientCarePartnerCode(patient_id=patient_id, code=code, created_at=now_iso())
+    db.add(record)
+    db.commit()
+    return code
 
     return patient
 
@@ -443,6 +459,10 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
 
     doctor_access = [serialize_doctor_access(link) for link in patient.doctor_access_links]
 
+    code_record = db.query(models.PatientCarePartnerCode).filter(
+        models.PatientCarePartnerCode.patient_id == patient.id
+    ).first()
+
     return {
         "patient": {
             "id": patient.id,
@@ -452,6 +472,7 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
             "sex": patient.sex,
             "cnp": patient.cnp,
             "patient_identifier": patient.patient_identifier,
+            "care_partner_code": code_record.code if code_record else None,
         },
         "sections": grouped_documents,
         "doctor_access": doctor_access,
@@ -900,6 +921,8 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         )
         db.add(patient)
         db.commit()
+        db.refresh(patient)
+        _ensure_patient_code(db, patient.id)
 
     if payload.role == "care_partner":
         if not payload.care_partner_code:
@@ -1357,11 +1380,16 @@ def search_patients(
     results = []
 
     for patient in patients:
+        code_record = db.query(models.PatientCarePartnerCode).filter(
+            models.PatientCarePartnerCode.patient_id == patient.id
+        ).first()
+        patient_code = (code_record.code or "").lower() if code_record else ""
+
         haystack = " ".join(
             [
                 (patient.full_name or "").lower(),
-                (patient.cnp or "").lower(),
                 (patient.patient_identifier or "").lower(),
+                patient_code,
             ]
         )
 
@@ -1393,6 +1421,7 @@ def search_patients(
                 "sex": patient.sex,
                 "cnp": patient.cnp,
                 "patient_identifier": patient.patient_identifier,
+                "care_partner_code": code_record.code if code_record else None,
                 "has_access": has_access,
                 "pending_request": pending_request,
             }
@@ -1416,6 +1445,61 @@ def get_patient_profile(
         raise HTTPException(status_code=403, detail="Forbidden")
 
     return build_patient_profile_response(db, patient, current_user)
+
+
+@app.delete("/my/account")
+def delete_my_account(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+
+    if patient:
+        docs = db.query(models.Document).filter(models.Document.patient_id == patient.id).all()
+        doc_ids = [d.id for d in docs]
+
+        if doc_ids:
+            db.query(models.SharedStructuredPage).filter(
+                models.SharedStructuredPage.document_id.in_(doc_ids)
+            ).delete(synchronize_session=False)
+            db.query(models.DoctorDocumentReview).filter(
+                models.DoctorDocumentReview.document_id.in_(doc_ids)
+            ).delete(synchronize_session=False)
+            db.query(models.UploadJob).filter(
+                models.UploadJob.document_id.in_(doc_ids)
+            ).delete(synchronize_session=False)
+
+        db.query(models.UploadJob).filter(
+            models.UploadJob.patient_id == patient.id,
+            models.UploadJob.document_id.is_(None),
+        ).delete(synchronize_session=False)
+
+        for doc in docs:
+            db.delete(doc)
+        db.flush()
+
+        db.query(models.DoctorPatientAccessRequest).filter(
+            models.DoctorPatientAccessRequest.patient_id == patient.id
+        ).delete(synchronize_session=False)
+        db.query(models.DoctorPatientAccess).filter(
+            models.DoctorPatientAccess.patient_id == patient.id
+        ).delete(synchronize_session=False)
+        db.query(models.CarePartnerPatientLink).filter(
+            models.CarePartnerPatientLink.patient_id == patient.id
+        ).delete(synchronize_session=False)
+        db.query(models.PatientCarePartnerCode).filter(
+            models.PatientCarePartnerCode.patient_id == patient.id
+        ).delete(synchronize_session=False)
+        db.query(models.PatientEvent).filter(
+            models.PatientEvent.patient_id == patient.id
+        ).delete(synchronize_session=False)
+
+        db.delete(patient)
+        db.flush()
+
+    db.delete(current_user)
+    db.commit()
+    return {"deleted": True}
 
 
 @app.delete("/my/access/{doctor_user_id}")
@@ -2125,6 +2209,16 @@ def regenerate_care_partner_code(
     db.commit()
     db.refresh(code_record)
 
+    log = models.AdminActionLog(
+        admin_user_id=current_user.id,
+        action="patient_code_regenerated",
+        patient_id=patient.id,
+        timestamp=now_iso(),
+        details=f"Patient regenerated their access code. New code: {new_code}",
+    )
+    db.add(log)
+    db.commit()
+
     return {"code": code_record.code, "created_at": code_record.created_at}
 
 
@@ -2347,25 +2441,30 @@ def admin_search_patients(
     term = f"%{q.strip()}%"
     patients = (
         db.query(models.Patient)
+        .outerjoin(models.PatientCarePartnerCode, models.PatientCarePartnerCode.patient_id == models.Patient.id)
         .filter(
             or_(
                 models.Patient.full_name.ilike(term),
-                models.Patient.cnp.ilike(term),
+                models.PatientCarePartnerCode.code.ilike(term),
             )
         )
         .limit(30)
         .all()
     )
-    return [
-        {
+    results = []
+    for p in patients:
+        code_rec = db.query(models.PatientCarePartnerCode).filter(
+            models.PatientCarePartnerCode.patient_id == p.id
+        ).first()
+        results.append({
             "id": p.id,
             "full_name": p.full_name,
             "date_of_birth": p.date_of_birth,
             "cnp": p.cnp,
             "patient_identifier": p.patient_identifier,
-        }
-        for p in patients
-    ]
+            "care_partner_code": code_rec.code if code_rec else None,
+        })
+    return results
 
 
 @app.get("/admin/doctors")
@@ -2647,3 +2746,53 @@ def link_patient(
     }
 
     return serialize_patient_event(event)
+
+
+@app.get("/admin/analyte-gaps")
+def admin_analyte_gaps(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("admin")),
+):
+    """
+    Return distinct canonical_name values from lab_results that have no match
+    in the Python lab catalog, ordered by occurrence count descending.
+    """
+    rows = (
+        db.query(
+            models.LabResult.canonical_name,
+            func.count(models.LabResult.id).label("count"),
+            func.max(models.LabResult.document_id).label("last_document_id"),
+        )
+        .filter(models.LabResult.canonical_name.isnot(None))
+        .filter(models.LabResult.canonical_name != "")
+        .group_by(models.LabResult.canonical_name)
+        .order_by(func.count(models.LabResult.id).desc())
+        .all()
+    )
+
+    gaps = []
+    for row in rows:
+        canonical = row.canonical_name
+        if find_lab_definition(canonical) is not None:
+            continue
+
+        raw_names_rows = (
+            db.query(models.LabResult.raw_test_name)
+            .filter(
+                models.LabResult.canonical_name == canonical,
+                models.LabResult.raw_test_name.isnot(None),
+            )
+            .distinct()
+            .limit(6)
+            .all()
+        )
+        raw_names = [r.raw_test_name for r in raw_names_rows if r.raw_test_name]
+
+        gaps.append({
+            "canonical_name": canonical,
+            "raw_names": raw_names,
+            "count": row.count,
+            "last_document_id": row.last_document_id,
+        })
+
+    return gaps

@@ -49,8 +49,8 @@ type HistoryEntry = {
 
 function maskCnp(cnp?: string | null): string {
   if (!cnp) return "—";
-  if (cnp.length <= 6) return cnp;
-  return cnp.slice(0, 6) + "•".repeat(cnp.length - 6);
+  if (cnp.length <= 4) return cnp;
+  return "•".repeat(cnp.length - 4) + cnp.slice(-4);
 }
 
 function formatDate(v?: string | null) {

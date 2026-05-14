@@ -23,9 +23,16 @@ type SearchPatient = {
   sex?: string | null;
   cnp?: string | null;
   patient_identifier?: string | null;
+  care_partner_code?: string | null;
   has_access: boolean;
   pending_request: boolean;
 };
+
+function maskCnp(cnp?: string | null): string {
+  if (!cnp) return "—";
+  if (cnp.length <= 4) return cnp;
+  return "•".repeat(cnp.length - 4) + cnp.slice(-4);
+}
 
 type AdminDoctor = {
   id: number;
@@ -90,11 +97,11 @@ function getInitials(name: string) {
 function PatientIdentityBlock({ patient, labels }: { patient: SearchPatient; labels: Record<string, string> }) {
   return (
     <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
-      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.cnp}</span>{" "}
-      {valueOrDash(patient.cnp)}
+      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.patientCode}</span>{" "}
+      {valueOrDash(patient.care_partner_code)}
       <br />
-      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.patientId}</span>{" "}
-      {valueOrDash(patient.patient_identifier)}
+      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.cnp}</span>{" "}
+      {maskCnp(patient.cnp)}
     </div>
   );
 }
@@ -121,16 +128,16 @@ export default function SearchPatientsPage() {
         searching: "Se caută...",
         findPatient: "Caută pacient",
         findPatientDesc:
-          "Caută după nume, CNP, dată de naștere sau ID pacient. Rezultatele apar ca listă pentru scanare rapidă.",
-        searchPlaceholder: "Nume, CNP, dată naștere sau ID pacient...",
+          "Caută după nume sau cod pacient (BW-XXXX-XXXX). Rezultatele apar ca listă pentru scanare rapidă.",
+        searchPlaceholder: "Nume sau cod pacient (BW-XXXX-XXXX)...",
         results: "Rezultate",
         startWithSearch: "Începe cu o căutare",
-        noPatientsShownUntilSearch: "Introdu un nume, CNP, dată de naștere sau ID pacient pentru rezultate.",
+        noPatientsShownUntilSearch: "Introdu un nume sau codul pacientului pentru rezultate.",
         noMatchingPatients: "Nu am găsit pacienți",
-        tryAnotherPatientSearch: "Încearcă alt nume, CNP, dată de naștere sau ID.",
+        tryAnotherPatientSearch: "Încearcă alt nume sau cod pacient.",
         onePatientFound: "1 pacient găsit",
         patientsFound: "pacienți găsiți",
-        searchByNameCnpId: "Caută după nume, CNP sau ID",
+        searchByNameCnpId: "Caută după nume sau cod pacient",
         openChart: "Deschide fișa",
         requestAccess: "Cere acces",
         requesting: "Se trimite...",
@@ -143,6 +150,7 @@ export default function SearchPatientsPage() {
         access: "Acces",
         actions: "Acțiuni",
         cnp: "CNP",
+        patientCode: "Cod pacient",
         patientId: "ID pacient",
         accessApproved: "Acces aprobat",
         requestPending: "Cerere în așteptare",
@@ -151,7 +159,7 @@ export default function SearchPatientsPage() {
         noDoctorAssignedDepartment: "Fără medic alocat în departamentul tău",
         activeAdmissionColon: "Internare activă:",
         adminSubtitle: "Caută pacienți și gestionează alocările din spitalul și departamentul tău.",
-        doctorSubtitle: "Caută pacienți, vezi CNP-ul, deschide fișele la care ai acces sau cere acces.",
+        doctorSubtitle: "Caută pacienți după nume sau cod, deschide fișele la care ai acces sau cere acces.",
         backToMyPatients: "Înapoi la pacienții mei",
       };
     }
@@ -161,16 +169,16 @@ export default function SearchPatientsPage() {
       searching: "Searching...",
       findPatient: "Find patient",
       findPatientDesc:
-        "Search by name, CNP, date of birth, or patient ID. Results are shown as a compact list for fast scanning.",
-      searchPlaceholder: "Name, CNP, date of birth, or patient ID...",
+        "Search by name or patient code (BW-XXXX-XXXX). Results are shown as a compact list for fast scanning.",
+      searchPlaceholder: "Name or patient code (BW-XXXX-XXXX)...",
       results: "Results",
       startWithSearch: "Start with a search",
-      noPatientsShownUntilSearch: "Enter a name, CNP, date of birth, or patient ID to show matching patients.",
+      noPatientsShownUntilSearch: "Enter a name or patient code to show matching patients.",
       noMatchingPatients: "No matching patients",
-      tryAnotherPatientSearch: "Try another name, CNP, date of birth, or patient ID.",
+      tryAnotherPatientSearch: "Try another name or patient code.",
       onePatientFound: "1 patient found",
       patientsFound: "patients found",
-      searchByNameCnpId: "Search by name, CNP, or ID",
+      searchByNameCnpId: "Search by name or patient code",
       openChart: "Open chart",
       requestAccess: "Request access",
       requesting: "Requesting...",
@@ -183,6 +191,7 @@ export default function SearchPatientsPage() {
       access: "Access",
       actions: "Actions",
       cnp: "CNP",
+      patientCode: "Patient code",
       patientId: "Patient ID",
       accessApproved: "Access approved",
       requestPending: "Request pending",
@@ -191,7 +200,7 @@ export default function SearchPatientsPage() {
       noDoctorAssignedDepartment: "No doctor assigned in your department",
       activeAdmissionColon: "Active admission:",
       adminSubtitle: "Search patients and manage assignments within your hospital and department.",
-      doctorSubtitle: "Search patients, see CNP, open charts you can access, or request access.",
+      doctorSubtitle: "Search patients by name or code, open charts you can access, or request access.",
       backToMyPatients: "Back to my patients",
     };
   }, [language]);

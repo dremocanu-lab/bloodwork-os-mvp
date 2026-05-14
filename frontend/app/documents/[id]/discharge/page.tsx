@@ -301,7 +301,7 @@ function SegmentedControl({
 }
 
 function StatusDot({ verified, t }: { verified: boolean; t: (k: string) => string }) {
-  const color = verified ? "var(--success-text)" : "var(--warn-text)";
+  const color = verified ? "var(--success-text)" : "var(--muted)";
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
       <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }} />

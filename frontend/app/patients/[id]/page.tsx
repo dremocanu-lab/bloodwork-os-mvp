@@ -1,4 +1,4 @@
-﻿"use client";
+"use client";
 
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
@@ -6,6 +6,9 @@ import AppShell from "@/components/app-shell";
 import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import { formatPatientAge } from "@/lib/patient-age";
+import type { BloodworkTrend, TrendPoint } from "@/lib/analytes/types";
+import { enrichBloodworkTrend } from "@/lib/analytes/match";
 
 type CurrentUser = {
   id: number;
@@ -97,28 +100,6 @@ type PatientProfileResponse = {
   events?: PatientEvent[];
 };
 
-type TrendPoint = {
-  document_id: number;
-  date: string;
-  value: number;
-  value_display: string;
-  flag?: string | null;
-  report_name?: string | null;
-  reference_range?: string | null;
-};
-
-type BloodworkTrend = {
-  test_key: string;
-  display_name: string;
-  canonical_name?: string | null;
-  category?: string | null;
-  unit?: string | null;
-  latest: TrendPoint;
-  previous?: TrendPoint | null;
-  delta?: number | null;
-  points: TrendPoint[];
-};
-
 type TimelineItem = {
   id: string;
   type: "document" | "event";
@@ -152,26 +133,21 @@ const SECTION_ORDER = [
 
 type SectionKey = (typeof SECTION_ORDER)[number];
 
+// ── Helpers ───────────────────────────────────────────────────────────────────
+
 function Spinner({ size = 18 }: { size?: number }) {
   return (
     <>
       <style jsx>{`
-        @keyframes bloodworkSpin {
-          to {
-            transform: rotate(360deg);
-          }
-        }
-
+        @keyframes bloodworkSpin { to { transform: rotate(360deg); } }
         .bloodwork-spinner {
-          width: ${size}px;
-          height: ${size}px;
+          width: ${size}px; height: ${size}px;
           border-radius: 999px;
           border: 2px solid var(--border);
           border-top-color: var(--primary);
           animation: bloodworkSpin 0.8s linear infinite;
         }
       `}</style>
-
       <span className="bloodwork-spinner" />
     </>
   );
@@ -179,18 +155,11 @@ function Spinner({ size = 18 }: { size?: number }) {
 
 function parseDateTime(value?: string | null) {
   if (!value) return 0;
-
   const normalized = value.trim();
   const direct = new Date(normalized).getTime();
-
   if (!Number.isNaN(direct)) return direct;
-
-  const match = normalized.match(
-    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
-  );
-
+  const match = normalized.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
   if (!match) return 0;
-
   const day = Number(match[1]);
   const month = Number(match[2]);
   const rawYear = Number(match[3]);
@@ -198,74 +167,34 @@ function parseDateTime(value?: string | null) {
   const hour = match[4] ? Number(match[4]) : 0;
   const minute = match[5] ? Number(match[5]) : 0;
   const parsed = new Date(year, month - 1, day, hour, minute).getTime();
-
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function compareDatesDescending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
-
   if (aTime || bTime) return bTime - aTime;
-
   return (b || "").localeCompare(a || "");
 }
 
 function compareDatesAscending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
-
   if (aTime || bTime) return aTime - bTime;
-
   return (a || "").localeCompare(b || "");
 }
 
 function formatDate(value?: string | null) {
   if (!value) return "—";
-
   const time = parseDateTime(value);
-
   if (!time) return value;
-
-  return new Date(time).toLocaleDateString(undefined, {
-    day: "2-digit",
-    month: "short",
-    year: "numeric",
-  });
+  return new Date(time).toLocaleDateString(undefined, { day: "2-digit", month: "short", year: "numeric" });
 }
 
 function getYear(value?: string | null) {
   const time = parseDateTime(value);
-
   if (!time) return "";
-
   return String(new Date(time).getFullYear());
-}
-
-function calculateAgeFromDob(dateOfBirth?: string | null) {
-  if (!dateOfBirth) return "—";
-
-  const dob = new Date(dateOfBirth);
-
-  if (Number.isNaN(dob.getTime())) return "—";
-
-  const today = new Date();
-
-  let years = today.getFullYear() - dob.getFullYear();
-  let months = today.getMonth() - dob.getMonth();
-
-  if (today.getDate() < dob.getDate()) {
-    months -= 1;
-  }
-
-  if (months < 0) {
-    years -= 1;
-    months += 12;
-  }
-
-  if (years < 0) return "—";
-
-  return `${years}y ${months}m`;
 }
 
 function normalizeProfile(profile: PatientProfileResponse): PatientProfileResponse {
@@ -302,23 +231,9 @@ function sectionLabel(section: string) {
 
 function getDocumentClinicalDate(doc: DocumentCard) {
   if (doc.section === "discharge_summary") {
-    return (
-      doc.reported_on ||
-      doc.collected_on ||
-      doc.generated_on ||
-      doc.created_at ||
-      ""
-    );
+    return doc.reported_on || doc.collected_on || doc.generated_on || doc.created_at || "";
   }
-  return (
-    doc.collected_on ||
-    doc.test_date ||
-    doc.reported_on ||
-    doc.registered_on ||
-    doc.generated_on ||
-    doc.created_at ||
-    ""
-  );
+  return doc.collected_on || doc.test_date || doc.reported_on || doc.registered_on || doc.generated_on || doc.created_at || "";
 }
 
 function getDocumentDateLabel(doc: DocumentCard) {
@@ -345,11 +260,7 @@ function getDocumentTitle(doc: DocumentCard) {
 
 function getUploaderText(doc: DocumentCard) {
   if (!doc.uploaded_by) return "Uploaded by unknown user";
-
-  const details = [doc.uploaded_by.full_name, doc.uploaded_by.department, doc.uploaded_by.hospital_name].filter(
-    Boolean
-  );
-
+  const details = [doc.uploaded_by.full_name, doc.uploaded_by.department, doc.uploaded_by.hospital_name].filter(Boolean);
   return `Uploaded by ${details.join(" · ")}`;
 }
 
@@ -357,16 +268,12 @@ function isDischargeDocument(doc: DocumentCard | TimelineItem) {
   return (
     doc.section === "discharge_summary" ||
     ("section" in doc && doc.section === "hospitalizations") ||
-    ("report_type" in doc &&
-      (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
+    ("report_type" in doc && (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
   );
 }
 
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
-  if (isDischargeDocument(doc)) {
-    return `/documents/${documentId}/discharge`;
-  }
-
+  if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
   return `/documents/${documentId}`;
 }
 
@@ -374,142 +281,55 @@ function isInsideDateRange(date?: string | null, start?: string | null, end?: st
   const dateTime = parseDateTime(date);
   const startTime = parseDateTime(start);
   const endTime = parseDateTime(end);
-
   if (!dateTime || !startTime) return false;
-
-  if (!endTime) {
-    return dateTime >= startTime;
-  }
-
+  if (!endTime) return dateTime >= startTime;
   return dateTime >= startTime && dateTime <= endTime;
 }
 
 function getRecentTrendPoints(points: TrendPoint[]) {
-  return [...points]
-    .sort((a, b) => compareDatesAscending(a.date, b.date))
-    .slice(-TREND_POINT_LIMIT);
+  return [...points].sort((a, b) => compareDatesAscending(a.date, b.date)).slice(-TREND_POINT_LIMIT);
 }
 
-function StatCard({ label, value, note }: { label: string; value: string | number; note?: string }) {
-  return (
-    <div className="soft-card-tight" style={{ padding: 18 }}>
-      <div className="muted-text" style={{ fontSize: 12, fontWeight: 850 }}>
-        {label}
-      </div>
+// ── Sub-components ────────────────────────────────────────────────────────────
 
-      <div
-        style={{
-          fontSize: 30,
-          fontWeight: 950,
-          letterSpacing: "-0.06em",
-          marginTop: 8,
-        }}
-      >
-        {value}
-      </div>
-
-      {note && (
-        <div className="muted-text" style={{ marginTop: 6, fontSize: 12, lineHeight: 1.45 }}>
-          {note}
-        </div>
-      )}
-    </div>
-  );
-}
-
-function SectionPill({
-  active,
-  label,
-  count,
-  onClick,
-}: {
-  active: boolean;
-  label: string;
-  count: number;
-  onClick: () => void;
-}) {
+function SectionPill({ active, label, count, onClick }: { active: boolean; label: string; count: number; onClick: () => void }) {
   return (
     <button
       type="button"
       onClick={onClick}
       className={active ? "primary-btn" : "secondary-btn"}
-      style={{
-        borderRadius: 999,
-        padding: "10px 14px",
-        fontWeight: 900,
-        display: "inline-flex",
-        alignItems: "center",
-        gap: 8,
-      }}
+      style={{ borderRadius: 999, padding: "8px 14px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 7 }}
     >
       <span>{label}</span>
-
       <span
         style={{
-          minWidth: 22,
-          height: 22,
-          padding: "0 7px",
-          borderRadius: 999,
-          display: "grid",
-          placeItems: "center",
+          minWidth: 20, height: 20, padding: "0 6px", borderRadius: 999,
+          display: "grid", placeItems: "center",
           background: active ? "rgba(255,255,255,0.18)" : "var(--panel-2)",
           border: active ? "1px solid rgba(255,255,255,0.22)" : "1px solid var(--border)",
-          fontSize: 12,
-          lineHeight: 1,
+          fontSize: 11, lineHeight: 1,
         }}
-      >
-        {count}
-      </span>
+      >{count}</span>
     </button>
   );
 }
 
-function FilterSelect({
-  label,
-  value,
-  onChange,
-  children,
-}: {
-  label: string;
-  value: string;
-  onChange: (next: string) => void;
-  children: React.ReactNode;
-}) {
+function FilterSelect({ label, value, onChange, children }: { label: string; value: string; onChange: (next: string) => void; children: React.ReactNode }) {
   return (
-    <label style={{ display: "grid", gap: 8, minWidth: 170 }}>
-      <span className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
-        {label}
-      </span>
-
+    <label style={{ display: "grid", gap: 6, minWidth: 160 }}>
+      <span className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>{label}</span>
       <select
         className="text-input"
         value={value}
-        onChange={(event) => onChange(event.target.value)}
-        style={{
-          borderRadius: 18,
-          padding: "13px 42px 13px 14px",
-          fontWeight: 850,
-          cursor: "pointer",
-          background: "var(--panel)",
-        }}
-      >
-        {children}
-      </select>
+        onChange={(e) => onChange(e.target.value)}
+        style={{ borderRadius: 12, padding: "10px 38px 10px 12px", fontWeight: 600, cursor: "pointer" }}
+      >{children}</select>
     </label>
   );
 }
 
-function MiniTimeline({
-  items,
-  patientId,
-  onOpenDocument,
-}: {
-  items: TimelineItem[];
-  patientId: string;
-  onOpenDocument: (documentId: number) => void;
-}) {
+function MiniTimeline({ items, patientId, onOpenDocument }: { items: TimelineItem[]; patientId: string; onOpenDocument: (id: number) => void }) {
   const router = useRouter();
-
   return (
     <ClinicalTimeline
       items={items}
@@ -522,247 +342,87 @@ function MiniTimeline({
   );
 }
 
-function TrendChart({
-  points,
-  unit,
-  expanded,
-  highlightedDocumentId,
-}: {
-  points: TrendPoint[];
-  unit?: string | null;
-  expanded?: boolean;
-  highlightedDocumentId?: number | null;
-}) {
+function TrendChart({ points, unit, expanded, highlightedDocumentId }: { points: TrendPoint[]; unit?: string | null; expanded?: boolean; highlightedDocumentId?: number | null }) {
   const sorted = getRecentTrendPoints(points);
-
   if (!sorted.length) return null;
 
   const svgTextColor = "var(--foreground, #f8fafc)";
   const svgMutedTextColor = "var(--muted, #cbd5e1)";
   const svgTooltipBg = "var(--panel, #0f172a)";
   const svgTooltipBorder = "var(--primary, #8b5cf6)";
-
   const width = expanded ? 860 : 560;
   const height = expanded ? 300 : 150;
-
-  const margin = expanded
-    ? { top: 34, right: 42, bottom: 56, left: 66 }
-    : { top: 18, right: 22, bottom: 30, left: 42 };
-
+  const margin = expanded ? { top: 34, right: 42, bottom: 56, left: 66 } : { top: 18, right: 22, bottom: 30, left: 42 };
   const plotWidth = width - margin.left - margin.right;
   const plotHeight = height - margin.top - margin.bottom;
-
-  const values = sorted.map((point) => point.value);
+  const values = sorted.map((p) => p.value);
   const min = Math.min(...values);
   const max = Math.max(...values);
   const spread = max - min || Math.max(Math.abs(max) * 0.25, 1);
-
   const yMin = min - spread * 0.22;
   const yMax = max + spread * 0.22;
   const yRange = yMax - yMin || 1;
-
-  const coords = sorted.map((point, index) => {
-    const x = margin.left + (index * plotWidth) / Math.max(sorted.length - 1, 1);
-    const y = margin.top + plotHeight - ((point.value - yMin) / yRange) * plotHeight;
-
-    return { x, y, point };
-  });
-
-  const line = coords.map((coord) => `${coord.x},${coord.y}`).join(" ");
+  const coords = sorted.map((point, index) => ({
+    x: margin.left + (index * plotWidth) / Math.max(sorted.length - 1, 1),
+    y: margin.top + plotHeight - ((point.value - yMin) / yRange) * plotHeight,
+    point,
+  }));
+  const line = coords.map((c) => `${c.x},${c.y}`).join(" ");
   const hoveredCoord =
-    highlightedDocumentId === null || highlightedDocumentId === undefined
-      ? null
-      : coords.find((coord) => coord.point.document_id === highlightedDocumentId) || null;
+    highlightedDocumentId == null ? null :
+    coords.find((c) => c.point.document_id === highlightedDocumentId) || null;
 
   return (
-    <div
-      style={{
-        width: "100%",
-        height: expanded ? 340 : 165,
-        borderRadius: expanded ? 22 : 0,
-        background: expanded ? "var(--panel-2)" : "transparent",
-        border: expanded ? "1px solid var(--border)" : "0",
-        padding: expanded ? 14 : 0,
-        overflow: "hidden",
-        transition:
-          "height 260ms ease, padding 260ms ease, background 220ms ease, border-color 220ms ease, opacity 220ms ease",
-      }}
-    >
-      <svg
-        width="100%"
-        height="100%"
-        viewBox={`0 0 ${width} ${height}`}
-        preserveAspectRatio="xMidYMid meet"
-        style={{
-          display: "block",
-          width: "100%",
-          height: "100%",
-          overflow: "visible",
-        }}
-      >
+    <div style={{
+      width: "100%", height: expanded ? 340 : 165,
+      borderRadius: expanded ? 18 : 0,
+      background: expanded ? "var(--panel-2)" : "transparent",
+      border: expanded ? "1px solid var(--border)" : "0",
+      padding: expanded ? 14 : 0,
+      overflow: "hidden",
+      transition: "height 260ms ease, padding 260ms ease",
+    }}>
+      <svg width="100%" height="100%" viewBox={`0 0 ${width} ${height}`} preserveAspectRatio="xMidYMid meet" style={{ display: "block", width: "100%", height: "100%", overflow: "visible" }}>
         {expanded && (
           <>
-            <text x={margin.left} y={18} fill={svgTextColor} fontSize="13" fontWeight="900">
-              Value {unit ? `(${unit})` : ""}
-            </text>
-
-            <text
-              x={width - margin.right}
-              y={height - 12}
-              textAnchor="end"
-              fill={svgTextColor}
-              fontSize="12"
-              fontWeight="900"
-            >
-              Collection date
-            </text>
+            <text x={margin.left} y={18} fill={svgTextColor} fontSize="13" fontWeight="900">Value {unit ? `(${unit})` : ""}</text>
+            <text x={width - margin.right} y={height - 12} textAnchor="end" fill={svgTextColor} fontSize="12" fontWeight="900">Collection date</text>
           </>
         )}
-
         {[0, 0.25, 0.5, 0.75, 1].map((tick) => {
           const y = margin.top + plotHeight * tick;
           const value = yMax - yRange * tick;
-
           return (
             <g key={tick}>
-              <line
-                x1={margin.left}
-                y1={y}
-                x2={width - margin.right}
-                y2={y}
-                stroke="var(--border)"
-                strokeWidth="1"
-                opacity={tick === 1 ? 1 : 0.65}
-              />
-
-              {expanded && (
-                <text
-                  x={margin.left - 12}
-                  y={y + 4}
-                  textAnchor="end"
-                  fill={svgMutedTextColor}
-                  fontSize="11"
-                  fontWeight="800"
-                >
-                  {Number(value.toFixed(2))}
-                </text>
-              )}
+              <line x1={margin.left} y1={y} x2={width - margin.right} y2={y} stroke="var(--border)" strokeWidth="1" opacity={tick === 1 ? 1 : 0.65} />
+              {expanded && <text x={margin.left - 12} y={y + 4} textAnchor="end" fill={svgMutedTextColor} fontSize="11" fontWeight="800">{Number(value.toFixed(2))}</text>}
             </g>
           );
         })}
-
-        {expanded &&
-          coords.map((coord, index) => (
-            <text
-              key={`${coord.point.document_id}-date-${index}`}
-              x={coord.x}
-              y={height - 32}
-              textAnchor="middle"
-              fill={svgTextColor}
-              fontSize="11"
-              fontWeight="800"
-            >
-              {formatDate(coord.point.date).replace(",", "")}
-            </text>
-          ))}
-
-        <polyline
-          fill="none"
-          stroke="var(--primary)"
-          strokeWidth={expanded ? "4" : "3.5"}
-          strokeLinecap="round"
-          strokeLinejoin="round"
-          points={line}
-          style={{
-            transition: "all 260ms ease",
-          }}
-        />
-
-        {coords.map((coord, index) => {
-          const isHighlighted = coord.point.document_id === highlightedDocumentId;
-
+        {expanded && coords.map((c, i) => (
+          <text key={`${c.point.document_id}-date-${i}`} x={c.x} y={height - 32} textAnchor="middle" fill={svgTextColor} fontSize="11" fontWeight="800">
+            {formatDate(c.point.date).replace(",", "")}
+          </text>
+        ))}
+        <polyline fill="none" stroke="var(--primary)" strokeWidth={expanded ? "4" : "3.5"} strokeLinecap="round" strokeLinejoin="round" points={line} style={{ transition: "all 260ms ease" }} />
+        {coords.map((c, i) => {
+          const isHl = c.point.document_id === highlightedDocumentId;
           return (
-            <circle
-              key={`${coord.point.document_id}-${index}`}
-              cx={coord.x}
-              cy={coord.y}
-              r={isHighlighted ? 7 : 5}
-              fill={isHighlighted ? "var(--warn-text)" : "var(--primary)"}
-              stroke="var(--panel)"
-              strokeWidth={isHighlighted ? 4 : 3}
-              style={{
-                transition: "r 160ms ease, fill 160ms ease, stroke-width 160ms ease",
-              }}
-            />
+            <circle key={`${c.point.document_id}-${i}`} cx={c.x} cy={c.y} r={isHl ? 7 : 5}
+              fill={isHl ? "var(--warn-text)" : "var(--primary)"} stroke="var(--panel)" strokeWidth={isHl ? 4 : 3}
+              style={{ transition: "r 160ms ease, fill 160ms ease" }} />
           );
         })}
-
         {expanded && hoveredCoord && (
-          <g style={{ transition: "opacity 180ms ease" }}>
-            <line
-              x1={hoveredCoord.x}
-              x2={hoveredCoord.x}
-              y1={margin.top}
-              y2={margin.top + plotHeight}
-              stroke="var(--border)"
-              strokeDasharray="4 4"
-              opacity="0.8"
-            />
-
-            <rect
-              x={Math.min(hoveredCoord.x + 12, width - 210)}
-              y={Math.max(hoveredCoord.y - 34, margin.top)}
-              width="178"
-              height="54"
-              rx="13"
-              fill={svgTooltipBg}
-              stroke={svgTooltipBorder}
-              strokeWidth="1.5"
-              opacity="0.98"
-            />
-
-            <rect
-              x={Math.min(hoveredCoord.x + 12, width - 210)}
-              y={Math.max(hoveredCoord.y - 34, margin.top)}
-              width="178"
-              height="54"
-              rx="13"
-              fill="none"
-              stroke="rgba(255,255,255,0.18)"
-              strokeWidth="1"
-            />
-
-            <text
-              x={Math.min(hoveredCoord.x + 28, width - 194)}
-              y={Math.max(hoveredCoord.y - 12, margin.top + 22)}
-              fill={svgTextColor}
-              fontSize="13"
-              fontWeight="950"
-            >
-              {hoveredCoord.point.value_display} {unit || ""}
-            </text>
-
-            <text
-              x={Math.min(hoveredCoord.x + 28, width - 194)}
-              y={Math.max(hoveredCoord.y + 8, margin.top + 42)}
-              fill={svgMutedTextColor}
-              fontSize="11"
-              fontWeight="850"
-            >
-              {formatDate(hoveredCoord.point.date)}
-            </text>
+          <g>
+            <line x1={hoveredCoord.x} x2={hoveredCoord.x} y1={margin.top} y2={margin.top + plotHeight} stroke="var(--border)" strokeDasharray="4 4" opacity="0.8" />
+            <rect x={Math.min(hoveredCoord.x + 12, width - 210)} y={Math.max(hoveredCoord.y - 34, margin.top)} width="178" height="54" rx="13" fill={svgTooltipBg} stroke={svgTooltipBorder} strokeWidth="1.5" opacity="0.98" />
+            <text x={Math.min(hoveredCoord.x + 28, width - 194)} y={Math.max(hoveredCoord.y - 12, margin.top + 22)} fill={svgTextColor} fontSize="13" fontWeight="950">{hoveredCoord.point.value_display} {unit || ""}</text>
+            <text x={Math.min(hoveredCoord.x + 28, width - 194)} y={Math.max(hoveredCoord.y + 8, margin.top + 42)} fill={svgMutedTextColor} fontSize="11" fontWeight="850">{formatDate(hoveredCoord.point.date)}</text>
           </g>
         )}
-
         {!expanded && coords.length > 0 && (
-          <text
-            x={width - margin.right}
-            y={22}
-            textAnchor="end"
-            fill={svgTextColor}
-            fontSize="12"
-            fontWeight="950"
-          >
+          <text x={width - margin.right} y={22} textAnchor="end" fill={svgTextColor} fontSize="12" fontWeight="950">
             {coords[coords.length - 1].point.value_display} {unit || ""}
           </text>
         )}
@@ -771,10 +431,100 @@ function TrendChart({
   );
 }
 
+type DocRowProps = {
+  doc: DocumentCard;
+  patientId: string;
+  isDoctor: boolean;
+  currentUserId?: number;
+  openingId: number | null;
+  onOpenOriginal: (id: number) => void;
+  onOpenStructured: (doc: DocumentCard) => void;
+  router: ReturnType<typeof useRouter>;
+};
+
+function DocumentRow({ doc, patientId, isDoctor, currentUserId, openingId, onOpenOriginal, onOpenStructured, router }: DocRowProps) {
+  const isNote = doc.section === "notes";
+  const isDischargeSummary = doc.section === "discharge_summary";
+  const reviewNeeded = needsDoctorReview(doc);
+  const editableNote = isDoctor && doc.section === "notes" && (doc.can_edit_note || doc.uploaded_by?.id === currentUserId);
+
+  const accentColor = reviewNeeded ? "var(--danger-text)" : doc.is_verified ? "var(--success-text)" : "var(--border)";
+
+  return (
+    <div
+      style={{
+        display: "grid",
+        gridTemplateColumns: "4px 1fr auto",
+        alignItems: "center",
+        gap: "0 16px",
+        borderBottom: "1px solid var(--border)",
+        padding: "12px 0",
+        background: reviewNeeded ? "color-mix(in srgb, var(--danger-bg) 40%, transparent)" : "transparent",
+      }}
+    >
+      {/* Accent bar */}
+      <span style={{ alignSelf: "stretch", width: 4, borderRadius: "0 2px 2px 0", background: accentColor }} />
+
+      {/* Main content */}
+      <div style={{ minWidth: 0 }}>
+        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
+          <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{getDocumentTitle(doc)}</span>
+          <span style={{
+            padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 600,
+            background: doc.is_verified ? "var(--success-bg)" : "var(--panel-2)",
+            color: doc.is_verified ? "var(--success-text)" : "var(--muted)",
+            border: `1px solid ${doc.is_verified ? "color-mix(in srgb, var(--success-text) 24%, transparent)" : "var(--border)"}`,
+          }}>
+            {doc.is_verified ? "Verified" : "Unverified"}
+          </span>
+          {reviewNeeded && (
+            <span style={{
+              padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+              background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)",
+            }}>
+              Needs review
+            </span>
+          )}
+        </div>
+        <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", gap: 6, flexWrap: "wrap" }}>
+          <span>{getDocumentDateLabel(doc)}</span>
+          {doc.lab_name && !isDischargeSummary && <><span>·</span><span>{doc.lab_name}</span></>}
+          {doc.sample_type && !isDischargeSummary && <><span>·</span><span>{doc.sample_type}</span></>}
+          {isDischargeSummary && <><span>·</span><span>Discharge record</span></>}
+          <span>·</span>
+          <span>{getUploaderText(doc)}</span>
+          {isNote && doc.note_preview && (
+            <><span>·</span><span style={{ fontStyle: "italic", opacity: 0.8 }}>{doc.note_preview.slice(0, 80)}{doc.note_preview.length > 80 ? "…" : ""}</span></>
+          )}
+        </div>
+      </div>
+
+      {/* Actions */}
+      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+        {!isNote && (
+          <button type="button" className="secondary-btn" onClick={() => onOpenOriginal(doc.id)} disabled={openingId === doc.id}>
+            {openingId === doc.id ? "Opening…" : "Original"}
+          </button>
+        )}
+        <button type="button" className="primary-btn" onClick={() => onOpenStructured(doc)}>
+          {isNote ? "Open Note" : isDischargeSummary ? "Discharge" : "Structured"}
+        </button>
+        {editableNote && (
+          <button type="button" className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/${doc.id}/edit`)}>
+            Edit
+          </button>
+        )}
+      </div>
+    </div>
+  );
+}
+
+// ── Page ──────────────────────────────────────────────────────────────────────
+
 export default function PatientChartPage() {
   const params = useParams();
   const router = useRouter();
-  const { t } = useLanguage();
+  const { language } = useLanguage();
   const patientId = params?.id as string;
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -815,7 +565,8 @@ export default function PatientChartPage() {
   const fetchTrends = useCallback(async () => {
     try {
       const response = await api.get<BloodworkTrend[]>(`/patients/${patientId}/bloodwork-trends`);
-      setTrends(Array.isArray(response.data) ? response.data : []);
+      const raw = Array.isArray(response.data) ? response.data : [];
+      setTrends(raw.map((t) => enrichBloodworkTrend(t)));
     } catch {
       setTrends([]);
     }
@@ -837,14 +588,8 @@ export default function PatientChartPage() {
     async function init() {
       try {
         setError("");
-
         const user = await fetchMe();
-
-        if (user.role === "patient") {
-          router.replace("/my-records");
-          return;
-        }
-
+        if (user.role === "patient") { router.replace("/my-records"); return; }
         await Promise.all([fetchProfile(), fetchTrends()]);
       } catch (err) {
         setError(getErrorMessage(err, "Could not load patient chart."));
@@ -852,7 +597,6 @@ export default function PatientChartPage() {
         setLoading(false);
       }
     }
-
     init();
   }, [fetchMe, fetchProfile, fetchTrends, router]);
 
@@ -867,15 +611,13 @@ export default function PatientChartPage() {
 
   const allDocuments = useMemo(() => {
     if (!profile) return [];
-
-    return SECTION_ORDER.flatMap((section) => getSectionDocuments(profile, section)).sort((a, b) =>
+    return SECTION_ORDER.flatMap((s) => getSectionDocuments(profile, s)).sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
   }, [profile]);
 
   const documentsForSection = useMemo(() => {
     if (!profile) return [];
-
     return [...getSectionDocuments(profile, activeSection)].sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
@@ -885,15 +627,12 @@ export default function PatientChartPage() {
     const departments = new Set<string>();
     const hospitals = new Set<string>();
     const years = new Set<string>();
-
     documentsForSection.forEach((doc) => {
       if (doc.uploaded_by?.department) departments.add(doc.uploaded_by.department);
       if (doc.uploaded_by?.hospital_name) hospitals.add(doc.uploaded_by.hospital_name);
-
       const year = getYear(getDocumentClinicalDate(doc));
       if (year) years.add(year);
     });
-
     return {
       departments: Array.from(departments).sort(),
       hospitals: Array.from(hospitals).sort(),
@@ -903,11 +642,10 @@ export default function PatientChartPage() {
 
   const filteredDocuments = useMemo(() => {
     return documentsForSection.filter((doc) => {
-      const departmentMatches = !departmentFilter || doc.uploaded_by?.department === departmentFilter;
-      const hospitalMatches = !hospitalFilter || doc.uploaded_by?.hospital_name === hospitalFilter;
-      const yearMatches = !yearFilter || getYear(getDocumentClinicalDate(doc)) === yearFilter;
-
-      return departmentMatches && hospitalMatches && yearMatches;
+      const deptOk = !departmentFilter || doc.uploaded_by?.department === departmentFilter;
+      const hospOk = !hospitalFilter || doc.uploaded_by?.hospital_name === hospitalFilter;
+      const yearOk = !yearFilter || getYear(getDocumentClinicalDate(doc)) === yearFilter;
+      return deptOk && hospOk && yearOk;
     });
   }, [documentsForSection, departmentFilter, hospitalFilter, yearFilter]);
 
@@ -915,11 +653,7 @@ export default function PatientChartPage() {
 
   const documentById = useMemo(() => {
     const lookup = new Map<number, DocumentCard>();
-
-    for (const doc of allDocuments) {
-      lookup.set(doc.id, doc);
-    }
-
+    for (const doc of allDocuments) lookup.set(doc.id, doc);
     return lookup;
   }, [allDocuments]);
 
@@ -929,78 +663,50 @@ export default function PatientChartPage() {
 
   function openTimelineDocument(documentId: number) {
     const doc = documentById.get(documentId);
-
-    if (doc) {
-      router.push(getStructuredDocumentPath(doc, documentId));
-      return;
-    }
-
+    if (doc) { router.push(getStructuredDocumentPath(doc, documentId)); return; }
     router.push(`/documents/${documentId}`);
   }
 
   const timelineItems = useMemo<TimelineItem[]>(() => {
     if (!profile) return [];
-
     const sortedDocuments = [...allDocuments].sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
-
     const usedDocumentIds = new Set<number>();
 
     const dischargeParents: AdmissionTimelineItem[] = sortedDocuments
       .filter((doc) => isDischargeDocument(doc))
       .map((doc) => ({
-        id: `discharge-${doc.id}`,
-        type: "document",
+        id: `discharge-${doc.id}`, type: "document" as const,
         date: doc.reported_on || doc.collected_on || getDocumentClinicalDate(doc),
         title: getDocumentTitle(doc),
-        subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${
-          doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""
-        } · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
-          doc.is_verified ? "Verified" : "Unverified"
-        }`,
-        documentId: doc.id,
-        section: doc.section,
-        children: [],
-        admissionStart: doc.collected_on,
-        admissionEnd: doc.reported_on,
-        parentRank: 1,
+        subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""} · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${doc.is_verified ? "Verified" : "Unverified"}`,
+        documentId: doc.id, section: doc.section, children: [],
+        admissionStart: doc.collected_on, admissionEnd: doc.reported_on, parentRank: 1,
       }));
 
     const eventParents: AdmissionTimelineItem[] = (profile.events || []).map((event) => ({
-      id: `event-${event.id}`,
-      type: "event",
+      id: `event-${event.id}`, type: "event" as const,
       date: event.discharged_at || event.admitted_at || "",
       title: event.title || "Hospitalization",
-      subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} · Doctor ${valueOrDash(
-        event.doctor_name
-      )} · ${valueOrDash(event.department)} · ${valueOrDash(event.hospital_name)}`,
-      eventId: event.id,
-      section: "care_events",
-      children: [],
-      admissionStart: event.admitted_at,
-      admissionEnd: event.discharged_at,
-      parentRank: 2,
+      subtitle: `${event.status === "active" ? "Active admission" : "Discharged"} · Doctor ${valueOrDash(event.doctor_name)} · ${valueOrDash(event.department)} · ${valueOrDash(event.hospital_name)}`,
+      eventId: event.id, section: "care_events", children: [],
+      admissionStart: event.admitted_at, admissionEnd: event.discharged_at, parentRank: 2,
     }));
 
     const admissionParents = [...dischargeParents, ...eventParents]
-      .filter((parent) => parent.admissionStart || parent.admissionEnd)
+      .filter((p) => p.admissionStart || p.admissionEnd)
       .sort((a, b) => {
-        const dateDifference = compareDatesDescending(a.date, b.date);
-        if (dateDifference !== 0) return dateDifference;
-        return a.parentRank - b.parentRank;
+        const diff = compareDatesDescending(a.date, b.date);
+        return diff !== 0 ? diff : a.parentRank - b.parentRank;
       });
 
     const documentToTimelineItem = (doc: DocumentCard): TimelineItem => ({
-      id: `doc-${doc.id}`,
-      type: "document",
+      id: `doc-${doc.id}`, type: "document",
       date: getDocumentClinicalDate(doc),
       title: getDocumentTitle(doc),
-      subtitle: `${sectionLabel(doc.section)} · ${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(
-        doc
-      )}`,
-      documentId: doc.id,
-      section: doc.section,
+      subtitle: `${sectionLabel(doc.section)} · ${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
+      documentId: doc.id, section: doc.section,
     });
 
     for (const parent of admissionParents) {
@@ -1008,37 +714,21 @@ export default function PatientChartPage() {
         .filter((doc) => {
           if (usedDocumentIds.has(doc.id)) return false;
           if (isDischargeDocument(doc)) return false;
-
-          const belongs = isInsideDateRange(
-            getDocumentClinicalDate(doc),
-            parent.admissionStart,
-            parent.admissionEnd
-          );
-
-          if (belongs) {
-            usedDocumentIds.add(doc.id);
-          }
-
+          const belongs = isInsideDateRange(getDocumentClinicalDate(doc), parent.admissionStart, parent.admissionEnd);
+          if (belongs) usedDocumentIds.add(doc.id);
           return belongs;
         })
         .map(documentToTimelineItem)
         .sort((a, b) => compareDatesAscending(a.date, b.date));
-
       parent.children = children;
     }
 
-    const parentDocumentIds = new Set(
-      admissionParents.map((parent) => parent.documentId).filter((id): id is number => Boolean(id))
-    );
-
+    const parentDocumentIds = new Set(admissionParents.map((p) => p.documentId).filter((id): id is number => Boolean(id)));
     const standaloneDocuments = sortedDocuments
-      .filter((doc) => !usedDocumentIds.has(doc.id))
-      .filter((doc) => !parentDocumentIds.has(doc.id))
+      .filter((doc) => !usedDocumentIds.has(doc.id) && !parentDocumentIds.has(doc.id))
       .map(documentToTimelineItem);
 
-    return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
-      compareDatesDescending(a.date, b.date)
-    );
+    return [...admissionParents, ...standaloneDocuments].sort((a, b) => compareDatesDescending(a.date, b.date));
   }, [profile, allDocuments]);
 
   const sortedTrends = useMemo(() => {
@@ -1049,37 +739,18 @@ export default function PatientChartPage() {
         const latest = recentPoints[recentPoints.length - 1] || trend.latest;
         const previous = recentPoints[recentPoints.length - 2] || trend.previous || null;
         const delta = latest && previous ? Number((latest.value - previous.value).toFixed(2)) : null;
-
-        return {
-          ...trend,
-          points: recentPoints,
-          latest,
-          previous,
-          delta,
-        };
+        return { ...trend, points: recentPoints, latest, previous, delta };
       })
       .sort((a, b) => {
-        const abnormalA = a.latest?.flag && String(a.latest.flag).toLowerCase() !== "normal" ? 1 : 0;
-        const abnormalB = b.latest?.flag && String(b.latest.flag).toLowerCase() !== "normal" ? 1 : 0;
-
-        if (abnormalA !== abnormalB) return abnormalB - abnormalA;
-
+        const abnA = a.latest?.flag && String(a.latest.flag).toLowerCase() !== "normal" ? 1 : 0;
+        const abnB = b.latest?.flag && String(b.latest.flag).toLowerCase() !== "normal" ? 1 : 0;
+        if (abnA !== abnB) return abnB - abnA;
         return a.display_name.localeCompare(b.display_name);
       });
   }, [trends]);
 
   const stats = useMemo(() => {
-    if (!profile) {
-      return {
-        total: 0,
-        bloodwork: 0,
-        dischargeSummaries: 0,
-        scans: 0,
-        notes: 0,
-        needsReview: 0,
-      };
-    }
-
+    if (!profile) return { total: 0, bloodwork: 0, dischargeSummaries: 0, scans: 0, notes: 0, needsReview: 0 };
     return {
       total: allDocuments.length,
       bloodwork: getSectionDocuments(profile, "bloodwork").length,
@@ -1090,40 +761,19 @@ export default function PatientChartPage() {
     };
   }, [profile, allDocuments]);
 
-  const activeEvents = useMemo(() => {
-    return (profile?.events || []).filter((event) => event.status === "active");
-  }, [profile]);
-
-  function getSectionCount(section: SectionKey) {
-    return getSectionDocuments(profile, section).length;
-  }
-
-  function canEditNote(doc: DocumentCard) {
-    if (!isDoctor) return false;
-    if (doc.section !== "notes") return false;
-    if (doc.can_edit_note) return true;
-    return doc.uploaded_by?.id === currentUser?.id;
-  }
+  const activeEvents = useMemo(() => (profile?.events || []).filter((e) => e.status === "active"), [profile]);
 
   async function openOriginal(documentId: number) {
     try {
       setOpeningId(documentId);
       setError("");
-
-      const response = await api.get(`/documents/${documentId}/file`, {
-        responseType: "blob",
-      });
-
+      const response = await api.get(`/documents/${documentId}/file`, { responseType: "blob" });
       const rawContentType = response.headers["content-type"];
       const contentType = typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
       const blob = new Blob([response.data], { type: contentType });
       const fileUrl = window.URL.createObjectURL(blob);
-
       window.open(fileUrl, "_blank", "noopener,noreferrer");
-
-      window.setTimeout(() => {
-        window.URL.revokeObjectURL(fileUrl);
-      }, 60_000);
+      window.setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
     } catch (err) {
       setError(getErrorMessage(err, "Could not open original file."));
     } finally {
@@ -1133,654 +783,255 @@ export default function PatientChartPage() {
 
   if (loading || !currentUser || !profile) {
     return (
-      <main
-        className="app-page-bg"
-        style={{
-          minHeight: "100vh",
-          padding: 24,
-          display: "grid",
-          placeItems: "center",
-        }}
-      >
+      <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
         <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
           <Spinner size={20} />
-          <span className="muted-text">Loading patient chart...</span>
+          <span className="muted-text">Loading patient chart…</span>
         </div>
       </main>
     );
   }
 
-  const calculatedAge = calculateAgeFromDob(profile.patient.date_of_birth);
   const hasActiveAdmission = activeEvents.length > 0;
 
   return (
     <AppShell
       user={currentUser}
       title={profile.patient.full_name}
-      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · DOB ${valueOrDash(
-        profile.patient.date_of_birth
-      )} · Age ${calculatedAge} · Sex ${valueOrDash(profile.patient.sex)}`}
+      subtitle={`ID ${valueOrDash(profile.patient.patient_identifier)} · DOB ${valueOrDash(profile.patient.date_of_birth)} · ${formatPatientAge(profile.patient.date_of_birth, language)} · ${valueOrDash(profile.patient.sex)}`}
       rightContent={
         <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
-          <button className="secondary-btn" onClick={refreshPage}>
-            {refreshing ? "Refreshing..." : "Refresh"}
-          </button>
-
-          <button className="secondary-btn" onClick={() => router.push(isAdmin ? "/assignments" : "/my-patients")}>
-            Back
-          </button>
+          <button className="secondary-btn" onClick={refreshPage}>{refreshing ? "Refreshing…" : "Refresh"}</button>
+          <button className="secondary-btn" onClick={() => router.push(isAdmin ? "/assignments" : "/my-patients")}>Back</button>
         </div>
       }
     >
       {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
+        <div className="soft-card-tight" style={{ marginBottom: 20, padding: 16, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}>
           {error}
         </div>
       )}
 
-      <div
-        className="soft-card"
-        style={{
-          padding: 24,
-          marginBottom: 24,
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-        }}
-      >
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(0, 1fr) auto",
-            gap: 20,
-            alignItems: "center",
-          }}
-        >
+      {/* Patient header */}
+      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+        <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto", gap: 20, alignItems: "center" }}>
           <div>
-            <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 12 }}>
-              {hasActiveAdmission ? (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    padding: "7px 11px",
-                    borderRadius: 999,
-                    background: "var(--success-bg)",
-                    color: "var(--success-text)",
-                    border: "1px solid var(--success-border)",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  Active admission
-                </span>
-              ) : (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    padding: "7px 11px",
-                    borderRadius: 999,
-                    background: "var(--panel-2)",
-                    color: "var(--muted)",
-                    border: "1px solid var(--border)",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  No active stay
-                </span>
-              )}
-
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 10 }}>
+              <span style={{
+                padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700,
+                background: hasActiveAdmission ? "var(--success-bg)" : "var(--panel-2)",
+                color: hasActiveAdmission ? "var(--success-text)" : "var(--muted)",
+                border: `1px solid ${hasActiveAdmission ? "color-mix(in srgb, var(--success-text) 24%, transparent)" : "var(--border)"}`,
+              }}>
+                {hasActiveAdmission ? "Active admission" : "No active stay"}
+              </span>
               {stats.needsReview > 0 && (
-                <span
-                  style={{
-                    display: "inline-flex",
-                    padding: "7px 11px",
-                    borderRadius: 999,
-                    background: "var(--danger-bg)",
-                    color: "var(--danger-text)",
-                    border: "1px solid var(--danger-border)",
-                    fontWeight: 900,
-                    fontSize: 12,
-                  }}
-                >
-                  {stats.needsReview} need review
+                <span style={{ padding: "5px 10px", borderRadius: 6, fontSize: 12, fontWeight: 700, background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)" }}>
+                  {stats.needsReview} need{stats.needsReview === 1 ? "s" : ""} review
                 </span>
               )}
             </div>
-
-            <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.06em" }}>
-              {profile.patient.full_name}
-            </div>
-
-            <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
+            <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.04em" }}>{profile.patient.full_name}</div>
+            <div className="muted-text" style={{ marginTop: 6 }}>
               Patient ID {valueOrDash(profile.patient.patient_identifier)} · CNP {valueOrDash(profile.patient.cnp)}
             </div>
           </div>
 
-          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", justifyContent: "flex-end" }}>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {canDoctorActions && (
               <>
-                <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>
-                  Upload document
-                </button>
-
-                <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>
-                  New clinical note
-                </button>
+                <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
+                <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>New note</button>
               </>
             )}
-
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
-              Full timeline
-            </button>
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>Full timeline</button>
           </div>
         </div>
       </div>
 
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-          gap: 14,
-          marginBottom: 24,
-        }}
-      >
-        <StatCard label="Total records" value={stats.total} note="All uploaded records" />
-        <StatCard label="Bloodwork" value={stats.bloodwork} note="Structured lab reports" />
-        <StatCard label="Discharges" value={stats.dischargeSummaries} note="Narrative discharge records" />
-        <StatCard label="Scans" value={stats.scans} note="Imaging and scans" />
-        <StatCard label="Clinical notes" value={stats.notes} note="Doctor-created notes" />
-        <StatCard label="Needs review" value={stats.needsReview} note="Abnormal unreviewed records" />
+      {/* Stat strip */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 24 }}>
+        {[
+          { label: "Total records", value: stats.total },
+          { label: "Bloodwork", value: stats.bloodwork },
+          { label: "Discharges", value: stats.dischargeSummaries },
+          { label: "Scans", value: stats.scans },
+          { label: "Clinical notes", value: stats.notes },
+          { label: "Needs review", value: stats.needsReview },
+        ].map(({ label, value }) => (
+          <div key={label} className="soft-card-tight" style={{ padding: 16 }}>
+            <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>{label}</div>
+            <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6 }}>{value}</div>
+          </div>
+        ))}
       </div>
 
+      {/* Review alert */}
       {stats.needsReview > 0 && (
-        <div
-          className="soft-card"
-          style={{
-            padding: 20,
-            marginBottom: 24,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-          }}
-        >
-          <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-            <span
-              style={{
-                width: 12,
-                height: 12,
-                borderRadius: 999,
-                background: "var(--danger-text)",
-                display: "inline-flex",
-              }}
-            />
-
-            <div style={{ fontWeight: 950, color: "var(--danger-text)", fontSize: 18 }}>
-              Abnormal records need review
-            </div>
+        <div className="soft-card" style={{ padding: 16, marginBottom: 24, borderColor: "var(--danger-border)", background: "var(--danger-bg)" }}>
+          <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
+            <span style={{ width: 10, height: 10, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
+            <span style={{ fontWeight: 700, color: "var(--danger-text)" }}>Abnormal records need review</span>
           </div>
-
-          <div className="muted-text" style={{ marginTop: 8 }}>
-            Opening each structured record marks it reviewed for your doctor account.
+          <div className="muted-text" style={{ marginTop: 6, fontSize: 13 }}>
+            Opening each structured record marks it reviewed for your account.
           </div>
         </div>
       )}
 
+      {/* Timeline */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            flexWrap: "wrap",
-            marginBottom: 18,
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 18 }}>
           <div>
-            <div className="section-title">My Timeline</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              Recent records and admission episodes, grouped by hospitalization period when possible.
-            </div>
+            <div className="section-title">Timeline</div>
+            <div className="muted-text" style={{ marginTop: 6 }}>Recent records and admissions, grouped by hospitalization period when possible.</div>
           </div>
-
-          <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>
-            View full timeline
-          </button>
+          <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>View full timeline</button>
         </div>
-
         <MiniTimeline items={timelineItems} patientId={patientId} onOpenDocument={openTimelineDocument} />
       </div>
 
+      {/* Documents */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "center",
-            flexWrap: "wrap",
-            marginBottom: 18,
-          }}
-        >
+        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
           <div>
             <div className="section-title">Documents</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              Organized by category, date, department, and source.
-            </div>
+            <div className="muted-text" style={{ marginTop: 6 }}>Organized by category, date, department, and source.</div>
           </div>
-
           {canDoctorActions && (
-            <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>
-              Upload
-            </button>
+            <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
           )}
         </div>
 
-        <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 18 }}>
+        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
           {SECTION_ORDER.map((section) => (
-            <SectionPill
-              key={section}
-              active={activeSection === section}
-              label={sectionLabel(section)}
-              count={getSectionCount(section)}
-              onClick={() => setActiveSection(section)}
-            />
+            <SectionPill key={section} active={activeSection === section} label={sectionLabel(section)} count={getSectionDocuments(profile, section).length} onClick={() => setActiveSection(section)} />
           ))}
         </div>
 
-        <div
-          className="soft-card-tight"
-          style={{
-            padding: 18,
-            marginBottom: 18,
-            background: "var(--panel-2)",
-            display: "grid",
-            gridTemplateColumns: "repeat(auto-fit, minmax(170px, 1fr))",
-            gap: 12,
-          }}
-        >
+        <div className="soft-card-tight" style={{ padding: 14, marginBottom: 16, background: "var(--panel-2)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
           <FilterSelect label="Department" value={departmentFilter} onChange={setDepartmentFilter}>
             <option value="">All</option>
-            {filterOptions.departments.map((department) => (
-              <option key={department} value={department}>
-                {department}
-              </option>
-            ))}
+            {filterOptions.departments.map((d) => <option key={d} value={d}>{d}</option>)}
           </FilterSelect>
-
           <FilterSelect label="Hospital" value={hospitalFilter} onChange={setHospitalFilter}>
             <option value="">All</option>
-            {filterOptions.hospitals.map((hospital) => (
-              <option key={hospital} value={hospital}>
-                {hospital}
-              </option>
-            ))}
+            {filterOptions.hospitals.map((h) => <option key={h} value={h}>{h}</option>)}
           </FilterSelect>
-
           <FilterSelect label="Year" value={yearFilter} onChange={setYearFilter}>
             <option value="">All</option>
-            {filterOptions.years.map((year) => (
-              <option key={year} value={year}>
-                {year}
-              </option>
-            ))}
+            {filterOptions.years.map((y) => <option key={y} value={y}>{y}</option>)}
           </FilterSelect>
         </div>
 
-        <div style={{ display: "grid", gap: 14 }}>
-          {visibleDocuments.map((doc) => {
-            const isNote = doc.section === "notes";
-            const isDischargeSummary = doc.section === "discharge_summary";
-            const abnormal = hasAbnormal(doc);
-            const reviewNeeded = needsDoctorReview(doc);
-            const editableNote = canEditNote(doc);
-
-            return (
-              <div
-                key={doc.id}
-                className="soft-card-tight"
-                style={{
-                  padding: 18,
-                  borderColor: reviewNeeded ? "var(--danger-border)" : "var(--border)",
-                  background: reviewNeeded ? "var(--danger-bg)" : "var(--panel)",
-                }}
-              >
-                <div
-                  style={{
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0, 1fr) minmax(170px, 0.35fr) auto",
-                    gap: 18,
-                    alignItems: "center",
-                  }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      {abnormal && (
-                        <span
-                          style={{
-                            width: 10,
-                            height: 10,
-                            borderRadius: 999,
-                            background: reviewNeeded ? "var(--danger-text)" : "var(--muted)",
-                            flex: "0 0 auto",
-                          }}
-                        />
-                      )}
-
-                      <div style={{ fontWeight: 950, fontSize: 18 }}>{getDocumentTitle(doc)}</div>
-
-                      <span
-                        style={{
-                          display: "inline-flex",
-                          padding: "5px 9px",
-                          borderRadius: 999,
-                          background: doc.is_verified ? "var(--success-bg)" : "var(--warn-bg)",
-                          color: doc.is_verified ? "var(--success-text)" : "var(--warn-text)",
-                          border: "1px solid var(--border)",
-                          fontSize: 12,
-                          fontWeight: 900,
-                        }}
-                      >
-                        {doc.is_verified ? "Verified" : "Unverified"}
-                      </span>
-
-                      {reviewNeeded && (
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            padding: "5px 9px",
-                            borderRadius: 999,
-                            background: "var(--danger-bg)",
-                            color: "var(--danger-text)",
-                            border: "1px solid var(--danger-border)",
-                            fontSize: 12,
-                            fontWeight: 900,
-                          }}
-                        >
-                          Needs review
-                        </span>
-                      )}
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 8 }}>
-                      {getUploaderText(doc)}
-                    </div>
-
-                    {isNote ? (
-                      <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
-                        {valueOrDash(doc.note_preview)}
-                      </div>
-                    ) : (
-                      <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.6 }}>
-                        {sectionLabel(doc.section)} · {getDocumentDateLabel(doc)}
-                        {!isDischargeSummary && doc.lab_name ? ` · ${doc.lab_name}` : ""}
-                        {!isDischargeSummary && doc.sample_type ? ` · ${doc.sample_type}` : ""}
-                        {isDischargeSummary ? " · Narrative discharge record" : ""}
-                      </div>
-                    )}
-                  </div>
-
-                  <div style={{ minWidth: 0 }}>
-                    <div className="muted-text" style={{ fontSize: 12, fontWeight: 850 }}>
-                      Source
-                    </div>
-                    <div style={{ fontWeight: 950, marginTop: 5 }}>
-                      {valueOrDash(doc.report_type || sectionLabel(doc.section))}
-                    </div>
-                    <div className="muted-text" style={{ marginTop: 5 }}>
-                      {valueOrDash(doc.referring_doctor)}
-                    </div>
-                  </div>
-
-                  <div style={{ display: "grid", gap: 8, minWidth: 150 }}>
-                    {!isNote && (
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => openOriginal(doc.id)}
-                        disabled={openingId === doc.id}
-                      >
-                        {openingId === doc.id ? "Opening..." : "Open Original"}
-                      </button>
-                    )}
-
-                    <button type="button" className="primary-btn" onClick={() => openStructuredDocument(doc)}>
-                      {isNote ? "Open Note" : isDischargeSummary ? "Open Discharge" : "Structured View"}
-                    </button>
-
-                    {editableNote && (
-                      <button
-                        type="button"
-                        className="secondary-btn"
-                        onClick={() => router.push(`/patients/${patientId}/notes/${doc.id}/edit`)}
-                      >
-                        Edit Note
-                      </button>
-                    )}
-                  </div>
-                </div>
-              </div>
-            );
-          })}
-
+        <div style={{ borderTop: "1px solid var(--border)" }}>
+          {visibleDocuments.map((doc) => (
+            <DocumentRow
+              key={doc.id}
+              doc={doc}
+              patientId={patientId}
+              isDoctor={isDoctor}
+              currentUserId={currentUser?.id}
+              openingId={openingId}
+              onOpenOriginal={openOriginal}
+              onOpenStructured={openStructuredDocument}
+              router={router}
+            />
+          ))}
           {!visibleDocuments.length && (
-            <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>No documents in this section yet.</div>
-              <div className="muted-text" style={{ marginTop: 6 }}>
-                Upload a document or choose another section.
-              </div>
+            <div style={{ padding: "28px 0", textAlign: "center" }}>
+              <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>No documents in this section yet.</div>
+              <div className="muted-text">Upload a document or choose another section.</div>
             </div>
           )}
         </div>
 
         {visibleCount < filteredDocuments.length && (
-          <div style={{ display: "flex", justifyContent: "center", marginTop: 18 }}>
-            <button type="button" className="secondary-btn" onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}>
-              Show More
-            </button>
+          <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+            <button type="button" className="secondary-btn" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>Show more</button>
           </div>
         )}
       </div>
 
+      {/* Bloodwork trends */}
       {activeSection === "bloodwork" && (
         <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
           <div style={{ marginBottom: 18 }}>
             <div className="section-title">Bloodwork Trends</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              Trends are sorted by clinical importance. Graphs use the most recent 5 collections by collected/test date.
-            </div>
+            <div className="muted-text" style={{ marginTop: 6 }}>Sorted by clinical importance. Graphs use the most recent 5 collections.</div>
           </div>
 
-          <div style={{ display: "grid", gap: 14 }}>
+          <div style={{ display: "grid", gap: 12 }}>
             {sortedTrends.map((trend) => {
               const abnormal = trend.latest?.flag && String(trend.latest.flag).trim().toLowerCase() !== "normal";
               const expanded = expandedTrend === trend.test_key;
               const trendPoints = getRecentTrendPoints(trend.points);
 
               return (
-                <div
-                  key={trend.test_key}
-                  className="soft-card-tight"
-                  style={{
-                    padding: 18,
-                    borderColor: abnormal ? "var(--danger-border)" : "var(--border)",
-                    background: "var(--panel)",
-                    transition: "border-color 220ms ease, background 220ms ease, box-shadow 220ms ease",
-                  }}
-                >
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: expanded
-                        ? "minmax(0, 1fr) auto"
-                        : "minmax(220px, 0.42fr) minmax(260px, 1fr) auto",
-                      gap: 18,
-                      alignItems: "center",
-                      transition: "grid-template-columns 260ms ease",
-                    }}
-                  >
+                <div key={trend.test_key} className="soft-card-tight" style={{ padding: 16, borderColor: abnormal ? "var(--danger-border)" : "var(--border)", transition: "border-color 220ms ease" }}>
+                  <div style={{ display: "grid", gridTemplateColumns: expanded ? "minmax(0, 1fr) auto" : "minmax(200px, 0.42fr) minmax(240px, 1fr) auto", gap: 16, alignItems: "center" }}>
                     <div style={{ minWidth: 0 }}>
-                      <div
-                        style={{
-                          fontWeight: 950,
-                          whiteSpace: "nowrap",
-                          overflow: "hidden",
-                          textOverflow: "ellipsis",
-                        }}
-                      >
-                        {trend.display_name}
+                      <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{trend.display_name}</div>
+                      <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>{trend.category || "Lab result"} · {trend.unit || "—"}</div>
+                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
+                        {[
+                          { label: "Latest", value: trend.latest?.value_display || "—" },
+                          { label: "Previous", value: trend.previous?.value_display || "—" },
+                          { label: "Delta", value: trend.delta == null ? "—" : `${trend.delta > 0 ? "+" : ""}${trend.delta}` },
+                        ].map(({ label, value }) => (
+                          <div key={label}>
+                            <div className="muted-text" style={{ fontSize: 11, fontWeight: 700 }}>{label}</div>
+                            <div style={{ fontWeight: 700, marginTop: 3 }}>{value}</div>
+                          </div>
+                        ))}
                       </div>
-
-                      <div className="muted-text" style={{ marginTop: 5, fontSize: 12 }}>
-                        {trend.category || "Lab result"} · Unit {trend.unit || "—"}
-                      </div>
-
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                          gap: 10,
-                          marginTop: 14,
-                        }}
-                      >
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 11, fontWeight: 850 }}>
-                            Latest
-                          </div>
-                          <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.latest?.value_display || "—"}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 11, fontWeight: 850 }}>
-                            Previous
-                          </div>
-                          <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.previous?.value_display || "—"}
-                          </div>
-                        </div>
-
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 11, fontWeight: 850 }}>
-                            Delta
-                          </div>
-                          <div style={{ fontWeight: 950, marginTop: 4 }}>
-                            {trend.delta === null || trend.delta === undefined
-                              ? "—"
-                              : `${trend.delta > 0 ? "+" : ""}${trend.delta}`}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="muted-text" style={{ marginTop: 10, fontSize: 12 }}>
-                        Latest sample:{" "}
-                        {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
+                      <div className="muted-text" style={{ marginTop: 8, fontSize: 12 }}>
+                        Latest: {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
                       </div>
                     </div>
 
-                    {!expanded && (
-                      <TrendChart
-                        points={trendPoints}
-                        unit={trend.unit}
-                        highlightedDocumentId={null}
-                      />
-                    )}
+                    {!expanded && <TrendChart points={trendPoints} unit={trend.unit} highlightedDocumentId={null} />}
 
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => {
-                        setExpandedTrend(expanded ? null : trend.test_key);
-                        setHoveredTrendDocumentId(null);
-                      }}
-                    >
+                    <button type="button" className="secondary-btn" onClick={() => { setExpandedTrend(expanded ? null : trend.test_key); setHoveredTrendDocumentId(null); }}>
                       {expanded ? "Collapse" : "Expand"}
                     </button>
                   </div>
 
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateRows: expanded ? "1fr" : "0fr",
-                      transition:
-                        "grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease, margin-top 260ms ease",
-                      opacity: expanded ? 1 : 0,
-                      marginTop: expanded ? 18 : 0,
-                      overflow: "hidden",
-                    }}
-                  >
+                  <div style={{ display: "grid", gridTemplateRows: expanded ? "1fr" : "0fr", transition: "grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease, margin-top 260ms ease", opacity: expanded ? 1 : 0, marginTop: expanded ? 16 : 0, overflow: "hidden" }}>
                     <div style={{ minHeight: 0, overflow: "hidden" }}>
-                      <TrendChart
-                        points={trendPoints}
-                        unit={trend.unit}
-                        expanded
-                        highlightedDocumentId={hoveredTrendDocumentId}
-                      />
+                      <TrendChart points={trendPoints} unit={trend.unit} expanded highlightedDocumentId={hoveredTrendDocumentId} />
 
-                      <div style={{ marginTop: 18, fontWeight: 950 }}>Reports used in this trend</div>
-
-                      <div style={{ display: "grid", gap: 10, marginTop: 10 }}>
-                        {[...trendPoints]
-                          .sort((a, b) => compareDatesDescending(a.date, b.date))
-                          .map((point, index) => {
-                            const highlighted = hoveredTrendDocumentId === point.document_id;
-
-                            return (
-                              <button
-                                key={`${trend.test_key}-${point.document_id}-${index}`}
-                                type="button"
-                                className="soft-card-tight"
-                                onMouseEnter={() => setHoveredTrendDocumentId(point.document_id)}
-                                onMouseLeave={() => setHoveredTrendDocumentId(null)}
-                                onFocus={() => setHoveredTrendDocumentId(point.document_id)}
-                                onBlur={() => setHoveredTrendDocumentId(null)}
-                                onClick={() => router.push(`/documents/${point.document_id}`)}
-                                style={{
-                                  padding: 14,
-                                  display: "grid",
-                                  gridTemplateColumns: "minmax(0, 1fr) auto auto",
-                                  gap: 12,
-                                  alignItems: "center",
-                                  textAlign: "left",
-                                  cursor: "pointer",
-                                  transition:
-                                    "background 180ms ease, border-color 180ms ease, transform 180ms ease",
-                                  transform: highlighted ? "translateX(3px)" : "translateX(0)",
-                                  background: highlighted
-                                    ? "color-mix(in srgb, var(--primary) 9%, var(--panel))"
-                                    : "var(--panel-2)",
-                                  borderColor: highlighted
-                                    ? "color-mix(in srgb, var(--primary) 35%, var(--border))"
-                                    : "var(--border)",
-                                }}
-                              >
-                                <div style={{ minWidth: 0 }}>
-                                  <div style={{ fontWeight: 900 }}>
-                                    {point.report_name || `Document ${point.document_id}`}
-                                  </div>
-                                  <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
-                                    {point.date || "No date"} · Ref {point.reference_range || "—"}
-                                  </div>
-                                </div>
-
-                                <div style={{ fontWeight: 950 }}>
-                                  {point.value_display} {trend.unit || ""}
-                                </div>
-
-                                <span className="secondary-btn" style={{ pointerEvents: "none" }}>
-                                  Open
-                                </span>
-                              </button>
-                            );
-                          })}
+                      <div style={{ marginTop: 16, fontWeight: 700 }}>Reports used in this trend</div>
+                      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                        {[...trendPoints].sort((a, b) => compareDatesDescending(a.date, b.date)).map((point, index) => {
+                          const highlighted = hoveredTrendDocumentId === point.document_id;
+                          return (
+                            <button
+                              key={`${trend.test_key}-${point.document_id}-${index}`}
+                              type="button"
+                              className="soft-card-tight"
+                              onMouseEnter={() => setHoveredTrendDocumentId(point.document_id)}
+                              onMouseLeave={() => setHoveredTrendDocumentId(null)}
+                              onFocus={() => setHoveredTrendDocumentId(point.document_id)}
+                              onBlur={() => setHoveredTrendDocumentId(null)}
+                              onClick={() => router.push(`/documents/${point.document_id}`)}
+                              style={{
+                                padding: 12, display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 12, alignItems: "center", textAlign: "left", cursor: "pointer",
+                                transition: "background 180ms ease, border-color 180ms ease, transform 180ms ease",
+                                transform: highlighted ? "translateX(3px)" : "translateX(0)",
+                                background: highlighted ? "color-mix(in srgb, var(--primary) 9%, var(--panel))" : "var(--panel-2)",
+                                borderColor: highlighted ? "color-mix(in srgb, var(--primary) 35%, var(--border))" : "var(--border)",
+                              }}
+                            >
+                              <div style={{ minWidth: 0 }}>
+                                <div style={{ fontWeight: 700 }}>{point.report_name || `Document ${point.document_id}`}</div>
+                                <div className="muted-text" style={{ marginTop: 3, fontSize: 12 }}>{point.date || "No date"} · Ref {point.reference_range || "—"}</div>
+                              </div>
+                              <div style={{ fontWeight: 700 }}>{point.value_display} {trend.unit || ""}</div>
+                              <span className="secondary-btn" style={{ pointerEvents: "none" }}>Open</span>
+                            </button>
+                          );
+                        })}
                       </div>
                     </div>
                   </div>
@@ -1789,35 +1040,29 @@ export default function PatientChartPage() {
             })}
 
             {!sortedTrends.length && (
-              <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 900 }}>No bloodwork trends yet.</div>
-                <div className="muted-text" style={{ marginTop: 6 }}>
-                  Upload structured bloodwork reports to generate graphs.
-                </div>
+              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                <div style={{ fontWeight: 700 }}>No bloodwork trends yet.</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>Upload structured bloodwork reports to generate graphs.</div>
               </div>
             )}
           </div>
         </div>
       )}
 
+      {/* Assigned doctors */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div className="section-title" style={{ marginBottom: 16 }}>
-          Assigned doctors
-        </div>
-
-        <div style={{ display: "grid", gap: 12 }}>
+        <div className="section-title" style={{ marginBottom: 14 }}>Assigned doctors</div>
+        <div style={{ display: "grid", gap: 10 }}>
           {(profile.doctor_access || []).map((doctor) => (
-            <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 16 }}>
-              <div style={{ fontWeight: 900 }}>{doctor.doctor_name}</div>
-              <div className="muted-text" style={{ marginTop: 4 }}>
-                {doctor.doctor_email}
-              </div>
-              <div className="muted-text" style={{ marginTop: 6 }}>
-                {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+            <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 14, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center" }}>
+              <div>
+                <div style={{ fontWeight: 700 }}>{doctor.doctor_name}</div>
+                <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
+                  {doctor.doctor_email} · {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                </div>
               </div>
             </div>
           ))}
-
           {!(profile.doctor_access || []).length && <div className="muted-text">No doctors assigned.</div>}
         </div>
       </div>
