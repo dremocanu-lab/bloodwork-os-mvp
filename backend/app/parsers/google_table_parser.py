@@ -10,6 +10,7 @@ from app.parsers.bloodwork_parser import (
     build_lab_result,
     build_nil_result,
     clean_text,
+    is_qualitative_value,
     normalize_decimal,
     normalize_test_token,
 )
@@ -132,8 +133,31 @@ NULL_TEXT = {
     "na",
     "null",
     "none",
-    "absent",
 }
+
+SECTION_DETECTION_KEYWORDS: frozenset[str] = frozenset({
+    "hemograma", "hematologie", "hemogram", "hematology",
+    "biochimie", "biochemie", "biochemistry", "biochimice",
+    "hemostaza", "hemostazã", "coagulare", "coagulogram", "coagulation", "hemostasis",
+    "imunologie", "immunologie", "immunology",
+    "endocrinologie", "endocrinology",
+    "oncomarkeri", "markeri tumorali", "tumor markers", "markeri oncologici",
+    "biologie moleculara", "biologie moleculară", "molecular biology",
+    "microbiologie", "microbiology",
+    "sumar urina", "sumar urină", "urinaliza", "urinalysis",
+    "markeri cardiaci", "cardiac markers",
+    "vitamine", "minerale",
+    "lipide", "lipidograma", "lipidogramă", "lipid panel", "profil lipidic",
+    "alergologie", "alergii", "allergy", "panel alergologic",
+    "infectiologie", "serologie", "serology",
+    "parazitologie", "toxicologie",
+    "fertilitate", "hormoni",
+    "reumatologie", "rheumatology",
+    "profil hepatic", "profil renal", "profil tiroidian", "profil fier",
+    "markeri inflamatori", "inflammatory markers",
+    "electroforeza", "electrophoresis",
+    "citologie", "bacteriologie", "fungi",
+})
 
 HEADER_HINTS_TEST = {
     "denumire",
@@ -515,6 +539,10 @@ def extract_result(value: Any) -> str | None:
     if extract_reference_range(text):
         return None
 
+    # Return qualitative values verbatim
+    if is_qualitative_value(text):
+        return clean_text(text)
+
     stripped = remove_units(text)
 
     if not stripped:
@@ -573,6 +601,135 @@ def is_header_or_stop_line(value: Any) -> bool:
         return True
 
     return any(hint in lowered for hint in STOP_LINE_HINTS)
+
+
+def detect_section_heading(line: Any) -> str | None:
+    """Return the line text if it looks like a lab section heading, else None."""
+    text = norm(line)
+
+    if not text or len(text) > 80:
+        return None
+
+    if not any(ch.isalpha() for ch in text):
+        return None
+
+    digit_count = sum(1 for ch in text if ch.isdigit())
+    if digit_count > len(text) * 0.3:
+        return None
+
+    if detect_key(text):
+        return None
+
+    if is_header_or_stop_line(text):
+        return None
+
+    lowered = text.lower()
+
+    for kw in SECTION_DETECTION_KEYWORDS:
+        if kw in lowered:
+            return text
+
+    # All-caps lines (typical of Romanian lab section titles)
+    stripped = re.sub(r"[\s/\-().,:;]", "", text)
+    if stripped and stripped == stripped.upper() and len(text) >= 4:
+        alpha_count = sum(1 for ch in stripped if ch.isalpha())
+        if alpha_count >= len(stripped) * 0.75:
+            return text
+
+    return None
+
+
+def extract_test_name_generic(value: Any) -> str | None:
+    """Return value as a generic test name if it looks like one (not a result/range/header)."""
+    text = norm(value)
+
+    if not text or len(text) > 100:
+        return None
+
+    if not any(ch.isalpha() for ch in text):
+        return None
+
+    if is_null_value(text):
+        return None
+
+    if extract_reference_range(text):
+        return None
+
+    if line_is_result(text):
+        return None
+
+    if re.fullmatch(r"[\d.,\s]+", text):
+        return None
+
+    if is_header_or_stop_line(text):
+        return None
+
+    if detect_section_heading(text):
+        return None
+
+    alpha_count = sum(1 for ch in text if ch.isalpha())
+    if alpha_count < 2:
+        return None
+
+    return text
+
+
+def make_generic_lab_row(
+    raw_name: str,
+    result_text: str | None,
+    reference_text: str | None,
+    unit_text: str | None,
+    confidence: float,
+    flag_text: str | None = None,
+    source_section: str | None = None,
+) -> dict | None:
+    """Build a lab result row for any test (not just CBC) given its raw name."""
+    if not raw_name:
+        return None
+
+    result_str = norm(result_text or "")
+    qual = is_qualitative_value(result_str)
+
+    if qual:
+        value: str | None = clean_text(result_str)
+    else:
+        value = clean_number(result_str) if result_str else None
+
+    reference_range, unit_from_ref = split_reference_and_unit(reference_text or "")
+    unit = (
+        extract_unit(unit_text or "")
+        or unit_from_ref
+        or extract_unit(reference_text or "")
+        or extract_unit(result_text or "")
+    )
+
+    explicit_flag: str | None = None
+    if flag_text:
+        lowered = norm(flag_text).lower()
+        if lowered in {"high", "h", "crescut", "mare", "abnormal"}:
+            explicit_flag = "High"
+        elif lowered in {"low", "l", "scazut", "scăzut", "mic"}:
+            explicit_flag = "Low"
+        elif lowered in {"normal", "ok"}:
+            explicit_flag = "Normal"
+
+    if value is None and not qual:
+        return build_nil_result(
+            raw_test_name=raw_name,
+            reference_range=reference_range,
+            unit=unit,
+            confidence=confidence,
+        )
+
+    return build_lab_result(
+        raw_test_name=raw_name,
+        value=value,
+        flag=explicit_flag,
+        reference_range=reference_range,
+        unit=unit,
+        confidence=confidence,
+        source_section=source_section,
+    )
 
 
 def infer_lab_flag(value: Any, reference_range: Any) -> str | None:
@@ -690,6 +847,9 @@ def score_result_cell(value: Any) -> float:
     if line_is_result(text):
         score += 7.0
 
+    if is_qualitative_value(text):
+        score += 5.0
+
     for hint in HEADER_HINTS_RESULT:
         if hint in lowered:
             score += 5.0
@@ -777,6 +937,7 @@ def make_lab_row(
     unit_text: str | None,
     confidence: float,
     flag_text: str | None = None,
+    source_section: str | None = None,
 ) -> dict | None:
     key = norm_key(key)
     value = extract_result(result_text or "")
@@ -819,7 +980,8 @@ def make_lab_row(
         elif lowered in {"normal", "ok"}:
             explicit_flag = "Normal"
 
-    flag = explicit_flag or (infer_lab_flag(value, reference_range) if reference_range else None)
+    qual = is_qualitative_value(value)
+    flag = explicit_flag or (infer_lab_flag(value, reference_range) if (reference_range and not qual) else None)
 
     return build_lab_result(
         raw_test_name=key,
@@ -828,6 +990,7 @@ def make_lab_row(
         reference_range=reference_range,
         unit=unit,
         confidence=confidence,
+        source_section=source_section,
     )
 
 
@@ -922,7 +1085,11 @@ def infer_columns_from_table_rows(rows: list[list[str]]) -> dict[str, int]:
     return chosen
 
 
-def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]], confidence: float = 0.99) -> list[dict]:
+def parse_labs_from_table_rows_dynamic(
+    table_rows: list[list[str]],
+    confidence: float = 0.99,
+    source_section: str | None = None,
+) -> list[dict]:
     rows = [[norm(cell) for cell in row] for row in table_rows]
     rows = [row for row in rows if any(row)]
 
@@ -935,20 +1102,29 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]], confidence: 
         return []
 
     labs: list[dict] = []
+    current_section = source_section
 
     for row in rows:
         test_text = row[columns["test"]] if columns["test"] < len(row) else ""
-        key = detect_key(test_text)
 
-        if not key:
-            joined = " ".join(row)
-            key = detect_key(joined)
-
-        if not key:
+        # Detect section heading rows (e.g. "BIOCHIMIE GENERALA" as a table row)
+        heading = detect_section_heading(test_text)
+        if heading and all(
+            not norm(cell) or detect_section_heading(norm(cell)) or is_header_or_stop_line(norm(cell))
+            for cell in row
+            if norm(cell) != heading
+        ):
+            current_section = heading
             continue
 
         if is_header_or_stop_line(test_text):
             continue
+
+        # Try CBC/known key first
+        key = detect_key(test_text)
+        if not key:
+            joined = " ".join(row)
+            key = detect_key(joined)
 
         result_text = row[columns["result"]] if "result" in columns and columns["result"] < len(row) else ""
         reference_text = row[columns["reference"]] if "reference" in columns and columns["reference"] < len(row) else ""
@@ -962,37 +1138,73 @@ def parse_labs_from_table_rows_dynamic(table_rows: list[list[str]], confidence: 
                         result_text = cell
                         break
 
-        if not reference_text and key not in NO_REFERENCE_KEYS:
-            for cell in row:
-                if reference_compatible_with_key(key, cell):
-                    reference_text = cell
-                    break
+        if key:
+            if not reference_text and key not in NO_REFERENCE_KEYS:
+                for cell in row:
+                    if reference_compatible_with_key(key, cell):
+                        reference_text = cell
+                        break
 
-        if not unit_text:
-            for cell in row:
-                _reference_range, unit = split_reference_and_unit(cell, key)
+            if not unit_text:
+                for cell in row:
+                    _reference_range, unit = split_reference_and_unit(cell, key)
+                    if unit:
+                        unit_text = cell
+                        break
 
-                if unit:
-                    unit_text = cell
-                    break
+            parsed = make_lab_row(
+                key=key,
+                result_text=result_text,
+                reference_text=reference_text,
+                unit_text=unit_text,
+                confidence=confidence,
+                flag_text=flag_text,
+                source_section=current_section,
+            )
 
-        parsed = make_lab_row(
-            key=key,
-            result_text=result_text,
-            reference_text=reference_text,
-            unit_text=unit_text,
-            confidence=confidence,
-            flag_text=flag_text,
-        )
+            if parsed:
+                labs.append(parsed)
 
-        if parsed:
-            labs.append(parsed)
+        else:
+            # Generic non-CBC test — extract raw name and build row
+            generic_name = extract_test_name_generic(test_text)
+            if not generic_name:
+                continue
+
+            if not result_text:
+                continue
+
+            if not reference_text:
+                for cell in row:
+                    if extract_reference_range(cell):
+                        reference_text = cell
+                        break
+
+            if not unit_text:
+                for cell in row:
+                    if extract_unit(cell):
+                        unit_text = cell
+                        break
+
+            parsed = make_generic_lab_row(
+                raw_name=generic_name,
+                result_text=result_text,
+                reference_text=reference_text,
+                unit_text=unit_text,
+                confidence=confidence - 0.02,
+                flag_text=flag_text,
+                source_section=current_section,
+            )
+
+            if parsed:
+                labs.append(parsed)
 
     return labs
 
 
 def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
     labs: list[dict] = []
+    current_section: str | None = None
 
     for table in tables or []:
         table_rows: list[list[str]] = []
@@ -1000,7 +1212,18 @@ def parse_labs_from_google_tables(tables: list[dict[str, Any]]) -> list[dict]:
         for row in table.get("rows", []) or []:
             table_rows.append(table_row_to_cells(row))
 
-        labs.extend(parse_labs_from_table_rows_dynamic(table_rows, confidence=0.995))
+        table_labs = parse_labs_from_table_rows_dynamic(
+            table_rows,
+            confidence=0.995,
+            source_section=current_section,
+        )
+        labs.extend(table_labs)
+
+        # Carry section forward from last table that set one
+        for lab in reversed(table_labs):
+            if lab.get("source_section"):
+                current_section = lab["source_section"]
+                break
 
     return labs
 
@@ -1334,8 +1557,15 @@ def nearest_unit_around_key(lines: list[str], index: int, key: str) -> str | Non
 
 def parse_labs_from_ordered_lines(lines: list[str], confidence: float = 0.935) -> list[dict]:
     labs: list[dict] = []
+    current_section: str | None = None
 
     for index, line in enumerate(lines):
+        # Track section headings in the line stream
+        heading = detect_section_heading(line)
+        if heading:
+            current_section = heading
+            continue
+
         key = detect_key(line)
 
         if not key:
@@ -1354,6 +1584,7 @@ def parse_labs_from_ordered_lines(lines: list[str], confidence: float = 0.935) -
             reference_text=reference_text,
             unit_text=unit_text,
             confidence=confidence,
+            source_section=current_section,
         )
 
         if parsed:
@@ -1421,6 +1652,9 @@ def quality_score(row: dict) -> float:
     if row.get("unit"):
         score += 0.2
 
+    if row.get("source_section"):
+        score += 0.3
+
     if row_reference_compatible(row):
         score += 0.25
     else:
@@ -1438,8 +1672,13 @@ def clean_final_row(row: dict) -> dict:
         cleaned["flag"] = None
         cleaned["unit"] = cleaned.get("unit") or DEFAULT_CBC_UNITS.get(key)
 
-    if not cleaned.get("reference_range"):
+    # Only clear flag for numeric results; qualitative results don't rely on reference range for flag
+    if not cleaned.get("reference_range") and not is_qualitative_value(cleaned.get("value")):
         cleaned["flag"] = None
+
+    # Preserve source_section from input
+    if "source_section" not in cleaned:
+        cleaned["source_section"] = None
 
     return cleaned
 
@@ -1459,6 +1698,7 @@ def order_labs(labs_by_key: dict[str, dict]) -> list[dict]:
 
 def merge_lab_candidates(candidate_groups: list[list[dict]]) -> list[dict]:
     labs_by_key: dict[str, dict] = {}
+    section_by_key: dict[str, str] = {}
 
     for group in candidate_groups:
         for row in group:
@@ -1469,12 +1709,21 @@ def merge_lab_candidates(candidate_groups: list[list[dict]]) -> list[dict]:
 
             cleaned = clean_final_row(row)
 
+            # Track any source_section seen for this key across all candidates
+            if cleaned.get("source_section"):
+                section_by_key[key] = cleaned["source_section"]
+
             if key not in labs_by_key:
                 labs_by_key[key] = cleaned
                 continue
 
             if quality_score(cleaned) > quality_score(labs_by_key[key]):
                 labs_by_key[key] = cleaned
+
+    # Patch source_section back onto the winner if it was missing
+    for key, row in labs_by_key.items():
+        if not row.get("source_section") and key in section_by_key:
+            row["source_section"] = section_by_key[key]
 
     return order_labs(labs_by_key)
 

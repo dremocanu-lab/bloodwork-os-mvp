@@ -44,6 +44,7 @@ type LabRow = {
   canonical_name?: string | null;
   display_name?: string | null;
   category?: string | null;
+  source_section?: string | null;
   value?: string | null;
   flag?: string | null;
   reference_range?: string | null;
@@ -119,6 +120,7 @@ type EditableLabRow = {
   canonical_name?: string | null;
   display_name?: string | null;
   category?: string | null;
+  source_section?: string | null;
   value?: string | null;
   flag?: string | null;
   reference_range?: string | null;
@@ -517,6 +519,7 @@ export default function DocumentStructuredPage() {
         canonical_name: lab.canonical_name || "",
         display_name: lab.display_name || "",
         category: lab.category || "Alte analize",
+        source_section: lab.source_section || null,
         value: isNilValue(lab.value) ? "" : lab.value || "",
         flag: lab.flag || "",
         reference_range: lab.reference_range || "",
@@ -605,18 +608,22 @@ export default function DocumentStructuredPage() {
   }, [documentData]);
 
   const orderedGroupedLabs = useMemo(() => {
-    const groups = new Map<string, LabRow[]>();
+    const groups = new Map<string, { displayTitle: string; category: string; rows: LabRow[] }>();
 
     for (const lab of documentData?.parsed_data.labs || []) {
-      const key = lab.category || "Alte analize";
+      const groupKey = lab.source_section || lab.category || "Alte analize";
+      const displayTitle = lab.source_section || lab.category || "Alte analize";
+      const category = lab.category || "Alte analize";
 
-      if (!groups.has(key)) groups.set(key, []);
-      groups.get(key)?.push(lab);
+      if (!groups.has(groupKey)) {
+        groups.set(groupKey, { displayTitle, category, rows: [] });
+      }
+      groups.get(groupKey)!.rows.push(lab);
     }
 
-    return Array.from(groups.entries())
-      .sort(([a], [b]) => categorySortIndex(a) - categorySortIndex(b))
-      .map(([category, rows]) => ({ category, rows }));
+    return Array.from(groups.values()).sort(
+      (a, b) => categorySortIndex(a.category) - categorySortIndex(b.category)
+    );
   }, [documentData]);
 
   async function toggleShare(cpUserId: number) {
@@ -780,6 +787,7 @@ export default function DocumentStructuredPage() {
             canonical_name: lab.canonical_name || lab.display_name || lab.raw_test_name || null,
             display_name: lab.display_name || lab.canonical_name || lab.raw_test_name || null,
             category: lab.category || "Alte analize",
+            source_section: lab.source_section || null,
             value: cleanLabValueForSave(lab.value || null),
             flag: isNilValue(lab.value) || !lab.reference_range?.trim() ? null : lab.flag || null,
             reference_range: lab.reference_range || null,
@@ -1617,8 +1625,8 @@ export default function DocumentStructuredPage() {
 
             {orderedGroupedLabs.length > 0 ? (
               <div style={{ display: "grid", gap: 22 }}>
-                {orderedGroupedLabs.map(({ category, rows }) => (
-                  <div key={category}>
+                {orderedGroupedLabs.map(({ displayTitle, category, rows }) => (
+                  <div key={displayTitle}>
                     <div
                       style={{
                         fontWeight: 950,
@@ -1629,7 +1637,12 @@ export default function DocumentStructuredPage() {
                         color: "var(--muted)",
                       }}
                     >
-                      {category}
+                      {displayTitle}
+                      {displayTitle !== category && (
+                        <span style={{ fontWeight: 700, marginLeft: 8, opacity: 0.55, fontSize: 11, textTransform: "none", letterSpacing: 0 }}>
+                          {category}
+                        </span>
+                      )}
                     </div>
 
                     <div

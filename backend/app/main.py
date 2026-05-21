@@ -29,6 +29,7 @@ def run_migrations():
     with engine.connect() as conn:
         conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1"))
         conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS ended_at VARCHAR"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS source_section VARCHAR"))
         conn.commit()
 
 run_migrations()
@@ -347,6 +348,7 @@ def serialize_lab_result(lab):
         "canonical_name": lab.canonical_name,
         "display_name": lab.display_name,
         "category": lab.category,
+        "source_section": lab.source_section,
         "value": lab.value,
         "flag": lab.flag,
         "reference_range": lab.reference_range,
@@ -729,6 +731,7 @@ def process_upload_job(job_id: int):
                     canonical_name=lab.get("canonical_name"),
                     display_name=lab.get("display_name"),
                     category=lab.get("category"),
+                    source_section=lab.get("source_section"),
                     value=lab.get("value"),
                     flag=lab.get("flag"),
                     reference_range=lab.get("reference_range"),
@@ -819,6 +822,7 @@ class LabResultUpdate(BaseModel):
     canonical_name: str | None = None
     display_name: str | None = None
     category: str | None = None
+    source_section: str | None = None
     value: str | None = None
     flag: str | None = None
     reference_range: str | None = None
@@ -1855,6 +1859,7 @@ def update_document(
                 canonical_name=lab.canonical_name,
                 display_name=lab.display_name,
                 category=lab.category,
+                source_section=lab.source_section,
                 value=lab.value,
                 flag=lab.flag,
                 reference_range=lab.reference_range,

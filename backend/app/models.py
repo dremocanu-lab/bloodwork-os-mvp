@@ -212,6 +212,7 @@ class LabResult(Base):
     canonical_name = Column(String, nullable=True, index=True)
     display_name = Column(String, nullable=True)
     category = Column(String, nullable=True, index=True)
+    source_section = Column(String, nullable=True)
 
     value = Column(String, nullable=True)
     flag = Column(String, nullable=True)

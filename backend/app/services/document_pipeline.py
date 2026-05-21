@@ -4,6 +4,7 @@ import re
 from pathlib import Path
 from typing import Any
 
+from app.parsers.bloodwork_parser import is_qualitative_value
 from app.parsers.google_table_parser import parse_labs_from_google_extraction
 from app.report_fields import extract_report_metadata
 from app.services.lab_catalog import build_report_name_from_categories, normalize_lab_rows
@@ -29,7 +30,6 @@ NULL_VALUE_TOKENS = {
     "none",
     "n/a",
     "na",
-    "absent",
 }
 
 CBC_EXACT_LABELS = {
@@ -189,6 +189,10 @@ def normalize_value(value: Any) -> str | None:
 
     if cleaned.lower() in NULL_VALUE_TOKENS:
         return None
+
+    # Preserve qualitative values verbatim (Pozitiv, Negativ, < 0.400, etc.)
+    if is_qualitative_value(cleaned):
+        return cleaned
 
     cleaned = cleaned.replace(",", ".")
     cleaned = re.sub(r"[^0-9.+-]", "", cleaned)
@@ -403,10 +407,12 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
     except Exception:
         confidence = None
 
+    source_section = lab.get("source_section") or None
+
     if cbc_key:
         display_name = CBC_EXACT_LABELS[cbc_key]
 
-        return {
+        row: dict[str, Any] = {
             "raw_test_name": cbc_key,
             "canonical_name": display_name,
             "display_name": display_name,
@@ -417,12 +423,15 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
             "unit": unit,
             "confidence": confidence,
         }
+        if source_section:
+            row["source_section"] = source_section
+        return row
 
     canonical_name = lab.get("canonical_name") or lab.get("test_name") or lab.get("display_name") or raw_name
     display_name = lab.get("display_name") or canonical_name or raw_name
     category = lab.get("category") or "Alte analize"
 
-    return {
+    row = {
         "raw_test_name": clean_string(raw_name),
         "canonical_name": clean_string(canonical_name),
         "display_name": clean_string(display_name),
@@ -433,6 +442,9 @@ def standardize_lab_row_shape(lab: dict[str, Any]) -> dict[str, Any]:
         "unit": unit,
         "confidence": confidence,
     }
+    if source_section:
+        row["source_section"] = source_section
+    return row
 
 
 def normalize_rows_preserving_cbc(
@@ -501,6 +513,7 @@ def lab_quality_score(lab: dict[str, Any]) -> float:
 
 def merge_lab_results(*lab_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
     merged_by_key: dict[str, dict[str, Any]] = {}
+    section_by_key: dict[str, str] = {}
 
     for lab_list in lab_lists:
         for lab in lab_list or []:
@@ -510,10 +523,20 @@ def merge_lab_results(*lab_lists: list[dict[str, Any]]) -> list[dict[str, Any]]:
             if not key:
                 continue
 
+            if row.get("source_section"):
+                section_by_key[key] = row["source_section"]
+
             if key not in merged_by_key or lab_quality_score(row) >= lab_quality_score(merged_by_key[key]):
                 merged_by_key[key] = row
 
-    return order_lab_rows([standardize_lab_row_shape(row) for row in merged_by_key.values()])
+    result_rows = []
+    for key, row in merged_by_key.items():
+        if not row.get("source_section") and key in section_by_key:
+            row = dict(row)
+            row["source_section"] = section_by_key[key]
+        result_rows.append(standardize_lab_row_shape(row))
+
+    return order_lab_rows(result_rows)
 
 
 def order_lab_rows(labs: list[dict[str, Any]]) -> list[dict[str, Any]]:

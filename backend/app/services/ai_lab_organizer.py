@@ -4,6 +4,7 @@ import base64
 import json
 import mimetypes
 import os
+import re
 import urllib.error
 import urllib.request
 from pathlib import Path
@@ -106,14 +107,41 @@ def compact_text_for_ai(text: str, max_chars: int = 24000) -> str:
     return combined[:max_chars]
 
 
+QUALITATIVE_TOKENS = frozenset({
+    "pozitiv", "negativ", "reactiv", "nereactiv",
+    "prezent", "absent", "normal", "patologic",
+    "nedetectabil", "detectabil", "trace", "urme",
+    "slab pozitiv", "intens pozitiv",
+    "positive", "negative", "reactive", "non-reactive", "nonreactive",
+    "present", "detected", "not detected",
+    "borderline", "indeterminate", "nedeterminat", "echivoc", "equivocal",
+    "inconclusive",
+})
+
+QUALITATIVE_PREFIX_RE = re.compile(r"^[<>≤≥]=?\s*\d", re.UNICODE)
+
+
+def is_qualitative_ai_value(value: str) -> bool:
+    lowered = value.lower().strip()
+    if lowered in QUALITATIVE_TOKENS:
+        return True
+    if QUALITATIVE_PREFIX_RE.match(value.strip()):
+        return True
+    return False
+
+
 def normalize_ai_lab_row(row: dict[str, Any]) -> dict[str, Any]:
     value = row.get("value")
 
     if value is not None:
-        value = str(value).strip().replace(",", ".")
+        value_str = str(value).strip()
 
-        if value.lower() in {"nil", "null", "none", "n/a", "na", "-", "--", "---", "—", ""}:
+        if value_str.lower() in {"nil", "null", "none", "n/a", "na", "-", "--", "---", "—", ""}:
             value = None
+        elif is_qualitative_ai_value(value_str):
+            value = value_str  # preserve verbatim
+        else:
+            value = value_str.replace(",", ".")
 
     reference_range = row.get("reference_range")
     if reference_range is not None:
@@ -144,17 +172,25 @@ def normalize_ai_lab_row(row: dict[str, Any]) -> dict[str, Any]:
 
     name = row.get("raw_test_name") or row.get("test") or row.get("name") or row.get("display_name")
 
-    return {
+    # Map section_title → source_section
+    source_section = row.get("source_section") or row.get("section_title") or None
+
+    result: dict[str, Any] = {
         "raw_test_name": name,
         "canonical_name": row.get("canonical_name") or name,
         "display_name": row.get("display_name") or row.get("test") or name,
-        "category": row.get("category") or "Hematologie",
+        "category": row.get("category") or "Alte analize",
         "value": value,
         "flag": flag,
         "reference_range": reference_range,
         "unit": unit,
         "confidence": float(row.get("confidence") or 0.86),
     }
+
+    if source_section:
+        result["source_section"] = source_section
+
+    return result
 
 
 def extract_response_text(response_json: dict[str, Any]) -> str:
@@ -196,52 +232,40 @@ def extract_json_object(text: str) -> dict[str, Any] | None:
 def build_lab_extraction_prompt(extracted_text: str, deterministic_labs: list[dict[str, Any]]) -> str:
     return json.dumps(
         {
-            "task": "Extract every visible lab row from this Romanian medical lab report.",
+            "task": "Extract every visible lab test row from this Romanian medical laboratory report. The report may contain multiple sections (Hemograma, Biochimie, Coagulare, Imunologie, Endocrinologie, Oncomarkeri, etc.). Extract ALL sections.",
             "critical_rules": [
                 "Use the uploaded PDF/image visually if present. The table is more important than OCR text.",
-                "Extract the CBC table under Citomorfologie / Hemograma simpla / CBC+DIFF / Sysmex.",
-                "Each row has: test name, result, biological reference interval.",
-                "Do not invent values.",
-                "Do not invent reference ranges.",
-                "Do not use default lab ranges.",
+                "Extract ALL visible lab sections — not just CBC. Include Biochimie, Coagulare, Imunologie, Endocrinologie, Oncomarkeri, Biologie moleculara, Sumar urina, Lipide, Vitamine, Markeri cardiaci, and any other section visible.",
+                "For each test row, record the exact section title from the document in section_title (e.g. 'HEMOGRAMA', 'BIOCHIMIE GENERALA', 'HEMOSTAZA').",
+                "Do not collapse tests from different sections. Each row must keep its section_title.",
+                "Qualitative results like Pozitiv, Negativ, Reactiv, Nereactiv, Prezent, Absent, Nedetectabil, Detectabil, Slab pozitiv, Intens pozitiv, Borderline must be preserved verbatim in the value field — never convert or discard them.",
+                "Values like '< 0.400', '> 500', '< 1.0' are also qualitative — preserve them verbatim.",
+                "Do not invent values. Do not invent reference ranges. Do not use default lab ranges.",
                 "Preserve decimals exactly as shown.",
                 "If result is blank or --- then value must be null.",
                 "If reference range and unit are combined, split them.",
                 "Reference range must be only the numeric interval, e.g. 3.98 - 10.00.",
-                "Unit must be separate, e.g. 10^3/uL, 10^6/uL, g/dL, %, fL, pg.",
-                "If arrows are visible, use them only to set High/Low; still calculate Normal only if value and reference range exist.",
+                "Unit must be separate, e.g. 10^3/uL, 10^6/uL, g/dL, %, fL, pg, mg/dL, mmol/L, U/L, IU/L, mIU/L.",
+                "If arrows are visible, use them only to set High/Low flag; still calculate Normal only if value and reference range exist.",
                 "Return all visible rows, including rows with --- values if the test row exists.",
+                "For qualitative results, set flag only if explicitly shown (High/Low marker). Do not infer flag from qualitative values.",
             ],
-            "expected_cbc_tests_if_visible": [
-                "WBC",
-                "RBC",
-                "HGB",
-                "HCT",
-                "MCV",
-                "MCH",
-                "MCHC",
-                "PLT",
-                "RDW-SD",
-                "RDW-CV",
-                "PDW",
-                "MPV",
-                "P-LCR",
-                "PCT",
-                "NRBC#",
-                "NRBC%",
-                "NEUT#",
-                "NEUT%",
-                "LYMPH#",
-                "LYMPH%",
-                "MONO#",
-                "MONO%",
-                "EO#",
-                "EO%",
-                "BASO#",
-                "BASO%",
-                "IG#",
-                "IG%",
-            ],
+            "lab_categories": {
+                "Hematologie": "CBC / Hemograma: WBC, RBC, HGB, HCT, MCV, MCH, MCHC, PLT, RDW-SD, RDW-CV, PDW, MPV, P-LCR, PCT, NRBC#, NRBC%, NEUT#, NEUT%, LYMPH#, LYMPH%, MONO#, MONO%, EO#, EO%, BASO#, BASO%, IG#, IG%",
+                "Biochimie generala": "Glucoza, Uree, Creatinina, Acid uric, Bilirubina totala/directa/indirecta, ALT/TGP, AST/TGO, GGT, Fosfataza alcalina, LDH, Amilaza, Lipaza, Proteine totale, Albumina, Calciu, Fosfor, Magneziu, Sodiu, Potasiu, Clor, Fier, TIBC, Feritina, Transferina",
+                "Coagulare": "Timp protrombina (PT), INR, APTT, Fibrinogen, Trombina, D-dimeri, Antitrombina III, Proteina C, Proteina S",
+                "Imunologie": "CRP, VSH, Interleukina 6, Procalcitonina, Complement C3/C4, IgA/IgG/IgM, ANA, ANCA, FR (Factor reumatoid), Anti-CCP, Anti-dsDNA",
+                "Endocrinologie": "TSH, FT4, FT3, T4, T3, Anti-TPO, Anti-Tg, Insulina, C-peptid, HbA1c, Cortizol, ACTH, Prolactina, LH, FSH, Estradiol, Progesteron, Testosteron, PTH, Vitamina D",
+                "Oncomarkeri": "PSA, PSA liber, AFP, CEA, CA 19-9, CA 125, CA 15-3, CA 72-4, HE4, CYFRA 21-1, NSE, SCC, Cromogranina A, Beta-HCG",
+                "Lipide": "Colesterol total, HDL, LDL, Trigliceride, non-HDL, Apo A1, Apo B",
+                "Vitamine/Minerale": "Vitamina B12, Vitamina D (25-OH), Vitamina B9/Acid folic, Vitamina B1, Zinc, Seleniu, Cupru",
+                "Biologie moleculara": "PCR Chlamydia, PCR Mycoplasma, PCR HPV, PCR Hepatita B (HBV-DNA), PCR Hepatita C (HCV-RNA), PCR SARS-CoV-2",
+                "Sumar urina": "pH, Densitate, Proteine, Glucoza, Corpi cetonici, Hemoglobina, Bilirubina, Urobilinogen, Nitrit, Leucocite",
+                "Microbiologie": "Urocultura, Coprocultura, Hemocultura, Exsudat faringian, Antibiograma",
+                "Markeri cardiaci": "Troponina I/T, CK-MB, BNP, NT-proBNP, Mioglobina",
+                "Serologie": "Toxoplasma IgG/IgM, CMV IgG/IgM, EBV IgG/IgM, Rubeola IgG/IgM, HSV IgG/IgM, Helicobacter pylori IgG, HIV Ag/Ac, Sifilis (VDRL/TPHA)",
+                "Alte analize": "Any test not covered by the above categories",
+            },
             "output_schema": {
                 "metadata": {
                     "patient_name": "string|null",
@@ -264,13 +288,14 @@ def build_lab_extraction_prompt(extracted_text: str, deterministic_labs: list[di
                 },
                 "labs": [
                     {
-                        "raw_test_name": "string",
+                        "raw_test_name": "string (exact test name from document)",
                         "canonical_name": "string",
                         "display_name": "string",
-                        "category": "Hematologie",
-                        "value": "string|null",
+                        "category": "one of the lab_categories keys above",
+                        "section_title": "string|null (exact section heading from document, e.g. 'BIOCHIMIE GENERALA')",
+                        "value": "string|null (preserve qualitative values verbatim)",
                         "unit": "string|null",
-                        "reference_range": "string|null",
+                        "reference_range": "string|null (numeric interval only, e.g. '3.98 - 10.00')",
                         "flag": "High|Low|Normal|null",
                         "confidence": "number",
                     }

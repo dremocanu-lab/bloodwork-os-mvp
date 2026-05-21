@@ -164,13 +164,39 @@ NULL_RESULT_TOKENS = {
     "na",
     "null",
     "none",
-    "absent",
 }
 
 ARROW_HIGH_MARKERS = {"↑", "▲", "↗", "⬆", "➚"}
 ARROW_LOW_MARKERS = {"↓", "▼", "↘", "⬇", "➘"}
 
 NUMBER_RE = re.compile(r"[-+]?\d+(?:[.,]\d+)?")
+
+# Known qualitative result values (lowercase for comparison)
+QUALITATIVE_VALUES: frozenset[str] = frozenset({
+    "pozitiv", "negativ", "reactiv", "nereactiv",
+    "prezent", "absent", "normal", "patologic",
+    "nedetectabil", "detectabil", "trace", "urme",
+    "slab pozitiv", "intens pozitiv",
+    "positive", "negative", "reactive", "non-reactive", "nonreactive",
+    "present", "detected", "not detected",
+    "borderline", "indeterminate", "nedeterminat", "echivoc", "equivocal",
+    "inconclusive",
+})
+
+# < 0.400 / > 500 / >= 10 patterns
+QUALITATIVE_PREFIX_RE = re.compile(r"^[<>≤≥]=?\s*\d", re.UNICODE)
+
+
+def is_qualitative_value(value: Any) -> bool:
+    text = clean_text(value)
+    if not text:
+        return False
+    lowered = text.lower().strip()
+    if lowered in QUALITATIVE_VALUES:
+        return True
+    if QUALITATIVE_PREFIX_RE.match(text.strip()):
+        return True
+    return False
 
 # Compact differential notation: "N4 S63 L22 M11" — at least 2 letter-digit pairs
 COMPACT_DIFF_RE = re.compile(r"(?<![A-Za-z0-9])([A-Z]\d{1,3})(?:\s+[A-Z]\d{1,3})+")
@@ -678,20 +704,30 @@ def build_lab_result(
     reference_range: Any = None,
     unit: Any = None,
     confidence: float = 0.85,
+    source_section: str | None = None,
 ) -> dict:
     test_key = normalize_test_token(raw_test_name)
     display_candidate = KNOWN_TEST_ALIASES.get(test_key, clean_text(raw_test_name))
     normalized = normalize_test_name(display_candidate)
 
-    final_value = normalize_decimal(value)
+    qualitative = is_qualitative_value(value)
+    final_value = clean_text(value) if qualitative else normalize_decimal(value)
     final_reference = extract_reference_range(reference_range)
     final_unit = clean_unit(unit, test_key)
 
     final_flag = None
 
-    final_flag = None
-
-    if final_value is not None and final_reference:
+    if qualitative:
+        # For qualitative results use only the explicit flag; never infer from reference range
+        if flag:
+            lowered = str(flag).strip().lower()
+            if lowered in {"high", "h", "crescut", "mare", "abnormal"}:
+                final_flag = "High"
+            elif lowered in {"low", "l", "scazut", "scăzut", "mic"}:
+                final_flag = "Low"
+            elif lowered == "normal":
+                final_flag = "Normal"
+    elif final_value is not None and final_reference:
         explicit_flag = None
 
         if flag:
@@ -706,7 +742,7 @@ def build_lab_result(
 
         final_flag = explicit_flag or infer_flag(final_value, final_reference)
 
-    return {
+    result = {
         "raw_test_name": test_key or clean_text(raw_test_name),
         "canonical_name": normalized["canonical_name"],
         "display_name": normalized["display_name"],
@@ -717,6 +753,11 @@ def build_lab_result(
         "unit": final_unit,
         "confidence": confidence,
     }
+
+    if source_section is not None:
+        result["source_section"] = source_section
+
+    return result
 
 
 def build_nil_result(

@@ -85,7 +85,7 @@ def normalize_ai_extraction(payload: dict[str, Any]) -> dict[str, Any]:
     report = payload.get("report") or {}
     labs = payload.get("labs") or []
 
-    normalized_labs: list[dict[str, str | None]] = []
+    normalized_labs: list[dict[str, Any]] = []
 
     for lab in labs:
         if not isinstance(lab, dict):
@@ -94,18 +94,21 @@ def normalize_ai_extraction(payload: dict[str, Any]) -> dict[str, Any]:
         raw_name = _clean_value(lab.get("raw_test_name") or lab.get("test_name") or lab.get("name"))
         value = _clean_value(lab.get("value") or lab.get("result"))
 
-        if not raw_name or not value:
+        if not raw_name:
             continue
 
-        normalized_labs.append(
-            {
-                "raw_test_name": raw_name,
-                "value": value,
-                "unit": _clean_value(lab.get("unit")) or "",
-                "reference_range": _clean_value(lab.get("reference_range") or lab.get("range")) or "",
-                "flag": _clean_value(lab.get("flag")) or "Normal",
-            }
-        )
+        source_section = _clean_value(lab.get("source_section") or lab.get("section_title"))
+
+        row: dict[str, Any] = {
+            "raw_test_name": raw_name,
+            "value": value,
+            "unit": _clean_value(lab.get("unit")) or "",
+            "reference_range": _clean_value(lab.get("reference_range") or lab.get("range")) or "",
+            "flag": _clean_value(lab.get("flag")) or "Normal",
+        }
+        if source_section:
+            row["source_section"] = source_section
+        normalized_labs.append(row)
 
     return {
         "patient_name": _clean_value(patient.get("full_name") or patient.get("name")),
@@ -145,46 +148,57 @@ def _extract_page_with_ai(
     prompt = f"""
 You are Bloodwork OS table extraction engine.
 
-You are reading PAGE {page_number} of {total_pages} from a medical document.
+You are reading PAGE {page_number} of {total_pages} from a Romanian medical laboratory report.
 
 Return ONLY valid JSON. No markdown. No explanation.
 
 Your task is NOT to summarize.
-Your task is to copy every visible structured result row from this page.
+Your task is to copy every visible structured lab result row from this page.
 
-Very important:
-- Extract EVERY row from every visible table.
+EXTRACTION RULES:
+- Extract EVERY row from every visible table on this page.
+- Extract ALL sections — not just CBC/hemogram. This report may have multiple sections.
+- For each section (e.g. HEMOGRAMA, BIOCHIMIE GENERALA, HEMOSTAZA, IMUNOLOGIE, ENDOCRINOLOGIE, ONCOMARKERI, SUMAR URINA, LIPIDE, VITAMINE, MARKERI CARDIACI, BIOLOGIE MOLECULARA etc.), record the exact section heading in section_title.
+- Do not collapse tests from different sections. Each row must have its own section_title.
 - Do not stop after the first result.
 - Do not only extract abnormal rows.
 - Do not ignore rows with abbreviations.
-- If the page has a CBC / hemogram / hematology table, extract all rows from the CBC table.
-- If a row has a test name and a numeric/text result, include it.
+- If a row has a test name and any result (numeric or text), include it.
 - If unit or reference range is missing/unclear, leave it blank but still include the row.
-- Preserve test abbreviations exactly.
+- Preserve test abbreviations and names exactly as shown.
+
+QUALITATIVE VALUES (IMPORTANT):
+- Some results are text, not numbers: Pozitiv, Negativ, Reactiv, Nereactiv, Prezent, Absent, Nedetectabil, Detectabil, Slab pozitiv, Intens pozitiv, Borderline, Indeterminate, Normal, Patologic, etc.
+- Values like "< 0.400", "> 500", "< 1.0" are also qualitative.
+- Preserve ALL qualitative values verbatim in the value field. Never convert or discard them.
+- For qualitative values, set flag only if explicitly shown (H/L marker visible). Do not guess.
 
 Romanian terms:
-- Nume / Nume si prenume / Nume și prenume = patient name
+- Nume / Nume si prenume = patient name
 - Varsta / Vârsta = age
-- Sex = sex
 - CNP = national ID
-- Cod pacient / ID pacient = patient identifier
-- Data recoltarii / Data recoltării = collected on
-- Data validarii / Data validării = validated/reported on
-- Buletin Analize Medicale = medical report
-- Hemograma / Hemoleucograma = CBC
+- Data recoltarii = collected on
+- Data validarii = validated/reported on
+- Hemograma / Hemoleucograma = CBC section
 
-Common CBC rows to look for:
+CBC rows to look for (section: HEMOGRAMA or similar):
 WBC, RBC, HGB, HCT, MCV, MCH, MCHC, PLT, RDW-SD, RDW-CV, PDW, MPV, P-LCR, PCT,
 NEUT#, NEUT%, LYMPH#, LYMPH%, MONO#, MONO%, EO#, EO%, BASO#, BASO%, IG#, IG%,
-NRBC#, NRBC%, RET%, RET#, IRF, LFR, MFR, HFR, RET-HE, RBC-HE, HYPO-HE, HYPER-HE, DELTA-HE.
+NRBC#, NRBC%.
 
-Also extract chemistry, coagulation, urine, pathology, or other result rows if visible.
+Chemistry rows (section: BIOCHIMIE or similar):
+Glucoza, Uree, Creatinina, Acid uric, Bilirubina totala/directa, ALT/TGP, AST/TGO, GGT,
+Fosfataza alcalina, LDH, Amilaza, Proteine totale, Albumina, Calciu, Fosfor, Magneziu,
+Sodiu, Potasiu, Fier, Feritina.
+
+Coagulation (section: HEMOSTAZA / COAGULARE):
+PT, INR, APTT, Fibrinogen, D-dimeri.
 
 Flag rules:
 - Use "High" if marked high or above range.
 - Use "Low" if marked low or below range.
-- Use "Abnormal" if clearly abnormal but direction unclear.
-- Use "Normal" if normal or unclear.
+- Use "Normal" if within range.
+- Leave null if unclear or if value is qualitative without explicit marker.
 
 Return this exact JSON shape:
 {{
@@ -212,10 +226,19 @@ Return this exact JSON shape:
   "labs": [
     {{
       "raw_test_name": "WBC",
+      "section_title": "HEMOGRAMA",
       "value": "4.49",
       "unit": "10^3/uL",
       "reference_range": "3.98 - 10.00",
       "flag": "Normal"
+    }},
+    {{
+      "raw_test_name": "Anti-HCV",
+      "section_title": "SEROLOGIE",
+      "value": "Negativ",
+      "unit": null,
+      "reference_range": null,
+      "flag": null
     }}
   ]
 }}
