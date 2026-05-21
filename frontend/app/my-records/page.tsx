@@ -719,6 +719,7 @@ export default function MyRecordsPage() {
   const [expandedTrendKey, setExpandedTrendKey] = useState<string | null>(null);
   const [hoveredTrendPoint, setHoveredTrendPoint] = useState<Record<string, number | null>>({});
   const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
+  const [pinsLoaded, setPinsLoaded] = useState(false);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -865,6 +866,31 @@ export default function MyRecordsPage() {
     setHospitalFilter("");
     setYearFilter("");
   }, [activeSection]);
+
+  useEffect(() => {
+    if (!currentUser || pinsLoaded) return;
+    const storageKey = `pinned_trends_patient_${currentUser.id}`;
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setPinnedTrendKeys(parsed);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+    setPinsLoaded(true);
+  }, [currentUser, pinsLoaded]);
+
+  useEffect(() => {
+    if (!currentUser || !pinsLoaded) return;
+    const storageKey = `pinned_trends_patient_${currentUser.id}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(pinnedTrendKeys));
+    } catch {
+      // ignore storage errors
+    }
+  }, [pinnedTrendKeys, currentUser, pinsLoaded]);
 
   const allDocuments = useMemo(() => {
     if (!profile) return [];

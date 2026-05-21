@@ -120,6 +120,7 @@ type AdmissionTimelineItem = TimelineItem & {
 
 const PAGE_SIZE = 10;
 const TREND_POINT_LIMIT = 5;
+const MAX_PINNED = 3;
 
 const SECTION_ORDER = [
   "bloodwork",
@@ -301,15 +302,13 @@ function SectionPill({ active, label, count, onClick }: { active: boolean; label
       style={{ borderRadius: 999, padding: "8px 14px", fontWeight: 700, display: "inline-flex", alignItems: "center", gap: 7 }}
     >
       <span>{label}</span>
-      <span
-        style={{
-          minWidth: 20, height: 20, padding: "0 6px", borderRadius: 999,
-          display: "grid", placeItems: "center",
-          background: active ? "rgba(255,255,255,0.18)" : "var(--panel-2)",
-          border: active ? "1px solid rgba(255,255,255,0.22)" : "1px solid var(--border)",
-          fontSize: 11, lineHeight: 1,
-        }}
-      >{count}</span>
+      <span style={{
+        minWidth: 20, height: 20, padding: "0 6px", borderRadius: 999,
+        display: "grid", placeItems: "center",
+        background: active ? "rgba(255,255,255,0.18)" : "var(--panel-2)",
+        border: active ? "1px solid rgba(255,255,255,0.22)" : "1px solid var(--border)",
+        fontSize: 11, lineHeight: 1,
+      }}>{count}</span>
     </button>
   );
 }
@@ -431,7 +430,7 @@ function TrendChart({ points, unit, expanded, highlightedDocumentId }: { points:
   );
 }
 
-type DocRowProps = {
+type DocCardProps = {
   doc: DocumentCard;
   patientId: string;
   isDoctor: boolean;
@@ -442,78 +441,90 @@ type DocRowProps = {
   router: ReturnType<typeof useRouter>;
 };
 
-function DocumentRow({ doc, patientId, isDoctor, currentUserId, openingId, onOpenOriginal, onOpenStructured, router }: DocRowProps) {
+function DocCard({ doc, patientId, isDoctor, currentUserId, openingId, onOpenOriginal, onOpenStructured, router }: DocCardProps) {
   const isNote = doc.section === "notes";
   const isDischargeSummary = doc.section === "discharge_summary";
   const reviewNeeded = needsDoctorReview(doc);
   const editableNote = isDoctor && doc.section === "notes" && (doc.can_edit_note || doc.uploaded_by?.id === currentUserId);
 
-  const accentColor = reviewNeeded ? "var(--danger-text)" : doc.is_verified ? "var(--success-text)" : "var(--border)";
-
   return (
     <div
+      className="soft-card-tight"
       style={{
-        display: "grid",
-        gridTemplateColumns: "4px 1fr auto",
-        alignItems: "center",
-        gap: "0 16px",
-        borderBottom: "1px solid var(--border)",
-        padding: "12px 0",
-        background: reviewNeeded ? "color-mix(in srgb, var(--danger-bg) 40%, transparent)" : "transparent",
+        padding: 0,
+        overflow: "hidden",
+        marginBottom: 12,
+        borderColor: reviewNeeded ? "var(--danger-border)" : "var(--border)",
+        background: reviewNeeded ? "color-mix(in srgb, var(--danger-bg) 40%, var(--panel))" : "var(--panel)",
       }}
     >
-      {/* Accent bar */}
-      <span style={{ alignSelf: "stretch", width: 4, borderRadius: "0 2px 2px 0", background: accentColor }} />
+      <div style={{
+        height: 3,
+        background: reviewNeeded ? "var(--danger-text)" : doc.is_verified ? "var(--success-text)" : "var(--border)",
+      }} />
 
-      {/* Main content */}
-      <div style={{ minWidth: 0 }}>
-        <div style={{ display: "flex", alignItems: "center", gap: 8, flexWrap: "wrap", marginBottom: 3 }}>
-          <span style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{getDocumentTitle(doc)}</span>
+      <div style={{ padding: "16px 18px" }}>
+        <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 10 }}>
           <span style={{
-            padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 600,
-            background: doc.is_verified ? "var(--success-bg)" : "var(--panel-2)",
-            color: doc.is_verified ? "var(--success-text)" : "var(--muted)",
-            border: `1px solid ${doc.is_verified ? "color-mix(in srgb, var(--success-text) 24%, transparent)" : "var(--border)"}`,
+            padding: "3px 9px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+            background: "var(--panel-2)", color: "var(--muted)", border: "1px solid var(--border)",
           }}>
-            {doc.is_verified ? "Verified" : "Unverified"}
+            {sectionLabel(doc.section)}
           </span>
+          {doc.is_verified && (
+            <span style={{
+              padding: "3px 9px", borderRadius: 6, fontSize: 11, fontWeight: 700,
+              background: "var(--success-bg)", color: "var(--success-text)",
+              border: "1px solid color-mix(in srgb, var(--success-text) 24%, transparent)",
+            }}>
+              Verified
+            </span>
+          )}
           {reviewNeeded && (
             <span style={{
-              padding: "1px 7px", borderRadius: 4, fontSize: 11, fontWeight: 700,
+              padding: "3px 9px", borderRadius: 6, fontSize: 11, fontWeight: 700,
               background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)",
             }}>
               Needs review
             </span>
           )}
         </div>
-        <div style={{ fontSize: 12, color: "var(--muted)", display: "flex", gap: 6, flexWrap: "wrap" }}>
-          <span>{getDocumentDateLabel(doc)}</span>
-          {doc.lab_name && !isDischargeSummary && <><span>·</span><span>{doc.lab_name}</span></>}
-          {doc.sample_type && !isDischargeSummary && <><span>·</span><span>{doc.sample_type}</span></>}
-          {isDischargeSummary && <><span>·</span><span>Discharge record</span></>}
-          <span>·</span>
-          <span>{getUploaderText(doc)}</span>
+
+        <div style={{ fontWeight: 800, fontSize: 16, letterSpacing: "-0.02em", marginBottom: 6 }}>
+          {getDocumentTitle(doc)}
+        </div>
+
+        <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
+          {getDocumentDateLabel(doc)}
+          {doc.lab_name && !isDischargeSummary && ` · ${doc.lab_name}`}
+          {doc.sample_type && !isDischargeSummary && ` · ${doc.sample_type}`}
+          {doc.referring_doctor && ` · Dr. ${doc.referring_doctor}`}
+          {isDischargeSummary && ` · Discharge record`}
+        </div>
+        <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+          {getUploaderText(doc)}
           {isNote && doc.note_preview && (
-            <><span>·</span><span style={{ fontStyle: "italic", opacity: 0.8 }}>{doc.note_preview.slice(0, 80)}{doc.note_preview.length > 80 ? "…" : ""}</span></>
+            <span style={{ fontStyle: "italic", opacity: 0.75 }}>
+              {` · "${doc.note_preview.slice(0, 80)}${doc.note_preview.length > 80 ? "…" : ""}"`}
+            </span>
           )}
         </div>
-      </div>
 
-      {/* Actions */}
-      <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-        {!isNote && (
-          <button type="button" className="secondary-btn" onClick={() => onOpenOriginal(doc.id)} disabled={openingId === doc.id}>
-            {openingId === doc.id ? "Opening…" : "Original"}
+        <div style={{ display: "flex", gap: 8, marginTop: 14, justifyContent: "flex-end" }}>
+          {!isNote && (
+            <button type="button" className="secondary-btn" onClick={() => onOpenOriginal(doc.id)} disabled={openingId === doc.id}>
+              {openingId === doc.id ? "Opening…" : "Original"}
+            </button>
+          )}
+          <button type="button" className="primary-btn" onClick={() => onOpenStructured(doc)}>
+            {isNote ? "Open Note" : isDischargeSummary ? "Discharge" : "Structured"}
           </button>
-        )}
-        <button type="button" className="primary-btn" onClick={() => onOpenStructured(doc)}>
-          {isNote ? "Open Note" : isDischargeSummary ? "Discharge" : "Structured"}
-        </button>
-        {editableNote && (
-          <button type="button" className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/${doc.id}/edit`)}>
-            Edit
-          </button>
-        )}
+          {editableNote && (
+            <button type="button" className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/${doc.id}/edit`)}>
+              Edit
+            </button>
+          )}
+        </div>
       </div>
     </div>
   );
@@ -539,6 +550,9 @@ export default function PatientChartPage() {
 
   const [expandedTrend, setExpandedTrend] = useState<string | null>(null);
   const [hoveredTrendDocumentId, setHoveredTrendDocumentId] = useState<number | null>(null);
+  const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
+  const [pinsLoaded, setPinsLoaded] = useState(false);
+  const [featuredTrendKey, setFeaturedTrendKey] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [openingId, setOpeningId] = useState<number | null>(null);
@@ -608,6 +622,39 @@ export default function PatientChartPage() {
     setExpandedTrend(null);
     setHoveredTrendDocumentId(null);
   }, [activeSection]);
+
+  useEffect(() => {
+    if (!currentUser || pinsLoaded) return;
+    const storageKey = `pinned_trends_${currentUser.id}_patient_${patientId}`;
+    try {
+      const stored = localStorage.getItem(storageKey);
+      if (stored) {
+        const parsed = JSON.parse(stored);
+        if (Array.isArray(parsed)) setPinnedTrendKeys(parsed);
+      }
+    } catch {
+      // ignore corrupt storage
+    }
+    setPinsLoaded(true);
+  }, [currentUser, patientId, pinsLoaded]);
+
+  useEffect(() => {
+    if (!currentUser || !pinsLoaded) return;
+    const storageKey = `pinned_trends_${currentUser.id}_patient_${patientId}`;
+    try {
+      localStorage.setItem(storageKey, JSON.stringify(pinnedTrendKeys));
+    } catch {
+      // ignore storage errors
+    }
+  }, [pinnedTrendKeys, currentUser, patientId, pinsLoaded]);
+
+  function togglePin(key: string) {
+    setPinnedTrendKeys((prev) => {
+      if (prev.includes(key)) return prev.filter((k) => k !== key);
+      if (prev.length >= MAX_PINNED) return prev;
+      return [...prev, key];
+    });
+  }
 
   const allDocuments = useMemo(() => {
     if (!profile) return [];
@@ -749,14 +796,30 @@ export default function PatientChartPage() {
       });
   }, [trends]);
 
+  const featuredTrend = useMemo(() => {
+    if (!sortedTrends.length) return null;
+    if (featuredTrendKey) {
+      return sortedTrends.find((t) => t.test_key === featuredTrendKey) || sortedTrends[0];
+    }
+    const abnormals = sortedTrends.filter(
+      (t) => t.latest?.flag && String(t.latest.flag).toLowerCase() !== "normal"
+    );
+    const pool = abnormals.length ? abnormals : sortedTrends;
+    return pool.reduce((best, t) => {
+      return Math.abs(t.delta || 0) > Math.abs(best.delta || 0) ? t : best;
+    }, pool[0]);
+  }, [sortedTrends, featuredTrendKey]);
+
   const stats = useMemo(() => {
-    if (!profile) return { total: 0, bloodwork: 0, dischargeSummaries: 0, scans: 0, notes: 0, needsReview: 0 };
+    if (!profile) return { total: 0, bloodwork: 0, hospitalizations: 0, needsReview: 0 };
+    const hospitalCount =
+      getSectionDocuments(profile, "discharge_summary").length +
+      getSectionDocuments(profile, "hospitalizations").length +
+      (profile.events || []).length;
     return {
       total: allDocuments.length,
       bloodwork: getSectionDocuments(profile, "bloodwork").length,
-      dischargeSummaries: getSectionDocuments(profile, "discharge_summary").length,
-      scans: getSectionDocuments(profile, "scans").length,
-      notes: getSectionDocuments(profile, "notes").length,
+      hospitalizations: hospitalCount,
       needsReview: allDocuments.filter(needsDoctorReview).length,
     };
   }, [profile, allDocuments]);
@@ -793,6 +856,7 @@ export default function PatientChartPage() {
   }
 
   const hasActiveAdmission = activeEvents.length > 0;
+  const hasPins = pinnedTrendKeys.length > 0;
 
   return (
     <AppShell
@@ -849,19 +913,31 @@ export default function PatientChartPage() {
         </div>
       </div>
 
-      {/* Stat strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 14, marginBottom: 24 }}>
+      {/* Stat cards */}
+      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 24 }}>
         {[
-          { label: "Total records", value: stats.total },
-          { label: "Bloodwork", value: stats.bloodwork },
-          { label: "Discharges", value: stats.dischargeSummaries },
-          { label: "Scans", value: stats.scans },
-          { label: "Clinical notes", value: stats.notes },
-          { label: "Needs review", value: stats.needsReview },
-        ].map(({ label, value }) => (
-          <div key={label} className="soft-card-tight" style={{ padding: 16 }}>
-            <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>{label}</div>
-            <div style={{ fontSize: 26, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6 }}>{value}</div>
+          { label: "Total records", value: stats.total, danger: false, onClick: undefined as (() => void) | undefined },
+          { label: "Bloodwork", value: stats.bloodwork, danger: false, onClick: () => setActiveSection("bloodwork") },
+          { label: "Hospitalizations", value: stats.hospitalizations, danger: false, onClick: () => setActiveSection("discharge_summary") },
+          { label: "Needs review", value: stats.needsReview, danger: stats.needsReview > 0, onClick: undefined as (() => void) | undefined },
+        ].map(({ label, value, danger, onClick }) => (
+          <div
+            key={label}
+            className="soft-card"
+            onClick={onClick}
+            style={{
+              padding: "20px 24px",
+              cursor: onClick ? "pointer" : "default",
+              borderColor: danger ? "var(--danger-border)" : "var(--border)",
+              background: danger ? "color-mix(in srgb, var(--danger-bg) 35%, var(--panel))" : undefined,
+              transition: "border-color 220ms ease",
+            }}
+          >
+            <div className="muted-text" style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+            <div style={{
+              fontSize: 38, fontWeight: 900, letterSpacing: "-0.05em", marginTop: 8, lineHeight: 1,
+              color: danger ? "var(--danger-text)" : "var(--foreground)",
+            }}>{value}</div>
           </div>
         ))}
       </div>
@@ -879,192 +955,334 @@ export default function PatientChartPage() {
         </div>
       )}
 
-      {/* Timeline */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 18 }}>
-          <div>
-            <div className="section-title">Timeline</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>Recent records and admissions, grouped by hospitalization period when possible.</div>
+      {/* Featured trend */}
+      {featuredTrend && (
+        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 16, flexWrap: "wrap", marginBottom: 16 }}>
+            <div>
+              <div className="section-title">Featured Trend</div>
+              <div className="muted-text" style={{ marginTop: 6 }}>
+                {featuredTrend.display_name} · {featuredTrend.category || "Lab result"} · {featuredTrend.unit || "—"}
+              </div>
+            </div>
+            <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
+              {sortedTrends.length > 1 && (
+                <select
+                  className="text-input"
+                  value={featuredTrendKey || featuredTrend.test_key}
+                  onChange={(e) => setFeaturedTrendKey(e.target.value)}
+                  style={{ borderRadius: 12, padding: "8px 32px 8px 12px", fontWeight: 600, fontSize: 13, cursor: "pointer", minWidth: 180 }}
+                >
+                  {sortedTrends.map((t) => (
+                    <option key={t.test_key} value={t.test_key}>{t.display_name}</option>
+                  ))}
+                </select>
+              )}
+              <button
+                type="button"
+                className={pinnedTrendKeys.includes(featuredTrend.test_key) ? "primary-btn" : "secondary-btn"}
+                onClick={() => togglePin(featuredTrend.test_key)}
+                disabled={!pinnedTrendKeys.includes(featuredTrend.test_key) && pinnedTrendKeys.length >= MAX_PINNED}
+              >
+                {pinnedTrendKeys.includes(featuredTrend.test_key) ? "Unpin" : "Pin"}
+              </button>
+            </div>
           </div>
-          <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>View full timeline</button>
-        </div>
-        <MiniTimeline items={timelineItems} patientId={patientId} onOpenDocument={openTimelineDocument} />
-      </div>
 
-      {/* Documents */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
-          <div>
-            <div className="section-title">Documents</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>Organized by category, date, department, and source.</div>
+          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 12, marginBottom: 16 }}>
+            {[
+              { label: "Latest", value: featuredTrend.latest?.value_display || "—" },
+              { label: "Previous", value: featuredTrend.previous?.value_display || "—" },
+              { label: "Delta", value: featuredTrend.delta == null ? "—" : `${featuredTrend.delta > 0 ? "+" : ""}${featuredTrend.delta}` },
+            ].map(({ label, value }) => (
+              <div key={label} className="soft-card-tight" style={{ padding: "12px 16px" }}>
+                <div className="muted-text" style={{ fontSize: 11, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
+                <div style={{ fontWeight: 800, fontSize: 22, marginTop: 4, letterSpacing: "-0.03em" }}>{value}</div>
+              </div>
+            ))}
           </div>
-          {canDoctorActions && (
-            <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
-          )}
-        </div>
 
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          {SECTION_ORDER.map((section) => (
-            <SectionPill key={section} active={activeSection === section} label={sectionLabel(section)} count={getSectionDocuments(profile, section).length} onClick={() => setActiveSection(section)} />
-          ))}
-        </div>
+          <TrendChart
+            points={getRecentTrendPoints(featuredTrend.points)}
+            unit={featuredTrend.unit}
+            expanded
+            highlightedDocumentId={null}
+          />
 
-        <div className="soft-card-tight" style={{ padding: 14, marginBottom: 16, background: "var(--panel-2)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
-          <FilterSelect label="Department" value={departmentFilter} onChange={setDepartmentFilter}>
-            <option value="">All</option>
-            {filterOptions.departments.map((d) => <option key={d} value={d}>{d}</option>)}
-          </FilterSelect>
-          <FilterSelect label="Hospital" value={hospitalFilter} onChange={setHospitalFilter}>
-            <option value="">All</option>
-            {filterOptions.hospitals.map((h) => <option key={h} value={h}>{h}</option>)}
-          </FilterSelect>
-          <FilterSelect label="Year" value={yearFilter} onChange={setYearFilter}>
-            <option value="">All</option>
-            {filterOptions.years.map((y) => <option key={y} value={y}>{y}</option>)}
-          </FilterSelect>
-        </div>
-
-        <div style={{ borderTop: "1px solid var(--border)" }}>
-          {visibleDocuments.map((doc) => (
-            <DocumentRow
-              key={doc.id}
-              doc={doc}
-              patientId={patientId}
-              isDoctor={isDoctor}
-              currentUserId={currentUser?.id}
-              openingId={openingId}
-              onOpenOriginal={openOriginal}
-              onOpenStructured={openStructuredDocument}
-              router={router}
-            />
-          ))}
-          {!visibleDocuments.length && (
-            <div style={{ padding: "28px 0", textAlign: "center" }}>
-              <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>No documents in this section yet.</div>
-              <div className="muted-text">Upload a document or choose another section.</div>
+          {featuredTrend.latest && (
+            <div className="muted-text" style={{ marginTop: 10, fontSize: 12 }}>
+              Latest: {featuredTrend.latest.date} · Reference {featuredTrend.latest.reference_range || "—"}
             </div>
           )}
-        </div>
-
-        {visibleCount < filteredDocuments.length && (
-          <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
-            <button type="button" className="secondary-btn" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>Show more</button>
-          </div>
-        )}
-      </div>
-
-      {/* Bloodwork trends */}
-      {activeSection === "bloodwork" && (
-        <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="section-title">Bloodwork Trends</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>Sorted by clinical importance. Graphs use the most recent 5 collections.</div>
-          </div>
-
-          <div style={{ display: "grid", gap: 12 }}>
-            {sortedTrends.map((trend) => {
-              const abnormal = trend.latest?.flag && String(trend.latest.flag).trim().toLowerCase() !== "normal";
-              const expanded = expandedTrend === trend.test_key;
-              const trendPoints = getRecentTrendPoints(trend.points);
-
-              return (
-                <div key={trend.test_key} className="soft-card-tight" style={{ padding: 16, borderColor: abnormal ? "var(--danger-border)" : "var(--border)", transition: "border-color 220ms ease" }}>
-                  <div style={{ display: "grid", gridTemplateColumns: expanded ? "minmax(0, 1fr) auto" : "minmax(200px, 0.42fr) minmax(240px, 1fr) auto", gap: 16, alignItems: "center" }}>
-                    <div style={{ minWidth: 0 }}>
-                      <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{trend.display_name}</div>
-                      <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>{trend.category || "Lab result"} · {trend.unit || "—"}</div>
-                      <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
-                        {[
-                          { label: "Latest", value: trend.latest?.value_display || "—" },
-                          { label: "Previous", value: trend.previous?.value_display || "—" },
-                          { label: "Delta", value: trend.delta == null ? "—" : `${trend.delta > 0 ? "+" : ""}${trend.delta}` },
-                        ].map(({ label, value }) => (
-                          <div key={label}>
-                            <div className="muted-text" style={{ fontSize: 11, fontWeight: 700 }}>{label}</div>
-                            <div style={{ fontWeight: 700, marginTop: 3 }}>{value}</div>
-                          </div>
-                        ))}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 8, fontSize: 12 }}>
-                        Latest: {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
-                      </div>
-                    </div>
-
-                    {!expanded && <TrendChart points={trendPoints} unit={trend.unit} highlightedDocumentId={null} />}
-
-                    <button type="button" className="secondary-btn" onClick={() => { setExpandedTrend(expanded ? null : trend.test_key); setHoveredTrendDocumentId(null); }}>
-                      {expanded ? "Collapse" : "Expand"}
-                    </button>
-                  </div>
-
-                  <div style={{ display: "grid", gridTemplateRows: expanded ? "1fr" : "0fr", transition: "grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease, margin-top 260ms ease", opacity: expanded ? 1 : 0, marginTop: expanded ? 16 : 0, overflow: "hidden" }}>
-                    <div style={{ minHeight: 0, overflow: "hidden" }}>
-                      <TrendChart points={trendPoints} unit={trend.unit} expanded highlightedDocumentId={hoveredTrendDocumentId} />
-
-                      <div style={{ marginTop: 16, fontWeight: 700 }}>Reports used in this trend</div>
-                      <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
-                        {[...trendPoints].sort((a, b) => compareDatesDescending(a.date, b.date)).map((point, index) => {
-                          const highlighted = hoveredTrendDocumentId === point.document_id;
-                          return (
-                            <button
-                              key={`${trend.test_key}-${point.document_id}-${index}`}
-                              type="button"
-                              className="soft-card-tight"
-                              onMouseEnter={() => setHoveredTrendDocumentId(point.document_id)}
-                              onMouseLeave={() => setHoveredTrendDocumentId(null)}
-                              onFocus={() => setHoveredTrendDocumentId(point.document_id)}
-                              onBlur={() => setHoveredTrendDocumentId(null)}
-                              onClick={() => router.push(`/documents/${point.document_id}`)}
-                              style={{
-                                padding: 12, display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 12, alignItems: "center", textAlign: "left", cursor: "pointer",
-                                transition: "background 180ms ease, border-color 180ms ease, transform 180ms ease",
-                                transform: highlighted ? "translateX(3px)" : "translateX(0)",
-                                background: highlighted ? "color-mix(in srgb, var(--primary) 9%, var(--panel))" : "var(--panel-2)",
-                                borderColor: highlighted ? "color-mix(in srgb, var(--primary) 35%, var(--border))" : "var(--border)",
-                              }}
-                            >
-                              <div style={{ minWidth: 0 }}>
-                                <div style={{ fontWeight: 700 }}>{point.report_name || `Document ${point.document_id}`}</div>
-                                <div className="muted-text" style={{ marginTop: 3, fontSize: 12 }}>{point.date || "No date"} · Ref {point.reference_range || "—"}</div>
-                              </div>
-                              <div style={{ fontWeight: 700 }}>{point.value_display} {trend.unit || ""}</div>
-                              <span className="secondary-btn" style={{ pointerEvents: "none" }}>Open</span>
-                            </button>
-                          );
-                        })}
-                      </div>
-                    </div>
-                  </div>
-                </div>
-              );
-            })}
-
-            {!sortedTrends.length && (
-              <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 700 }}>No bloodwork trends yet.</div>
-                <div className="muted-text" style={{ marginTop: 6 }}>Upload structured bloodwork reports to generate graphs.</div>
-              </div>
-            )}
-          </div>
         </div>
       )}
 
-      {/* Assigned doctors */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div className="section-title" style={{ marginBottom: 14 }}>Assigned doctors</div>
-        <div style={{ display: "grid", gap: 10 }}>
-          {(profile.doctor_access || []).map((doctor) => (
-            <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 14, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center" }}>
+      {/* 2-column layout: main content + pinned sidebar */}
+      <div style={{
+        display: "grid",
+        gridTemplateColumns: hasPins ? "minmax(0, 1fr) 300px" : "minmax(0, 1fr)",
+        gap: 24,
+        alignItems: "start",
+      }}>
+        {/* Main column */}
+        <div>
+          {/* Timeline */}
+          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 18 }}>
               <div>
-                <div style={{ fontWeight: 700 }}>{doctor.doctor_name}</div>
-                <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
-                  {doctor.doctor_email} · {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                <div className="section-title">Timeline</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>Recent records and admissions, grouped by hospitalization period when possible.</div>
+              </div>
+              <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>View full timeline</button>
+            </div>
+            <MiniTimeline items={timelineItems} patientId={patientId} onOpenDocument={openTimelineDocument} />
+          </div>
+
+          {/* Documents */}
+          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "center", flexWrap: "wrap", marginBottom: 18 }}>
+              <div>
+                <div className="section-title">Documents</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>Organized by category, date, department, and source.</div>
+              </div>
+              {canDoctorActions && (
+                <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
+              )}
+            </div>
+
+            <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+              {SECTION_ORDER.map((section) => (
+                <SectionPill key={section} active={activeSection === section} label={sectionLabel(section)} count={getSectionDocuments(profile, section).length} onClick={() => setActiveSection(section)} />
+              ))}
+            </div>
+
+            <div className="soft-card-tight" style={{ padding: 14, marginBottom: 16, background: "var(--panel-2)", display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(160px, 1fr))", gap: 12 }}>
+              <FilterSelect label="Department" value={departmentFilter} onChange={setDepartmentFilter}>
+                <option value="">All</option>
+                {filterOptions.departments.map((d) => <option key={d} value={d}>{d}</option>)}
+              </FilterSelect>
+              <FilterSelect label="Hospital" value={hospitalFilter} onChange={setHospitalFilter}>
+                <option value="">All</option>
+                {filterOptions.hospitals.map((h) => <option key={h} value={h}>{h}</option>)}
+              </FilterSelect>
+              <FilterSelect label="Year" value={yearFilter} onChange={setYearFilter}>
+                <option value="">All</option>
+                {filterOptions.years.map((y) => <option key={y} value={y}>{y}</option>)}
+              </FilterSelect>
+            </div>
+
+            <div>
+              {visibleDocuments.map((doc) => (
+                <DocCard
+                  key={doc.id}
+                  doc={doc}
+                  patientId={patientId}
+                  isDoctor={isDoctor}
+                  currentUserId={currentUser?.id}
+                  openingId={openingId}
+                  onOpenOriginal={openOriginal}
+                  onOpenStructured={openStructuredDocument}
+                  router={router}
+                />
+              ))}
+              {!visibleDocuments.length && (
+                <div style={{ padding: "28px 0", textAlign: "center" }}>
+                  <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 6 }}>No documents in this section yet.</div>
+                  <div className="muted-text">Upload a document or choose another section.</div>
                 </div>
+              )}
+            </div>
+
+            {visibleCount < filteredDocuments.length && (
+              <div style={{ display: "flex", justifyContent: "center", marginTop: 16 }}>
+                <button type="button" className="secondary-btn" onClick={() => setVisibleCount((c) => c + PAGE_SIZE)}>Show more</button>
+              </div>
+            )}
+          </div>
+
+          {/* Bloodwork trends */}
+          {activeSection === "bloodwork" && (
+            <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+              <div style={{ marginBottom: 18 }}>
+                <div className="section-title">Bloodwork Trends</div>
+                <div className="muted-text" style={{ marginTop: 6 }}>Sorted by clinical importance. Graphs use the most recent 5 collections.</div>
+              </div>
+
+              <div style={{ display: "grid", gap: 12 }}>
+                {sortedTrends.map((trend) => {
+                  const abnormal = trend.latest?.flag && String(trend.latest.flag).trim().toLowerCase() !== "normal";
+                  const expanded = expandedTrend === trend.test_key;
+                  const pinned = pinnedTrendKeys.includes(trend.test_key);
+                  const trendPoints = getRecentTrendPoints(trend.points);
+
+                  return (
+                    <div key={trend.test_key} className="soft-card-tight" style={{ padding: 16, borderColor: abnormal ? "var(--danger-border)" : "var(--border)", transition: "border-color 220ms ease" }}>
+                      <div style={{ display: "grid", gridTemplateColumns: expanded ? "minmax(0, 1fr) auto" : "minmax(200px, 0.42fr) minmax(240px, 1fr) auto", gap: 16, alignItems: "center" }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>{trend.display_name}</div>
+                          <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>{trend.category || "Lab result"} · {trend.unit || "—"}</div>
+                          <div style={{ display: "grid", gridTemplateColumns: "repeat(3, minmax(0, 1fr))", gap: 8, marginTop: 12 }}>
+                            {[
+                              { label: "Latest", value: trend.latest?.value_display || "—" },
+                              { label: "Previous", value: trend.previous?.value_display || "—" },
+                              { label: "Delta", value: trend.delta == null ? "—" : `${trend.delta > 0 ? "+" : ""}${trend.delta}` },
+                            ].map(({ label, value }) => (
+                              <div key={label}>
+                                <div className="muted-text" style={{ fontSize: 11, fontWeight: 700 }}>{label}</div>
+                                <div style={{ fontWeight: 700, marginTop: 3 }}>{value}</div>
+                              </div>
+                            ))}
+                          </div>
+                          <div className="muted-text" style={{ marginTop: 8, fontSize: 12 }}>
+                            Latest: {trend.latest ? `${trend.latest.date} · Ref ${trend.latest.reference_range || "—"}` : "—"}
+                          </div>
+                        </div>
+
+                        {!expanded && <TrendChart points={trendPoints} unit={trend.unit} highlightedDocumentId={null} />}
+
+                        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+                          <button
+                            type="button"
+                            className="secondary-btn"
+                            onClick={() => { setExpandedTrend(expanded ? null : trend.test_key); setHoveredTrendDocumentId(null); }}
+                          >
+                            {expanded ? "Collapse" : "Expand"}
+                          </button>
+                          <button
+                            type="button"
+                            className={pinned ? "primary-btn" : "secondary-btn"}
+                            onClick={() => togglePin(trend.test_key)}
+                            disabled={!pinned && pinnedTrendKeys.length >= MAX_PINNED}
+                          >
+                            {pinned ? "Unpin" : "Pin"}
+                          </button>
+                        </div>
+                      </div>
+
+                      <div style={{ display: "grid", gridTemplateRows: expanded ? "1fr" : "0fr", transition: "grid-template-rows 320ms cubic-bezier(0.22, 1, 0.36, 1), opacity 240ms ease, margin-top 260ms ease", opacity: expanded ? 1 : 0, marginTop: expanded ? 16 : 0, overflow: "hidden" }}>
+                        <div style={{ minHeight: 0, overflow: "hidden" }}>
+                          <TrendChart points={trendPoints} unit={trend.unit} expanded highlightedDocumentId={hoveredTrendDocumentId} />
+
+                          <div style={{ marginTop: 16, fontWeight: 700 }}>Reports used in this trend</div>
+                          <div style={{ display: "grid", gap: 8, marginTop: 8 }}>
+                            {[...trendPoints].sort((a, b) => compareDatesDescending(a.date, b.date)).map((point, index) => {
+                              const highlighted = hoveredTrendDocumentId === point.document_id;
+                              return (
+                                <button
+                                  key={`${trend.test_key}-${point.document_id}-${index}`}
+                                  type="button"
+                                  className="soft-card-tight"
+                                  onMouseEnter={() => setHoveredTrendDocumentId(point.document_id)}
+                                  onMouseLeave={() => setHoveredTrendDocumentId(null)}
+                                  onFocus={() => setHoveredTrendDocumentId(point.document_id)}
+                                  onBlur={() => setHoveredTrendDocumentId(null)}
+                                  onClick={() => router.push(`/documents/${point.document_id}`)}
+                                  style={{
+                                    padding: 12, display: "grid", gridTemplateColumns: "minmax(0, 1fr) auto auto", gap: 12, alignItems: "center", textAlign: "left", cursor: "pointer",
+                                    transition: "background 180ms ease, border-color 180ms ease, transform 180ms ease",
+                                    transform: highlighted ? "translateX(3px)" : "translateX(0)",
+                                    background: highlighted ? "color-mix(in srgb, var(--primary) 9%, var(--panel))" : "var(--panel-2)",
+                                    borderColor: highlighted ? "color-mix(in srgb, var(--primary) 35%, var(--border))" : "var(--border)",
+                                  }}
+                                >
+                                  <div style={{ minWidth: 0 }}>
+                                    <div style={{ fontWeight: 700 }}>{point.report_name || `Document ${point.document_id}`}</div>
+                                    <div className="muted-text" style={{ marginTop: 3, fontSize: 12 }}>{point.date || "No date"} · Ref {point.reference_range || "—"}</div>
+                                  </div>
+                                  <div style={{ fontWeight: 700 }}>{point.value_display} {trend.unit || ""}</div>
+                                  <span className="secondary-btn" style={{ pointerEvents: "none" }}>Open</span>
+                                </button>
+                              );
+                            })}
+                          </div>
+                        </div>
+                      </div>
+                    </div>
+                  );
+                })}
+
+                {!sortedTrends.length && (
+                  <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
+                    <div style={{ fontWeight: 700 }}>No bloodwork trends yet.</div>
+                    <div className="muted-text" style={{ marginTop: 6 }}>Upload structured bloodwork reports to generate graphs.</div>
+                  </div>
+                )}
               </div>
             </div>
-          ))}
-          {!(profile.doctor_access || []).length && <div className="muted-text">No doctors assigned.</div>}
+          )}
+
+          {/* Assigned doctors */}
+          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+            <div className="section-title" style={{ marginBottom: 14 }}>Assigned doctors</div>
+            <div style={{ display: "grid", gap: 10 }}>
+              {(profile.doctor_access || []).map((doctor) => (
+                <div key={doctor.doctor_user_id} className="soft-card-tight" style={{ padding: 14, display: "grid", gridTemplateColumns: "1fr auto", alignItems: "center" }}>
+                  <div>
+                    <div style={{ fontWeight: 700 }}>{doctor.doctor_name}</div>
+                    <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
+                      {doctor.doctor_email} · {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                    </div>
+                  </div>
+                </div>
+              ))}
+              {!(profile.doctor_access || []).length && <div className="muted-text">No doctors assigned.</div>}
+            </div>
+          </div>
         </div>
+
+        {/* Pinned trends sidebar */}
+        {hasPins && (
+          <div style={{ position: "sticky", top: 24 }}>
+            <div className="soft-card" style={{ padding: 20 }}>
+              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "center", marginBottom: 16 }}>
+                <div className="section-title" style={{ margin: 0 }}>Pinned Trends</div>
+                <span className="muted-text" style={{ fontSize: 12 }}>{pinnedTrendKeys.length}/{MAX_PINNED}</span>
+              </div>
+              <div style={{ display: "grid", gap: 14 }}>
+                {pinnedTrendKeys.map((key) => {
+                  const trend = sortedTrends.find((t) => t.test_key === key);
+                  if (!trend) return null;
+                  const pts = getRecentTrendPoints(trend.points);
+                  const abnormal = trend.latest?.flag && String(trend.latest.flag).trim().toLowerCase() !== "normal";
+
+                  return (
+                    <div
+                      key={key}
+                      className="soft-card-tight"
+                      style={{ padding: 14, borderColor: abnormal ? "var(--danger-border)" : "var(--border)" }}
+                    >
+                      <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 10 }}>
+                        <div style={{ minWidth: 0 }}>
+                          <div style={{ fontWeight: 700, fontSize: 14, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
+                            {trend.display_name}
+                          </div>
+                          <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
+                            {trend.latest?.value_display || "—"} {trend.unit || ""}
+                            {trend.delta != null && (
+                              <span style={{ marginLeft: 6, color: trend.delta > 0 ? "var(--danger-text)" : trend.delta < 0 ? "var(--primary)" : "var(--muted)" }}>
+                                {trend.delta > 0 ? "▲" : trend.delta < 0 ? "▼" : ""}
+                                {Math.abs(trend.delta)}
+                              </span>
+                            )}
+                          </div>
+                        </div>
+                        <button
+                          type="button"
+                          className="secondary-btn"
+                          onClick={() => togglePin(key)}
+                          style={{ padding: "4px 10px", fontSize: 12, flexShrink: 0 }}
+                        >
+                          Unpin
+                        </button>
+                      </div>
+                      <TrendChart points={pts} unit={trend.unit} highlightedDocumentId={null} />
+                    </div>
+                  );
+                })}
+              </div>
+            </div>
+          </div>
+        )}
       </div>
     </AppShell>
   );

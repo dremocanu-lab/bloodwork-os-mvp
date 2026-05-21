@@ -112,6 +112,7 @@ export default function SearchPatientsPage() {
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [query, setQuery] = useState("");
+  const [codeQuery, setCodeQuery] = useState("");
   const [searchedQuery, setSearchedQuery] = useState("");
   const [patients, setPatients] = useState<SearchPatient[]>([]);
   const [adminAssignments, setAdminAssignments] = useState<AdminAssignmentRow[]>([]);
@@ -128,8 +129,11 @@ export default function SearchPatientsPage() {
         searching: "Se caută...",
         findPatient: "Caută pacient",
         findPatientDesc:
-          "Caută după nume sau cod pacient (BW-XXXX-XXXX). Rezultatele apar ca listă pentru scanare rapidă.",
+          "Caută după nume sau introdu codul individual al pacientului (BW-XXXX-XXXX) pentru localizare exactă.",
         searchPlaceholder: "Nume sau cod pacient (BW-XXXX-XXXX)...",
+        nameLabel: "Nume pacient",
+        namePlaceholder: "Caută după nume complet...",
+        codeLabel: "Cod individual (BW-XXXX-XXXX)",
         results: "Rezultate",
         startWithSearch: "Începe cu o căutare",
         noPatientsShownUntilSearch: "Introdu un nume sau codul pacientului pentru rezultate.",
@@ -169,8 +173,11 @@ export default function SearchPatientsPage() {
       searching: "Searching...",
       findPatient: "Find patient",
       findPatientDesc:
-        "Search by name or patient code (BW-XXXX-XXXX). Results are shown as a compact list for fast scanning.",
+        "Search by patient name or enter their individual patient code (BW-XXXX-XXXX) for an exact match.",
       searchPlaceholder: "Name or patient code (BW-XXXX-XXXX)...",
+      nameLabel: "Patient name",
+      namePlaceholder: "Search by full name...",
+      codeLabel: "Individual code (BW-XXXX-XXXX)",
       results: "Results",
       startWithSearch: "Start with a search",
       noPatientsShownUntilSearch: "Enter a name or patient code to show matching patients.",
@@ -265,7 +272,8 @@ export default function SearchPatientsPage() {
 
   function onSubmit(event: FormEvent) {
     event.preventDefault();
-    searchPatients(query);
+    const effective = codeQuery.trim() || query.trim();
+    if (effective) searchPatients(effective);
   }
 
   async function requestAccess(patientId: number) {
@@ -370,21 +378,28 @@ export default function SearchPatientsPage() {
             </div>
           </div>
 
-          <div
-            style={{
-              display: "grid",
-              gridTemplateColumns: "minmax(0, 1fr) auto",
-              gap: 12,
-              alignItems: "center",
-            }}
-          >
-            <input
-              className="text-input"
-              value={query}
-              onChange={(event) => setQuery(event.target.value)}
-              placeholder={labels.searchPlaceholder}
-            />
+          <div style={{ display: "grid", gridTemplateColumns: "minmax(0, 1fr) minmax(0, 1fr)", gap: 12 }}>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>{labels.nameLabel}</span>
+              <input
+                className="text-input"
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                placeholder={labels.namePlaceholder}
+              />
+            </label>
+            <label style={{ display: "grid", gap: 6 }}>
+              <span className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>{labels.codeLabel}</span>
+              <input
+                className="text-input"
+                value={codeQuery}
+                onChange={(event) => setCodeQuery(event.target.value)}
+                placeholder="BW-XXXX-XXXX"
+              />
+            </label>
+          </div>
 
+          <div style={{ display: "flex", justifyContent: "flex-end" }}>
             <button
               type="submit"
               className="primary-btn"
