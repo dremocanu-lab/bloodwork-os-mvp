@@ -102,17 +102,18 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
             paddingBottom: 16,
           }}
         >
-          <div className="app-sidebar-brand">
+          <div className="app-sidebar-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
             <Link
               href={getHomeHref(user)}
               onClick={onCloseMobile}
               style={{
-                display: "inline-flex",
+                display: "flex",
+                justifyContent: "center",
                 textDecoration: "none",
                 color: "inherit",
               }}
             >
-              <BragiLogo height={72} showText />
+              <BragiLogo height={88} showText />
             </Link>
 
             <div className="muted-text" style={{ marginTop: 10, fontSize: 13 }}>
