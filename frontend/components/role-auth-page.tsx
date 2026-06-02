@@ -3,6 +3,7 @@
 import Link from "next/link";
 import { useRouter } from "next/navigation";
 import { FormEvent, useState } from "react";
+import BragiLogo from "@/components/bragi-logo";
 import ThemeToggle from "@/components/theme-toggle";
 import { useLanguage } from "@/lib/i18n";
 import { api, getErrorMessage } from "@/lib/api";
@@ -117,9 +118,9 @@ export default function RoleAuthPage({ role, mode }: { role: Role; mode: Mode })
     <main className="portal-page">
       <div className="auth-shell">
         <div className="portal-topbar">
-          <Link href="/" className="portal-brand-pill">
-            <span className="portal-brand-dot" />
-            <span>{t("brand")}</span>
+          <Link href="/" className="portal-brand-pill" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <BragiLogo height={22} showText={false} />
+            <span>bragi health</span>
           </Link>
 
           <Link href="/about" className="portal-top-link">

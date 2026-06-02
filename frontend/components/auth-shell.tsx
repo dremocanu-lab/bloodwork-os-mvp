@@ -2,6 +2,7 @@
 
 import { ReactNode, useEffect, useState } from "react";
 import Link from "next/link";
+import BragiLogo from "@/components/bragi-logo";
 import { useLanguage } from "@/lib/i18n";
 
 const THEME_KEY = "bloodwork-theme";
@@ -87,9 +88,9 @@ export default function AuthShell({
       <div className="auth-page-inner">
         <section className="auth-hero">
           <div className="auth-brand-row">
-            <Link href="/" className="auth-brand-pill">
-              <span className="auth-brand-dot" />
-              <span>{t("brand")}</span>
+            <Link href="/" className="auth-brand-pill" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+              <BragiLogo height={22} showText={false} />
+              <span>bragi health</span>
             </Link>
 
             <Link href="/about" className="auth-top-link">

@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import { ReactNode, useEffect, useState } from "react";
+import BragiLogo from "@/components/bragi-logo";
 import Sidebar from "@/components/sidebar";
 import { useLanguage } from "@/lib/i18n";
 
@@ -77,16 +78,8 @@ export default function AppShell({ user, title, subtitle, children, rightContent
             </button>
 
             <div style={{ minWidth: 0 }}>
-              <div
-                style={{
-                  fontWeight: 950,
-                  letterSpacing: "-0.04em",
-                  lineHeight: 1,
-                }}
-              >
-                Bloodwork OS
-              </div>
-              <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+              <BragiLogo height={36} showText={false} />
+              <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>
                 {getWorkspaceLabel()}
               </div>
             </div>

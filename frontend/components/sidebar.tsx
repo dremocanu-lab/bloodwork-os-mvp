@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { usePathname, useRouter } from "next/navigation";
+import BragiLogo from "@/components/bragi-logo";
 import ThemeToggle from "@/components/theme-toggle";
 import { useLanguage } from "@/lib/i18n";
 
@@ -111,12 +112,10 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
                 color: "inherit",
               }}
             >
-              <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.06em", lineHeight: 1 }}>
-                {t("brand")}
-              </div>
+              <BragiLogo height={72} showText />
             </Link>
 
-            <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
+            <div className="muted-text" style={{ marginTop: 10, fontSize: 13 }}>
               {t("clinicalWorkspace")}
             </div>
           </div>

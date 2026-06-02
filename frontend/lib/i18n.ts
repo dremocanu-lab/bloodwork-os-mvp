@@ -8,7 +8,7 @@ const LANGUAGE_STORAGE_KEY = "bloodwork_os_language";
 const LANGUAGE_EVENT = "bloodwork-os-language-change";
 
 const en = {
-  brand: "Bloodwork OS",
+  brand: "Bragi Health",
 
   // Common
   all: "All",
@@ -772,7 +772,7 @@ const en = {
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
-  brand: "Bloodwork OS",
+  brand: "Bragi Health",
 
   // Common
   all: "Toate",
