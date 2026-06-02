@@ -18,14 +18,16 @@ function useDarkMode() {
 type BragiLogoProps = {
   height?: number;
   showText?: boolean;
+  forceWhite?: boolean;
 };
 
-export default function BragiLogo({ height = 64, showText = true }: BragiLogoProps) {
+export default function BragiLogo({ height = 64, showText = true, forceWhite = false }: BragiLogoProps) {
   const isDark = useDarkMode();
 
-  const shieldColor = isDark ? "#FFFFFF" : "#82C09A";
-  const crossColor = isDark ? "#0f1b2d" : "#FFFFFF";
-  const textColor = shieldColor;
+  const white = forceWhite || isDark;
+  const shieldColor = white ? "#FFFFFF" : "#82C09A";
+  const crossColor = white ? "#0f1b2d" : "#FFFFFF";
+  const textColor = white ? "#FFFFFF" : "#82C09A";
 
   const viewH = showText ? 96 : 68;
   const viewW = 100;

@@ -460,7 +460,7 @@ const en = {
   landingHeroLine2: "Faster care.",
   landingHeroLine3: "One secure workspace.",
   landingHeroSubtitle:
-    "Bloodwork OS gives doctors, patients, and admins a cleaner way to work with structured labs, scans, notes, hospitalizations, uploads, and access control.",
+    "Bragi Health gives doctors, patients, and admins a cleaner way to work with structured labs, scans, notes, hospitalizations, uploads, and access control.",
   doctorPortal: "Doctor Portal",
   doctorPortalDesc:
     "Review structured bloodwork, patient charts, notes, scans, and uploaded records.",
@@ -469,11 +469,11 @@ const en = {
   adminPortal: "Admin Portal",
   adminPortalDesc:
     "Manage assignments, permissions, user roles, and access oversight.",
-  aboutBloodworkOs: "About Bloodwork OS",
+  aboutBloodworkOs: "About Bragi Health",
   aboutHeroLine1: "Clinical records,",
   aboutHeroLine2: "built for real use.",
   aboutSubtitle:
-    "Bloodwork OS is designed to make medical records easier to access, structure, review, and share across doctor, patient, and admin workflows.",
+    "Bragi Health is designed to make medical records easier to access, structure, review, and share across doctor, patient, and admin workflows.",
   forDoctors: "For doctors",
   forDoctorsDesc:
     "Review charts, structured bloodwork, uploads, notes, and trends in one clinical workspace.",
@@ -1224,7 +1224,7 @@ const ro: Record<keyof typeof en, string> = {
   landingHeroLine2: "Îngrijire mai rapidă.",
   landingHeroLine3: "Un spațiu securizat.",
   landingHeroSubtitle:
-    "Bloodwork OS ajută medicii, pacienții și administratorii să lucreze mai ușor cu analize structurate, investigații, note, internări, încărcări și acces controlat.",
+    "Bragi Health ajută medicii, pacienții și administratorii să lucreze mai ușor cu analize structurate, investigații, note, internări, încărcări și acces controlat.",
   doctorPortal: "Portal medic",
   doctorPortalDesc:
     "Revizuiește analize structurate, fișe de pacient, note, investigații și documente încărcate.",
@@ -1233,11 +1233,11 @@ const ro: Record<keyof typeof en, string> = {
   adminPortal: "Portal administrator",
   adminPortalDesc:
     "Gestionează alocări, permisiuni, roluri de utilizator și supravegherea accesului.",
-  aboutBloodworkOs: "Despre Bloodwork OS",
+  aboutBloodworkOs: "Despre Bragi Health",
   aboutHeroLine1: "Documente medicale,",
   aboutHeroLine2: "gândite pentru utilizare reală.",
   aboutSubtitle:
-    "Bloodwork OS este creat pentru ca documentele medicale să fie mai ușor de accesat, structurat, revizuit și partajat între medici, pacienți și administratori.",
+    "Bragi Health este creat pentru ca documentele medicale să fie mai ușor de accesat, structurat, revizuit și partajat între medici, pacienți și administratori.",
   forDoctors: "Pentru medici",
   forDoctorsDesc:
     "Revizuiește fișe, analize structurate, încărcări, note și tendințe într-un singur spațiu clinic.",

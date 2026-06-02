@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import { useParams, useRouter } from "next/navigation";
+import BragiLogo from "@/components/bragi-logo";
 import { FormEvent, useMemo, useState } from "react";
 import ThemeToggle from "@/components/theme-toggle";
 import LanguageToggle from "@/components/language-toggle";
@@ -163,9 +164,9 @@ export default function RoleSignupPage() {
 
       <div className="auth-shell">
         <div className="portal-topbar">
-          <Link href="/" className="portal-brand-pill">
-            <span className="portal-brand-dot" />
-            <span>Bloodwork OS</span>
+          <Link href="/" className="portal-brand-pill" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <BragiLogo height={22} showText={false} />
+            <span>bragi health</span>
           </Link>
 
           <Link href="/about" className="portal-top-link">

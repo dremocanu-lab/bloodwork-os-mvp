@@ -1,6 +1,7 @@
 "use client";
 
 import Link from "next/link";
+import BragiLogo from "@/components/bragi-logo";
 import { useLanguage } from "@/lib/i18n";
 
 export default function VideoLandingPage() {
@@ -59,17 +60,7 @@ export default function VideoLandingPage() {
           padding: "26px 36px",
         }}
       >
-        <div
-          style={{
-            fontWeight: 950,
-            fontSize: 20,
-            letterSpacing: "-0.05em",
-            color: "#fff",
-            lineHeight: 1,
-          }}
-        >
-          Bloodwork OS
-        </div>
+        <BragiLogo height={40} showText forceWhite />
 
         <button
           type="button"

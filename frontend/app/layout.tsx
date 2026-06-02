@@ -2,7 +2,7 @@
 import { UploadManagerProvider } from "@/components/upload-provider";
 
 export const metadata = {
-  title: "Bloodwork OS",
+  title: "Bragi Health",
   description: "Clinical records workspace",
 };
 

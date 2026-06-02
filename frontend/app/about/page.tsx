@@ -1,6 +1,7 @@
 ﻿"use client";
 
 import Link from "next/link";
+import BragiLogo from "@/components/bragi-logo";
 import ThemeToggle from "@/components/theme-toggle";
 import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
@@ -27,9 +28,9 @@ export default function AboutPage() {
 
       <div className="portal-shell">
         <div className="portal-topbar">
-          <Link href="/" className="portal-brand-pill">
-            <span className="portal-brand-dot" />
-            <span>Bloodwork OS</span>
+          <Link href="/" className="portal-brand-pill" style={{ display: "inline-flex", alignItems: "center", gap: 8 }}>
+            <BragiLogo height={22} showText={false} />
+            <span>bragi health</span>
           </Link>
 
           <Link href="/" className="portal-top-link">
