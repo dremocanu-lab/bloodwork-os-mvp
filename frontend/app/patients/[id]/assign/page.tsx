@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
@@ -79,7 +80,7 @@ export default function AssignDoctorPage() {
     const meResponse = await api.get<CurrentUser>("/auth/me");
 
     if (meResponse.data.role !== "admin") {
-      router.push(meResponse.data.role === "doctor" ? "/my-patients" : "/my-records");
+      router.push(getHomeByRole(meResponse.data.role));
       return;
     }
 

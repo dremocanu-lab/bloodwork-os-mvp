@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import OriginalLayoutViewer from "@/components/original-layout-viewer";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { formatPdfLikeDischargeText } from "@/lib/discharge-epicriza-formatter";
 import { useLanguage } from "@/lib/i18n";
 
@@ -744,7 +745,7 @@ export default function DischargeStructuredPage() {
       await api.delete(`/documents/${documentData.document_id}`);
       if (currentUser?.role === "patient") { router.push("/my-records"); return; }
       if (documentData.patient_id) { router.push(`/patients/${documentData.patient_id}`); return; }
-      router.push("/my-records");
+      router.push(getHomeByRole(currentUser?.role ?? ""));
     } catch (err) {
       setError(getErrorMessage(err, t("failedLoadRecord")));
       setConfirmDeleteOpen(false);

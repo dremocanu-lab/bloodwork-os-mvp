@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
@@ -57,7 +58,7 @@ export default function AdminLogsPage() {
     const me = await api.get<CurrentUser>("/auth/me");
 
     if (me.data.role !== "admin") {
-      router.push(me.data.role === "doctor" ? "/my-patients" : "/my-records");
+      router.push(getHomeByRole(me.data.role));
       return;
     }
 

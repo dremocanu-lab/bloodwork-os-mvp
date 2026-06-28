@@ -4,6 +4,7 @@ import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
 
@@ -270,7 +271,7 @@ export default function MyRecordsUploadPage() {
         const response = await api.get<CurrentUser>("/auth/me");
 
         if (response.data.role !== "patient") {
-          router.push(response.data.role === "doctor" ? "/my-patients" : "/assignments");
+          router.push(getHomeByRole(response.data.role));
           return;
         }
 

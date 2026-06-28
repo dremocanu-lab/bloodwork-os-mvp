@@ -36,6 +36,7 @@ class Patient(Base):
     doctor_access_links = relationship("DoctorPatientAccess", back_populates="patient")
     access_requests = relationship("DoctorPatientAccessRequest", back_populates="patient")
     events = relationship("PatientEvent", back_populates="patient")
+    medications = relationship("PatientMedication", back_populates="patient")
 
 
 class DoctorPatientAccess(Base):
@@ -298,3 +299,40 @@ class SharedStructuredPage(Base):
     document = relationship("Document")
     care_partner_user = relationship("User", foreign_keys=[care_partner_user_id])
     shared_by_patient_user = relationship("User", foreign_keys=[shared_by_patient_user_id])
+
+
+class PatientMedication(Base):
+    __tablename__ = "patient_medications"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=False)
+    updated_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    name = Column(String, nullable=False, index=True)
+    dose_strength = Column(String, nullable=True)
+    frequency = Column(String, nullable=True)
+    reason = Column(Text, nullable=True)
+    status = Column(String, nullable=False, default="active", index=True)
+    route_form = Column(String, nullable=True)
+    start_date = Column(String, nullable=True)
+    stop_date = Column(String, nullable=True)
+    prescriber = Column(String, nullable=True)
+    extra_info = Column(Text, nullable=True)
+    is_uncertain = Column(Integer, nullable=False, default=0)
+
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=True)
+
+    official_match_status = Column(String, nullable=True)
+    official_source_name = Column(String, nullable=True)
+    official_source_url = Column(String, nullable=True)
+    rxnorm_rxcui = Column(String, nullable=True)
+    dailymed_setid = Column(String, nullable=True)
+    official_info_json = Column(Text, nullable=True)
+    official_retrieved_at = Column(String, nullable=True)
+    official_label_date = Column(String, nullable=True)
+
+    patient = relationship("Patient", back_populates="medications")
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+    updated_by_user = relationship("User", foreign_keys=[updated_by_user_id])

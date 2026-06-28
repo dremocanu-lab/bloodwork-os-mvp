@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import AppShell from "@/components/app-shell";
 import PageTabs from "@/components/page-tabs";
 import StatCard from "@/components/stat-card";
@@ -127,8 +128,8 @@ export default function UnverifiedPage() {
       const me = await fetchMe();
       if (!me) return;
 
-      if (me.role === "patient") {
-        router.push("/my-records");
+      if (me.role === "patient" || me.role === "care_partner") {
+        router.push(getHomeByRole(me.role));
         return;
       }
 

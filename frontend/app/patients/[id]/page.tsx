@@ -559,6 +559,13 @@ export default function PatientChartPage() {
   const [refreshing, setRefreshing] = useState(false);
   const [error, setError] = useState("");
 
+  const [medications, setMedications] = useState<Array<{
+    id: number; name: string; status: string;
+    dose_strength?: string | null; frequency?: string | null;
+    reason?: string | null; is_uncertain: boolean;
+    official_match_status?: string | null;
+  }>>([]);
+
   const isDoctor = currentUser?.role === "doctor";
   const isAdmin = currentUser?.role === "admin";
   const canDoctorActions = isDoctor;
@@ -598,13 +605,27 @@ export default function PatientChartPage() {
     }
   }
 
+  const fetchMedications = useCallback(async () => {
+    try {
+      const res = await api.get<Array<{
+        id: number; name: string; status: string;
+        dose_strength?: string | null; frequency?: string | null;
+        reason?: string | null; is_uncertain: boolean;
+        official_match_status?: string | null;
+      }>>(`/patients/${patientId}/medications`);
+      setMedications(Array.isArray(res.data) ? res.data : []);
+    } catch {
+      setMedications([]);
+    }
+  }, [patientId]);
+
   useEffect(() => {
     async function init() {
       try {
         setError("");
         const user = await fetchMe();
         if (user.role === "patient") { router.replace("/my-records"); return; }
-        await Promise.all([fetchProfile(), fetchTrends()]);
+        await Promise.all([fetchProfile(), fetchTrends(), fetchMedications()]);
       } catch (err) {
         setError(getErrorMessage(err, "Could not load patient chart."));
       } finally {
@@ -612,7 +633,7 @@ export default function PatientChartPage() {
       }
     }
     init();
-  }, [fetchMe, fetchProfile, fetchTrends, router]);
+  }, [fetchMe, fetchProfile, fetchTrends, fetchMedications, router]);
 
   useEffect(() => {
     setDepartmentFilter("");
@@ -1036,6 +1057,72 @@ export default function PatientChartPage() {
               <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>View full timeline</button>
             </div>
             <MiniTimeline items={timelineItems} patientId={patientId} onOpenDocument={openTimelineDocument} />
+          </div>
+
+          {/* Medications */}
+          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: medications.length > 0 ? 16 : 0 }}>
+              <div>
+                <div className="section-title">Medications</div>
+                <div className="muted-text" style={{ marginTop: 6, fontSize: 13 }}>Patient-entered records — view only. Dose and frequency not verified.</div>
+              </div>
+              <button className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push(`/patients/${patientId}/medications/list`)}>View all</button>
+            </div>
+
+            {medications.length === 0 ? (
+              <div className="muted-text" style={{ fontSize: 13 }}>No medications recorded by this patient.</div>
+            ) : (
+              <div style={{ display: "grid", gap: 8 }}>
+                {medications.slice(0, 8).map((m) => {
+                  const active = m.status === "active";
+                  const asNeeded = m.status === "as_needed";
+                  const statusBg = active ? "var(--success-bg)" : asNeeded ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)";
+                  const statusColor = active ? "var(--success-text)" : asNeeded ? "var(--primary)" : "var(--muted)";
+                  const statusLabel = active ? "Active" : asNeeded ? "As needed" : m.status === "paused" ? "Paused" : "Stopped";
+                  return (
+                    <button
+                      key={m.id}
+                      type="button"
+                      onClick={() => router.push(`/patients/${patientId}/medications/${m.id}`)}
+                      className="soft-card-tight"
+                      style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer", width: "100%" }}
+                    >
+                      <div style={{ minWidth: 0 }}>
+                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
+                          <span style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</span>
+                          {m.is_uncertain && (
+                            <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+                              Dose not verified
+                            </span>
+                          )}
+                        </div>
+                        <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+                          {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || "No dose recorded"}
+                          {m.reason ? ` · ${m.reason}` : ""}
+                        </div>
+                      </div>
+                      <span style={{ flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: statusBg, color: statusColor }}>
+                        {statusLabel}
+                      </span>
+                    </button>
+                  );
+                })}
+                {medications.length > 8 && (
+                  <div className="muted-text" style={{ fontSize: 12, textAlign: "center", paddingTop: 2 }}>
+                    +{medications.length - 8} more medications on record
+                  </div>
+                )}
+              </div>
+            )}
+
+            <div
+              className="soft-card-tight"
+              style={{ padding: 10, marginTop: 14, background: "var(--panel-2)", fontSize: 11 }}
+            >
+              <span className="muted-text">
+                Patient-entered medication records are not verified by a clinician. Dose not verified · Frequency not verified · Review with the patient directly.
+              </span>
+            </div>
           </div>
 
           {/* Documents */}

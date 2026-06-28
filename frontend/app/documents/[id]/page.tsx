@@ -4,6 +4,7 @@ import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
@@ -720,7 +721,7 @@ export default function DocumentStructuredPage() {
         return;
       }
 
-      router.push("/my-records");
+      router.push(getHomeByRole(currentUser?.role ?? ""));
     } catch (err) {
       setError(getErrorMessage(err, "Could not delete document."));
       setConfirmDeleteOpen(false);

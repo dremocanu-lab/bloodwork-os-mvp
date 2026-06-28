@@ -6,6 +6,7 @@ import AppShell from "@/components/app-shell";
 import { useUploadManager } from "@/components/upload-provider";
 import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
@@ -721,6 +722,8 @@ export default function MyRecordsPage() {
   const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
   const [pinsLoaded, setPinsLoaded] = useState(false);
 
+  const [medications, setMedications] = useState<Array<{ id: number; name: string; status: string; dose_strength?: string | null; frequency?: string | null }>>([]);
+
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -820,7 +823,7 @@ export default function MyRecordsPage() {
       if (!me) return;
 
       if (me.role !== "patient") {
-        router.push(me.role === "doctor" ? "/my-patients" : "/assignments");
+        router.push(getHomeByRole(me.role));
         return;
       }
 
@@ -828,6 +831,12 @@ export default function MyRecordsPage() {
         setError("");
         const profileResponse = await fetchProfile();
         await fetchTrends(profileResponse.patient.id);
+        try {
+          const medResponse = await api.get<Array<{ id: number; name: string; status: string; dose_strength?: string | null; frequency?: string | null }>>("/my/medications");
+          setMedications(medResponse.data);
+        } catch {
+          // medications are non-critical — page still loads
+        }
       } catch (err) {
         setError(getErrorMessage(err, t("failedLoadRecords")));
       } finally {
@@ -1402,6 +1411,61 @@ export default function MyRecordsPage() {
             </div>
           )}
         </div>
+      </div>
+
+      {/* Medications summary card */}
+      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
+        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: medications.length > 0 ? 14 : 0 }}>
+          <div>
+            <div className="section-title" style={{ marginBottom: 4 }}>My Medications</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>
+              Patient-entered medication records. Review with your doctor.
+            </div>
+          </div>
+          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
+            <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications")}>
+              View all
+            </button>
+            <button type="button" className="primary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications/new")}>
+              Add
+            </button>
+          </div>
+        </div>
+
+        {medications.length === 0 ? (
+          <div className="muted-text" style={{ fontSize: 13 }}>No medications recorded yet.</div>
+        ) : (
+          <div style={{ display: "grid", gap: 8 }}>
+            {medications.filter((m) => m.status === "active" || m.status === "as_needed").slice(0, 5).map((m) => (
+              <button
+                key={m.id}
+                type="button"
+                onClick={() => router.push(`/my-records/medications/${m.id}`)}
+                className="soft-card-tight"
+                style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer" }}
+              >
+                <div style={{ minWidth: 0 }}>
+                  <div style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</div>
+                  <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+                    {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || "No dose recorded"}
+                  </div>
+                </div>
+                <span style={{
+                  flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                  background: m.status === "active" ? "var(--success-bg)" : "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
+                  color: m.status === "active" ? "var(--success-text)" : "var(--primary)",
+                }}>
+                  {m.status === "active" ? "Active" : "As needed"}
+                </span>
+              </button>
+            ))}
+            {medications.length > 5 && (
+              <div className="muted-text" style={{ fontSize: 12, textAlign: "center", paddingTop: 4 }}>
+                +{medications.length - 5} more · <button type="button" style={{ color: "var(--primary)", fontWeight: 800, background: "none", border: "none", cursor: "pointer", fontSize: 12 }} onClick={() => router.push("/my-records/medications")}>View all</button>
+              </div>
+            )}
+          </div>
+        )}
       </div>
 
       {/* Timeline */}

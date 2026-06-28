@@ -4,6 +4,7 @@ import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api } from "@/lib/api";
+import { getHomeByRole } from "@/lib/routing";
 import type { AppLanguage } from "@/lib/i18n";
 import { useLanguage } from "@/lib/i18n";
 import { formatPatientAge } from "@/lib/patient-age";
@@ -371,7 +372,7 @@ export default function MyPatientsPage() {
     ]);
 
     if (meResponse.data.role !== "doctor") {
-      router.push(meResponse.data.role === "patient" ? "/my-records" : "/assignments");
+      router.push(getHomeByRole(meResponse.data.role));
       return;
     }
 
