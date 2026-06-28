@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -25,13 +26,6 @@ type PatientMedication = {
   stop_date?: string | null;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  active: "Active",
-  as_needed: "As needed",
-  paused: "Paused",
-  stopped: "Stopped",
-};
-
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   active: { bg: "var(--success-bg)", text: "var(--success-text)" },
   as_needed: { bg: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", text: "var(--primary)" },
@@ -42,6 +36,7 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 export default function DoctorMedicationsListPage() {
   const params = useParams();
   const router = useRouter();
+  const { t } = useLanguage();
   const patientId = params?.id as string;
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
@@ -59,7 +54,7 @@ export default function DoctorMedicationsListPage() {
         const res = await api.get<PatientMedication[]>(`/patients/${patientId}/medications`);
         setMedications(Array.isArray(res.data) ? res.data : []);
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load medications."));
+        setError(getErrorMessage(err, t("medLoadError")));
       } finally {
         setLoading(false);
       }
@@ -67,12 +62,19 @@ export default function DoctorMedicationsListPage() {
     init();
   }, [patientId, router]);
 
+  const STATUS_LABELS: Record<string, string> = {
+    active: t("active"),
+    as_needed: t("medStatusAsNeeded"),
+    paused: t("medStatusPaused"),
+    stopped: t("medStatusStopped"),
+  };
+
   const filtered = statusFilter ? medications.filter((m) => m.status === statusFilter) : medications;
 
   if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading medications…</p>
+        <p className="muted-text">{t("loadingMedications")}</p>
       </main>
     );
   }
@@ -80,11 +82,11 @@ export default function DoctorMedicationsListPage() {
   return (
     <AppShell
       user={currentUser!}
-      title="Patient Medications"
-      subtitle="View only — patient-entered records"
+      title={t("patientMedications")}
+      subtitle={t("medViewOnlySubtitle")}
       rightContent={
         <button type="button" className="secondary-btn" onClick={() => router.push(`/patients/${patientId}`)}>
-          Back to chart
+          {t("backToChart")}
         </button>
       }
     >
@@ -95,9 +97,9 @@ export default function DoctorMedicationsListPage() {
       )}
 
       <div className="soft-card-tight" style={{ marginBottom: 20, padding: 14, background: "var(--panel-2)" }}>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>Patient-entered records — view only</div>
+        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>{t("medDoctorViewOnlyTitle")}</div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-          These records are entered by the patient and are not clinically verified. Dose not verified · Frequency not verified · Review with the patient directly.
+          {t("medDoctorViewOnlyDesc")}
         </div>
       </div>
 
@@ -112,7 +114,7 @@ export default function DoctorMedicationsListPage() {
               style={{ borderRadius: 999, padding: "7px 14px", fontSize: 13 }}
               onClick={() => setStatusFilter(s)}
             >
-              {s === "" ? `All (${medications.length})` : `${STATUS_LABELS[s]} (${medications.filter((m) => m.status === s).length})`}
+              {s === "" ? `${t("all")} (${medications.length})` : `${STATUS_LABELS[s]} (${medications.filter((m) => m.status === s).length})`}
             </button>
           ))}
         </div>
@@ -137,23 +139,23 @@ export default function DoctorMedicationsListPage() {
                     </span>
                     {med.is_uncertain && (
                       <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-                        Dose not verified
+                        {t("medDoseNotVerified")}
                       </span>
                     )}
                   </div>
                   <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em" }}>{med.name}</div>
                   <div className="muted-text" style={{ marginTop: 5, fontSize: 13 }}>
-                    {[med.dose_strength, med.frequency].filter(Boolean).join(" · ") || "No dose or frequency recorded"}
+                    {[med.dose_strength, med.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
                   </div>
                   {med.reason && (
-                    <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>Recorded reason: {med.reason}</div>
+                    <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>{t("medRecordedReasonLabel")} {med.reason}</div>
                   )}
                 </div>
 
                 {(med.start_date || med.stop_date) && (
                   <div style={{ flexShrink: 0, textAlign: "right" }}>
-                    {med.start_date && <div className="muted-text" style={{ fontSize: 11 }}>Since {med.start_date}</div>}
-                    {med.stop_date && <div className="muted-text" style={{ fontSize: 11 }}>Stopped {med.stop_date}</div>}
+                    {med.start_date && <div className="muted-text" style={{ fontSize: 11 }}>{t("medSince")} {med.start_date}</div>}
+                    {med.stop_date && <div className="muted-text" style={{ fontSize: 11 }}>{t("medStatusStopped")} {med.stop_date}</div>}
                   </div>
                 )}
               </div>
@@ -163,7 +165,7 @@ export default function DoctorMedicationsListPage() {
 
         {filtered.length === 0 && (
           <div className="muted-text" style={{ padding: "12px 0" }}>
-            {medications.length === 0 ? "This patient has not recorded any medications." : "No medications match this filter."}
+            {medications.length === 0 ? t("medPatientNone") : t("noMedicationsFilter")}
           </div>
         )}
       </div>

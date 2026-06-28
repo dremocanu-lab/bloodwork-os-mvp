@@ -4,6 +4,7 @@ import { useEffect, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -50,13 +51,6 @@ type PatientMedication = {
   official_label_date?: string | null;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  active: "Active",
-  as_needed: "As needed",
-  paused: "Paused",
-  stopped: "Stopped",
-};
-
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   active: { bg: "var(--success-bg)", text: "var(--success-text)" },
   as_needed: { bg: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", text: "var(--primary)" },
@@ -64,20 +58,10 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   stopped: { bg: "var(--panel-2)", text: "var(--muted)" },
 };
 
-function Field({ label, value }: { label: string; value?: string | null }) {
-  return (
-    <div>
-      <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
-        {label}
-      </div>
-      <div style={{ fontWeight: 700, fontSize: 15 }}>{valueOrDash(value)}</div>
-    </div>
-  );
-}
-
 export default function DoctorMedicationViewPage() {
   const params = useParams();
   const router = useRouter();
+  const { t } = useLanguage();
   const patientId = params?.id as string;
   const medicationId = params?.medication_id as string;
 
@@ -98,7 +82,7 @@ export default function DoctorMedicationViewPage() {
         const res = await api.get<PatientMedication>(`/patients/${patientId}/medications/${medicationId}`);
         setMed(res.data);
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load medication."));
+        setError(getErrorMessage(err, t("medLoadError")));
       } finally {
         setLoading(false);
       }
@@ -109,7 +93,7 @@ export default function DoctorMedicationViewPage() {
   if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading…</p>
+        <p className="muted-text">{t("loading")}</p>
       </main>
     );
   }
@@ -117,24 +101,42 @@ export default function DoctorMedicationViewPage() {
   if (!med || !currentUser) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{error || "Medication not found."}</p>
+        <p className="muted-text">{error || t("medLoadError")}</p>
       </main>
     );
   }
+
+  const STATUS_LABELS: Record<string, string> = {
+    active: t("active"),
+    as_needed: t("medStatusAsNeeded"),
+    paused: t("medStatusPaused"),
+    stopped: t("medStatusStopped"),
+  };
 
   const statusStyle = STATUS_COLORS[med.status] || STATUS_COLORS.stopped;
   const officialInfo = med.official_info;
   const sections = officialInfo?.sections || {};
   const hasSections = Object.keys(sections).length > 0;
 
+  function Field({ label, value }: { label: string; value?: string | null }) {
+    return (
+      <div>
+        <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+          {label}
+        </div>
+        <div style={{ fontWeight: 700, fontSize: 15 }}>{valueOrDash(value)}</div>
+      </div>
+    );
+  }
+
   return (
     <AppShell
       user={currentUser}
       title={med.name}
-      subtitle="Patient medication — read only"
+      subtitle={t("medPatientReadOnlySubtitle")}
       rightContent={
         <button type="button" className="secondary-btn" onClick={() => router.push(`/patients/${patientId}`)}>
-          Back to patient chart
+          {t("backToPatientChart")}
         </button>
       }
     >
@@ -149,9 +151,9 @@ export default function DoctorMedicationViewPage() {
         className="soft-card-tight"
         style={{ marginBottom: 20, padding: 14, background: "var(--panel-2)", borderColor: "var(--border)" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>Patient-entered medication record — view only</div>
+        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>{t("medDoctorViewOnlySingleTitle")}</div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-          This record was entered by the patient and is not clinically verified. Dose and frequency are not verified. Review with the patient directly. You cannot edit patient-entered medication records.
+          {t("medDoctorViewOnlySingleDesc")}
         </div>
       </div>
 
@@ -163,26 +165,26 @@ export default function DoctorMedicationViewPage() {
           </span>
           {med.is_uncertain && (
             <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-              Dose not verified
+              {t("medDoseNotVerified")}
             </span>
           )}
         </div>
 
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 18 }}>
-          <Field label="Medication name" value={med.name} />
-          <Field label="Dose / strength" value={med.dose_strength} />
-          <Field label="Form / route" value={med.route_form} />
-          <Field label="Frequency" value={med.frequency} />
-          <Field label="Recorded reason" value={med.reason} />
-          <Field label="Prescribed by" value={med.prescriber} />
-          <Field label="Start date" value={med.start_date} />
-          <Field label="Stop date" value={med.stop_date} />
+          <Field label={t("medName")} value={med.name} />
+          <Field label={t("medDoseStrength")} value={med.dose_strength} />
+          <Field label={t("medRouteForm")} value={med.route_form} />
+          <Field label={t("medFrequency")} value={med.frequency} />
+          <Field label={t("medRecordedReason")} value={med.reason} />
+          <Field label={t("medPrescribedBy")} value={med.prescriber} />
+          <Field label={t("startDate")} value={med.start_date} />
+          <Field label={t("stopDate")} value={med.stop_date} />
         </div>
 
         {med.extra_info && (
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
             <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
-              Additional notes
+              {t("medAdditionalNotes")}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.7 }}>{med.extra_info}</div>
           </div>
@@ -190,8 +192,8 @@ export default function DoctorMedicationViewPage() {
 
         <div style={{ marginTop: 18, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
           <div className="muted-text" style={{ fontSize: 11 }}>
-            Recorded by patient {med.created_at}
-            {med.updated_at ? ` · Last edited ${med.updated_at}` : ""}
+            {t("created")} {med.created_at}
+            {med.updated_at ? ` · ${t("lastEdited")} ${med.updated_at}` : ""}
           </div>
         </div>
       </div>
@@ -199,41 +201,41 @@ export default function DoctorMedicationViewPage() {
       {/* Official information */}
       <div className="soft-card" style={{ padding: 24 }}>
         <div style={{ marginBottom: 16 }}>
-          <div className="section-title" style={{ marginBottom: 4 }}>Official label information</div>
+          <div className="section-title" style={{ marginBottom: 4 }}>{t("medOfficialLabelInfo")}</div>
           <div className="muted-text" style={{ fontSize: 13 }}>
-            Official information for reference only. This does not replace clinical judgment.
+            {t("medOfficialRefClinical")}
           </div>
         </div>
 
         {(!med.official_match_status || med.official_match_status === "pending") && (
-          <div className="muted-text" style={{ fontSize: 13 }}>Looking up official information…</div>
+          <div className="muted-text" style={{ fontSize: 13 }}>{t("medOfficialLookingUp")}</div>
         )}
 
         {med.official_match_status === "not_matched" && (
           <div className="soft-card-tight" style={{ padding: 14, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>No official match found</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>The medication name could not be matched in the RxNorm/DailyMed database.</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("medOfficialNoMatchTitle")}</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>{t("medOfficialNoMatchDoctorDesc")}</div>
           </div>
         )}
 
         {med.official_match_status === "vague" && (
           <div className="soft-card-tight" style={{ padding: 14, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Name too vague to match</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>The name entered by the patient is too general to match a specific drug.</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("medOfficialVagueTitle")}</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>{t("medOfficialVagueDoctorDesc")}</div>
           </div>
         )}
 
         {med.official_match_status === "multiple" && (
           <div className="soft-card-tight" style={{ padding: 14, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Multiple candidates found</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>The patient needs to select the correct match from the medication detail page.</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("medOfficialMultipleCandidates")}</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>{t("medOfficialMultipleDoctorDesc")}</div>
           </div>
         )}
 
         {med.official_match_status === "error" && (
           <div className="soft-card-tight" style={{ padding: 14, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 700, marginBottom: 4 }}>Lookup error</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>Official information could not be retrieved.</div>
+            <div style={{ fontWeight: 700, marginBottom: 4 }}>{t("medOfficialErrorTitle")}</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>{t("medOfficialErrorDoctorDesc")}</div>
           </div>
         )}
 
@@ -244,7 +246,7 @@ export default function DoctorMedicationViewPage() {
                 padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
                 background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
               }}>
-                Matched
+                {t("medMatchMatched")}
               </span>
               <span className="muted-text" style={{ fontSize: 12 }}>
                 {officialInfo?.rxnorm_name || med.name}
@@ -258,7 +260,7 @@ export default function DoctorMedicationViewPage() {
                   className="secondary-btn"
                   style={{ fontSize: 12, padding: "4px 10px", borderRadius: 999 }}
                 >
-                  View source ↗
+                  {t("medViewSource")}
                 </a>
               )}
             </div>
@@ -267,7 +269,7 @@ export default function DoctorMedicationViewPage() {
               <div className="muted-text" style={{ fontSize: 12, marginBottom: 12 }}>
                 Source: {med.official_source_name}
                 {med.official_label_date ? ` · Label date: ${med.official_label_date}` : ""}
-                {med.official_retrieved_at ? ` · Retrieved: ${med.official_retrieved_at.slice(0, 10)}` : ""}
+                {med.official_retrieved_at ? ` · ${t("retrieved")}: ${med.official_retrieved_at.slice(0, 10)}` : ""}
               </div>
             )}
 
@@ -276,7 +278,7 @@ export default function DoctorMedicationViewPage() {
               style={{ padding: 12, marginBottom: 16, background: "color-mix(in srgb, var(--warn-bg) 50%, var(--panel-2))", borderColor: "var(--warn-text)" }}
             >
               <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-                The following is official label information for reference only. Dose not verified for this patient. Frequency not verified for this patient. This does not replace clinical judgment.
+                {t("medOfficialDisclaimerDoctor")}
               </div>
             </div>
 
@@ -293,7 +295,7 @@ export default function DoctorMedicationViewPage() {
               </div>
             ) : (
               <div className="muted-text" style={{ fontSize: 13 }}>
-                Matched to RxNorm but no detailed label sections available from DailyMed.
+                {t("medOfficialNoSectionsDoctor")}
               </div>
             )}
           </div>

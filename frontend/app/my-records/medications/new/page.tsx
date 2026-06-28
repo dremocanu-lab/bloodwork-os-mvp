@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -13,15 +14,9 @@ type CurrentUser = {
   role: "patient" | "doctor" | "admin" | "care_partner";
 };
 
-const STATUS_OPTIONS = [
-  { value: "active", label: "Active — currently taking" },
-  { value: "as_needed", label: "As needed — only when required" },
-  { value: "paused", label: "Paused — temporarily not taking" },
-  { value: "stopped", label: "Stopped — no longer taking" },
-];
-
 export default function NewMedicationPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [authLoading, setAuthLoading] = useState(true);
 
@@ -60,7 +55,7 @@ export default function NewMedicationPage() {
   async function handleSubmit(e: React.FormEvent) {
     e.preventDefault();
     if (!name.trim()) {
-      setError("Medication name is required.");
+      setError(t("medNameRequired"));
       return;
     }
     try {
@@ -81,7 +76,7 @@ export default function NewMedicationPage() {
       });
       router.push(`/my-records/medications/${response.data.id}`);
     } catch (err) {
-      setError(getErrorMessage(err, "Could not save medication."));
+      setError(getErrorMessage(err, t("medSaveError")));
       setSaving(false);
     }
   }
@@ -89,29 +84,36 @@ export default function NewMedicationPage() {
   if (authLoading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading…</p>
+        <p className="muted-text">{t("loading")}</p>
       </main>
     );
   }
 
+  const STATUS_OPTIONS = [
+    { value: "active", label: t("medStatusActiveDesc") },
+    { value: "as_needed", label: t("medStatusAsNeededDesc") },
+    { value: "paused", label: t("medStatusPausedDesc") },
+    { value: "stopped", label: t("medStatusStoppedDesc") },
+  ];
+
   return (
-    <AppShell user={currentUser!} title="Add Medication">
+    <AppShell user={currentUser!} title={t("addMedication")}>
       {/* Safety notice */}
       <div
         className="soft-card-tight"
         style={{ marginBottom: 24, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
       >
         <div style={{ fontSize: 12, fontWeight: 800, color: "var(--primary)", marginBottom: 4 }}>
-          Patient-entered medication record
+          {t("medSafetyTitleSingle")}
         </div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-          Enter exactly what you take or have been prescribed. Do not start, stop, or change any medication without speaking to a licensed clinician. This record is not medical advice. Dose and frequency are not verified.
+          {t("medSafetyAddDesc")}
         </div>
       </div>
 
       <form onSubmit={handleSubmit}>
         <div className="soft-card" style={{ padding: 24, marginBottom: 20 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>Medication details</div>
+          <div className="section-title" style={{ marginBottom: 18 }}>{t("medDetails")}</div>
 
           {error && (
             <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 12, background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontSize: 14 }}>
@@ -122,7 +124,7 @@ export default function NewMedicationPage() {
           {/* Name */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
             <span style={{ fontSize: 13, fontWeight: 800 }}>
-              Medication name <span style={{ color: "var(--danger-text)" }}>*</span>
+              {t("medName")} <span style={{ color: "var(--danger-text)" }}>*</span>
             </span>
             <input
               className="text-input"
@@ -137,7 +139,7 @@ export default function NewMedicationPage() {
 
           {/* Status */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>Status</span>
+            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("status")}</span>
             <select
               className="text-input"
               value={status}
@@ -153,7 +155,7 @@ export default function NewMedicationPage() {
           {/* Dose and frequency row */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>Dose / strength</span>
+              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseStrength")}</span>
               <input
                 className="text-input"
                 type="text"
@@ -163,7 +165,7 @@ export default function NewMedicationPage() {
               />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>Frequency</span>
+              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medFrequency")}</span>
               <input
                 className="text-input"
                 type="text"
@@ -176,7 +178,7 @@ export default function NewMedicationPage() {
 
           {/* Route */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>Form / route</span>
+            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRouteForm")}</span>
             <input
               className="text-input"
               type="text"
@@ -195,14 +197,14 @@ export default function NewMedicationPage() {
               style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }}
             />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>Dose not verified</div>
-              <div className="muted-text" style={{ fontSize: 12 }}>Check this if you are unsure of the exact dose or frequency</div>
+              <div style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseNotVerified")}</div>
+              <div className="muted-text" style={{ fontSize: 12 }}>{t("medDoseNotVerifiedHint")}</div>
             </div>
           </label>
 
           {/* Reason */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>Recorded reason</span>
+            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRecordedReason")}</span>
             <textarea
               className="text-input"
               rows={2}
@@ -212,18 +214,18 @@ export default function NewMedicationPage() {
               style={{ resize: "vertical" }}
             />
             <span className="muted-text" style={{ fontSize: 11 }}>
-              This is the reason you recorded — not a diagnosis.
+              {t("medRecordedReasonHint")}
             </span>
           </label>
         </div>
 
         <div className="soft-card" style={{ padding: 24, marginBottom: 20 }}>
-          <div className="section-title" style={{ marginBottom: 18 }}>Optional details</div>
+          <div className="section-title" style={{ marginBottom: 18 }}>{t("medOptionalDetails")}</div>
 
           {/* Dates row */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>Start date</span>
+              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("startDate")}</span>
               <input
                 className="text-input"
                 type="date"
@@ -232,7 +234,7 @@ export default function NewMedicationPage() {
               />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>Stop date</span>
+              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("stopDate")}</span>
               <input
                 className="text-input"
                 type="date"
@@ -244,7 +246,7 @@ export default function NewMedicationPage() {
 
           {/* Prescriber */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>Prescribed by</span>
+            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medPrescribedBy")}</span>
             <input
               className="text-input"
               type="text"
@@ -256,7 +258,7 @@ export default function NewMedicationPage() {
 
           {/* Extra info */}
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>Additional notes</span>
+            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medAdditionalNotes")}</span>
             <textarea
               className="text-input"
               rows={3}
@@ -270,14 +272,14 @@ export default function NewMedicationPage() {
 
         <div style={{ display: "flex", gap: 12 }}>
           <button type="submit" className="primary-btn" disabled={saving}>
-            {saving ? "Saving…" : "Save medication"}
+            {saving ? t("saving") : t("medSaveBtn")}
           </button>
           <button
             type="button"
             className="secondary-btn"
             onClick={() => router.push("/my-records/medications")}
           >
-            Cancel
+            {t("cancel")}
           </button>
         </div>
       </form>

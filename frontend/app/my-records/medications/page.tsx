@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
+import { useLanguage } from "@/lib/i18n";
 
 type CurrentUser = {
   id: number;
@@ -31,13 +32,6 @@ type PatientMedication = {
   updated_at?: string | null;
 };
 
-const STATUS_LABELS: Record<string, string> = {
-  active: "Active",
-  as_needed: "As needed",
-  paused: "Paused",
-  stopped: "Stopped",
-};
-
 const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   active: { bg: "var(--success-bg)", text: "var(--success-text)" },
   as_needed: { bg: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", text: "var(--primary)" },
@@ -45,22 +39,30 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
   stopped: { bg: "var(--panel-2)", text: "var(--muted)" },
 };
 
-const MATCH_LABELS: Record<string, string> = {
-  pending: "Looking up…",
-  matched: "Matched",
-  not_matched: "No official match",
-  multiple: "Multiple candidates",
-  vague: "Name too vague",
-  error: "Lookup error",
-};
-
 export default function MedicationsListPage() {
   const router = useRouter();
+  const { t } = useLanguage();
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [medications, setMedications] = useState<PatientMedication[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
   const [statusFilter, setStatusFilter] = useState("");
+
+  const STATUS_LABELS: Record<string, string> = {
+    active: t("active"),
+    as_needed: t("medStatusAsNeeded"),
+    paused: t("medStatusPaused"),
+    stopped: t("medStatusStopped"),
+  };
+
+  const MATCH_LABELS: Record<string, string> = {
+    pending: t("medMatchPending"),
+    matched: t("medMatchMatched"),
+    not_matched: t("medMatchNotMatched"),
+    multiple: t("medMatchMultiple"),
+    vague: t("medMatchVague"),
+    error: t("medMatchError"),
+  };
 
   useEffect(() => {
     async function init() {
@@ -74,7 +76,7 @@ export default function MedicationsListPage() {
         const meds = await api.get<PatientMedication[]>("/my/medications");
         setMedications(meds.data);
       } catch (err) {
-        setError(getErrorMessage(err, "Could not load medications."));
+        setError(getErrorMessage(err, t("medLoadError")));
       } finally {
         setLoading(false);
       }
@@ -92,7 +94,7 @@ export default function MedicationsListPage() {
   if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">Loading medications…</p>
+        <p className="muted-text">{t("loadingMedications")}</p>
       </main>
     );
   }
@@ -100,14 +102,14 @@ export default function MedicationsListPage() {
   return (
     <AppShell
       user={currentUser!}
-      title="My Medications"
+      title={t("myMedications")}
       rightContent={
         <button
           type="button"
           className="primary-btn"
           onClick={() => router.push("/my-records/medications/new")}
         >
-          Add medication
+          {t("addMedication")}
         </button>
       }
     >
@@ -126,10 +128,10 @@ export default function MedicationsListPage() {
         style={{ marginBottom: 20, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
       >
         <div style={{ fontSize: 12, fontWeight: 800, color: "var(--primary)", marginBottom: 4 }}>
-          Patient-entered medication records
+          {t("medSafetyTitle")}
         </div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-          These records are entered by you and are not verified by a clinician. Do not start, stop, or change any medication without speaking to a licensed clinician. Official label information is shown for reference only and does not replace medical advice.
+          {t("medSafetyDesc")}
         </div>
       </div>
 
@@ -137,9 +139,9 @@ export default function MedicationsListPage() {
       {medications.length > 0 && (
         <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(150px, 1fr))", gap: 12, marginBottom: 20 }}>
           {[
-            { label: "Total", value: medications.length, onClick: () => setStatusFilter("") },
-            { label: "Active", value: active, onClick: () => setStatusFilter("active") },
-            { label: "As needed", value: asNeeded, onClick: () => setStatusFilter("as_needed") },
+            { label: t("total"), value: medications.length, onClick: () => setStatusFilter("") },
+            { label: t("active"), value: active, onClick: () => setStatusFilter("active") },
+            { label: t("medStatusAsNeeded"), value: asNeeded, onClick: () => setStatusFilter("as_needed") },
           ].map(({ label, value, onClick }) => (
             <div
               key={label}
@@ -165,7 +167,7 @@ export default function MedicationsListPage() {
               style={{ borderRadius: 999, padding: "7px 14px", fontSize: 13 }}
               onClick={() => setStatusFilter(s)}
             >
-              {s === "" ? "All" : STATUS_LABELS[s]}
+              {s === "" ? t("all") : STATUS_LABELS[s]}
             </button>
           ))}
         </div>
@@ -204,7 +206,7 @@ export default function MedicationsListPage() {
                         padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
                         background: "var(--warn-bg)", color: "var(--warn-text)",
                       }}>
-                        Dose not verified
+                        {t("medDoseNotVerified")}
                       </span>
                     )}
                     {med.official_match_status === "matched" && (
@@ -212,28 +214,28 @@ export default function MedicationsListPage() {
                         padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
                         background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
                       }}>
-                        Official info available
+                        {t("medOfficialInfoAvailable")}
                       </span>
                     )}
                   </div>
                   <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>{med.name}</div>
                   <div className="muted-text" style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6 }}>
-                    {[med.dose_strength, med.route_form, med.frequency].filter(Boolean).join(" · ") || "No dose or frequency recorded"}
+                    {[med.dose_strength, med.route_form, med.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
                   </div>
                   {med.reason && (
                     <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                      Recorded reason: {med.reason}
+                      {t("medRecordedReasonLabel")} {med.reason}
                     </div>
                   )}
                 </div>
 
                 <div style={{ flexShrink: 0, textAlign: "right" }}>
                   <div className="muted-text" style={{ fontSize: 11 }}>
-                    {MATCH_LABELS[med.official_match_status || ""] || "Not looked up"}
+                    {MATCH_LABELS[med.official_match_status || ""] || t("medMatchUnknown")}
                   </div>
                   {med.start_date && (
                     <div className="muted-text" style={{ fontSize: 11, marginTop: 4 }}>
-                      Since {med.start_date}
+                      {t("medSince")} {med.start_date}
                     </div>
                   )}
                 </div>
@@ -244,24 +246,24 @@ export default function MedicationsListPage() {
 
         {filtered.length === 0 && medications.length === 0 && (
           <div className="soft-card" style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 10 }}>No medications recorded yet</div>
+            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 10 }}>{t("noMedicationsYet")}</div>
             <div className="muted-text" style={{ marginBottom: 20, lineHeight: 1.65 }}>
-              Keep a record of your current medications here. This information is shared with doctors who have access to your chart.
+              {t("noMedicationsYetDesc")}
             </div>
             <button type="button" className="primary-btn" onClick={() => router.push("/my-records/medications/new")}>
-              Add first medication
+              {t("addFirstMedication")}
             </button>
           </div>
         )}
 
         {filtered.length === 0 && medications.length > 0 && (
-          <div className="muted-text">No medications match this filter.</div>
+          <div className="muted-text">{t("noMedicationsFilter")}</div>
         )}
       </div>
 
       <div style={{ marginTop: 20 }}>
         <button type="button" className="secondary-btn" onClick={() => router.push("/my-records")}>
-          Back to my records
+          {t("backToMyRecords")}
         </button>
       </div>
     </AppShell>

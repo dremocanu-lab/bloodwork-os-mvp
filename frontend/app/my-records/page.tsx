@@ -136,7 +136,6 @@ type AdmissionParent = TimelineItem & {
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
   "bloodwork",
   "discharge_summary",
-  "medications",
   "scans",
   "hospitalizations",
   "other",
@@ -700,7 +699,6 @@ export default function MyRecordsPage() {
   const sectionLabels: Record<string, string> = {
     bloodwork: t("bloodwork"),
     discharge_summary: "Discharge summaries",
-    medications: "Medications",
     scans: t("scans"),
     hospitalizations: "Hospitalizations",
     other: "Other",
@@ -723,6 +721,7 @@ export default function MyRecordsPage() {
   const [pinsLoaded, setPinsLoaded] = useState(false);
 
   const [medications, setMedications] = useState<Array<{ id: number; name: string; status: string; dose_strength?: string | null; frequency?: string | null }>>([]);
+  const [visibleMedCount, setVisibleMedCount] = useState(5);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
@@ -1417,52 +1416,58 @@ export default function MyRecordsPage() {
       <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: medications.length > 0 ? 14 : 0 }}>
           <div>
-            <div className="section-title" style={{ marginBottom: 4 }}>My Medications</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>
-              Patient-entered medication records. Review with your doctor.
-            </div>
+            <div className="section-title" style={{ marginBottom: 4 }}>{t("myMedications")}</div>
+            <div className="muted-text" style={{ fontSize: 13 }}>{t("medCardSubtitle")}</div>
           </div>
           <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
             <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications")}>
-              View all
+              {t("viewAll").replace(" →", "")}
             </button>
             <button type="button" className="primary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications/new")}>
-              Add
+              {t("add")}
             </button>
           </div>
         </div>
 
         {medications.length === 0 ? (
-          <div className="muted-text" style={{ fontSize: 13 }}>No medications recorded yet.</div>
+          <div className="muted-text" style={{ fontSize: 13 }}>{t("noMedicationsYet")}.</div>
         ) : (
           <div style={{ display: "grid", gap: 8 }}>
-            {medications.filter((m) => m.status === "active" || m.status === "as_needed").slice(0, 5).map((m) => (
-              <button
-                key={m.id}
-                type="button"
-                onClick={() => router.push(`/my-records/medications/${m.id}`)}
-                className="soft-card-tight"
-                style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer" }}
-              >
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</div>
-                  <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
-                    {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || "No dose recorded"}
+            {medications
+              .filter((m) => m.status === "active" || m.status === "as_needed")
+              .slice(0, visibleMedCount)
+              .map((m) => (
+                <button
+                  key={m.id}
+                  type="button"
+                  onClick={() => router.push(`/my-records/medications/${m.id}`)}
+                  className="soft-card-tight"
+                  style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer" }}
+                >
+                  <div style={{ minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</div>
+                    <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
+                      {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
+                    </div>
                   </div>
-                </div>
-                <span style={{
-                  flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
-                  background: m.status === "active" ? "var(--success-bg)" : "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
-                  color: m.status === "active" ? "var(--success-text)" : "var(--primary)",
-                }}>
-                  {m.status === "active" ? "Active" : "As needed"}
-                </span>
+                  <span style={{
+                    flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                    background: m.status === "active" ? "var(--success-bg)" : "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
+                    color: m.status === "active" ? "var(--success-text)" : "var(--primary)",
+                  }}>
+                    {m.status === "active" ? t("active") : t("medStatusAsNeeded")}
+                  </span>
+                </button>
+              ))}
+            {medications.filter((m) => m.status === "active" || m.status === "as_needed").length > visibleMedCount && (
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ fontSize: 13, marginTop: 4 }}
+                onClick={() => setVisibleMedCount((c) => c + 5)}
+              >
+                {t("showMore")}
               </button>
-            ))}
-            {medications.length > 5 && (
-              <div className="muted-text" style={{ fontSize: 12, textAlign: "center", paddingTop: 4 }}>
-                +{medications.length - 5} more · <button type="button" style={{ color: "var(--primary)", fontWeight: 800, background: "none", border: "none", cursor: "pointer", fontSize: 12 }} onClick={() => router.push("/my-records/medications")}>View all</button>
-              </div>
             )}
           </div>
         )}
