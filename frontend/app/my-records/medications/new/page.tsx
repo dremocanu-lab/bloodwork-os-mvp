@@ -10,7 +10,7 @@ type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: string;
+  role: "patient" | "doctor" | "admin" | "care_partner";
 };
 
 const STATUS_OPTIONS = [
