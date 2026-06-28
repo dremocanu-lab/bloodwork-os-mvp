@@ -936,35 +936,6 @@ export default function PatientChartPage() {
         </div>
       </div>
 
-      {/* Stat cards */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))", gap: 14, marginBottom: 24 }}>
-        {[
-          { label: "Total records", value: stats.total, danger: false, onClick: undefined as (() => void) | undefined },
-          { label: "Bloodwork", value: stats.bloodwork, danger: false, onClick: () => setActiveSection("bloodwork") },
-          { label: "Hospitalizations", value: stats.hospitalizations, danger: false, onClick: () => setActiveSection("discharge_summary") },
-          { label: "Needs review", value: stats.needsReview, danger: stats.needsReview > 0, onClick: undefined as (() => void) | undefined },
-        ].map(({ label, value, danger, onClick }) => (
-          <div
-            key={label}
-            className="soft-card"
-            onClick={onClick}
-            style={{
-              padding: "20px 24px",
-              cursor: onClick ? "pointer" : "default",
-              borderColor: danger ? "var(--danger-border)" : "var(--border)",
-              background: danger ? "color-mix(in srgb, var(--danger-bg) 35%, var(--panel))" : undefined,
-              transition: "border-color 220ms ease",
-            }}
-          >
-            <div className="muted-text" style={{ fontSize: 12, fontWeight: 700, textTransform: "uppercase", letterSpacing: "0.04em" }}>{label}</div>
-            <div style={{
-              fontSize: 38, fontWeight: 900, letterSpacing: "-0.05em", marginTop: 8, lineHeight: 1,
-              color: danger ? "var(--danger-text)" : "var(--foreground)",
-            }}>{value}</div>
-          </div>
-        ))}
-      </div>
-
       {/* Review alert */}
       {stats.needsReview > 0 && (
         <div className="soft-card" style={{ padding: 16, marginBottom: 24, borderColor: "var(--danger-border)", background: "var(--danger-bg)" }}>
