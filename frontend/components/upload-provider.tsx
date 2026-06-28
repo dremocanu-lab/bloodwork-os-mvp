@@ -112,6 +112,9 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const refreshUploadJobs = useCallback(async () => {
+    // Don't poll when there is no session — avoids spurious 401s on login/signup pages.
+    if (typeof window === "undefined" || !localStorage.getItem("access_token")) return;
+
     try {
       const response = await api.get<BackendUploadJob[]>("/upload-jobs");
 

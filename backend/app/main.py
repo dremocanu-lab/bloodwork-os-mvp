@@ -67,18 +67,31 @@ def run_migrations():
 
 run_migrations()
 
-frontend_origins_raw = os.getenv(
-    "FRONTEND_ORIGINS",
-    "http://localhost:3000,http://127.0.0.1:3000,https://app.bragi.health",
-)
-frontend_origins = [origin.strip() for origin in frontend_origins_raw.split(",") if origin.strip()]
+# These origins are always allowed regardless of any env var setting.
+# FRONTEND_ORIGINS (comma-separated) is additive — it can add staging/preview
+# URLs on top, but it cannot remove the production URL.
+_ALWAYS_ALLOWED_ORIGINS = [
+    "https://app.bragi.health",
+    "http://localhost:3000",
+    "http://127.0.0.1:3000",
+    "http://localhost:3001",
+]
+_extra_origins = [
+    o.strip()
+    for o in os.getenv("FRONTEND_ORIGINS", "").split(",")
+    if o.strip()
+]
+# dict.fromkeys preserves insertion order and deduplicates.
+frontend_origins = list(dict.fromkeys(_ALWAYS_ALLOWED_ORIGINS + _extra_origins))
 
 app.add_middleware(
     CORSMiddleware,
     allow_origins=frontend_origins,
     allow_credentials=True,
-    allow_methods=["*"],
-    allow_headers=["*"],
+    allow_methods=["GET", "POST", "PUT", "PATCH", "DELETE", "OPTIONS"],
+    # Explicit header list avoids wildcard edge-cases with allow_credentials=True.
+    allow_headers=["Authorization", "Content-Type", "Accept", "Origin", "X-Requested-With"],
+    expose_headers=["Content-Disposition"],
 )
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
