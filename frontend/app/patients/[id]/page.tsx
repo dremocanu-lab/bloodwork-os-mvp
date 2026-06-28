@@ -14,7 +14,7 @@ type CurrentUser = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -23,7 +23,7 @@ type UploadedBy = {
   id: number;
   email: string;
   full_name: string;
-  role: "patient" | "doctor" | "admin";
+  role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
 };
@@ -125,7 +125,6 @@ const MAX_PINNED = 3;
 const SECTION_ORDER = [
   "bloodwork",
   "discharge_summary",
-  "medications",
   "scans",
   "hospitalizations",
   "notes",
@@ -564,6 +563,7 @@ export default function PatientChartPage() {
     dose_strength?: string | null; frequency?: string | null;
     reason?: string | null; is_uncertain: boolean;
     official_match_status?: string | null;
+    route_form?: string | null;
   }>>([]);
 
   const isDoctor = currentUser?.role === "doctor";
@@ -929,7 +929,9 @@ export default function PatientChartPage() {
                 <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>New note</button>
               </>
             )}
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>Full timeline</button>
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>Timeline</button>
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/medications/list`)}>Medications</button>
+            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/analytics`)}>Analytics</button>
           </div>
         </div>
       </div>
@@ -1060,70 +1062,109 @@ export default function PatientChartPage() {
           </div>
 
           {/* Medications */}
-          <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-            <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: medications.length > 0 ? 16 : 0 }}>
-              <div>
-                <div className="section-title">Medications</div>
-                <div className="muted-text" style={{ marginTop: 6, fontSize: 13 }}>Patient-entered records — view only. Dose and frequency not verified.</div>
-              </div>
-              <button className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push(`/patients/${patientId}/medications/list`)}>View all</button>
-            </div>
+          {(() => {
+            const activeMeds = medications.filter((m) => m.status === "active");
+            const asNeededMeds = medications.filter((m) => m.status === "as_needed");
+            const pausedStopped = medications.filter((m) => m.status === "paused" || m.status === "stopped");
+            const uncertainMeds = medications.filter((m) => m.is_uncertain);
+            const officialMatched = medications.filter((m) => m.official_match_status === "matched");
+            const displayMeds = [...activeMeds, ...asNeededMeds].slice(0, 6);
+            return (
+              <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
+                <div style={{ display: "flex", justifyContent: "space-between", gap: 16, alignItems: "flex-start", flexWrap: "wrap", marginBottom: 16 }}>
+                  <div>
+                    <div className="section-title">Medications</div>
+                    <div className="muted-text" style={{ marginTop: 6, fontSize: 13 }}>Patient-entered records — view only. Dose and frequency not verified.</div>
+                  </div>
+                  <button className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push(`/patients/${patientId}/medications/list`)}>View all</button>
+                </div>
 
-            {medications.length === 0 ? (
-              <div className="muted-text" style={{ fontSize: 13 }}>No medications recorded by this patient.</div>
-            ) : (
-              <div style={{ display: "grid", gap: 8 }}>
-                {medications.slice(0, 8).map((m) => {
-                  const active = m.status === "active";
-                  const asNeeded = m.status === "as_needed";
-                  const statusBg = active ? "var(--success-bg)" : asNeeded ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)";
-                  const statusColor = active ? "var(--success-text)" : asNeeded ? "var(--primary)" : "var(--muted)";
-                  const statusLabel = active ? "Active" : asNeeded ? "As needed" : m.status === "paused" ? "Paused" : "Stopped";
-                  return (
-                    <button
-                      key={m.id}
-                      type="button"
-                      onClick={() => router.push(`/patients/${patientId}/medications/${m.id}`)}
-                      className="soft-card-tight"
-                      style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer", width: "100%" }}
-                    >
-                      <div style={{ minWidth: 0 }}>
-                        <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap" }}>
-                          <span style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</span>
-                          {m.is_uncertain && (
-                            <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-                              Dose not verified
-                            </span>
-                          )}
-                        </div>
-                        <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
-                          {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || "No dose recorded"}
-                          {m.reason ? ` · ${m.reason}` : ""}
-                        </div>
+                {medications.length > 0 && (
+                  <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(110px, 1fr))", gap: 10, marginBottom: 16 }}>
+                    {[
+                      { label: "Total", value: medications.length },
+                      { label: "Active", value: activeMeds.length, accent: activeMeds.length > 0 ? "var(--success-text)" : undefined },
+                      { label: "As needed", value: asNeededMeds.length },
+                      { label: "Paused / stopped", value: pausedStopped.length },
+                      { label: "Dose not verified", value: uncertainMeds.length, accent: uncertainMeds.length > 0 ? "var(--warn-text)" : undefined },
+                      { label: "Official info", value: officialMatched.length },
+                    ].map(({ label, value, accent }) => (
+                      <div key={label} className="soft-card-tight" style={{ padding: "10px 12px" }}>
+                        <div className="muted-text" style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em" }}>{label}</div>
+                        <div style={{ fontWeight: 800, fontSize: 20, marginTop: 3, color: accent || "var(--foreground)" }}>{value}</div>
                       </div>
-                      <span style={{ flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: statusBg, color: statusColor }}>
-                        {statusLabel}
-                      </span>
-                    </button>
-                  );
-                })}
-                {medications.length > 8 && (
-                  <div className="muted-text" style={{ fontSize: 12, textAlign: "center", paddingTop: 2 }}>
-                    +{medications.length - 8} more medications on record
+                    ))}
                   </div>
                 )}
-              </div>
-            )}
 
-            <div
-              className="soft-card-tight"
-              style={{ padding: 10, marginTop: 14, background: "var(--panel-2)", fontSize: 11 }}
-            >
-              <span className="muted-text">
-                Patient-entered medication records are not verified by a clinician. Dose not verified · Frequency not verified · Review with the patient directly.
-              </span>
-            </div>
-          </div>
+                {medications.length === 0 ? (
+                  <div className="muted-text" style={{ fontSize: 13 }}>No medications recorded by this patient.</div>
+                ) : (
+                  <div style={{ display: "grid", gap: 8 }}>
+                    {displayMeds.map((m) => {
+                      const active = m.status === "active";
+                      const asNeeded = m.status === "as_needed";
+                      const statusBg = active ? "var(--success-bg)" : asNeeded ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)";
+                      const statusColor = active ? "var(--success-text)" : asNeeded ? "var(--primary)" : "var(--muted)";
+                      const statusLabel = active ? "Active" : asNeeded ? "As needed" : m.status === "paused" ? "Paused" : "Stopped";
+                      const matchBadge =
+                        m.official_match_status === "matched" ? { label: "Official info matched", bg: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)" } :
+                        m.official_match_status === "not_matched" ? { label: "No official match", bg: "var(--panel-2)", color: "var(--muted)" } :
+                        null;
+                      return (
+                        <button
+                          key={m.id}
+                          type="button"
+                          onClick={() => router.push(`/patients/${patientId}/medications/${m.id}`)}
+                          className="soft-card-tight"
+                          style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, cursor: "pointer", width: "100%" }}
+                        >
+                          <div style={{ minWidth: 0, flex: 1 }}>
+                            <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 4 }}>
+                              <span style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</span>
+                              {m.is_uncertain && (
+                                <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+                                  Dose not verified
+                                </span>
+                              )}
+                              {matchBadge && (
+                                <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: matchBadge.bg, color: matchBadge.color }}>
+                                  {matchBadge.label}
+                                </span>
+                              )}
+                            </div>
+                            <div className="muted-text" style={{ fontSize: 12 }}>
+                              {[m.dose_strength, m.frequency, m.route_form].filter(Boolean).join(" · ") || "No dose recorded"}
+                              {m.reason ? ` · Reason: ${m.reason}` : ""}
+                            </div>
+                          </div>
+                          <span style={{ flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: statusBg, color: statusColor }}>
+                            {statusLabel}
+                          </span>
+                        </button>
+                      );
+                    })}
+                    {medications.length > 6 && (
+                      <button
+                        type="button"
+                        className="secondary-btn"
+                        style={{ fontSize: 13 }}
+                        onClick={() => router.push(`/patients/${patientId}/medications/list`)}
+                      >
+                        View all {medications.length} medications →
+                      </button>
+                    )}
+                  </div>
+                )}
+
+                <div className="soft-card-tight" style={{ padding: 10, marginTop: 14, background: "var(--panel-2)", fontSize: 11 }}>
+                  <span className="muted-text">
+                    Patient-entered medication records are not verified by a clinician. Dose not verified · Frequency not verified · Review with the patient directly.
+                  </span>
+                </div>
+              </div>
+            );
+          })()}
 
           {/* Documents */}
           <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
