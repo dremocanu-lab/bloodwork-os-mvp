@@ -924,15 +924,21 @@ export default function PatientChartPage() {
 
           <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
             {canDoctorActions && (
-              <>
-                <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
-                <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/notes/new`)}>New note</button>
-              </>
+              <button className="primary-btn" onClick={() => router.push(`/patients/${patientId}/upload`)}>Upload</button>
             )}
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/timeline`)}>Timeline</button>
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/medications/list`)}>Medications</button>
-            <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}/analytics`)}>Analytics</button>
           </div>
+        </div>
+      </div>
+
+      {/* Quick actions */}
+      <div style={{ display: "flex", gap: 14, marginBottom: 24, flexWrap: "wrap" }}>
+        {canDoctorActions && (
+          <div className="soft-card" style={{ padding: "14px 20px", flex: "1 1 160px" }}>
+            <button className="secondary-btn" style={{ width: "100%" }} onClick={() => router.push(`/patients/${patientId}/notes/new`)}>New note</button>
+          </div>
+        )}
+        <div className="soft-card" style={{ padding: "14px 20px", flex: "1 1 160px" }}>
+          <button className="secondary-btn" style={{ width: "100%" }} onClick={() => router.push(`/patients/${patientId}/analytics`)}>Analytics</button>
         </div>
       </div>
 
