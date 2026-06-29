@@ -67,7 +67,10 @@ type AdvancedView =
   | "radar"
   | "boxplot"
   | "waterfall"
-  | "calendar";
+  | "calendar"
+  | "multiples"
+  | "parallel"
+  | "treemap";
 
 // ── Status presentation ───────────────────────────────────────────────────────
 
@@ -1484,7 +1487,67 @@ function statusShort(status: AnalyticsLabStatus, t: Translate): string {
 }
 
 // ════════════════════════════════════════════════════════════════════════════
-// ADVANCED TAB
+// ADVANCED TAB — constants and helpers
+// ════════════════════════════════════════════════════════════════════════════
+
+const SCATTER_PAIRS: { aKey: string; bKey: string; aLabel: string; bLabel: string }[] = [
+  { aKey: "creatinin", bKey: "egfr", aLabel: "Creatinine", bLabel: "eGFR" },
+  { aKey: "glucoz", bKey: "hba1c", aLabel: "Glucose", bLabel: "HbA1c" },
+  { aKey: "tsh", bKey: "ft4", aLabel: "TSH", bLabel: "Free T4" },
+  { aKey: "alt", bKey: "ast", aLabel: "ALT", bLabel: "AST" },
+  { aKey: "feritin", bKey: "sideremie", aLabel: "Ferritin", bLabel: "Iron" },
+  { aKey: "ldl", bKey: "triglicerid", aLabel: "LDL", bLabel: "Triglycerides" },
+  { aKey: "crp", bKey: "leucocit", aLabel: "CRP", bLabel: "Leukocytes" },
+  { aKey: "hemoglobin", bKey: "mcv", aLabel: "Hemoglobin", bLabel: "MCV" },
+];
+
+const CBC_KEYWORDS = [
+  "leucocit", "wbc", "hemoglobin", "hematocrit", "hct", "mcv", "mch", "mchc",
+  "trombocit", "platelet", "rdw", "eritrocit", "rbc", "neutrofil", "limfocit",
+  "monocit", "eozinofil", "bazofil",
+];
+
+const RADAR_PANELS: { label: string; keywords: string[] }[] = [
+  { label: "CBC", keywords: CBC_KEYWORDS },
+  { label: "Lipids", keywords: ["colesterol", "ldl", "hdl", "triglicerid"] },
+  { label: "Liver", keywords: ["alt", "ast", "ggt", "fosfataz", "bilirubina", "albumin", "ldh"] },
+  { label: "Thyroid", keywords: ["tsh", "ft4", "ft3"] },
+  { label: "Renal", keywords: ["creatinin", "uree", "egfr", "acid uric", "sodiu", "potasiu", "clor"] },
+  { label: "Iron / Vitamins", keywords: ["feritin", "sideremie", "transferin", "vitamina b", "vitamina d", "folat"] },
+  { label: "Coagulation", keywords: ["protrombina", "inr", "aptt", "fibrinogen", "d-dimer"] },
+  { label: "Inflammation", keywords: ["crp", "c-reactiva", "vsh", "procalcitonin"] },
+];
+
+const PARALLEL_COLORS = [
+  "#7c3aed", "#0284c7", "#16a34a", "#d97706", "#dc2626",
+  "#0891b2", "#65a30d", "#db2777", "#ea580c", "#9333ea", "#0d9488", "#b45309",
+];
+
+function markerMatchesAny(name: string, keywords: string[]): boolean {
+  const n = name.toLowerCase();
+  return keywords.some((k) => n.includes(k));
+}
+
+function normalizedPos(value: number, low: number, high: number): number {
+  const span = high - low;
+  if (span === 0) return 50;
+  return ((value - low) / span) * 100;
+}
+
+function boxplotStats(nums: number[]): [number, number, number, number, number] {
+  const sorted = [...nums].sort((a, b) => a - b);
+  const q = (p: number) => {
+    const idx = (sorted.length - 1) * p;
+    const lo = Math.floor(idx);
+    const hi = Math.ceil(idx);
+    if (lo === hi) return sorted[lo];
+    return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
+  };
+  return [sorted[0], q(0.25), q(0.5), q(0.75), sorted[sorted.length - 1]];
+}
+
+// ════════════════════════════════════════════════════════════════════════════
+// ADVANCED TAB — layout
 // ════════════════════════════════════════════════════════════════════════════
 
 function AdvancedTab({
@@ -1498,48 +1561,85 @@ function AdvancedTab({
   setAdvancedView: (v: AdvancedView | null) => void;
   t: Translate;
 }) {
-  const cards: { key: AdvancedView; title: string; desc: string }[] = [
-    { key: "panel", title: t("panelCompletenessMap"), desc: t("panelCompletenessMapDesc") },
-    { key: "scatter", title: t("markerRelationshipScatter"), desc: t("markerRelationshipScatterDesc") },
-    { key: "radar", title: t("radarSnapshot"), desc: t("radarSnapshotDesc") },
-    { key: "boxplot", title: t("boxplotDistribution"), desc: t("boxplotDistributionDesc") },
-    { key: "waterfall", title: t("waterfallDelta"), desc: t("waterfallDeltaDesc") },
-    { key: "calendar", title: t("calendarHeatmap"), desc: t("calendarHeatmapDesc") },
+  const cards: { key: AdvancedView; icon: string; title: string; desc: string }[] = [
+    { key: "panel",     icon: "▦", title: t("panelCompletenessMap"),      desc: t("panelCompletenessMapDesc") },
+    { key: "scatter",   icon: "⚬", title: t("markerRelationshipScatter"), desc: t("markerRelationshipScatterDesc") },
+    { key: "radar",     icon: "◈", title: t("radarSnapshot"),             desc: t("radarSnapshotDesc") },
+    { key: "boxplot",   icon: "▭", title: t("boxplotDistribution"),       desc: t("boxplotDistributionDesc") },
+    { key: "waterfall", icon: "≋", title: t("waterfallDelta"),            desc: t("waterfallDeltaDesc") },
+    { key: "calendar",  icon: "▤", title: t("calendarHeatmap"),           desc: t("calendarHeatmapDesc") },
+    { key: "multiples", icon: "⊞", title: t("advSmallMultiples"),         desc: t("advSmallMultiplesDesc") },
+    { key: "parallel",  icon: "⋮", title: t("advParallelCoords"),         desc: t("advParallelCoordsDesc") },
+    { key: "treemap",   icon: "⊟", title: t("advTreemap"),                desc: t("advTreemapDesc") },
   ];
 
   return (
-    <ChartCard title={t("advancedVisualizations")} subtitle={t("advancedVisualizationsDesc")}>
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(200px, 1fr))", gap: 10, marginBottom: advancedView ? 20 : 0 }}>
-        {cards.map((c) => (
-          <button
-            key={c.key}
-            type="button"
-            className={advancedView === c.key ? "primary-btn" : "secondary-btn"}
-            onClick={() => setAdvancedView(advancedView === c.key ? null : c.key)}
-            style={{ padding: 14, textAlign: "left", display: "flex", flexDirection: "column", gap: 4, height: "100%" }}
-          >
-            <span style={{ fontWeight: 700, fontSize: 13 }}>{c.title}</span>
-            <span style={{ fontSize: 11, opacity: 0.8 }}>{c.desc}</span>
-          </button>
-        ))}
+    <div style={{ display: "flex", flexDirection: "column", gap: 20 }}>
+      {/* Compact picker grid */}
+      <div>
+        <div
+          className="muted-text"
+          style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}
+        >
+          {t("advancedVisualizations")}
+        </div>
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))", gap: 8 }}>
+          {cards.map((c) => (
+            <button
+              key={c.key}
+              type="button"
+              className={advancedView === c.key ? "primary-btn" : "secondary-btn"}
+              onClick={() => setAdvancedView(advancedView === c.key ? null : c.key)}
+              style={{ padding: "12px 14px", textAlign: "left", display: "flex", flexDirection: "column", gap: 3 }}
+            >
+              <span style={{ fontWeight: 700, fontSize: 12 }}>{c.icon}&nbsp;{c.title}</span>
+              <span style={{ fontSize: 10, opacity: 0.75 }}>{c.desc}</span>
+            </button>
+          ))}
+        </div>
       </div>
 
-      {advancedView === null && (
-        <div style={{ marginTop: 16 }}>
-          <EmptyStateCard title={t("selectVisualization")} icon="✦" />
+      {/* Chart stage */}
+      {advancedView === null ? (
+        <EmptyStateCard title={t("selectVisualization")} icon="✦" />
+      ) : (
+        <div className="soft-card" style={{ padding: "28px 32px", minHeight: 580 }}>
+          {advancedView === "panel"     && <PanelCompleteness      values={filteredValues} t={t} />}
+          {advancedView === "scatter"   && <ScatterView            values={filteredValues} t={t} />}
+          {advancedView === "radar"     && <RadarView              values={filteredValues} t={t} />}
+          {advancedView === "boxplot"   && <BoxplotView            values={filteredValues} t={t} />}
+          {advancedView === "waterfall" && <WaterfallView          values={filteredValues} t={t} />}
+          {advancedView === "calendar"  && <CalendarView           values={filteredValues} t={t} />}
+          {advancedView === "multiples" && <SmallMultiplesAdvView  values={filteredValues} t={t} />}
+          {advancedView === "parallel"  && <ParallelCoordsView     values={filteredValues} t={t} />}
+          {advancedView === "treemap"   && <TreemapView            values={filteredValues} t={t} />}
         </div>
       )}
-      {advancedView === "panel" && <PanelCompleteness values={filteredValues} t={t} />}
-      {advancedView === "scatter" && <ScatterView values={filteredValues} t={t} />}
-      {advancedView === "radar" && <RadarView values={filteredValues} t={t} />}
-      {advancedView === "boxplot" && <BoxplotView values={filteredValues} t={t} />}
-      {advancedView === "waterfall" && <WaterfallView values={filteredValues} t={t} />}
-      {advancedView === "calendar" && <CalendarView values={filteredValues} t={t} />}
-    </ChartCard>
+    </div>
   );
 }
 
-// Panel completeness: custom matrix subgroup x date
+// ── Chart header helper ────────────────────────────────────────────────────
+
+function AdvChartHeader({ title, desc, note }: { title: string; desc: string; note?: string }) {
+  return (
+    <div style={{ marginBottom: 20 }}>
+      <div style={{ fontWeight: 700, fontSize: 15, letterSpacing: "-0.01em", marginBottom: 4 }}>{title}</div>
+      <div className="muted-text" style={{ fontSize: 12, marginBottom: note ? 8 : 0 }}>{desc}</div>
+      {note && (
+        <span
+          className="muted-text"
+          style={{ fontSize: 11, padding: "5px 11px", background: "var(--panel-2)", borderRadius: 8, display: "inline-block" }}
+        >
+          {note}
+        </span>
+      )}
+    </div>
+  );
+}
+
+// ── Panel Completeness ─────────────────────────────────────────────────────
+
 function PanelCompleteness({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
   const data = useMemo(() => {
     const dates = uniqueSortedDates(values);
@@ -1556,153 +1656,355 @@ function PanelCompleteness({ values, t }: { values: AnalyticsLabValue[]; t: Tran
   if (!data.dates.length || !data.subgroups.length) {
     return <EmptyStateCard title={t("notEnoughData")} icon="▦" />;
   }
-  const colW = 52;
-  const labelW = 180;
+
+  const colW = 62;
+  const labelW = 210;
+
   return (
-    <div style={{ overflowX: "auto" }}>
-      <div style={{ minWidth: labelW + data.dates.length * colW }}>
-        <div style={{ display: "flex" }}>
-          <div style={{ width: labelW, minWidth: labelW, fontSize: 10, fontWeight: 800, color: "var(--muted)", textTransform: "uppercase", padding: "6px 10px" }} />
-          {data.dates.map((d) => (
-            <div key={d} title={d} style={{ width: colW, minWidth: colW, textAlign: "center", fontSize: 9, color: "var(--muted)", padding: "6px 2px" }}>
-              {formatTinyDate(d)}
+    <div>
+      <AdvChartHeader title={t("panelCompletenessMap")} desc={t("panelCompletenessMapDesc")} />
+      <div style={{ display: "flex", gap: 16, marginBottom: 16 }}>
+        {[
+          { bg: "rgba(124,58,237,0.20)", border: "rgba(124,58,237,0.35)", label: "Present" },
+          { bg: "rgba(148,163,184,0.08)", border: "transparent", label: "Not present" },
+        ].map((item) => (
+          <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 7 }}>
+            <div style={{ width: 14, height: 14, borderRadius: 4, background: item.bg, border: `1px solid ${item.border}` }} />
+            <span className="muted-text" style={{ fontSize: 11 }}>{item.label}</span>
+          </div>
+        ))}
+      </div>
+      <div style={{ overflowX: "auto" }}>
+        <div style={{ minWidth: labelW + data.dates.length * colW }}>
+          <div style={{ display: "flex" }}>
+            <div style={{ width: labelW, minWidth: labelW }} />
+            {data.dates.map((d) => (
+              <div
+                key={d}
+                title={d}
+                style={{ width: colW, minWidth: colW, textAlign: "center", fontSize: 9, color: "var(--muted)", padding: "6px 3px", fontWeight: 600 }}
+              >
+                {formatTinyDate(d)}
+              </div>
+            ))}
+          </div>
+          {data.subgroups.map((sg) => (
+            <div key={sg} style={{ display: "flex", alignItems: "stretch" }}>
+              <div
+                title={sg}
+                style={{ width: labelW, minWidth: labelW, maxWidth: labelW, fontSize: 12, fontWeight: 600, padding: "6px 10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", borderTop: "1px solid var(--border)" }}
+              >
+                {sg}
+              </div>
+              {data.dates.map((d) => {
+                const has = data.present.has(`${sg}__${d}`);
+                return (
+                  <div key={d} style={{ width: colW, minWidth: colW, padding: 5, borderTop: "1px solid var(--border)" }}>
+                    <div
+                      style={{
+                        width: "100%",
+                        height: 38,
+                        borderRadius: 7,
+                        background: has ? "rgba(124,58,237,0.20)" : "rgba(148,163,184,0.08)",
+                        border: has ? "1px solid rgba(124,58,237,0.35)" : "1px solid transparent",
+                        display: "flex",
+                        alignItems: "center",
+                        justifyContent: "center",
+                      }}
+                    >
+                      {has && <span style={{ width: 8, height: 8, borderRadius: 999, background: "#7c3aed", display: "block" }} />}
+                    </div>
+                  </div>
+                );
+              })}
             </div>
           ))}
         </div>
-        {data.subgroups.map((sg) => (
-          <div key={sg} style={{ display: "flex", alignItems: "center" }}>
-            <div title={sg} style={{ width: labelW, minWidth: labelW, maxWidth: labelW, fontSize: 12, fontWeight: 600, padding: "4px 10px", whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis", borderTop: "1px solid var(--border)" }}>
-              {sg}
-            </div>
-            {data.dates.map((d) => {
-              const has = data.present.has(`${sg}__${d}`);
-              return (
-                <div key={d} style={{ width: colW, minWidth: colW, height: 30, padding: 4, borderTop: "1px solid var(--border)" }}>
-                  <div style={{ width: "100%", height: "100%", borderRadius: 6, background: has ? "rgba(124,58,237,0.18)" : NOT_PRESENT_BG, display: "flex", alignItems: "center", justifyContent: "center" }}>
-                    {has && <span style={{ width: 6, height: 6, borderRadius: 999, background: "#7c3aed" }} />}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-        ))}
       </div>
     </div>
   );
 }
 
+// ── Scatter View ───────────────────────────────────────────────────────────
+
 function ScatterView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
-  const { pairs, option } = useMemo(() => {
-    // index numeric values by date -> marker
-    const byDate = new Map<string, Map<string, number>>();
+  // Build date -> lowercased markerName -> value
+  const byDate = useMemo(() => {
+    const map = new Map<string, Map<string, number>>();
     for (const v of values) {
       if (v.value_numeric === null || v.value_numeric === undefined) continue;
-      if (!byDate.has(v.date)) byDate.set(v.date, new Map());
-      byDate.get(v.date)!.set(v.marker_key, v.value_numeric);
+      if (!map.has(v.date)) map.set(v.date, new Map());
+      map.get(v.date)!.set(v.marker_name.toLowerCase(), v.value_numeric);
     }
-    // count co-occurrences per marker pair
-    const markerNames = new Map<string, string>();
-    for (const v of values) markerNames.set(v.marker_key, v.marker_name);
-    const pairCount = new Map<string, { a: string; b: string; pts: [number, number][] }>();
-    for (const dayMap of byDate.values()) {
-      const keys = [...dayMap.keys()].sort();
-      for (let i = 0; i < keys.length; i++) {
-        for (let j = i + 1; j < keys.length; j++) {
-          const pk = `${keys[i]}|${keys[j]}`;
-          if (!pairCount.has(pk)) pairCount.set(pk, { a: keys[i], b: keys[j], pts: [] });
-          pairCount.get(pk)!.pts.push([dayMap.get(keys[i])!, dayMap.get(keys[j])!]);
-        }
-      }
-    }
-    const best = [...pairCount.values()].filter((p) => p.pts.length >= 3).sort((a, b) => b.pts.length - a.pts.length)[0];
-    if (!best) return { pairs: false, option: null };
-    const aName = markerNames.get(best.a) || best.a;
-    const bName = markerNames.get(best.b) || best.b;
-    return {
-      pairs: true,
-      option: {
-        backgroundColor: "transparent",
-        tooltip: { ...tooltipBox(), formatter: (p: { value: [number, number] }) => `${aName}: ${p.value[0]}<br/>${bName}: ${p.value[1]}` },
-        grid: { left: 52, right: 24, top: 24, bottom: 48 },
-        xAxis: { type: "value", name: aName, scale: true, nameTextStyle: { color: AXIS_COLOR, fontSize: 10 }, axisLabel: { color: AXIS_COLOR, fontSize: 10 }, splitLine: { lineStyle: { color: GRID_LINE } } },
-        yAxis: { type: "value", name: bName, scale: true, nameTextStyle: { color: AXIS_COLOR, fontSize: 10 }, axisLabel: { color: AXIS_COLOR, fontSize: 10 }, splitLine: { lineStyle: { color: GRID_LINE } } },
-        series: [{ type: "scatter", symbolSize: 12, data: best.pts, itemStyle: { color: "#7c3aed", opacity: 0.8 } }],
-      },
-    };
+    return map;
   }, [values]);
 
-  if (!pairs || !option) return <EmptyStateCard title={t("notEnoughData")} icon="⚬" />;
-  return <ReactECharts option={option} style={{ height: 320 }} />;
-}
+  const availablePairs = useMemo(
+    () =>
+      SCATTER_PAIRS.filter((pair) => {
+        let shared = 0;
+        for (const dayMap of byDate.values()) {
+          const hasA = [...dayMap.keys()].some((k) => k.includes(pair.aKey));
+          const hasB = [...dayMap.keys()].some((k) => k.includes(pair.bKey));
+          if (hasA && hasB) shared++;
+        }
+        return shared >= 3;
+      }),
+    [byDate],
+  );
 
-function RadarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
+  const [pairIdx, setPairIdx] = useState(0);
+  const selectedPair = availablePairs[Math.min(pairIdx, Math.max(0, availablePairs.length - 1))];
+
   const option = useMemo(() => {
-    const latest = [...latestByMarker(values).values()].filter(
-      (v) => v.value_numeric !== null && v.reference_low !== null && v.reference_high !== null,
-    );
-    if (latest.length < 4) return null;
-    const picked = latest.slice(0, 8);
-    const indicators = picked.map((v) => ({ name: v.marker_name, max: 100, min: -20 }));
-    const data = picked.map((v) => {
-      const span = (v.reference_high! - v.reference_low!) || 1;
-      return ((v.value_numeric! - v.reference_low!) / span) * 100;
-    });
+    if (!selectedPair) return null;
+    const pts: [number, number][] = [];
+    for (const dayMap of byDate.values()) {
+      const aEntry = [...dayMap.entries()].find(([k]) => k.includes(selectedPair.aKey));
+      const bEntry = [...dayMap.entries()].find(([k]) => k.includes(selectedPair.bKey));
+      if (aEntry && bEntry) pts.push([aEntry[1], bEntry[1]]);
+    }
+    if (pts.length < 3) return null;
     return {
       backgroundColor: "transparent",
-      tooltip: { ...tooltipBox() },
+      tooltip: {
+        ...tooltipBox(),
+        formatter: (p: { value: [number, number] }) =>
+          `${selectedPair.aLabel}: <b>${p.value[0]}</b><br/>${selectedPair.bLabel}: <b>${p.value[1]}</b>`,
+      },
+      grid: { left: 72, right: 36, top: 36, bottom: 56 },
+      xAxis: {
+        type: "value",
+        name: selectedPair.aLabel,
+        scale: true,
+        nameLocation: "middle",
+        nameGap: 34,
+        nameTextStyle: { color: AXIS_COLOR, fontSize: 11 },
+        axisLabel: { color: AXIS_COLOR, fontSize: 10 },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+      },
+      yAxis: {
+        type: "value",
+        name: selectedPair.bLabel,
+        scale: true,
+        nameLocation: "middle",
+        nameGap: 52,
+        nameTextStyle: { color: AXIS_COLOR, fontSize: 11 },
+        axisLabel: { color: AXIS_COLOR, fontSize: 10 },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+      },
+      series: [{ type: "scatter", symbolSize: 14, data: pts, itemStyle: { color: "#7c3aed", opacity: 0.85 } }],
+    };
+  }, [selectedPair, byDate, pairIdx]);
+
+  if (!availablePairs.length) {
+    return (
+      <>
+        <AdvChartHeader title={t("markerRelationshipScatter")} desc={t("markerRelationshipScatterDesc")} />
+        <EmptyStateCard title={t("advNoPairsFound")} icon="⚬" />
+      </>
+    );
+  }
+
+  return (
+    <div>
+      <AdvChartHeader title={t("markerRelationshipScatter")} desc={t("markerRelationshipScatterDesc")} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+        {availablePairs.map((pair, i) => (
+          <button
+            key={`${pair.aKey}_${pair.bKey}`}
+            type="button"
+            className={i === Math.min(pairIdx, availablePairs.length - 1) ? "primary-btn" : "secondary-btn"}
+            style={{ fontSize: 11, padding: "5px 13px" }}
+            onClick={() => setPairIdx(i)}
+          >
+            {pair.aLabel} / {pair.bLabel}
+          </button>
+        ))}
+      </div>
+      {option ? (
+        <ReactECharts option={option} style={{ height: 520 }} />
+      ) : (
+        <EmptyStateCard title={t("notEnoughData")} icon="⚬" />
+      )}
+    </div>
+  );
+}
+
+// ── Radar View ─────────────────────────────────────────────────────────────
+
+function RadarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
+  const panelData = useMemo(() => {
+    const latest = [...latestByMarker(values).values()].filter(
+      (v) =>
+        v.value_numeric !== null &&
+        v.value_numeric !== undefined &&
+        v.reference_low !== null &&
+        v.reference_high !== null,
+    );
+    return RADAR_PANELS.map((panel) => ({
+      ...panel,
+      markers: latest.filter((v) => markerMatchesAny(v.marker_name, panel.keywords)).slice(0, 10),
+    })).filter((p) => p.markers.length >= 4);
+  }, [values]);
+
+  const [panelIdx, setPanelIdx] = useState(0);
+  const selectedPanel = panelData[Math.min(panelIdx, Math.max(0, panelData.length - 1))];
+
+  const option = useMemo(() => {
+    if (!selectedPanel) return null;
+    const indicators = selectedPanel.markers.map((v) => ({ name: v.marker_name, max: 140, min: -40 }));
+    const normalized = selectedPanel.markers.map((v) =>
+      normalizedPos(v.value_numeric!, v.reference_low!, v.reference_high!),
+    );
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        ...tooltipBox(),
+        formatter: () =>
+          selectedPanel.markers.map((v, i) => `${v.marker_name}: ${normalized[i].toFixed(0)}%`).join("<br/>"),
+      },
       radar: {
         indicator: indicators,
-        axisName: { color: AXIS_COLOR, fontSize: 10 },
+        radius: "70%",
+        center: ["50%", "52%"],
+        axisName: { color: AXIS_COLOR, fontSize: 10, fontWeight: 600 },
         splitLine: { lineStyle: { color: GRID_LINE } },
         splitArea: { areaStyle: { color: ["transparent"] } },
         axisLine: { lineStyle: { color: GRID_LINE } },
       },
-      series: [{ type: "radar", data: [{ value: data, name: t("radarSnapshot") }], areaStyle: { color: "rgba(124,58,237,0.18)" }, lineStyle: { color: "#7c3aed" }, itemStyle: { color: "#7c3aed" } }],
+      series: [
+        {
+          type: "radar",
+          data: [
+            {
+              value: normalized,
+              name: selectedPanel.label,
+              areaStyle: { color: "rgba(124,58,237,0.18)" },
+              lineStyle: { color: "#7c3aed", width: 2 },
+              itemStyle: { color: "#7c3aed" },
+            },
+          ],
+        },
+      ],
     };
-  }, [values, t]);
+  }, [selectedPanel, panelIdx]);
 
-  if (!option) return <EmptyStateCard title={t("notEnoughData")} icon="◈" />;
   return (
-    <>
-      <div className="muted-text" style={{ fontSize: 11, marginBottom: 8 }}>{t("referenceRangeFromSource")}</div>
-      <ReactECharts option={option} style={{ height: 340 }} />
-    </>
+    <div>
+      <AdvChartHeader
+        title={t("radarSnapshot")}
+        desc={t("radarSnapshotDesc")}
+        note={`${t("advNormalizedRefRange")} · ${t("advNeedRefRange")}`}
+      />
+      {!panelData.length ? (
+        <EmptyStateCard title={t("advNoPanel")} icon="◈" />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+            {panelData.map((p, i) => (
+              <button
+                key={p.label}
+                type="button"
+                className={i === Math.min(panelIdx, panelData.length - 1) ? "primary-btn" : "secondary-btn"}
+                style={{ fontSize: 11, padding: "5px 13px" }}
+                onClick={() => setPanelIdx(i)}
+              >
+                {p.label}
+              </button>
+            ))}
+          </div>
+          {option ? (
+            <ReactECharts option={option} style={{ height: 520 }} />
+          ) : (
+            <EmptyStateCard title={t("notEnoughData")} icon="◈" />
+          )}
+        </>
+      )}
+    </div>
   );
 }
 
+// ── Boxplot View ───────────────────────────────────────────────────────────
+
 function BoxplotView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
   const option = useMemo(() => {
-    const byMarker = new Map<string, { name: string; nums: number[] }>();
+    const byMarker = new Map<string, { name: string; normVals: number[] }>();
     for (const v of values) {
       if (v.value_numeric === null || v.value_numeric === undefined) continue;
-      if (!byMarker.has(v.marker_key)) byMarker.set(v.marker_key, { name: v.marker_name, nums: [] });
-      byMarker.get(v.marker_key)!.nums.push(v.value_numeric);
+      if (v.reference_low === null || v.reference_high === null) continue;
+      if (!byMarker.has(v.marker_key)) byMarker.set(v.marker_key, { name: v.marker_name, normVals: [] });
+      byMarker.get(v.marker_key)!.normVals.push(normalizedPos(v.value_numeric, v.reference_low!, v.reference_high!));
     }
-    const eligible = [...byMarker.values()].filter((m) => m.nums.length >= 4).slice(0, 12);
+    const eligible = [...byMarker.values()].filter((m) => m.normVals.length >= 4).slice(0, 14);
     if (!eligible.length) return null;
-    const boxData = eligible.map((m) => {
-      const sorted = [...m.nums].sort((a, b) => a - b);
-      const q = (p: number) => {
-        const idx = (sorted.length - 1) * p;
-        const lo = Math.floor(idx);
-        const hi = Math.ceil(idx);
-        return sorted[lo] + (sorted[hi] - sorted[lo]) * (idx - lo);
-      };
-      return [sorted[0], q(0.25), q(0.5), q(0.75), sorted[sorted.length - 1]];
-    });
+
+    const names = eligible.map((m) => m.name);
+    const boxData = eligible.map((m) => boxplotStats(m.normVals));
+    const minVal = Math.min(...boxData.map((b) => b[0]));
+
     return {
       backgroundColor: "transparent",
-      tooltip: { ...tooltipBox(), trigger: "item" },
-      grid: { left: 52, right: 24, top: 20, bottom: 70 },
-      xAxis: { type: "category", data: eligible.map((m) => m.name), axisLabel: { color: AXIS_COLOR, fontSize: 9, rotate: 35 }, axisLine: { lineStyle: { color: GRID_LINE } } },
-      yAxis: { type: "value", scale: true, axisLabel: { color: AXIS_COLOR, fontSize: 10 }, splitLine: { lineStyle: { color: GRID_LINE } } },
-      series: [{ type: "boxplot", data: boxData, itemStyle: { color: "rgba(124,58,237,0.25)", borderColor: "#7c3aed" } }],
+      tooltip: {
+        ...tooltipBox(),
+        trigger: "item",
+        formatter: (p: { name: string; value: number[] }) =>
+          `<b>${p.name}</b><br/>Min: ${p.value[0].toFixed(1)}%<br/>Q1: ${p.value[1].toFixed(1)}%<br/>Median: ${p.value[2].toFixed(1)}%<br/>Q3: ${p.value[3].toFixed(1)}%<br/>Max: ${p.value[4].toFixed(1)}%`,
+      },
+      grid: { left: 170, right: 40, top: 24, bottom: 44 },
+      xAxis: {
+        type: "value",
+        name: "% of reference range",
+        nameLocation: "middle",
+        nameGap: 28,
+        nameTextStyle: { color: AXIS_COLOR, fontSize: 10 },
+        axisLabel: { color: AXIS_COLOR, fontSize: 10, formatter: (v: number) => `${v.toFixed(0)}%` },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+        min: Math.min(-30, minVal - 5),
+      },
+      yAxis: {
+        type: "category",
+        data: names,
+        axisLabel: { color: AXIS_COLOR, fontSize: 11 },
+        axisLine: { lineStyle: { color: GRID_LINE } },
+      },
+      series: [
+        {
+          type: "boxplot",
+          data: boxData,
+          itemStyle: { color: "rgba(124,58,237,0.22)", borderColor: "#7c3aed", borderWidth: 2 },
+          boxWidth: ["20%", "55%"],
+        },
+        {
+          type: "line",
+          markArea: {
+            silent: true,
+            itemStyle: { color: "rgba(22,163,74,0.08)" },
+            data: [[{ xAxis: 0 }, { xAxis: 100 }]],
+          },
+          data: [],
+        },
+      ],
     };
   }, [values]);
 
-  if (!option) return <EmptyStateCard title={t("notEnoughData")} icon="▭" />;
-  return <ReactECharts option={option} style={{ height: 320 }} />;
+  return (
+    <div>
+      <AdvChartHeader
+        title={t("boxplotDistribution")}
+        desc={t("boxplotDistributionDesc")}
+        note={`${t("advNormalizedRefRange")} · ${t("advNeedRefRange")} · ${t("advNeedNumericValues")}`}
+      />
+      {!option ? (
+        <EmptyStateCard title={t("notEnoughData")} icon="▭" />
+      ) : (
+        <ReactECharts option={option} style={{ height: 520 }} />
+      )}
+    </div>
+  );
 }
+
+// ── Waterfall View ─────────────────────────────────────────────────────────
 
 function WaterfallView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
   const option = useMemo(() => {
@@ -1713,29 +2015,75 @@ function WaterfallView({ values, t }: { values: AnalyticsLabValue[]; t: Translat
       list.push(v);
       byMarker.set(v.marker_key, list);
     }
-    const deltas: { name: string; delta: number }[] = [];
+    const changes: { name: string; pct: number }[] = [];
     for (const list of byMarker.values()) {
       if (list.length < 2) continue;
-      const sorted = list.sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date));
+      const sorted = [...list].sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date));
       const latest = sorted[sorted.length - 1].value_numeric!;
       const prev = sorted[sorted.length - 2].value_numeric!;
-      deltas.push({ name: sorted[0].marker_name, delta: latest - prev });
+      if (prev === 0) continue;
+      changes.push({ name: sorted[0].marker_name, pct: ((latest - prev) / Math.abs(prev)) * 100 });
     }
-    const top = deltas.sort((a, b) => Math.abs(b.delta) - Math.abs(a.delta)).slice(0, 14);
+    const top = [...changes].sort((a, b) => Math.abs(b.pct) - Math.abs(a.pct)).slice(0, 16);
     if (!top.length) return null;
+
     return {
       backgroundColor: "transparent",
-      tooltip: { ...tooltipBox(), trigger: "axis", axisPointer: { type: "shadow" } },
-      grid: { left: 52, right: 24, top: 20, bottom: 70 },
-      xAxis: { type: "category", data: top.map((d) => d.name), axisLabel: { color: AXIS_COLOR, fontSize: 9, rotate: 35 }, axisLine: { lineStyle: { color: GRID_LINE } } },
-      yAxis: { type: "value", scale: true, axisLabel: { color: AXIS_COLOR, fontSize: 10 }, splitLine: { lineStyle: { color: GRID_LINE } } },
-      series: [{ type: "bar", data: top.map((d) => ({ value: d.delta, itemStyle: { color: d.delta >= 0 ? "#d97706" : "#7c3aed", borderRadius: 4 } })), barWidth: "55%" }],
+      tooltip: {
+        ...tooltipBox(),
+        trigger: "axis",
+        axisPointer: { type: "shadow" },
+        formatter: (params: { name: string; value: number }[]) => {
+          const p = params[0];
+          return `<b>${p.name}</b><br/>${p.value >= 0 ? "+" : ""}${p.value.toFixed(1)}%`;
+        },
+      },
+      grid: { left: 170, right: 52, top: 24, bottom: 44 },
+      xAxis: {
+        type: "value",
+        axisLabel: {
+          color: AXIS_COLOR,
+          fontSize: 10,
+          formatter: (v: number) => `${v >= 0 ? "+" : ""}${v.toFixed(0)}%`,
+        },
+        splitLine: { lineStyle: { color: GRID_LINE } },
+      },
+      yAxis: {
+        type: "category",
+        data: top.map((d) => d.name),
+        axisLabel: { color: AXIS_COLOR, fontSize: 11 },
+        axisLine: { lineStyle: { color: GRID_LINE } },
+      },
+      series: [
+        {
+          type: "bar",
+          barWidth: "55%",
+          data: top.map((d) => ({
+            value: parseFloat(d.pct.toFixed(1)),
+            itemStyle: { color: d.pct >= 0 ? "#d97706" : "#7c3aed", borderRadius: 4 },
+          })),
+        },
+      ],
     };
   }, [values]);
 
-  if (!option) return <EmptyStateCard title={t("notEnoughData")} icon="≋" />;
-  return <ReactECharts option={option} style={{ height: 320 }} />;
+  return (
+    <div>
+      <AdvChartHeader
+        title={t("waterfallDelta")}
+        desc={t("advPercentChangePrev")}
+        note={`${t("advSortedByAbsChange")} · ${t("advNeedNumericValues")}`}
+      />
+      {!option ? (
+        <EmptyStateCard title={t("notEnoughData")} icon="≋" />
+      ) : (
+        <ReactECharts option={option} style={{ height: 520 }} />
+      )}
+    </div>
+  );
 }
+
+// ── Calendar View ──────────────────────────────────────────────────────────
 
 function CalendarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
   const option = useMemo(() => {
@@ -1758,11 +2106,24 @@ function CalendarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate
     const range = startYear === endYear ? `${startYear}` : [`${startYear}`, `${endYear}`];
     return {
       backgroundColor: "transparent",
-      tooltip: { ...tooltipBox(), formatter: (p: { value: [string, number] }) => `${p.value[0]}<br/>${p.value[1]}` },
-      visualMap: { min: 0, max: maxCount, calculable: false, orient: "horizontal", left: "center", bottom: 0, inRange: { color: ["rgba(124,58,237,0.15)", "#7c3aed"] }, textStyle: { color: AXIS_COLOR, fontSize: 10 } },
+      tooltip: {
+        ...tooltipBox(),
+        formatter: (p: { value: [string, number] }) => `${p.value[0]}<br/>${p.value[1]} lab values`,
+      },
+      visualMap: {
+        min: 0,
+        max: maxCount,
+        calculable: false,
+        orient: "horizontal",
+        left: "center",
+        bottom: 24,
+        inRange: { color: ["rgba(124,58,237,0.15)", "#7c3aed"] },
+        textStyle: { color: AXIS_COLOR, fontSize: 10 },
+      },
       calendar: {
         range,
-        cellSize: ["auto", 16],
+        top: 40,
+        cellSize: ["auto", 20],
         itemStyle: { borderColor: GRID_LINE, color: "transparent" },
         splitLine: { lineStyle: { color: GRID_LINE } },
         dayLabel: { color: AXIS_COLOR, fontSize: 9 },
@@ -1773,6 +2134,267 @@ function CalendarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate
     };
   }, [values]);
 
-  if (!option) return <EmptyStateCard title={t("notEnoughData")} icon="▤" />;
-  return <ReactECharts option={option} style={{ height: 240 }} />;
+  return (
+    <div>
+      <AdvChartHeader title={t("calendarHeatmap")} desc={t("calendarHeatmapDesc")} />
+      {!option ? (
+        <EmptyStateCard title={t("notEnoughData")} icon="▤" />
+      ) : (
+        <ReactECharts option={option} style={{ height: 520 }} />
+      )}
+    </div>
+  );
+}
+
+// ── Small Multiples (Advanced) ─────────────────────────────────────────────
+
+function SmallMultiplesAdvView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
+  const categories = useMemo(() => {
+    const cats = new Map<string, string>(); // display -> category key
+    for (const v of values) cats.set(v.category_display, v.category);
+    return [...cats.entries()]
+      .map(([display, key]) => ({ display, key }))
+      .sort((a, b) => a.display.localeCompare(b.display));
+  }, [values]);
+
+  const [catIdx, setCatIdx] = useState(0);
+  const selectedCat = categories[Math.min(catIdx, Math.max(0, categories.length - 1))];
+
+  const markersInCat = useMemo(() => {
+    if (!selectedCat) return [];
+    const byMarker = new Map<string, { name: string; points: { date: string; value: number }[] }>();
+    for (const v of values) {
+      if (v.category !== selectedCat.key) continue;
+      if (v.value_numeric === null || v.value_numeric === undefined) continue;
+      if (!byMarker.has(v.marker_key)) byMarker.set(v.marker_key, { name: v.marker_name, points: [] });
+      byMarker.get(v.marker_key)!.points.push({ date: v.date, value: v.value_numeric });
+    }
+    return [...byMarker.values()]
+      .filter((m) => m.points.length >= 2)
+      .map((m) => ({ ...m, points: m.points.sort((a, b) => parseDateTime(a.date) - parseDateTime(b.date)) }))
+      .slice(0, 16);
+  }, [values, selectedCat]);
+
+  if (!categories.length) return <EmptyStateCard title={t("notEnoughData")} icon="⊞" />;
+
+  return (
+    <div>
+      <AdvChartHeader title={t("advSmallMultiples")} desc={t("advSmallMultiplesDesc")} />
+      <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 22 }}>
+        {categories.map((cat, i) => (
+          <button
+            key={cat.key}
+            type="button"
+            className={i === Math.min(catIdx, categories.length - 1) ? "primary-btn" : "secondary-btn"}
+            style={{ fontSize: 11, padding: "5px 13px" }}
+            onClick={() => setCatIdx(i)}
+          >
+            {cat.display}
+          </button>
+        ))}
+      </div>
+      {!markersInCat.length ? (
+        <EmptyStateCard title={t("notEnoughData")} icon="⊞" />
+      ) : (
+        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(280px, 1fr))", gap: 14 }}>
+          {markersInCat.map((marker) => {
+            const miniOption = {
+              backgroundColor: "transparent",
+              grid: { left: 46, right: 10, top: 14, bottom: 28 },
+              xAxis: {
+                type: "category",
+                data: marker.points.map((p) => formatTinyDate(p.date)),
+                axisLabel: { color: AXIS_COLOR, fontSize: 8, rotate: 30 },
+                axisLine: { lineStyle: { color: GRID_LINE } },
+              },
+              yAxis: {
+                type: "value",
+                scale: true,
+                axisLabel: { color: AXIS_COLOR, fontSize: 8 },
+                splitLine: { lineStyle: { color: GRID_LINE } },
+              },
+              series: [
+                {
+                  type: "line",
+                  data: marker.points.map((p) => p.value),
+                  smooth: 0.4,
+                  lineStyle: { color: "#7c3aed", width: 2 },
+                  itemStyle: { color: "#7c3aed" },
+                  symbolSize: 5,
+                  areaStyle: { color: "rgba(124,58,237,0.10)" },
+                },
+              ],
+              tooltip: { ...tooltipBox(), trigger: "axis" },
+            };
+            return (
+              <div key={marker.name} className="soft-card-tight" style={{ padding: "12px 14px" }}>
+                <div style={{ fontWeight: 700, fontSize: 12, marginBottom: 6 }}>{marker.name}</div>
+                <ReactECharts option={miniOption} style={{ height: 140 }} />
+              </div>
+            );
+          })}
+        </div>
+      )}
+    </div>
+  );
+}
+
+// ── Parallel Coordinates View ──────────────────────────────────────────────
+
+function ParallelCoordsView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
+  const result = useMemo(() => {
+    const cbcWithRef = values.filter(
+      (v) =>
+        markerMatchesAny(v.marker_name, CBC_KEYWORDS) &&
+        v.value_numeric !== null &&
+        v.value_numeric !== undefined &&
+        v.reference_low !== null &&
+        v.reference_high !== null,
+    );
+    if (!cbcWithRef.length) return null;
+
+    // Latest value per CBC marker (for axis config)
+    const markerLatest = new Map<string, AnalyticsLabValue>();
+    for (const v of cbcWithRef) {
+      const prev = markerLatest.get(v.marker_key);
+      if (!prev || parseDateTime(v.date) > parseDateTime(prev.date)) markerLatest.set(v.marker_key, v);
+    }
+    const cbcMarkers = [...markerLatest.values()].slice(0, 10);
+    if (cbcMarkers.length < 4) return null;
+
+    // Build date -> markerKey -> normalizedValue
+    const dateMap = new Map<string, Map<string, number>>();
+    for (const v of cbcWithRef) {
+      if (!cbcMarkers.find((m) => m.marker_key === v.marker_key)) continue;
+      if (!dateMap.has(v.date)) dateMap.set(v.date, new Map());
+      dateMap.get(v.date)!.set(v.marker_key, normalizedPos(v.value_numeric!, v.reference_low!, v.reference_high!));
+    }
+
+    // Only dates where all selected CBC markers are present
+    const validDates = [...dateMap.entries()]
+      .filter(([, m]) => cbcMarkers.every((marker) => m.has(marker.marker_key)))
+      .sort(([a], [b]) => parseDateTime(a) - parseDateTime(b))
+      .slice(0, 12);
+
+    if (validDates.length < 2) return null;
+
+    const parallelAxis = cbcMarkers.map((m, i) => ({
+      dim: i,
+      name: m.marker_name,
+      min: -30,
+      max: 150,
+      nameTextStyle: { color: AXIS_COLOR, fontSize: 9 },
+      axisLine: { lineStyle: { color: GRID_LINE } },
+      axisTick: { lineStyle: { color: GRID_LINE } },
+      axisLabel: { color: AXIS_COLOR, fontSize: 8 },
+    }));
+
+    const series = validDates.map(([, markerMap], idx) => ({
+      type: "parallel",
+      lineStyle: { color: PARALLEL_COLORS[idx % PARALLEL_COLORS.length], width: 2, opacity: 0.78 },
+      data: [cbcMarkers.map((m) => parseFloat((markerMap.get(m.marker_key) ?? 50).toFixed(1)))],
+    }));
+
+    const legendItems = validDates.map(([date], idx) => ({
+      label: formatTinyDate(date),
+      color: PARALLEL_COLORS[idx % PARALLEL_COLORS.length],
+    }));
+
+    return { parallelAxis, series, legendItems };
+  }, [values]);
+
+  return (
+    <div>
+      <AdvChartHeader
+        title={t("advParallelCoords")}
+        desc={t("advParallelCoordsDesc")}
+        note={`${t("advNormalizedRefRange")} · ${t("advNeedRefRange")}`}
+      />
+      {!result ? (
+        <EmptyStateCard title={t("advNoPanel")} icon="⋮" />
+      ) : (
+        <>
+          <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 16 }}>
+            {result.legendItems.map((item) => (
+              <div key={item.label} style={{ display: "flex", alignItems: "center", gap: 5 }}>
+                <div style={{ width: 20, height: 3, borderRadius: 2, background: item.color }} />
+                <span className="muted-text" style={{ fontSize: 10 }}>{item.label}</span>
+              </div>
+            ))}
+          </div>
+          <ReactECharts
+            option={{
+              backgroundColor: "transparent",
+              parallelAxis: result.parallelAxis,
+              parallel: { top: 50, bottom: 60, left: 40, right: 40 },
+              series: result.series,
+              tooltip: { ...tooltipBox(), trigger: "item" },
+            }}
+            style={{ height: 520 }}
+          />
+        </>
+      )}
+    </div>
+  );
+}
+
+// ── Treemap View ───────────────────────────────────────────────────────────
+
+function TreemapView({ values, t }: { values: AnalyticsLabValue[]; t: Translate }) {
+  const option = useMemo(() => {
+    const catMap = new Map<string, Map<string, number>>();
+    for (const v of values) {
+      if (!catMap.has(v.category_display)) catMap.set(v.category_display, new Map());
+      const mMap = catMap.get(v.category_display)!;
+      mMap.set(v.marker_name, (mMap.get(v.marker_name) || 0) + 1);
+    }
+    if (!catMap.size) return null;
+
+    const data = [...catMap.entries()].map(([cat, markers]) => ({
+      name: cat,
+      value: [...markers.values()].reduce((s, c) => s + c, 0),
+      children: [...markers.entries()]
+        .sort(([, a], [, b]) => b - a)
+        .map(([marker, count]) => ({ name: marker, value: count })),
+    }));
+
+    return {
+      backgroundColor: "transparent",
+      tooltip: {
+        ...tooltipBox(),
+        formatter: (p: { name: string; value: number; treePathInfo: { name: string }[] }) => {
+          const path = p.treePathInfo.map((n) => n.name).join(" › ");
+          return `${path}<br/>${p.value} source value${p.value !== 1 ? "s" : ""}`;
+        },
+      },
+      series: [
+        {
+          type: "treemap",
+          roam: false,
+          nodeClick: false,
+          breadcrumb: { show: false },
+          label: { show: true, fontSize: 11, color: "#fff", formatter: "{b}" },
+          upperLabel: { show: true, height: 26, fontSize: 11, fontWeight: 700, color: "#fff" },
+          itemStyle: { borderColor: "rgba(255,255,255,0.10)", borderWidth: 2, gapWidth: 2 },
+          levels: [
+            { itemStyle: { borderColor: "#6d28d9", borderWidth: 3, gapWidth: 3 }, upperLabel: { show: true } },
+            { colorSaturation: [0.4, 0.75], itemStyle: { borderColorSaturation: 0.7, gapWidth: 2, borderWidth: 2 } },
+          ],
+          color: ["#7c3aed", "#0284c7", "#16a34a", "#d97706", "#dc2626", "#0891b2", "#9333ea", "#db2777"],
+          data,
+        },
+      ],
+    };
+  }, [values]);
+
+  return (
+    <div>
+      <AdvChartHeader title={t("advTreemap")} desc={t("advTreemapDesc")} />
+      {!option ? (
+        <EmptyStateCard title={t("notEnoughData")} icon="⊟" />
+      ) : (
+        <ReactECharts option={option} style={{ height: 560 }} />
+      )}
+    </div>
+  );
 }
