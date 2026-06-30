@@ -4,6 +4,7 @@ import { ReactNode } from "react";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
 import LanguageToggle from "@/components/language-toggle";
+import ThemeToggle from "@/components/theme-toggle";
 import { useLanguage } from "@/lib/i18n";
 
 type EmergencyShellUser = {
@@ -61,6 +62,7 @@ export default function EmergencyShell({ user, children, onLogout }: EmergencySh
         <div style={{ flex: 1 }} />
 
         <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <ThemeToggle compact />
           <LanguageToggle />
           {user && (
             <>

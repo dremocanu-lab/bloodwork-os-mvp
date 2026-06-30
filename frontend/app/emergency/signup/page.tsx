@@ -5,6 +5,7 @@ import { useRouter } from "next/navigation";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
 import LanguageToggle from "@/components/language-toggle";
+import ThemeToggle from "@/components/theme-toggle";
 import { useLanguage } from "@/lib/i18n";
 import { api, getErrorMessage } from "@/lib/api";
 import { EMERGENCY_STORAGE_KEYS } from "@/lib/emergency-api";
@@ -70,7 +71,8 @@ export default function EmergencySignupPage() {
         padding: "40px 24px",
       }}
     >
-      <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50 }}>
+      <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50, display: "flex", gap: 8 }}>
+        <ThemeToggle compact />
         <LanguageToggle />
       </div>
       <div style={{ maxWidth: 420, width: "100%" }}>
