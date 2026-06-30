@@ -855,11 +855,13 @@ function DocListSection({
   docs,
   emptyText,
   collapsed,
+  sessionId,
 }: {
   title: string;
   docs: EDoc[];
   emptyText: string;
   collapsed?: boolean;
+  sessionId: number;
 }) {
   const { t } = useLanguage();
   const inner = docs.length === 0 ? (
@@ -885,8 +887,7 @@ function DocListSection({
               <span className="muted-text" style={{ fontSize: 9 }}>{t("emergencyUnverified")}</span>
             )}
             <Link
-              href={`/documents/${doc.id}`}
-              target="_blank"
+              href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
               style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none", padding: "3px 8px", border: "1px solid var(--primary)", borderRadius: 5, whiteSpace: "nowrap" }}
             >
               {t("emergencyOpenStructured")}
@@ -921,7 +922,7 @@ function DocListSection({
   );
 }
 
-function RecentDocsSection({ documents }: { documents: EDoc[] }) {
+function RecentDocsSection({ documents, sessionId }: { documents: EDoc[]; sessionId: number }) {
   const { t } = useLanguage();
   const recent = documents.slice(0, 8);
   return (
@@ -941,7 +942,7 @@ function RecentDocsSection({ documents }: { documents: EDoc[] }) {
                   {sectionLabel(doc.section)}{doc.lab_name ? ` · ${doc.lab_name}` : ""} · {doc.test_date ? formatDate(doc.test_date) : formatDate(doc.created_at)}
                 </div>
               </div>
-              <Link href={`/documents/${doc.id}`} target="_blank"
+              <Link href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
                 style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none", padding: "3px 8px", border: "1px solid var(--primary)", borderRadius: 5, whiteSpace: "nowrap", flexShrink: 0 }}>
                 {t("emergencyOpenStructured")}
               </Link>
@@ -955,7 +956,7 @@ function RecentDocsSection({ documents }: { documents: EDoc[] }) {
 
 type LibFilter = "all" | "bloodwork" | "discharge_summary" | "scans" | "notes" | "other";
 
-function DocumentLibrarySection({ documents }: { documents: EDoc[] }) {
+function DocumentLibrarySection({ documents, sessionId }: { documents: EDoc[]; sessionId: number }) {
   const { t } = useLanguage();
   const [filter, setFilter] = useState<LibFilter>("all");
   const [search, setSearch] = useState("");
@@ -1025,9 +1026,9 @@ function DocumentLibrarySection({ documents }: { documents: EDoc[] }) {
                   {doc.is_verified
                     ? <span style={{ fontSize: 9, fontWeight: 700, color: "var(--success-text, #16a34a)", background: "rgba(22,163,74,0.08)", padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{t("emergencyVerified")}</span>
                     : <span className="muted-text" style={{ fontSize: 9 }}>{t("emergencyUnverified")}</span>}
-                  <Link href={`/documents/${doc.id}`} target="_blank"
+                  <Link href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
                     style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none", padding: "3px 8px", border: "1px solid var(--primary)", borderRadius: 5, whiteSpace: "nowrap" }}>
-                    {t("emergencyOpenSource")}
+                    {t("emergencyOpenStructured")}
                   </Link>
                 </div>
               </div>
@@ -1041,7 +1042,7 @@ function DocumentLibrarySection({ documents }: { documents: EDoc[] }) {
 
 // ── Full patient profile ───────────────────────────────────────────────────────
 
-function EmergencyPatientProfile({ session, data }: { session: TabSession; data: PatientData }) {
+function EmergencyPatientProfile({ session, data, sessionId }: { session: TabSession; data: PatientData; sessionId: number }) {
   const { t } = useLanguage();
   const docs = data.documents;
   const dischargeDocs = docs.filter((d) => d.section === "discharge_summary");
@@ -1057,20 +1058,20 @@ function EmergencyPatientProfile({ session, data }: { session: TabSession; data:
       </div>
       <MedicationsSection medications={data.medications} />
       <LatestLabsSection bloodwork={data.latest_bloodwork} />
-      <RecentDocsSection documents={docs} />
+      <RecentDocsSection documents={docs} sessionId={sessionId} />
 
       {/* Collapsible lower sections */}
       <div className="soft-card" style={{ padding: "14px 20px", display: "flex", flexDirection: "column", gap: 0 }}>
         <div style={{ paddingBottom: 10, borderBottom: "1px solid var(--border)", marginBottom: 10 }}>
-          <DocListSection title={t("emergencyDischargeSummaries")} docs={dischargeDocs} emptyText={t("emergencyNoDischarge")} collapsed />
+          <DocListSection title={t("emergencyDischargeSummaries")} docs={dischargeDocs} emptyText={t("emergencyNoDischarge")} collapsed sessionId={sessionId} />
         </div>
         <div style={{ paddingBottom: 10, borderBottom: "1px solid var(--border)", marginBottom: 10 }}>
-          <DocListSection title={t("emergencyImagingReports")} docs={imagingDocs} emptyText={t("emergencyNoImaging")} collapsed />
+          <DocListSection title={t("emergencyImagingReports")} docs={imagingDocs} emptyText={t("emergencyNoImaging")} collapsed sessionId={sessionId} />
         </div>
         <div style={{ paddingBottom: 10, borderBottom: "1px solid var(--border)", marginBottom: 10 }}>
-          <DocListSection title={t("emergencyClinicalNotes")} docs={notesDocs} emptyText={t("emergencyNoClinicalNotes")} collapsed />
+          <DocListSection title={t("emergencyClinicalNotes")} docs={notesDocs} emptyText={t("emergencyNoClinicalNotes")} collapsed sessionId={sessionId} />
         </div>
-        <DocumentLibrarySection documents={docs} />
+        <DocumentLibrarySection documents={docs} sessionId={sessionId} />
       </div>
 
       <p className="muted-text" style={{ fontSize: 11, textAlign: "center", paddingBottom: 20 }}>
@@ -1309,7 +1310,7 @@ function WorkspacePage() {
             </button>
           </div>
         ) : (
-          <EmergencyPatientProfile session={activeSession} data={activeData} />
+          <EmergencyPatientProfile session={activeSession} data={activeData} sessionId={activeSession.sessionId} />
         )}
       </div>
 

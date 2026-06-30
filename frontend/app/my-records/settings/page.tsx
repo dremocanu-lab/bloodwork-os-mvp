@@ -20,11 +20,93 @@ type CarePartnerCodeResponse = {
   created_at: string;
 };
 
+type EmergencyAccessSetting = {
+  emergency_search_enabled: boolean;
+  updated_at: string | null;
+};
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const parsed = new Date(value);
   if (Number.isNaN(parsed.getTime())) return value;
   return parsed.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
+}
+
+function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "primary" }) {
+  return (
+    <span
+      style={{
+        display: "inline-flex",
+        alignItems: "center",
+        padding: "3px 9px",
+        borderRadius: 999,
+        fontSize: 11,
+        fontWeight: 800,
+        letterSpacing: "0.01em",
+        background: tone === "primary" ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)",
+        color: tone === "primary" ? "var(--primary)" : "var(--muted)",
+        border: `1px solid ${tone === "primary" ? "color-mix(in srgb, var(--primary) 30%, transparent)" : "var(--border)"}`,
+      }}
+    >
+      {children}
+    </span>
+  );
+}
+
+function Toggle({
+  checked,
+  onChange,
+  disabled,
+  label,
+}: {
+  checked: boolean;
+  onChange: (v: boolean) => void;
+  disabled?: boolean;
+  label: string;
+}) {
+  return (
+    <label
+      style={{
+        display: "flex",
+        alignItems: "center",
+        gap: 12,
+        cursor: disabled ? "not-allowed" : "pointer",
+        opacity: disabled ? 0.6 : 1,
+        userSelect: "none",
+      }}
+    >
+      <div
+        onClick={() => !disabled && onChange(!checked)}
+        role="switch"
+        aria-checked={checked}
+        style={{
+          width: 44,
+          height: 24,
+          borderRadius: 999,
+          background: checked ? "var(--primary)" : "var(--border)",
+          position: "relative",
+          transition: "background 0.18s",
+          flexShrink: 0,
+          cursor: disabled ? "not-allowed" : "pointer",
+        }}
+      >
+        <div
+          style={{
+            position: "absolute",
+            top: 3,
+            left: checked ? 23 : 3,
+            width: 18,
+            height: 18,
+            borderRadius: 999,
+            background: "white",
+            boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
+            transition: "left 0.18s",
+          }}
+        />
+      </div>
+      <span style={{ fontSize: 14, fontWeight: 700 }}>{label}</span>
+    </label>
+  );
 }
 
 export default function PatientSettingsPage() {
@@ -33,6 +115,7 @@ export default function PatientSettingsPage() {
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [carePartnerCode, setCarePartnerCode] = useState<CarePartnerCodeResponse | null>(null);
+  const [emergencyAccess, setEmergencyAccess] = useState<EmergencyAccessSetting | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -45,6 +128,9 @@ export default function PatientSettingsPage() {
   const [deleting, setDeleting] = useState(false);
   const [deleteError, setDeleteError] = useState("");
 
+  const [emergencySaving, setEmergencySaving] = useState(false);
+  const [emergencyError, setEmergencyError] = useState("");
+
   useEffect(() => {
     async function init() {
       try {
@@ -55,8 +141,12 @@ export default function PatientSettingsPage() {
         }
         setCurrentUser(meResponse.data);
 
-        const codeResponse = await api.get<CarePartnerCodeResponse>("/my/care-partner-code");
+        const [codeResponse, emergencyResponse] = await Promise.all([
+          api.get<CarePartnerCodeResponse>("/my/care-partner-code"),
+          api.get<EmergencyAccessSetting>("/my/settings/emergency-access"),
+        ]);
         setCarePartnerCode(codeResponse.data);
+        setEmergencyAccess(emergencyResponse.data);
       } catch (err) {
         setError(getErrorMessage(err, "Could not load settings."));
       } finally {
@@ -105,6 +195,22 @@ export default function PatientSettingsPage() {
     }
   }
 
+  async function toggleEmergencyAccess(enabled: boolean) {
+    if (emergencySaving) return;
+    try {
+      setEmergencySaving(true);
+      setEmergencyError("");
+      const response = await api.put<EmergencyAccessSetting>("/my/settings/emergency-access", {
+        emergency_search_enabled: enabled,
+      });
+      setEmergencyAccess(response.data);
+    } catch (err) {
+      setEmergencyError(getErrorMessage(err, "Could not update emergency access setting."));
+    } finally {
+      setEmergencySaving(false);
+    }
+  }
+
   if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
@@ -122,6 +228,7 @@ export default function PatientSettingsPage() {
   }
 
   const deleteReady = deleteConfirmText.trim().toLowerCase() === "delete";
+  const emergencyEnabled = emergencyAccess?.emergency_search_enabled ?? false;
 
   return (
     <AppShell user={currentUser} title={t("patientSettings")}>
@@ -195,6 +302,137 @@ export default function PatientSettingsPage() {
           ) : (
             <div className="muted-text">{t("loadingCode")}</div>
           )}
+        </div>
+
+        {/* Emergency Access */}
+        <div
+          className="soft-card"
+          style={{
+            padding: 24,
+            borderColor: emergencyEnabled
+              ? "color-mix(in srgb, var(--primary) 30%, transparent)"
+              : undefined,
+            background: emergencyEnabled
+              ? "color-mix(in srgb, var(--primary) 5%, var(--panel))"
+              : undefined,
+          }}
+        >
+          <div style={{ marginBottom: 20 }}>
+            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
+              <div className="section-title">{t("settingsEmergencyAccess")}</div>
+              {emergencyEnabled && (
+                <span
+                  style={{
+                    fontSize: 10,
+                    fontWeight: 900,
+                    textTransform: "uppercase",
+                    letterSpacing: "0.07em",
+                    color: "var(--primary)",
+                    background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
+                    border: "1px solid color-mix(in srgb, var(--primary) 28%, transparent)",
+                    borderRadius: 999,
+                    padding: "2px 9px",
+                  }}
+                >
+                  {t("settingsEmergencyDiscoverability")}
+                </span>
+              )}
+            </div>
+            <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
+              {t("settingsEmergencyDiscoverabilityDesc")}
+            </div>
+          </div>
+
+          {/* Badges */}
+          <div style={{ display: "flex", gap: 6, flexWrap: "wrap", marginBottom: 20 }}>
+            <Badge>{t("settingsEmergencyBadgeReadOnly")}</Badge>
+            <Badge>{t("settingsEmergencyBadgeAudited")}</Badge>
+            <Badge>{t("settingsEmergencyBadgeSessions")}</Badge>
+          </div>
+
+          {/* Toggle */}
+          <div
+            style={{
+              padding: "16px 18px",
+              borderRadius: 14,
+              border: "1px solid var(--border)",
+              background: "var(--panel-2)",
+              marginBottom: 16,
+            }}
+          >
+            <Toggle
+              checked={emergencyEnabled}
+              onChange={toggleEmergencyAccess}
+              disabled={emergencySaving}
+              label={t("settingsEmergencyToggleLabel")}
+            />
+          </div>
+
+          {/* Status text */}
+          <div
+            style={{
+              padding: "12px 16px",
+              borderRadius: 12,
+              background: emergencyEnabled
+                ? "color-mix(in srgb, var(--primary) 8%, var(--panel-2))"
+                : "var(--panel-2)",
+              border: `1px solid ${emergencyEnabled ? "color-mix(in srgb, var(--primary) 22%, transparent)" : "var(--border)"}`,
+              marginBottom: emergencyError ? 10 : 0,
+            }}
+          >
+            <div
+              style={{
+                fontSize: 13,
+                fontWeight: 700,
+                color: emergencyEnabled ? "var(--primary)" : "var(--muted)",
+                marginBottom: 4,
+              }}
+            >
+              {emergencyEnabled ? t("settingsEmergencyEnabledStatus") : t("settingsEmergencyDisabledStatus")}
+            </div>
+            <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.55 }}>
+              {t("settingsEmergencySafetyNote")}
+              {!emergencyEnabled && <> {t("settingsEmergencyCanTurnOff")}</>}
+            </div>
+          </div>
+
+          {emergencyError && (
+            <div
+              style={{
+                padding: "10px 14px",
+                borderRadius: 10,
+                background: "var(--danger-bg)",
+                border: "1px solid var(--danger-border)",
+                color: "var(--danger-text)",
+                fontSize: 13,
+                marginBottom: 0,
+                marginTop: 10,
+              }}
+            >
+              {emergencyError}
+            </div>
+          )}
+
+          {emergencyAccess?.updated_at && (
+            <div className="muted-text" style={{ fontSize: 11, marginTop: 12 }}>
+              Last updated {formatDate(emergencyAccess.updated_at)}
+            </div>
+          )}
+        </div>
+
+        {/* Emergency Access History placeholder */}
+        <div className="soft-card" style={{ padding: 24 }}>
+          <div style={{ marginBottom: 10 }}>
+            <div className="section-title" style={{ marginBottom: 6 }}>{t("settingsEmergencyHistoryTitle")}</div>
+          </div>
+          <div
+            className="soft-card-tight"
+            style={{ padding: "16px 18px", background: "var(--panel-2)" }}
+          >
+            <p className="muted-text" style={{ fontSize: 13, lineHeight: 1.65, margin: 0 }}>
+              {t("settingsEmergencyHistoryPlaceholder")}
+            </p>
+          </div>
         </div>
 
         {/* Sharing & Visibility */}

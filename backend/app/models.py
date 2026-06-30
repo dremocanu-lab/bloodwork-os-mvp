@@ -30,6 +30,9 @@ class Patient(Base):
     sex = Column(String, nullable=True)
     cnp = Column(String, nullable=True, index=True)
     patient_identifier = Column(String, nullable=True, index=True)
+    emergency_search_enabled = Column(Integer, nullable=False, default=0)
+    emergency_search_updated_at = Column(String, nullable=True)
+    emergency_search_consent_text_version = Column(String, nullable=True)
 
     linked_user = relationship("User", back_populates="linked_patient")
     documents = relationship("Document", back_populates="patient")
@@ -349,6 +352,8 @@ class EmergencyAccessSession(Base):
     started_at = Column(String, nullable=False)
     expires_at = Column(String, nullable=False)
     closed_at = Column(String, nullable=True)
+    revoked_at = Column(String, nullable=True)
+    revoked_reason = Column(String, nullable=True)
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
