@@ -973,7 +973,7 @@ def root():
 
 @app.post("/auth/signup")
 def signup(payload: SignupRequest, db: Session = Depends(get_db)):
-    if payload.role not in {"patient", "doctor", "admin", "care_partner"}:
+    if payload.role not in {"patient", "doctor", "admin", "care_partner", "emergency_worker"}:
         raise HTTPException(status_code=400, detail="Invalid role")
 
     existing = db.query(models.User).filter(models.User.email == payload.email).first()

@@ -1053,6 +1053,17 @@ const en = {
   emergencyUnverified: "Unverified",
   emergencyPatientEntered: "Patient-entered",
   emergencySourceRequiresVerification: "Source requires verification",
+  emergencySignup: "Create Emergency Worker Account",
+  emergencySignupSubtitle: "Register to request emergency access to patient records.",
+  emergencySignupOrg: "Organization / Service",
+  emergencySignupOrgPlaceholder: "e.g. National Ambulance Service",
+  emergencySignupDept: "Department / Unit",
+  emergencySignupDeptPlaceholder: "e.g. SMURD, ER, Paramedic Unit",
+  emergencySignupSuccess: "Account created. You can now sign in.",
+  emergencyAlreadyHaveAccount: "Already have an account?",
+  emergencySignIn: "Sign in",
+  emergencyNoAccount: "Don't have an account?",
+  emergencyCreateAccount: "Create account",
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
@@ -2101,6 +2112,17 @@ const ro: Record<keyof typeof en, string> = {
   emergencyUnverified: "Neverificat",
   emergencyPatientEntered: "Introdus de pacient",
   emergencySourceRequiresVerification: "Sursa necesită verificare",
+  emergencySignup: "Creare cont lucrător urgență",
+  emergencySignupSubtitle: "Înregistrați-vă pentru a solicita acces de urgență la dosarele pacienților.",
+  emergencySignupOrg: "Organizație / Serviciu",
+  emergencySignupOrgPlaceholder: "ex. Serviciul Ambulanță",
+  emergencySignupDept: "Departament / Unitate",
+  emergencySignupDeptPlaceholder: "ex. SMURD, UPU, Paramedic",
+  emergencySignupSuccess: "Cont creat. Vă puteți autentifica.",
+  emergencyAlreadyHaveAccount: "Aveți deja un cont?",
+  emergencySignIn: "Autentificare",
+  emergencyNoAccount: "Nu aveți cont?",
+  emergencyCreateAccount: "Creați cont",
 };
 
 const dictionaries = {

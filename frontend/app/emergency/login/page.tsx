@@ -186,7 +186,19 @@ export default function EmergencyLoginPage() {
           <span className="muted-text">{t("emergencyAuditNotice")}</span>
         </div>
 
-        <div style={{ marginTop: 20, textAlign: "center" }}>
+        <div style={{ marginTop: 18, textAlign: "center" }}>
+          <span className="muted-text" style={{ fontSize: 13 }}>
+            {t("emergencyNoAccount")}{" "}
+          </span>
+          <Link
+            href="/emergency/signup"
+            style={{ fontSize: 13, fontWeight: 700, color: "var(--primary)" }}
+          >
+            {t("emergencyCreateAccount")}
+          </Link>
+        </div>
+
+        <div style={{ marginTop: 12, textAlign: "center" }}>
           <Link
             href="/"
             className="muted-text"
