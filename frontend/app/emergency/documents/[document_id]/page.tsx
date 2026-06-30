@@ -2,7 +2,6 @@
 
 import { Suspense, useEffect, useMemo, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
-import Link from "next/link";
 import EmergencyShell from "@/components/emergency-shell";
 import { emergencyApi, getEmergencyUser, clearEmergencySession } from "@/lib/emergency-api";
 import { useLanguage } from "@/lib/i18n";
@@ -130,22 +129,27 @@ function DocumentViewInner() {
     setUser(u);
 
     if (!documentId || !sessionId) {
-      setError(t("emergencyDocSessionRequired"));
+      setError("Emergency session required to view this document.");
       setLoading(false);
       return;
     }
+
+    // Clear any stale error from a previous render before fetching
+    setError("");
 
     emergencyApi
       .get<DocumentData>(`/emergency/documents/${documentId}?session_id=${sessionId}`)
       .then((r) => {
         setDoc(r.data);
+        setError("");
       })
       .catch((err) => {
         const msg = (err?.response?.data?.detail as string) ?? "";
-        setError(msg || t("emergencyDocNotFound"));
+        setError(msg || "Document not found or session expired.");
       })
       .finally(() => setLoading(false));
-  }, [documentId, sessionId, router, t]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [documentId, sessionId, router]);
 
   const workspaceHref = sessionId ? `/emergency/workspace?tab=${sessionId}` : "/emergency/workspace";
 
@@ -196,25 +200,31 @@ function DocumentViewInner() {
 
       {/* Back nav */}
       <div style={{ marginBottom: 20 }}>
-        <Link
-          href={workspaceHref}
-          style={{ display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--primary)", textDecoration: "none" }}
+        <button
+          type="button"
+          onClick={() => router.push(workspaceHref)}
+          style={{ background: "none", border: "none", padding: 0, cursor: "pointer", display: "inline-flex", alignItems: "center", gap: 6, fontSize: 13, fontWeight: 700, color: "var(--primary)" }}
         >
           ← {t("emergencyBackToWorkspace")}
-        </Link>
+        </button>
       </div>
 
-      {error && (
+      {/* Only show error when no document loaded — prevents stale error from showing alongside valid data */}
+      {error && !doc && (
         <div
           className="soft-card"
           style={{ padding: 22, marginBottom: 20, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}
         >
-          <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>{t("emergencyDocNotFound")}</div>
+          <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>Could not load document</div>
           <div style={{ fontSize: 13, lineHeight: 1.6 }}>{error}</div>
           <div style={{ marginTop: 16 }}>
-            <Link href={workspaceHref} style={{ fontSize: 13, color: "var(--primary)", fontWeight: 700, textDecoration: "none" }}>
+            <button
+              type="button"
+              onClick={() => router.push(workspaceHref)}
+              style={{ background: "none", border: "none", padding: 0, cursor: "pointer", fontSize: 13, color: "var(--primary)", fontWeight: 700 }}
+            >
               {t("emergencyBackToWorkspace")}
-            </Link>
+            </button>
           </div>
         </div>
       )}

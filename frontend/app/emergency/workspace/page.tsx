@@ -1304,8 +1304,11 @@ function WorkspacePage() {
           <p className="muted-text" style={{ fontSize: 14 }}>Loading patient data…</p>
         ) : activeData == null ? (
           <div className="soft-card" style={{ padding: "28px 24px", textAlign: "center" }}>
-            <p style={{ color: "var(--danger-text)", fontSize: 14 }}>Could not load patient data. The session may have expired.</p>
-            <button type="button" className="secondary-btn" style={{ marginTop: 16 }} onClick={() => handleCloseTab(activeSession.sessionId)}>
+            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Access unavailable</div>
+            <p className="muted-text" style={{ fontSize: 14, lineHeight: 1.65, maxWidth: 380, margin: "0 auto 20px" }}>
+              This patient&apos;s data could not be loaded. The session may have expired, or the patient may have disabled emergency discoverability.
+            </p>
+            <button type="button" className="secondary-btn" onClick={() => handleCloseTab(activeSession.sessionId)}>
               Close tab
             </button>
           </div>

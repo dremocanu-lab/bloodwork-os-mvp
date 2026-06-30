@@ -3540,6 +3540,7 @@ def create_emergency_session(
             models.EmergencyAccessSession.emergency_user_id == current_user.id,
             models.EmergencyAccessSession.patient_id == payload.patient_id,
             models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.revoked_at.is_(None),
             models.EmergencyAccessSession.expires_at > now_str,
         )
         .first()
@@ -3567,6 +3568,7 @@ def create_emergency_session(
         .filter(
             models.EmergencyAccessSession.emergency_user_id == current_user.id,
             models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.revoked_at.is_(None),
             models.EmergencyAccessSession.expires_at > now_str,
         )
         .count()
@@ -3637,6 +3639,7 @@ def get_active_emergency_sessions(
         .filter(
             models.EmergencyAccessSession.emergency_user_id == current_user.id,
             models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.revoked_at.is_(None),
             models.EmergencyAccessSession.expires_at > now_str,
         )
         .order_by(models.EmergencyAccessSession.created_at.asc())
@@ -3645,7 +3648,7 @@ def get_active_emergency_sessions(
     result = []
     for s in sessions:
         patient = db.query(models.Patient).filter(models.Patient.id == s.patient_id).first()
-        if not patient:
+        if not patient or not patient.emergency_search_enabled:
             continue
         cr = (
             db.query(models.PatientCarePartnerCode)
