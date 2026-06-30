@@ -3,6 +3,7 @@
 import { ReactNode } from "react";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
+import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 
 type EmergencyShellUser = {
@@ -59,21 +60,24 @@ export default function EmergencyShell({ user, children, onLogout }: EmergencySh
 
         <div style={{ flex: 1 }} />
 
-        {user && (
-          <div style={{ display: "flex", alignItems: "center", gap: 12 }}>
-            <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
-            {onLogout && (
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ fontSize: 12, padding: "5px 12px" }}
-                onClick={onLogout}
-              >
-                {t("emergencySignOut")}
-              </button>
-            )}
-          </div>
-        )}
+        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+          <LanguageToggle />
+          {user && (
+            <>
+              <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
+              {onLogout && (
+                <button
+                  type="button"
+                  className="secondary-btn"
+                  style={{ fontSize: 12, padding: "5px 12px" }}
+                  onClick={onLogout}
+                >
+                  {t("emergencySignOut")}
+                </button>
+              )}
+            </>
+          )}
+        </div>
       </div>
 
       {/* Emergency status bar */}

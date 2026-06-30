@@ -2,6 +2,7 @@
 
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
+import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 
 export default function EmergencySplashPage() {
@@ -19,6 +20,9 @@ export default function EmergencySplashPage() {
         padding: "60px 32px",
       }}
     >
+      <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50 }}>
+        <LanguageToggle />
+      </div>
       <div style={{ maxWidth: 560, width: "100%", textAlign: "center" }}>
         {/* Logo — centered block */}
         <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>

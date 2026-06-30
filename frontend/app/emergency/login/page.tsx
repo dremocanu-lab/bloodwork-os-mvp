@@ -4,6 +4,7 @@ import { useState, useEffect } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
+import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 import { api, getErrorMessage } from "@/lib/api";
 import { EMERGENCY_STORAGE_KEYS, getEmergencyUser } from "@/lib/emergency-api";
@@ -63,6 +64,9 @@ export default function EmergencyLoginPage() {
         padding: "40px 24px",
       }}
     >
+      <div style={{ position: "fixed", top: 18, right: 18, zIndex: 50 }}>
+        <LanguageToggle />
+      </div>
       <div style={{ maxWidth: 400, width: "100%" }}>
         {/* Header */}
         <div style={{ textAlign: "center", marginBottom: 36 }}>

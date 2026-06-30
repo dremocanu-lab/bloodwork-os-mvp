@@ -4,6 +4,7 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
+import LanguageToggle from "@/components/language-toggle";
 import { useLanguage } from "@/lib/i18n";
 import {
   emergencyApi,
@@ -235,14 +236,17 @@ function WorkspaceTopBar({
         </div>
       </Link>
       <div style={{ flex: 1 }} />
-      {user && (
-        <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-          <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
-          <button type="button" className="secondary-btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={onLogout}>
-            {t("emergencySignOut")}
-          </button>
-        </div>
-      )}
+      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
+        <LanguageToggle />
+        {user && (
+          <>
+            <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
+            <button type="button" className="secondary-btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={onLogout}>
+              {t("emergencySignOut")}
+            </button>
+          </>
+        )}
+      </div>
     </div>
   );
 }
