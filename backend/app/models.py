@@ -336,3 +336,39 @@ class PatientMedication(Base):
     patient = relationship("Patient", back_populates="medications")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id])
+
+
+class EmergencyAccessSession(Base):
+    __tablename__ = "emergency_access_sessions"
+
+    id = Column(Integer, primary_key=True, index=True)
+    emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    reason = Column(String, nullable=False)
+    reason_note = Column(Text, nullable=True)
+    started_at = Column(String, nullable=False)
+    expires_at = Column(String, nullable=False)
+    closed_at = Column(String, nullable=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+
+    emergency_user = relationship("User", foreign_keys=[emergency_user_id])
+    patient = relationship("Patient")
+
+
+class EmergencyAuditLog(Base):
+    __tablename__ = "emergency_audit_logs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("emergency_access_sessions.id"), nullable=True, index=True)
+    action = Column(String, nullable=False, index=True)
+    ip_address = Column(String, nullable=True)
+    user_agent = Column(String, nullable=True)
+    details = Column(Text, nullable=True)
+    timestamp = Column(String, nullable=False)
+
+    emergency_user = relationship("User", foreign_keys=[emergency_user_id])
+    patient = relationship("Patient")

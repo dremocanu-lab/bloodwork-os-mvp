@@ -7,7 +7,7 @@ import traceback
 from datetime import UTC, datetime
 from pathlib import Path
 
-from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, UploadFile
+from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
@@ -63,6 +63,41 @@ def run_migrations():
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_patient_medications_patient_id ON patient_medications(patient_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_patient_medications_status ON patient_medications(status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_patient_medications_name ON patient_medications(name)"))
+        # Emergency access portal tables
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS emergency_access_sessions (
+                id SERIAL PRIMARY KEY,
+                emergency_user_id INTEGER NOT NULL REFERENCES users(id),
+                patient_id INTEGER NOT NULL REFERENCES patients(id),
+                reason VARCHAR NOT NULL,
+                reason_note TEXT,
+                started_at VARCHAR NOT NULL,
+                expires_at VARCHAR NOT NULL,
+                closed_at VARCHAR,
+                ip_address VARCHAR,
+                user_agent VARCHAR,
+                created_at VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eas_user ON emergency_access_sessions(emergency_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eas_patient ON emergency_access_sessions(patient_id)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS emergency_audit_logs (
+                id SERIAL PRIMARY KEY,
+                emergency_user_id INTEGER REFERENCES users(id),
+                patient_id INTEGER REFERENCES patients(id),
+                session_id INTEGER REFERENCES emergency_access_sessions(id),
+                action VARCHAR NOT NULL,
+                ip_address VARCHAR,
+                user_agent VARCHAR,
+                details TEXT,
+                timestamp VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eal_user ON emergency_audit_logs(emergency_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eal_patient ON emergency_audit_logs(patient_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eal_session ON emergency_audit_logs(session_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_eal_action ON emergency_audit_logs(action)"))
         conn.commit()
 
 run_migrations()
@@ -3213,3 +3248,396 @@ def get_patient_medication(
     if not med:
         raise HTTPException(status_code=404, detail="Medication not found.")
     return serialize_medication(med)
+
+
+# ─────────────────────────────────────────────────────────────────────────────
+# EMERGENCY ACCESS PORTAL
+# ─────────────────────────────────────────────────────────────────────────────
+
+EMERGENCY_SESSION_MINUTES = 30
+
+
+def require_emergency_role():
+    def dependency(current_user=Depends(get_current_user)):
+        if current_user.role not in ("emergency_worker", "admin"):
+            raise HTTPException(status_code=403, detail="Emergency access only")
+        return current_user
+    return dependency
+
+
+def _get_active_emergency_session(
+    db: Session,
+    session_id: int,
+    user_id: int,
+) -> models.EmergencyAccessSession | None:
+    session = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.id == session_id,
+            models.EmergencyAccessSession.emergency_user_id == user_id,
+            models.EmergencyAccessSession.closed_at.is_(None),
+        )
+        .first()
+    )
+    if not session:
+        return None
+    if session.expires_at < now_iso():
+        return None
+    return session
+
+
+def _add_emergency_audit(
+    db: Session,
+    action: str,
+    emergency_user_id: int | None = None,
+    patient_id: int | None = None,
+    session_id: int | None = None,
+    ip_address: str | None = None,
+    user_agent: str | None = None,
+    details: str | None = None,
+) -> None:
+    db.add(
+        models.EmergencyAuditLog(
+            emergency_user_id=emergency_user_id,
+            patient_id=patient_id,
+            session_id=session_id,
+            action=action,
+            ip_address=ip_address,
+            user_agent=user_agent,
+            details=details,
+            timestamp=now_iso(),
+        )
+    )
+
+
+def _mask_cnp(cnp: str | None) -> str | None:
+    if not cnp:
+        return None
+    n = len(cnp)
+    if n <= 4:
+        return "*" * n
+    return cnp[:2] + "*" * (n - 4) + cnp[-2:]
+
+
+def _serialize_emergency_search_result(patient, code_record) -> dict:
+    masked_id = _mask_cnp(patient.cnp)
+    if not masked_id and patient.patient_identifier:
+        raw = patient.patient_identifier
+        masked_id = raw[:3] + "***" if len(raw) > 3 else "***"
+    return {
+        "id": patient.id,
+        "full_name": patient.full_name,
+        "age": patient.age,
+        "sex": patient.sex,
+        "bragi_code": code_record.code if code_record else None,
+        "masked_identifier": masked_id,
+    }
+
+
+class EmergencySessionCreateRequest(BaseModel):
+    patient_id: int
+    reason: str
+    reason_note: str | None = None
+
+
+@app.get("/emergency/search")
+def emergency_search(
+    type: str = Query(...),
+    q: str = Query(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    q = q.strip()
+    if not q:
+        return []
+
+    results: list[dict] = []
+
+    if type == "code":
+        term = q.upper().replace(" ", "")
+        code_records = (
+            db.query(models.PatientCarePartnerCode)
+            .filter(func.upper(models.PatientCarePartnerCode.code).contains(term))
+            .limit(5)
+            .all()
+        )
+        for cr in code_records:
+            patient = db.query(models.Patient).filter(models.Patient.id == cr.patient_id).first()
+            if patient:
+                results.append(_serialize_emergency_search_result(patient, cr))
+
+    elif type == "cnp":
+        patient = db.query(models.Patient).filter(models.Patient.cnp == q).first()
+        if patient:
+            cr = db.query(models.PatientCarePartnerCode).filter(
+                models.PatientCarePartnerCode.patient_id == patient.id
+            ).first()
+            results.append(_serialize_emergency_search_result(patient, cr))
+
+    elif type == "name":
+        term = f"%{q.lower()}%"
+        patients = (
+            db.query(models.Patient)
+            .filter(func.lower(models.Patient.full_name).like(term))
+            .limit(10)
+            .all()
+        )
+        for patient in patients:
+            cr = db.query(models.PatientCarePartnerCode).filter(
+                models.PatientCarePartnerCode.patient_id == patient.id
+            ).first()
+            results.append(_serialize_emergency_search_result(patient, cr))
+
+    ip = request.client.host if request and request.client else None
+    ua = request.headers.get("user-agent") if request else None
+    _add_emergency_audit(
+        db,
+        action="emergency_patient_search",
+        emergency_user_id=current_user.id,
+        ip_address=ip,
+        user_agent=ua,
+        details=f"type={type} q_len={len(q)} results={len(results)}",
+    )
+    db.commit()
+
+    return results
+
+
+@app.post("/emergency/access-sessions")
+def create_emergency_session(
+    payload: EmergencySessionCreateRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    from datetime import timedelta
+
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    now = datetime.now(UTC)
+    expires = now + timedelta(minutes=EMERGENCY_SESSION_MINUTES)
+    ip = request.client.host if request.client else None
+    ua = request.headers.get("user-agent")
+
+    session = models.EmergencyAccessSession(
+        emergency_user_id=current_user.id,
+        patient_id=payload.patient_id,
+        reason=payload.reason,
+        reason_note=payload.reason_note,
+        started_at=now.isoformat(),
+        expires_at=expires.isoformat(),
+        closed_at=None,
+        ip_address=ip,
+        user_agent=ua,
+        created_at=now.isoformat(),
+    )
+    db.add(session)
+    db.flush()
+
+    _add_emergency_audit(
+        db,
+        action="emergency_session_started",
+        emergency_user_id=current_user.id,
+        patient_id=payload.patient_id,
+        session_id=session.id,
+        ip_address=ip,
+        user_agent=ua,
+        details=f"reason={payload.reason}",
+    )
+    db.commit()
+    db.refresh(session)
+
+    return {
+        "id": session.id,
+        "patient_id": session.patient_id,
+        "reason": session.reason,
+        "started_at": session.started_at,
+        "expires_at": session.expires_at,
+    }
+
+
+@app.get("/emergency/access-sessions/{session_id}")
+def get_emergency_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    session = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.id == session_id,
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    is_active = session.closed_at is None and session.expires_at > now_iso()
+    return {
+        "id": session.id,
+        "patient_id": session.patient_id,
+        "reason": session.reason,
+        "started_at": session.started_at,
+        "expires_at": session.expires_at,
+        "closed_at": session.closed_at,
+        "is_active": is_active,
+    }
+
+
+@app.post("/emergency/access-sessions/{session_id}/close")
+def close_emergency_session(
+    session_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    session = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.id == session_id,
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found")
+
+    if session.closed_at is None:
+        session.closed_at = now_iso()
+        _add_emergency_audit(
+            db,
+            action="emergency_session_closed_manually",
+            emergency_user_id=current_user.id,
+            patient_id=session.patient_id,
+            session_id=session_id,
+        )
+        db.commit()
+
+    return {"ok": True}
+
+
+@app.get("/emergency/patients/{patient_id}")
+def emergency_get_patient(
+    patient_id: int,
+    session_id: int = Query(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    active_session = _get_active_emergency_session(db, session_id, current_user.id)
+    if not active_session:
+        raise HTTPException(status_code=403, detail="Emergency session expired or not found")
+    if active_session.patient_id != patient_id:
+        raise HTTPException(status_code=403, detail="Session does not cover this patient")
+
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    medications = (
+        db.query(models.PatientMedication)
+        .filter(models.PatientMedication.patient_id == patient_id)
+        .order_by(models.PatientMedication.status, models.PatientMedication.name)
+        .all()
+    )
+
+    documents = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient_id)
+        .order_by(models.Document.id.desc())
+        .limit(20)
+        .all()
+    )
+
+    # Latest bloodwork with labs (no extracted text)
+    latest_bloodwork = None
+    for doc in documents:
+        if doc.section == "bloodwork":
+            labs = (
+                db.query(models.LabResult)
+                .filter(models.LabResult.document_id == doc.id)
+                .limit(40)
+                .all()
+            )
+            latest_bloodwork = {
+                "document_id": doc.id,
+                "filename": doc.filename,
+                "test_date": doc.test_date,
+                "lab_name": doc.lab_name,
+                "labs": [
+                    {
+                        "name": lab.display_name or lab.raw_test_name,
+                        "value": lab.value,
+                        "unit": lab.unit,
+                        "flag": lab.flag,
+                        "reference_range": lab.reference_range,
+                    }
+                    for lab in labs
+                ],
+            }
+            break
+
+    code_record = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.patient_id == patient_id)
+        .first()
+    )
+
+    ip = request.client.host if request and request.client else None
+    ua = request.headers.get("user-agent") if request else None
+    _add_emergency_audit(
+        db,
+        action="emergency_patient_page_opened",
+        emergency_user_id=current_user.id,
+        patient_id=patient_id,
+        session_id=session_id,
+        ip_address=ip,
+        user_agent=ua,
+    )
+    db.commit()
+
+    return {
+        "patient": {
+            "id": patient.id,
+            "full_name": patient.full_name,
+            "date_of_birth": patient.date_of_birth,
+            "age": patient.age,
+            "sex": patient.sex,
+            "bragi_code": code_record.code if code_record else None,
+            # CNP intentionally omitted
+        },
+        "session": {
+            "id": active_session.id,
+            "expires_at": active_session.expires_at,
+            "reason": active_session.reason,
+        },
+        "medications": [
+            {
+                "id": m.id,
+                "name": m.name,
+                "dose_strength": m.dose_strength,
+                "frequency": m.frequency,
+                "status": m.status,
+                "route_form": m.route_form,
+                "is_uncertain": bool(m.is_uncertain),
+            }
+            for m in medications
+        ],
+        "documents": [
+            {
+                "id": doc.id,
+                "section": doc.section,
+                "filename": doc.filename,
+                "test_date": doc.test_date or doc.created_at,
+                "lab_name": doc.lab_name,
+                "report_name": doc.report_name,
+                "is_verified": bool(doc.is_verified),
+                "created_at": doc.created_at,
+            }
+            for doc in documents
+        ],
+        "latest_bloodwork": latest_bloodwork,
+    }
