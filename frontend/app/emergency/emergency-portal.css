@@ -1,0 +1,96 @@
+/*
+  Emergency Portal — responsive overrides.
+  Desktop (1024px+): NO changes. All rules below are tablet/mobile only.
+  Tablet  (768–1023px): adapted layout.
+  Mobile  (<768px): mobile-first layout.
+*/
+
+/* ── Tab bar ──────────────────────────────────────────────────────────────── */
+
+/* Hide session count when screen is narrow (doesn't change desktop) */
+@media (max-width: 900px) {
+  .ew-session-count {
+    display: none;
+  }
+}
+
+/* Shrink tab items on mobile so 2–3 tabs are always visible */
+@media (max-width: 767px) {
+  .ew-tab-item {
+    min-width: 128px !important;
+    max-width: 156px !important;
+    padding: 5px 8px !important;
+  }
+}
+
+/* ── Content area ─────────────────────────────────────────────────────────── */
+
+@media (max-width: 767px) {
+  .ew-content {
+    padding: 14px 12px 60px !important;
+  }
+}
+
+@media (min-width: 768px) and (max-width: 1023px) {
+  .ew-content {
+    padding: 20px 16px 60px !important;
+  }
+}
+
+/* ── Add-patient modal → bottom sheet on mobile ───────────────────────────── */
+
+@media (max-width: 767px) {
+  .ew-modal-overlay {
+    align-items: flex-end !important;
+    padding: 0 !important;
+  }
+
+  .ew-modal-card {
+    border-radius: 20px 20px 0 0 !important;
+    max-width: 100% !important;
+    max-height: 90dvh;
+    overflow-y: auto;
+    margin: 0 !important;
+  }
+}
+
+/* ── Topbar: hide verbose text on small screens ───────────────────────────── */
+
+/* Hide user name in workspace + shell topbars at phone width */
+@media (max-width: 599px) {
+  .ew-topbar-username,
+  .ew-shell-username {
+    display: none !important;
+  }
+}
+
+/* Hide the "Bragi Health" sub-label in the workspace logo block on phones */
+@media (max-width: 479px) {
+  .ew-topbar-sublabel {
+    display: none !important;
+  }
+
+  /* Keep logo + title visible but reduce gap */
+  .ew-topbar-brand {
+    gap: 6px !important;
+  }
+}
+
+/* ── Shell topbar ─────────────────────────────────────────────────────────── */
+
+/* Status bar pills wrap cleanly on mobile (already has flexWrap in JSX,
+   these ensure the dots don't orphan) */
+@media (max-width: 599px) {
+  .ew-status-bar {
+    gap: 6px !important;
+    padding: 5px 12px !important;
+  }
+}
+
+/* ── Cards: slightly tighter padding on mobile ────────────────────────────── */
+
+@media (max-width: 767px) {
+  .ew-card-mobile-tight {
+    padding: 14px 14px !important;
+  }
+}

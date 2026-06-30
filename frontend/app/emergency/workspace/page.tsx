@@ -242,7 +242,7 @@ function WorkspaceTopBar({
         <LanguageToggle />
         {user && (
           <>
-            <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
+            <span className="muted-text ew-topbar-username" style={{ fontSize: 12 }}>{user.full_name}</span>
             <button type="button" className="secondary-btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={onLogout}>
               {t("emergencySignOut")}
             </button>
@@ -300,6 +300,7 @@ function TabItem({
 
   return (
     <div
+      className="ew-tab-item"
       style={{
         display: "flex",
         alignItems: "center",
@@ -447,7 +448,7 @@ function WorkspaceTabBar({
         {t("emergencyAddPatient")}
       </button>
       {/* Session count */}
-      <div style={{ display: "flex", alignItems: "center", padding: "0 14px", marginLeft: "auto", flexShrink: 0 }}>
+      <div className="ew-session-count" style={{ display: "flex", alignItems: "center", padding: "0 14px", marginLeft: "auto", flexShrink: 0 }}>
         <span className="muted-text" style={{ fontSize: 10, whiteSpace: "nowrap" }}>
           {sessions.length}/{MAX_SESSIONS} {t("emergencyActivePatients")}
         </span>
@@ -559,6 +560,7 @@ function AddPatientModal({
 
   return (
     <div
+      className="ew-modal-overlay"
       style={{
         position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
         display: "flex", alignItems: "flex-start", justifyContent: "center",
@@ -566,7 +568,7 @@ function AddPatientModal({
       }}
       onClick={(e) => { if (e.target === e.currentTarget && !starting) onClose(); }}
     >
-      <div className="soft-card" style={{ maxWidth: 520, width: "100%", padding: "26px 28px" }}>
+      <div className="soft-card ew-modal-card" style={{ maxWidth: 520, width: "100%", padding: "26px 28px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>{t("emergencyAddPatient")}</h2>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", fontSize: 20, lineHeight: 1 }}>×</button>
@@ -1281,7 +1283,7 @@ function WorkspacePage() {
       </div>
 
       {/* Content */}
-      <div style={{ flex: 1, maxWidth: 960, margin: "0 auto", width: "100%", padding: "28px 22px 60px" }}>
+      <div className="ew-content" style={{ flex: 1, maxWidth: 960, margin: "0 auto", width: "100%", padding: "28px 22px 60px" }}>
         {loadingInit ? (
           <p className="muted-text" style={{ fontSize: 14 }}>Loading sessions…</p>
         ) : sessions.length === 0 ? (

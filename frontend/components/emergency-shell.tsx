@@ -66,7 +66,7 @@ export default function EmergencyShell({ user, children, onLogout }: EmergencySh
           <LanguageToggle />
           {user && (
             <>
-              <span className="muted-text" style={{ fontSize: 12 }}>{user.full_name}</span>
+              <span className="muted-text ew-shell-username" style={{ fontSize: 12 }}>{user.full_name}</span>
               {onLogout && (
                 <button
                   type="button"
