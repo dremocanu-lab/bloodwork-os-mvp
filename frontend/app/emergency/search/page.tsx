@@ -120,7 +120,7 @@ export default function EmergencySearchPage() {
       localStorage.setItem(EMERGENCY_STORAGE_KEYS.sessionId, String(session.id));
       localStorage.setItem(EMERGENCY_STORAGE_KEYS.expiresAt, session.expires_at);
       localStorage.setItem(EMERGENCY_STORAGE_KEYS.patientId, String(session.patient_id));
-      router.push(`/emergency/patients/${session.patient_id}`);
+      router.push(`/emergency/workspace?tab=${session.id}`);
     } catch (err) {
       setStartError(getErrorMessage(err, t("emergencySessionFailed")));
     } finally {

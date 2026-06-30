@@ -18,11 +18,15 @@ export { getErrorMessage };
 export const EMERGENCY_STORAGE_KEYS = {
   token: "emergency_access_token",
   user: "emergency_user",
+  // Step 1 compat keys (single-session pages)
   sessionId: "emergency_session_id",
   expiresAt: "emergency_session_expires_at",
   patientId: "emergency_patient_id",
+  // Step 2 workspace key
+  activeTab: "emergency_active_tab",
 } as const;
 
+/** Full logout — clears auth token, user, and all session state. */
 export function clearEmergencySession() {
   Object.values(EMERGENCY_STORAGE_KEYS).forEach((k) => localStorage.removeItem(k));
 }
@@ -35,4 +39,16 @@ export function getEmergencyUser(): { id: number; email: string; full_name: stri
   } catch {
     return null;
   }
+}
+
+export function getActiveTab(): number | null {
+  if (typeof window === "undefined") return null;
+  const v = localStorage.getItem(EMERGENCY_STORAGE_KEYS.activeTab);
+  return v ? Number(v) : null;
+}
+
+export function setActiveTab(sessionId: number | null) {
+  if (typeof window === "undefined") return;
+  if (sessionId == null) localStorage.removeItem(EMERGENCY_STORAGE_KEYS.activeTab);
+  else localStorage.setItem(EMERGENCY_STORAGE_KEYS.activeTab, String(sessionId));
 }

@@ -3417,6 +3417,48 @@ def create_emergency_session(
     if not patient:
         raise HTTPException(status_code=404, detail="Patient not found")
 
+    # Return existing active session for same patient — no duplicate tabs
+    now_str = now_iso()
+    existing = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+            models.EmergencyAccessSession.patient_id == payload.patient_id,
+            models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.expires_at > now_str,
+        )
+        .first()
+    )
+    if existing:
+        cr = (
+            db.query(models.PatientCarePartnerCode)
+            .filter(models.PatientCarePartnerCode.patient_id == patient.id)
+            .first()
+        )
+        return {
+            "id": existing.id,
+            "patient_id": existing.patient_id,
+            "patient_name": patient.full_name,
+            "bragi_code": cr.code if cr else None,
+            "reason": existing.reason,
+            "started_at": existing.started_at,
+            "expires_at": existing.expires_at,
+            "existing": True,
+        }
+
+    # Enforce max 8 active sessions per emergency worker
+    active_count = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+            models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.expires_at > now_str,
+        )
+        .count()
+    )
+    if active_count >= 8:
+        raise HTTPException(status_code=409, detail="Maximum 8 active emergency sessions reached")
+
     now = datetime.now(UTC)
     expires = now + timedelta(minutes=EMERGENCY_SESSION_MINUTES)
     ip = request.client.host if request.client else None
@@ -3450,13 +3492,74 @@ def create_emergency_session(
     db.commit()
     db.refresh(session)
 
+    cr = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.patient_id == patient.id)
+        .first()
+    )
     return {
         "id": session.id,
         "patient_id": session.patient_id,
+        "patient_name": patient.full_name,
+        "bragi_code": cr.code if cr else None,
         "reason": session.reason,
         "started_at": session.started_at,
         "expires_at": session.expires_at,
+        "existing": False,
     }
+
+
+@app.get("/emergency/access-sessions/active")
+def get_active_emergency_sessions(
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    from datetime import timezone
+    now_str = now_iso()
+    sessions = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+            models.EmergencyAccessSession.closed_at.is_(None),
+            models.EmergencyAccessSession.expires_at > now_str,
+        )
+        .order_by(models.EmergencyAccessSession.created_at.asc())
+        .all()
+    )
+    result = []
+    for s in sessions:
+        patient = db.query(models.Patient).filter(models.Patient.id == s.patient_id).first()
+        if not patient:
+            continue
+        cr = (
+            db.query(models.PatientCarePartnerCode)
+            .filter(models.PatientCarePartnerCode.patient_id == s.patient_id)
+            .first()
+        )
+        expires_dt = datetime.fromisoformat(s.expires_at)
+        if expires_dt.tzinfo is None:
+            expires_dt = expires_dt.replace(tzinfo=timezone.utc)
+        secs = max(0, int((expires_dt - datetime.now(timezone.utc)).total_seconds()))
+        result.append({
+            "id": s.id,
+            "patient_id": s.patient_id,
+            "patient_name": patient.full_name,
+            "bragi_code": cr.code if cr else None,
+            "started_at": s.started_at,
+            "expires_at": s.expires_at,
+            "seconds_remaining": secs,
+            "reason": s.reason,
+        })
+    _add_emergency_audit(
+        db,
+        action="emergency_workspace_opened",
+        emergency_user_id=current_user.id,
+        ip_address=request.client.host if request.client else None,
+        user_agent=request.headers.get("user-agent"),
+    )
+    db.commit()
+    return result
 
 
 @app.get("/emergency/access-sessions/{session_id}")
@@ -3548,7 +3651,7 @@ def emergency_get_patient(
         db.query(models.Document)
         .filter(models.Document.patient_id == patient_id)
         .order_by(models.Document.id.desc())
-        .limit(20)
+        .limit(100)
         .all()
     )
 
@@ -3611,6 +3714,7 @@ def emergency_get_patient(
         },
         "session": {
             "id": active_session.id,
+            "started_at": active_session.started_at,
             "expires_at": active_session.expires_at,
             "reason": active_session.reason,
         },
