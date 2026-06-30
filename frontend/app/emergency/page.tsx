@@ -16,21 +16,23 @@ export default function EmergencySplashPage() {
         alignItems: "center",
         justifyContent: "center",
         background: "var(--app-bg)",
-        padding: "40px 24px",
+        padding: "60px 32px",
       }}
     >
-      <div style={{ maxWidth: 480, width: "100%", textAlign: "center" }}>
-        <BragiLogo height={72} showText={false} />
+      <div style={{ maxWidth: 560, width: "100%", textAlign: "center" }}>
+        {/* Logo — centered block */}
+        <div style={{ display: "flex", justifyContent: "center", marginBottom: 28 }}>
+          <BragiLogo height={96} showText={false} />
+        </div>
 
         <div
           className="muted-text"
           style={{
-            fontSize: 10,
+            fontSize: 12,
             fontWeight: 900,
             textTransform: "uppercase",
-            letterSpacing: "0.12em",
-            marginTop: 20,
-            marginBottom: 10,
+            letterSpacing: "0.14em",
+            marginBottom: 14,
           }}
         >
           Bragi Health
@@ -38,11 +40,11 @@ export default function EmergencySplashPage() {
 
         <h1
           style={{
-            fontSize: 30,
+            fontSize: 44,
             fontWeight: 900,
-            letterSpacing: "-0.03em",
-            lineHeight: 1.15,
-            margin: "0 0 14px 0",
+            letterSpacing: "-0.035em",
+            lineHeight: 1.1,
+            margin: "0 0 18px 0",
           }}
         >
           {t("emergencyPortalTitle")}
@@ -51,10 +53,10 @@ export default function EmergencySplashPage() {
         <p
           className="muted-text"
           style={{
-            fontSize: 15,
-            lineHeight: 1.65,
-            maxWidth: 380,
-            margin: "0 auto 36px",
+            fontSize: 18,
+            lineHeight: 1.6,
+            maxWidth: 420,
+            margin: "0 auto 44px",
           }}
         >
           {t("emergencyPortalSubtitle")}
@@ -65,10 +67,11 @@ export default function EmergencySplashPage() {
           className="primary-btn"
           style={{
             display: "inline-block",
-            padding: "14px 36px",
-            fontSize: 15,
+            padding: "18px 52px",
+            fontSize: 17,
             fontWeight: 700,
             textDecoration: "none",
+            borderRadius: 12,
           }}
         >
           {t("emergencyEnterPortal")}
@@ -76,7 +79,7 @@ export default function EmergencySplashPage() {
 
         <p
           className="muted-text"
-          style={{ fontSize: 12, marginTop: 18, lineHeight: 1.6 }}
+          style={{ fontSize: 13, marginTop: 22, lineHeight: 1.6 }}
         >
           {t("emergencyAuditNotice")}
         </p>
@@ -84,27 +87,27 @@ export default function EmergencySplashPage() {
         {/* Safety notice */}
         <div
           style={{
-            marginTop: 40,
-            padding: "16px 20px",
+            marginTop: 52,
+            padding: "20px 26px",
             background: "rgba(220,38,38,0.06)",
             border: "1px solid rgba(220,38,38,0.18)",
-            borderRadius: 12,
+            borderRadius: 14,
             textAlign: "left",
           }}
         >
           <div
             style={{
-              fontSize: 10,
+              fontSize: 11,
               fontWeight: 900,
               textTransform: "uppercase",
               letterSpacing: "0.07em",
               color: "#dc2626",
-              marginBottom: 8,
+              marginBottom: 10,
             }}
           >
             {t("emergencyReadOnly")} · {t("emergencyAuditedAccess")}
           </div>
-          <p className="muted-text" style={{ fontSize: 12, lineHeight: 1.65, margin: 0 }}>
+          <p className="muted-text" style={{ fontSize: 13, lineHeight: 1.7, margin: 0 }}>
             No editing, no bulk browsing, no admin functions.
             Every search, session start, and page view is logged automatically.
             Access is valid for 30 minutes per patient and is patient-specific.
