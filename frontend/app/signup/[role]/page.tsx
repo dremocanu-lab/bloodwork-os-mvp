@@ -15,9 +15,9 @@ function isRole(value: string): value is Role {
   return value === "doctor" || value === "patient" || value === "admin" || value === "care_partner";
 }
 
-function getPostSignupPath(role: Role) {
+function getPostSignupPath(role: Role, doctorType?: string | null) {
   if (role === "patient") return "/my-records";
-  if (role === "doctor") return "/my-patients";
+  if (role === "doctor") return doctorType === "pcp" ? "/pcp/workspace" : "/my-patients";
   if (role === "care_partner") return "/care-partner";
   return "/assignments";
 }
@@ -36,6 +36,7 @@ export default function RoleSignupPage() {
 
   const [department, setDepartment] = useState("");
   const [hospitalName, setHospitalName] = useState("");
+  const [doctorType, setDoctorType] = useState<"pcp" | "specialist">("specialist");
 
   const [dateOfBirth, setDateOfBirth] = useState("");
   const [sex, setSex] = useState("");
@@ -106,6 +107,10 @@ export default function RoleSignupPage() {
         payload.hospital_name = hospitalName;
       }
 
+      if (role === "doctor") {
+        payload.doctor_type = doctorType;
+      }
+
       if (role === "patient") {
         payload.date_of_birth = dateOfBirth || null;
         payload.sex = sex || null;
@@ -122,7 +127,8 @@ export default function RoleSignupPage() {
       localStorage.setItem("access_token", response.data.access_token);
       localStorage.setItem("user", JSON.stringify(response.data.user));
 
-      router.push(getPostSignupPath(role));
+      const resolvedDoctorType = response.data.user?.doctor_type ?? null;
+      router.push(getPostSignupPath(role, resolvedDoctorType));
     } catch (err) {
       setError(getErrorMessage(err, t("signupFailed")));
     } finally {
@@ -254,6 +260,75 @@ export default function RoleSignupPage() {
                     />
                   </label>
                 </>
+              )}
+
+              {role === "doctor" && (
+                <div>
+                  <div className="auth-label" style={{ marginBottom: 8 }}>
+                    <span>{t("pcpDoctorTypeLabel")}</span>
+                  </div>
+                  <div style={{ display: "grid", gap: 8 }}>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        padding: "12px 14px",
+                        borderRadius: 12,
+                        border: `2px solid ${doctorType === "specialist" ? "var(--primary)" : "var(--border)"}`,
+                        background: doctorType === "specialist" ? "color-mix(in srgb, var(--primary) 6%, var(--panel))" : "var(--panel)",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s, background 0.15s",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="doctor_type"
+                        value="specialist"
+                        checked={doctorType === "specialist"}
+                        onChange={() => setDoctorType("specialist")}
+                        style={{ marginTop: 2, accentColor: "var(--primary)" }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }}>{t("pcpSpecialistDoctor")}</div>
+                        <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
+                          Cardiology, Oncology, Endocrinology, etc.
+                        </div>
+                      </div>
+                    </label>
+                    <label
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 12,
+                        padding: "12px 14px",
+                        borderRadius: 12,
+                        border: `2px solid ${doctorType === "pcp" ? "var(--primary)" : "var(--border)"}`,
+                        background: doctorType === "pcp" ? "color-mix(in srgb, var(--primary) 6%, var(--panel))" : "var(--panel)",
+                        cursor: "pointer",
+                        transition: "border-color 0.15s, background 0.15s",
+                      }}
+                    >
+                      <input
+                        type="radio"
+                        name="doctor_type"
+                        value="pcp"
+                        checked={doctorType === "pcp"}
+                        onChange={() => setDoctorType("pcp")}
+                        style={{ marginTop: 2, accentColor: "var(--primary)" }}
+                      />
+                      <div>
+                        <div style={{ fontWeight: 800, fontSize: 14 }}>{t("pcpFamilyDoctor")}</div>
+                        <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
+                          Family medicine, General practice, Doctor de familie
+                        </div>
+                      </div>
+                    </label>
+                  </div>
+                  <div className="muted-text" style={{ fontSize: 12, marginTop: 6 }}>
+                    {t("pcpDoctorTypeHint")}
+                  </div>
+                </div>
               )}
 
               {role === "patient" && (

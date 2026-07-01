@@ -12,6 +12,7 @@ type ShellUser = {
   role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
+  doctor_type?: "pcp" | "specialist" | null;
 };
 
 type AppShellProps = {

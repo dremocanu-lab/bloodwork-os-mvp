@@ -14,6 +14,7 @@ class User(Base):
     role = Column(String, nullable=False, index=True)
     department = Column(String, nullable=True)
     hospital_name = Column(String, nullable=True)
+    doctor_type = Column(String, nullable=True)  # "pcp" | "specialist" | null
 
     uploaded_documents = relationship("Document", back_populates="uploaded_by_user")
     linked_patient = relationship("Patient", back_populates="linked_user", uselist=False)

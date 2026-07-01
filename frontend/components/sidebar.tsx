@@ -13,6 +13,7 @@ type SidebarUser = {
   role: "patient" | "doctor" | "admin" | "care_partner";
   department?: string | null;
   hospital_name?: string | null;
+  doctor_type?: "pcp" | "specialist" | null;
 };
 
 type SidebarProps = {
@@ -33,8 +34,11 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
   const router = useRouter();
   const { language, setLanguage, t } = useLanguage();
 
+  const isPCP = user.role === "doctor" && user.doctor_type === "pcp";
+
   const navByRole: Record<SidebarUser["role"], { label: string; href: string }[]> = {
     doctor: [
+      ...(isPCP ? [{ label: t("pcpWorkspace"), href: "/pcp/workspace" }] : []),
       { label: t("myCurrentPatients"), href: "/my-patients" },
       { label: t("searchPatients"), href: "/patients/search" },
     ],

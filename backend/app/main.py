@@ -118,6 +118,28 @@ def run_migrations():
             )
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ec_patient ON emergency_contacts(patient_id)"))
+        # Doctor type field for PCP/specialist distinction
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS doctor_type VARCHAR"))
+        # Normalize existing doctors: default to specialist, then upgrade PCP matches
+        conn.execute(text("""
+            UPDATE users SET doctor_type = 'specialist'
+            WHERE role = 'doctor' AND doctor_type IS NULL
+        """))
+        conn.execute(text("""
+            UPDATE users SET doctor_type = 'pcp'
+            WHERE role = 'doctor' AND doctor_type = 'specialist' AND (
+                LOWER(department) LIKE '%pcp%' OR
+                LOWER(department) LIKE '%primary care%' OR
+                LOWER(department) LIKE '%family medicine%' OR
+                LOWER(department) LIKE '%family physician%' OR
+                LOWER(department) LIKE '%general practice%' OR
+                LOWER(department) = 'gp' OR
+                LOWER(department) LIKE '%doctor de familie%' OR
+                LOWER(department) LIKE '%medic de familie%' OR
+                LOWER(department) LIKE '%medicina de familie%' OR
+                LOWER(department) LIKE '%medicin%familie%'
+            )
+        """))
         conn.commit()
 
 run_migrations()
@@ -226,6 +248,7 @@ def serialize_user(user):
         "role": user.role,
         "department": user.department,
         "hospital_name": user.hospital_name,
+        "doctor_type": user.doctor_type,
     }
 
 
@@ -898,6 +921,28 @@ def process_upload_job(job_id: int):
         db.close()
 
 
+PCP_DEPARTMENT_VALUES = frozenset([
+    "pcp", "primary care", "family medicine", "family physician",
+    "general practice", "gp", "doctor de familie", "medic de familie",
+    "medicina de familie", "medicină de familie", "medicina familiala",
+    "medicină familială",
+])
+
+
+def _normalize_doctor_type(doctor_type_input: str | None, department: str | None) -> str | None:
+    if doctor_type_input:
+        if doctor_type_input.lower() == "pcp":
+            return "pcp"
+        return "specialist"
+    # Fall back to department sniffing for backwards compat
+    if department:
+        dept_lower = department.lower()
+        for val in PCP_DEPARTMENT_VALUES:
+            if val in dept_lower:
+                return "pcp"
+    return "specialist"
+
+
 class SignupRequest(BaseModel):
     email: EmailStr
     full_name: str
@@ -911,6 +956,7 @@ class SignupRequest(BaseModel):
     cnp: str | None = None
     patient_identifier: str | None = None
     care_partner_code: str | None = None
+    doctor_type: str | None = None
 
 
 class LoginRequest(BaseModel):
@@ -1001,6 +1047,10 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
     if existing:
         raise HTTPException(status_code=400, detail="Email already exists")
 
+    doctor_type = None
+    if payload.role == "doctor":
+        doctor_type = _normalize_doctor_type(payload.doctor_type, payload.department)
+
     user = models.User(
         email=payload.email,
         full_name=payload.full_name,
@@ -1008,6 +1058,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
         role=payload.role,
         department=payload.department,
         hospital_name=payload.hospital_name,
+        doctor_type=doctor_type,
     )
 
     db.add(user)
@@ -1473,6 +1524,225 @@ def get_my_patients(
         )
 
     return results
+
+
+# ── PCP Workspace endpoints ────────────────────────────────────────────────────
+
+def _is_pcp_doctor(user) -> bool:
+    return user.role == "doctor" and user.doctor_type == "pcp"
+
+
+def require_pcp_or_admin():
+    def dependency(current_user=Depends(get_current_user)):
+        if current_user.role == "admin":
+            return current_user
+        if current_user.role == "doctor" and current_user.doctor_type == "pcp":
+            return current_user
+        raise HTTPException(status_code=403, detail="PCP workspace is only available for primary care / family medicine doctors.")
+    return dependency
+
+
+@app.get("/pcp/patients")
+def pcp_get_patients(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_pcp_or_admin()),
+):
+    access_links = (
+        db.query(models.DoctorPatientAccess)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == current_user.id,
+            models.DoctorPatientAccess.is_active == 1,
+        )
+        .all()
+    )
+    if not access_links:
+        return []
+    patient_ids = [link.patient_id for link in access_links]
+    patients = (
+        db.query(models.Patient)
+        .filter(models.Patient.id.in_(patient_ids))
+        .order_by(models.Patient.full_name)
+        .all()
+    )
+    return [
+        {
+            "id": p.id,
+            "full_name": p.full_name,
+            "age": p.age,
+            "sex": p.sex,
+            "date_of_birth": p.date_of_birth,
+            "patient_identifier": p.patient_identifier,
+        }
+        for p in patients
+    ]
+
+
+@app.get("/pcp/patients/{patient_id}/summary")
+def pcp_get_patient_summary(
+    patient_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_pcp_or_admin()),
+):
+    # Validate access
+    if current_user.role != "admin" and not doctor_has_patient_access(db, current_user.id, patient_id):
+        raise HTTPException(status_code=403, detail="No active access to this patient.")
+
+    patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+
+    # Bragi code
+    code_record = db.query(models.PatientCarePartnerCode).filter(
+        models.PatientCarePartnerCode.patient_id == patient_id
+    ).first()
+
+    # Care context
+    active_event = (
+        db.query(models.PatientEvent)
+        .filter(models.PatientEvent.patient_id == patient_id, models.PatientEvent.status == "active")
+        .order_by(models.PatientEvent.id.desc())
+        .first()
+    )
+    latest_event = (
+        db.query(models.PatientEvent)
+        .filter(models.PatientEvent.patient_id == patient_id)
+        .order_by(models.PatientEvent.id.desc())
+        .first()
+    )
+    care_context = "active_admission" if active_event else ("past_admission" if latest_event else "outpatient")
+    care_context_label = (
+        "Active admission" if active_event else
+        ("Past admission" if latest_event else "Outpatient follow-up")
+    )
+
+    # Medications (active first)
+    medications = (
+        db.query(models.PatientMedication)
+        .filter(models.PatientMedication.patient_id == patient_id)
+        .order_by(models.PatientMedication.status, models.PatientMedication.name)
+        .limit(20)
+        .all()
+    )
+
+    # Recent documents (last 10)
+    recent_docs = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient_id)
+        .order_by(models.Document.id.desc())
+        .limit(10)
+        .all()
+    )
+
+    # Latest bloodwork labs
+    latest_labs = None
+    for doc in recent_docs:
+        if doc.section == "bloodwork":
+            labs = (
+                db.query(models.LabResult)
+                .filter(models.LabResult.document_id == doc.id)
+                .limit(40)
+                .all()
+            )
+            latest_labs = {
+                "document_id": doc.id,
+                "test_date": doc.test_date,
+                "lab_name": doc.lab_name,
+                "labs": [
+                    {
+                        "name": lab.display_name or lab.raw_test_name,
+                        "value": lab.value,
+                        "unit": lab.unit,
+                        "flag": lab.flag,
+                        "reference_range": lab.reference_range,
+                        "category": lab.category,
+                    }
+                    for lab in labs
+                ],
+            }
+            break
+
+    # Timeline preview (last 5 events)
+    timeline_events = (
+        db.query(models.PatientEvent)
+        .filter(models.PatientEvent.patient_id == patient_id)
+        .order_by(models.PatientEvent.id.desc())
+        .limit(5)
+        .all()
+    )
+
+    # Recent notes
+    recent_notes = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient_id, models.Document.section == "notes")
+        .order_by(models.Document.id.desc())
+        .limit(5)
+        .all()
+    )
+
+    return {
+        "patient": {
+            "id": patient.id,
+            "full_name": patient.full_name,
+            "age": patient.age,
+            "sex": patient.sex,
+            "date_of_birth": patient.date_of_birth,
+            "patient_identifier": patient.patient_identifier,
+            "bragi_code": code_record.code if code_record else None,
+        },
+        "care_context": care_context,
+        "care_context_label": care_context_label,
+        "access": {"has_active_access": True},
+        "medications": [
+            {
+                "id": m.id,
+                "name": m.name,
+                "dose_strength": m.dose_strength,
+                "frequency": m.frequency,
+                "status": m.status,
+                "route_form": m.route_form,
+                "is_uncertain": bool(m.is_uncertain),
+            }
+            for m in medications
+        ],
+        "recent_documents": [
+            {
+                "id": d.id,
+                "section": d.section,
+                "filename": d.filename,
+                "report_name": d.report_name,
+                "lab_name": d.lab_name,
+                "test_date": d.test_date or d.created_at,
+                "is_verified": bool(d.is_verified),
+                "created_at": d.created_at,
+            }
+            for d in recent_docs
+        ],
+        "latest_labs": latest_labs,
+        "timeline_preview": [
+            {
+                "id": e.id,
+                "title": e.title,
+                "event_type": e.event_type,
+                "status": e.status,
+                "admitted_at": e.admitted_at,
+                "discharged_at": e.discharged_at,
+                "hospital_name": e.hospital_name,
+                "department": e.department,
+            }
+            for e in timeline_events
+        ],
+        "recent_notes": [
+            {
+                "id": n.id,
+                "filename": n.filename,
+                "report_name": n.report_name,
+                "note_preview": (n.note_body or "")[:200] if n.note_body else None,
+                "created_at": n.created_at,
+            }
+            for n in recent_notes
+        ],
+    }
+
 
 @app.get("/patients/search")
 def search_patients(
