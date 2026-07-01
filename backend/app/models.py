@@ -24,6 +24,7 @@ class Patient(Base):
     __tablename__ = "patients"
 
     id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String, nullable=True, unique=True, index=True)
     linked_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     full_name = Column(String, nullable=False, index=True)
     date_of_birth = Column(String, nullable=True)
@@ -105,6 +106,7 @@ class Document(Base):
     __tablename__ = "documents"
 
     id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String, nullable=True, unique=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
     uploaded_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
 
@@ -361,6 +363,7 @@ class EmergencyAccessSession(Base):
     __tablename__ = "emergency_access_sessions"
 
     id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String, nullable=True, unique=True, index=True)
     emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     reason = Column(String, nullable=False)

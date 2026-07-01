@@ -1219,6 +1219,13 @@ const en = {
   pcpRefRangeSource: "Reference range from source document",
   pcpMoreInSource: "more in source document",
   pcpSwitchToTab: "Switch to tab",
+
+  // Public ID routes
+  recordNotFound: "Record not found.",
+  documentNotFound: "Document not found.",
+  noAccessToRecord: "You do not have access to this record.",
+  linkNoLongerAvailable: "This link is no longer available.",
+  resolvingRecord: "Loading record…",
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
@@ -2433,6 +2440,13 @@ const ro: Record<keyof typeof en, string> = {
   pcpRefRangeSource: "Interval de referință din documentul sursă",
   pcpMoreInSource: "în documentul sursă",
   pcpSwitchToTab: "Comută la filă",
+
+  // Public ID routes
+  recordNotFound: "Înregistrarea nu a fost găsită.",
+  documentNotFound: "Documentul nu a fost găsit.",
+  noAccessToRecord: "Nu aveți acces la această înregistrare.",
+  linkNoLongerAvailable: "Acest link nu mai este disponibil.",
+  resolvingRecord: "Se încarcă înregistrarea…",
 };
 
 const dictionaries = {

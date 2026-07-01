@@ -8,6 +8,10 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+
+def generate_public_id(prefix: str) -> str:
+    return f"{prefix}-{uuid.uuid4().hex[:12]}"
+
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
@@ -141,6 +145,33 @@ def run_migrations():
                 LOWER(department) LIKE '%medicin%familie%'
             )
         """))
+        # Public ID columns for pretty URLs
+        conn.execute(text("ALTER TABLE patients ADD COLUMN IF NOT EXISTS public_id VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS public_id VARCHAR"))
+        conn.execute(text("ALTER TABLE emergency_access_sessions ADD COLUMN IF NOT EXISTS public_id VARCHAR"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_patients_public_id ON patients(public_id) WHERE public_id IS NOT NULL"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_documents_public_id ON documents(public_id) WHERE public_id IS NOT NULL"))
+        conn.execute(text("CREATE UNIQUE INDEX IF NOT EXISTS ix_eas_public_id ON emergency_access_sessions(public_id) WHERE public_id IS NOT NULL"))
+        conn.commit()
+        # Backfill public_ids for existing rows (done in Python for cross-DB compatibility)
+        patients_no_pub = conn.execute(text("SELECT id FROM patients WHERE public_id IS NULL")).fetchall()
+        for row in patients_no_pub:
+            conn.execute(
+                text("UPDATE patients SET public_id = :pid WHERE id = :id AND public_id IS NULL"),
+                {"pid": generate_public_id("brg-pt"), "id": row[0]},
+            )
+        docs_no_pub = conn.execute(text("SELECT id FROM documents WHERE public_id IS NULL")).fetchall()
+        for row in docs_no_pub:
+            conn.execute(
+                text("UPDATE documents SET public_id = :pid WHERE id = :id AND public_id IS NULL"),
+                {"pid": generate_public_id("brg-doc"), "id": row[0]},
+            )
+        sessions_no_pub = conn.execute(text("SELECT id FROM emergency_access_sessions WHERE public_id IS NULL")).fetchall()
+        for row in sessions_no_pub:
+            conn.execute(
+                text("UPDATE emergency_access_sessions SET public_id = :pid WHERE id = :id AND public_id IS NULL"),
+                {"pid": generate_public_id("brg-em"), "id": row[0]},
+            )
         conn.commit()
 
 run_migrations()
@@ -289,6 +320,7 @@ def ensure_patient_for_user(db: Session, user):
         sex=None,
         cnp=None,
         patient_identifier=None,
+        public_id=generate_public_id("brg-pt"),
     )
 
     db.add(patient)
@@ -495,6 +527,7 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
 
     return {
         "id": document.id,
+        "public_id": document.public_id,
         "filename": document.filename,
         "content_type": document.content_type,
         "report_name": document.report_name,
@@ -593,6 +626,7 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
     return {
         "patient": {
             "id": patient.id,
+            "public_id": patient.public_id,
             "full_name": patient.full_name,
             "date_of_birth": patient.date_of_birth,
             "age": patient.age,
@@ -844,6 +878,7 @@ def process_upload_job(job_id: int):
             verified_at=None,
             last_edited_at=None,
             created_at=now_iso(),
+            public_id=generate_public_id("brg-doc"),
         )
 
         db.add(document)
@@ -1075,6 +1110,7 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
             sex=payload.sex,
             cnp=payload.cnp,
             patient_identifier=payload.patient_identifier,
+            public_id=generate_public_id("brg-pt"),
         )
         db.add(patient)
         db.commit()
@@ -1756,6 +1792,7 @@ def pcp_get_patient_summary(
     return {
         "patient": {
             "id": patient.id,
+            "public_id": patient.public_id,
             "full_name": patient.full_name,
             "age": patient.age,
             "sex": patient.sex,
@@ -2214,6 +2251,56 @@ def get_document(
     audit_logs = db.query(models.AuditLog).filter(models.AuditLog.document_id == document.id).all()
 
     return get_document_payload(db, document, labs, audit_logs, current_user)
+
+
+# ── Public-ID lookup endpoints (pretty URL resolution) ────────────────────────
+
+@app.get("/patients/by-public-id/{public_id}")
+def get_patient_by_public_id(
+    public_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    patient = db.query(models.Patient).filter(models.Patient.public_id == public_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found.")
+    if current_user.role == "patient":
+        if patient.linked_user_id != current_user.id:
+            raise HTTPException(status_code=403, detail="Access denied.")
+    elif current_user.role in ("doctor",):
+        if not doctor_has_patient_access(db, current_user.id, patient.id):
+            raise HTTPException(status_code=403, detail="No active access to this patient.")
+    elif current_user.role == "care_partner":
+        link = (
+            db.query(models.CarePartnerPatientLink)
+            .filter(
+                models.CarePartnerPatientLink.care_partner_user_id == current_user.id,
+                models.CarePartnerPatientLink.patient_id == patient.id,
+            )
+            .first()
+        )
+        if not link:
+            raise HTTPException(status_code=403, detail="Access denied.")
+    elif current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Access denied.")
+    return {"id": patient.id, "public_id": patient.public_id}
+
+
+@app.get("/documents/by-public-id/{public_id}")
+def get_document_by_public_id(
+    public_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.public_id == public_id).first()
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found.")
+    if current_user.role == "care_partner":
+        if not care_partner_can_access_document(db, current_user.id, document.id):
+            raise HTTPException(status_code=403, detail="Forbidden.")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden.")
+    return {"id": document.id, "public_id": document.public_id}
 
 
 @app.get("/documents/{document_id}/file")
@@ -4053,6 +4140,7 @@ def create_emergency_session(
         ip_address=ip,
         user_agent=ua,
         created_at=now.isoformat(),
+        public_id=generate_public_id("brg-em"),
     )
     db.add(session)
     db.flush()
@@ -4077,6 +4165,7 @@ def create_emergency_session(
     )
     return {
         "id": session.id,
+        "public_id": session.public_id,
         "patient_id": session.patient_id,
         "patient_name": patient.full_name,
         "bragi_code": cr.code if cr else None,
@@ -4139,6 +4228,25 @@ def get_active_emergency_sessions(
     )
     db.commit()
     return result
+
+
+@app.get("/emergency/sessions/by-public-id/{public_id}")
+def get_emergency_session_by_public_id(
+    public_id: str,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    session = (
+        db.query(models.EmergencyAccessSession)
+        .filter(
+            models.EmergencyAccessSession.public_id == public_id,
+            models.EmergencyAccessSession.emergency_user_id == current_user.id,
+        )
+        .first()
+    )
+    if not session:
+        raise HTTPException(status_code=404, detail="Session not found.")
+    return {"id": session.id, "public_id": session.public_id}
 
 
 @app.get("/emergency/access-sessions/{session_id}")
