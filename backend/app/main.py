@@ -2694,7 +2694,7 @@ def _contact_dict(c: models.EmergencyContact) -> dict:
     return {
         "id": c.id,
         "name": c.name,
-        "relationship": c.relationship,
+        "relationship": c.contact_relationship,
         "phone": c.phone,
         "notes": c.notes,
         "created_at": c.created_at,
@@ -2739,7 +2739,7 @@ def create_emergency_contact(
     contact = models.EmergencyContact(
         patient_id=patient.id,
         name=payload.name.strip(),
-        relationship=payload.relationship,
+        contact_relationship=payload.relationship,
         phone=payload.phone,
         notes=payload.notes,
         created_at=now_iso(),
@@ -2769,7 +2769,7 @@ def update_emergency_contact(
     if not payload.name.strip():
         raise HTTPException(status_code=400, detail="Contact name is required")
     contact.name = payload.name.strip()
-    contact.relationship = payload.relationship
+    contact.contact_relationship = payload.relationship
     contact.phone = payload.phone
     contact.notes = payload.notes
     db.commit()
@@ -4272,7 +4272,7 @@ def emergency_get_patient(
             {
                 "id": c.id,
                 "name": c.name,
-                "relationship": c.relationship,
+                "relationship": c.contact_relationship,
                 "phone": c.phone,
                 "notes": c.notes,
             }

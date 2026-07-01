@@ -349,7 +349,7 @@ class EmergencyContact(Base):
     id = Column(Integer, primary_key=True, index=True)
     patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
     name = Column(String, nullable=False)
-    relationship = Column(String, nullable=True)
+    contact_relationship = Column("relationship", String, nullable=True)
     phone = Column(String, nullable=True)
     notes = Column(String, nullable=True)
     created_at = Column(String, nullable=False)
