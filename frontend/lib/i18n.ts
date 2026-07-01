@@ -1124,6 +1124,18 @@ const en = {
   settingsEmergencyBadgeSessions: "30-minute sessions",
   settingsEmergencySaving: "Saving…",
   emergencySearchNoResults: "No matching emergency-searchable patient found.",
+  settingsEmergencyContactsTitle: "Emergency Contacts",
+  settingsEmergencyContactsDesc: "Add people emergency responders can reach on your behalf. These are shown to emergency workers during an active session.",
+  settingsContactAdd: "Add contact",
+  settingsContactName: "Name",
+  settingsContactRelationship: "Relationship (optional)",
+  settingsContactPhone: "Phone (optional)",
+  settingsContactNotes: "Notes (optional)",
+  settingsContactSave: "Save",
+  settingsContactDelete: "Remove",
+  settingsContactEdit: "Edit",
+  settingsContactMaxReached: "You can add up to 5 emergency contacts.",
+  settingsContactsEmpty: "No emergency contacts added yet.",
 } as const;
 
 const ro: Record<keyof typeof en, string> = {
@@ -2243,6 +2255,18 @@ const ro: Record<keyof typeof en, string> = {
   settingsEmergencyBadgeSessions: "Sesiuni de 30 de minute",
   settingsEmergencySaving: "Se salvează…",
   emergencySearchNoResults: "Nu a fost găsit niciun pacient disponibil pentru căutare în urgență.",
+  settingsEmergencyContactsTitle: "Contacte de urgență",
+  settingsEmergencyContactsDesc: "Adaugă persoane pe care echipele de urgență le pot contacta în locul tău. Acestea sunt afișate lucrătorilor de urgență în sesiunile active.",
+  settingsContactAdd: "Adaugă contact",
+  settingsContactName: "Nume",
+  settingsContactRelationship: "Relație (opțional)",
+  settingsContactPhone: "Telefon (opțional)",
+  settingsContactNotes: "Note (opțional)",
+  settingsContactSave: "Salvează",
+  settingsContactDelete: "Elimină",
+  settingsContactEdit: "Editează",
+  settingsContactMaxReached: "Poți adăuga până la 5 contacte de urgență.",
+  settingsContactsEmpty: "Nu au fost adăugate contacte de urgență.",
 };
 
 const dictionaries = {

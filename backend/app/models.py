@@ -40,6 +40,7 @@ class Patient(Base):
     access_requests = relationship("DoctorPatientAccessRequest", back_populates="patient")
     events = relationship("PatientEvent", back_populates="patient")
     medications = relationship("PatientMedication", back_populates="patient")
+    emergency_contacts = relationship("EmergencyContact", back_populates="patient", order_by="EmergencyContact.id")
 
 
 class DoctorPatientAccess(Base):
@@ -339,6 +340,20 @@ class PatientMedication(Base):
     patient = relationship("Patient", back_populates="medications")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id])
+
+
+class EmergencyContact(Base):
+    __tablename__ = "emergency_contacts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    name = Column(String, nullable=False)
+    relationship = Column(String, nullable=True)
+    phone = Column(String, nullable=True)
+    notes = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+
+    patient = relationship("Patient", back_populates="emergency_contacts")
 
 
 class EmergencyAccessSession(Base):

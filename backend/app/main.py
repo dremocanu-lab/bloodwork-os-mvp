@@ -105,6 +105,19 @@ def run_migrations():
         # Revocation fields on emergency sessions
         conn.execute(text("ALTER TABLE emergency_access_sessions ADD COLUMN IF NOT EXISTS revoked_at VARCHAR"))
         conn.execute(text("ALTER TABLE emergency_access_sessions ADD COLUMN IF NOT EXISTS revoked_reason VARCHAR"))
+        # Emergency contacts table
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS emergency_contacts (
+                id SERIAL PRIMARY KEY,
+                patient_id INTEGER NOT NULL REFERENCES patients(id),
+                name VARCHAR NOT NULL,
+                relationship VARCHAR,
+                phone VARCHAR,
+                notes VARCHAR,
+                created_at VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ec_patient ON emergency_contacts(patient_id)"))
         conn.commit()
 
 run_migrations()
@@ -2319,6 +2332,13 @@ class EmergencyAccessSettingRequest(BaseModel):
     emergency_search_enabled: bool
 
 
+class EmergencyContactPayload(BaseModel):
+    name: str
+    relationship: str | None = None
+    phone: str | None = None
+    notes: str | None = None
+
+
 @app.get("/my/settings/emergency-access")
 def get_emergency_access_setting(
     db: Session = Depends(get_db),
@@ -2398,6 +2418,113 @@ def update_emergency_access_setting(
         "emergency_search_enabled": bool(patient.emergency_search_enabled),
         "updated_at": patient.emergency_search_updated_at,
     }
+
+
+def _contact_dict(c: models.EmergencyContact) -> dict:
+    return {
+        "id": c.id,
+        "name": c.name,
+        "relationship": c.relationship,
+        "phone": c.phone,
+        "notes": c.notes,
+        "created_at": c.created_at,
+    }
+
+
+@app.get("/my/settings/emergency-contacts")
+def get_emergency_contacts(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    contacts = (
+        db.query(models.EmergencyContact)
+        .filter(models.EmergencyContact.patient_id == patient.id)
+        .order_by(models.EmergencyContact.id)
+        .all()
+    )
+    return [_contact_dict(c) for c in contacts]
+
+
+@app.post("/my/settings/emergency-contacts")
+def create_emergency_contact(
+    payload: EmergencyContactPayload,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    existing = (
+        db.query(models.EmergencyContact)
+        .filter(models.EmergencyContact.patient_id == patient.id)
+        .count()
+    )
+    if existing >= 5:
+        raise HTTPException(status_code=400, detail="Maximum of 5 emergency contacts allowed")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Contact name is required")
+    contact = models.EmergencyContact(
+        patient_id=patient.id,
+        name=payload.name.strip(),
+        relationship=payload.relationship,
+        phone=payload.phone,
+        notes=payload.notes,
+        created_at=now_iso(),
+    )
+    db.add(contact)
+    db.commit()
+    db.refresh(contact)
+    return _contact_dict(contact)
+
+
+@app.put("/my/settings/emergency-contacts/{contact_id}")
+def update_emergency_contact(
+    contact_id: int,
+    payload: EmergencyContactPayload,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    contact = db.query(models.EmergencyContact).filter(
+        models.EmergencyContact.id == contact_id,
+        models.EmergencyContact.patient_id == patient.id,
+    ).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    if not payload.name.strip():
+        raise HTTPException(status_code=400, detail="Contact name is required")
+    contact.name = payload.name.strip()
+    contact.relationship = payload.relationship
+    contact.phone = payload.phone
+    contact.notes = payload.notes
+    db.commit()
+    db.refresh(contact)
+    return _contact_dict(contact)
+
+
+@app.delete("/my/settings/emergency-contacts/{contact_id}")
+def delete_emergency_contact(
+    contact_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+):
+    patient = get_patient_for_user(db, current_user.id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found")
+    contact = db.query(models.EmergencyContact).filter(
+        models.EmergencyContact.id == contact_id,
+        models.EmergencyContact.patient_id == patient.id,
+    ).first()
+    if not contact:
+        raise HTTPException(status_code=404, detail="Contact not found")
+    db.delete(contact)
+    db.commit()
+    return {"ok": True}
 
 
 @app.get("/my/care-partners")
@@ -3822,6 +3949,13 @@ def emergency_get_patient(
     )
     db.commit()
 
+    emergency_contacts = (
+        db.query(models.EmergencyContact)
+        .filter(models.EmergencyContact.patient_id == patient_id)
+        .order_by(models.EmergencyContact.id)
+        .all()
+    )
+
     return {
         "patient": {
             "id": patient.id,
@@ -3864,6 +3998,16 @@ def emergency_get_patient(
             for doc in documents
         ],
         "latest_bloodwork": latest_bloodwork,
+        "emergency_contacts": [
+            {
+                "id": c.id,
+                "name": c.name,
+                "relationship": c.relationship,
+                "phone": c.phone,
+                "notes": c.notes,
+            }
+            for c in emergency_contacts
+        ],
     }
 
 

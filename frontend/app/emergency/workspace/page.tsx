@@ -57,6 +57,14 @@ type Medication = {
   is_uncertain: boolean;
 };
 
+type EmergencyContactEntry = {
+  id: number;
+  name: string;
+  relationship: string | null;
+  phone: string | null;
+  notes: string | null;
+};
+
 type PatientData = {
   patient: {
     id: number;
@@ -81,6 +89,7 @@ type PatientData = {
     lab_name: string | null;
     labs: Lab[];
   } | null;
+  emergency_contacts: EmergencyContactEntry[];
 };
 
 // ── Constants ─────────────────────────────────────────────────────────────────
@@ -741,12 +750,39 @@ function AllergiesSection() {
   );
 }
 
-function ContactsSection() {
+function ContactsSection({ contacts }: { contacts: EmergencyContactEntry[] }) {
   const { t } = useLanguage();
+  if (contacts.length === 0) {
+    return (
+      <Card>
+        <SectionLabel>{t("emergencyEmergencyContacts")}</SectionLabel>
+        <EmptyState text={t("emergencyNoContacts")} />
+      </Card>
+    );
+  }
   return (
     <Card>
       <SectionLabel>{t("emergencyEmergencyContacts")}</SectionLabel>
-      <EmptyState text={t("emergencyNoContacts")} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
+        {contacts.map((c) => (
+          <div
+            key={c.id}
+            style={{
+              padding: "10px 12px",
+              borderRadius: 10,
+              background: "var(--panel-2)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>{c.name}</div>
+            {(c.relationship || c.phone || c.notes) && (
+              <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.55 }}>
+                {[c.relationship, c.phone, c.notes].filter(Boolean).join(" · ")}
+              </div>
+            )}
+          </div>
+        ))}
+      </div>
     </Card>
   );
 }
@@ -1054,7 +1090,7 @@ function EmergencyPatientProfile({ session, data, sessionId }: { session: TabSes
       <IdentitySection data={data} session={session} />
       <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(260px, 1fr))", gap: 14 }}>
         <AllergiesSection />
-        <ContactsSection />
+        <ContactsSection contacts={data.emergency_contacts ?? []} />
       </div>
       <MedicationsSection medications={data.medications} />
       <LatestLabsSection bloodwork={data.latest_bloodwork} />

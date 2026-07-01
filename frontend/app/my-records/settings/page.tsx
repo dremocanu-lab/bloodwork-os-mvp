@@ -25,6 +25,17 @@ type EmergencyAccessSetting = {
   updated_at: string | null;
 };
 
+type EmergencyContact = {
+  id: number;
+  name: string;
+  relationship: string | null;
+  phone: string | null;
+  notes: string | null;
+  created_at: string;
+};
+
+const EMPTY_FORM = { name: "", relationship: "", phone: "", notes: "" };
+
 function formatDate(value?: string | null) {
   if (!value) return "—";
   const parsed = new Date(value);
@@ -116,6 +127,7 @@ export default function PatientSettingsPage() {
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [carePartnerCode, setCarePartnerCode] = useState<CarePartnerCodeResponse | null>(null);
   const [emergencyAccess, setEmergencyAccess] = useState<EmergencyAccessSetting | null>(null);
+  const [contacts, setContacts] = useState<EmergencyContact[]>([]);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
@@ -131,6 +143,14 @@ export default function PatientSettingsPage() {
   const [emergencySaving, setEmergencySaving] = useState(false);
   const [emergencyError, setEmergencyError] = useState("");
 
+  // Contact form state
+  const [showContactForm, setShowContactForm] = useState(false);
+  const [editingContact, setEditingContact] = useState<EmergencyContact | null>(null);
+  const [contactForm, setContactForm] = useState(EMPTY_FORM);
+  const [contactSaving, setContactSaving] = useState(false);
+  const [contactError, setContactError] = useState("");
+  const [deletingContactId, setDeletingContactId] = useState<number | null>(null);
+
   useEffect(() => {
     async function init() {
       try {
@@ -141,12 +161,14 @@ export default function PatientSettingsPage() {
         }
         setCurrentUser(meResponse.data);
 
-        const [codeResponse, emergencyResponse] = await Promise.all([
+        const [codeResponse, emergencyResponse, contactsResponse] = await Promise.all([
           api.get<CarePartnerCodeResponse>("/my/care-partner-code"),
           api.get<EmergencyAccessSetting>("/my/settings/emergency-access"),
+          api.get<EmergencyContact[]>("/my/settings/emergency-contacts"),
         ]);
         setCarePartnerCode(codeResponse.data);
         setEmergencyAccess(emergencyResponse.data);
+        setContacts(contactsResponse.data);
       } catch (err) {
         setError(getErrorMessage(err, "Could not load settings."));
       } finally {
@@ -211,6 +233,77 @@ export default function PatientSettingsPage() {
     }
   }
 
+  function openAddForm() {
+    setEditingContact(null);
+    setContactForm(EMPTY_FORM);
+    setContactError("");
+    setShowContactForm(true);
+  }
+
+  function openEditForm(c: EmergencyContact) {
+    setEditingContact(c);
+    setContactForm({
+      name: c.name,
+      relationship: c.relationship ?? "",
+      phone: c.phone ?? "",
+      notes: c.notes ?? "",
+    });
+    setContactError("");
+    setShowContactForm(true);
+  }
+
+  function cancelContactForm() {
+    setShowContactForm(false);
+    setEditingContact(null);
+    setContactForm(EMPTY_FORM);
+    setContactError("");
+  }
+
+  async function saveContact() {
+    if (!contactForm.name.trim()) {
+      setContactError("Name is required.");
+      return;
+    }
+    try {
+      setContactSaving(true);
+      setContactError("");
+      const payload = {
+        name: contactForm.name.trim(),
+        relationship: contactForm.relationship.trim() || null,
+        phone: contactForm.phone.trim() || null,
+        notes: contactForm.notes.trim() || null,
+      };
+      if (editingContact) {
+        const res = await api.put<EmergencyContact>(
+          `/my/settings/emergency-contacts/${editingContact.id}`,
+          payload
+        );
+        setContacts((prev) => prev.map((c) => (c.id === editingContact.id ? res.data : c)));
+      } else {
+        const res = await api.post<EmergencyContact>("/my/settings/emergency-contacts", payload);
+        setContacts((prev) => [...prev, res.data]);
+      }
+      cancelContactForm();
+    } catch (err) {
+      setContactError(getErrorMessage(err, "Could not save contact."));
+    } finally {
+      setContactSaving(false);
+    }
+  }
+
+  async function deleteContact(id: number) {
+    try {
+      setDeletingContactId(id);
+      await api.delete(`/my/settings/emergency-contacts/${id}`);
+      setContacts((prev) => prev.filter((c) => c.id !== id));
+      if (editingContact?.id === id) cancelContactForm();
+    } catch (err) {
+      setContactError(getErrorMessage(err, "Could not remove contact."));
+    } finally {
+      setDeletingContactId(null);
+    }
+  }
+
   if (loading) {
     return (
       <main className="app-page-bg" style={{ padding: 24 }}>
@@ -229,6 +322,7 @@ export default function PatientSettingsPage() {
 
   const deleteReady = deleteConfirmText.trim().toLowerCase() === "delete";
   const emergencyEnabled = emergencyAccess?.emergency_search_enabled ?? false;
+  const canAddContact = contacts.length < 5;
 
   return (
     <AppShell user={currentUser} title={t("patientSettings")}>
@@ -416,6 +510,115 @@ export default function PatientSettingsPage() {
           {emergencyAccess?.updated_at && (
             <div className="muted-text" style={{ fontSize: 11, marginTop: 12 }}>
               Last updated {formatDate(emergencyAccess.updated_at)}
+            </div>
+          )}
+        </div>
+
+        {/* Emergency Contacts */}
+        <div className="soft-card" style={{ padding: 24 }}>
+          <div style={{ marginBottom: 18 }}>
+            <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: 12, marginBottom: 6 }}>
+              <div className="section-title">{t("settingsEmergencyContactsTitle")}</div>
+              {canAddContact && !showContactForm && (
+                <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={openAddForm}>
+                  + {t("settingsContactAdd")}
+                </button>
+              )}
+            </div>
+            <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
+              {t("settingsEmergencyContactsDesc")}
+            </div>
+          </div>
+
+          {/* Contact list */}
+          {contacts.length === 0 && !showContactForm && (
+            <div
+              className="soft-card-tight"
+              style={{ padding: "14px 16px", background: "var(--panel-2)", marginBottom: 0 }}
+            >
+              <p className="muted-text" style={{ fontSize: 13, margin: 0 }}>{t("settingsContactsEmpty")}</p>
+            </div>
+          )}
+
+          {contacts.map((c) => (
+            <div key={c.id}>
+              {editingContact?.id === c.id && showContactForm ? (
+                <ContactForm
+                  form={contactForm}
+                  onChange={setContactForm}
+                  onSave={saveContact}
+                  onCancel={cancelContactForm}
+                  saving={contactSaving}
+                  error={contactError}
+                  t={t}
+                />
+              ) : (
+                <div
+                  style={{
+                    display: "flex",
+                    alignItems: "flex-start",
+                    gap: 12,
+                    padding: "12px 0",
+                    borderBottom: "1px solid var(--border)",
+                  }}
+                >
+                  <div style={{ flex: 1, minWidth: 0 }}>
+                    <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>{c.name}</div>
+                    <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.55 }}>
+                      {[c.relationship, c.phone, c.notes].filter(Boolean).join(" · ") || "—"}
+                    </div>
+                  </div>
+                  <div style={{ display: "flex", gap: 6, flexShrink: 0 }}>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ fontSize: 12, padding: "5px 12px" }}
+                      onClick={() => openEditForm(c)}
+                      disabled={showContactForm || deletingContactId !== null}
+                    >
+                      {t("settingsContactEdit")}
+                    </button>
+                    <button
+                      type="button"
+                      className="secondary-btn"
+                      style={{ fontSize: 12, padding: "5px 12px", color: "var(--danger-text)", borderColor: "var(--danger-border)" }}
+                      onClick={() => deleteContact(c.id)}
+                      disabled={deletingContactId === c.id || showContactForm}
+                    >
+                      {deletingContactId === c.id ? "…" : t("settingsContactDelete")}
+                    </button>
+                  </div>
+                </div>
+              )}
+            </div>
+          ))}
+
+          {/* Add form (when not editing an existing contact) */}
+          {showContactForm && !editingContact && (
+            <div style={{ marginTop: contacts.length > 0 ? 16 : 0 }}>
+              <ContactForm
+                form={contactForm}
+                onChange={setContactForm}
+                onSave={saveContact}
+                onCancel={cancelContactForm}
+                saving={contactSaving}
+                error={contactError}
+                t={t}
+              />
+            </div>
+          )}
+
+          {!canAddContact && !showContactForm && (
+            <div className="muted-text" style={{ fontSize: 12, marginTop: 12 }}>
+              {t("settingsContactMaxReached")}
+            </div>
+          )}
+
+          {canAddContact && !showContactForm && contacts.length > 0 && (
+            <div style={{ marginTop: 14 }}>
+              <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={openAddForm}>
+                + {t("settingsContactAdd")}
+              </button>
             </div>
           )}
         </div>
@@ -631,5 +834,96 @@ export default function PatientSettingsPage() {
         </div>
       )}
     </AppShell>
+  );
+}
+
+function ContactForm({
+  form,
+  onChange,
+  onSave,
+  onCancel,
+  saving,
+  error,
+  t,
+}: {
+  form: typeof EMPTY_FORM;
+  onChange: (f: typeof EMPTY_FORM) => void;
+  onSave: () => void;
+  onCancel: () => void;
+  saving: boolean;
+  error: string;
+  t: (k: string) => string;
+}) {
+  return (
+    <div
+      style={{
+        padding: "16px 18px",
+        borderRadius: 14,
+        border: "1px solid var(--border)",
+        background: "var(--panel-2)",
+        display: "grid",
+        gap: 10,
+      }}
+    >
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>{t("settingsContactName")} *</span>
+          <input
+            className="text-input"
+            value={form.name}
+            onChange={(e) => onChange({ ...form, name: e.target.value })}
+            placeholder="Full name"
+            disabled={saving}
+            autoFocus
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>{t("settingsContactRelationship")}</span>
+          <input
+            className="text-input"
+            value={form.relationship}
+            onChange={(e) => onChange({ ...form, relationship: e.target.value })}
+            placeholder="e.g. Spouse, Parent"
+            disabled={saving}
+          />
+        </label>
+      </div>
+      <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 10 }}>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>{t("settingsContactPhone")}</span>
+          <input
+            className="text-input"
+            value={form.phone}
+            onChange={(e) => onChange({ ...form, phone: e.target.value })}
+            placeholder="+40 700 000 000"
+            disabled={saving}
+            type="tel"
+          />
+        </label>
+        <label style={{ display: "grid", gap: 4 }}>
+          <span style={{ fontSize: 12, fontWeight: 700, color: "var(--muted)" }}>{t("settingsContactNotes")}</span>
+          <input
+            className="text-input"
+            value={form.notes}
+            onChange={(e) => onChange({ ...form, notes: e.target.value })}
+            placeholder="e.g. Available after 6pm"
+            disabled={saving}
+          />
+        </label>
+      </div>
+      {error && (
+        <div style={{ fontSize: 13, color: "var(--danger-text)", padding: "8px 12px", background: "var(--danger-bg)", borderRadius: 8, border: "1px solid var(--danger-border)" }}>
+          {error}
+        </div>
+      )}
+      <div style={{ display: "flex", gap: 8 }}>
+        <button type="button" className="primary-btn" style={{ fontSize: 13 }} onClick={onSave} disabled={saving}>
+          {saving ? "…" : t("settingsContactSave")}
+        </button>
+        <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={onCancel} disabled={saving}>
+          {t("cancel")}
+        </button>
+      </div>
+    </div>
   );
 }
