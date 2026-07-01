@@ -4,7 +4,18 @@ from datetime import UTC, datetime, timedelta
 from jose import JWTError, jwt
 from passlib.context import CryptContext
 
-SECRET_KEY = os.getenv("SECRET_KEY", "change-this-in-production-super-secret")
+_UNSAFE_DEFAULT = "change-this-in-production-super-secret"
+_ENV = os.getenv("ENVIRONMENT", "production").lower()
+
+SECRET_KEY = os.getenv("SECRET_KEY", "")
+
+if _ENV != "development":
+    if not SECRET_KEY or SECRET_KEY == _UNSAFE_DEFAULT or len(SECRET_KEY) < 32:
+        raise RuntimeError(
+            "SECRET_KEY environment variable is missing, uses the unsafe default, or is shorter than 32 characters. "
+            "Set a strong SECRET_KEY before starting the server."
+        )
+
 ALGORITHM = "HS256"
 ACCESS_TOKEN_EXPIRE_MINUTES = int(os.getenv("ACCESS_TOKEN_EXPIRE_MINUTES", "1440"))
 

@@ -4,6 +4,7 @@ import json
 import secrets
 import shutil
 import traceback
+import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -723,10 +724,11 @@ def process_upload_job(job_id: int):
         file_path = Path(job.saved_to)
 
         if not file_path.exists():
+            print(f"UPLOAD JOB {job_id}: saved file not found at {job.saved_to}")
             job.status = "error"
             job.progress = 100
             job.message = "Upload failed."
-            job.error = f"Uploaded file not found: {job.saved_to}"
+            job.error = "Uploaded file could not be located for processing."
             job.finished_at = now_iso()
             db.commit()
             return
@@ -897,9 +899,8 @@ def process_upload_job(job_id: int):
     except Exception as error:
         db.rollback()
 
-        error_text = traceback.format_exc()
-        print("UPLOAD JOB ERROR:")
-        print(error_text)
+        print(f"UPLOAD JOB {job_id} ERROR:")
+        print(traceback.format_exc())
 
         try:
             job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
@@ -908,13 +909,13 @@ def process_upload_job(job_id: int):
                 job.status = "error"
                 job.progress = 100
                 job.message = "Upload failed."
-                job.error = error_text
+                job.error = "An error occurred during document processing. Please try again."
                 job.finished_at = now_iso()
                 db.commit()
 
         except Exception:
             db.rollback()
-            print("FAILED TO SAVE UPLOAD JOB ERROR:")
+            print(f"UPLOAD JOB {job_id}: failed to persist error state:")
             print(traceback.format_exc())
 
     finally:
@@ -2032,8 +2033,9 @@ async def create_background_upload(
     patient = resolve_upload_patient(db, current_user, patient_id)
 
     original_filename = file.filename or "uploaded_document"
-    safe_filename = original_filename.replace("/", "_").replace("\\", "_")
-    saved_filename = f"{int(datetime.now(UTC).timestamp())}_{safe_filename}"
+    _suffix = Path(original_filename).suffix.lower()
+    _safe_ext = _suffix if re.match(r"^\.[a-z0-9]{1,10}$", _suffix) else ""
+    saved_filename = f"{uuid.uuid4().hex}{_safe_ext}"
     saved_path = UPLOAD_DIR / saved_filename
 
     try:

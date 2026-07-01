@@ -10,6 +10,7 @@ env/
 backend/uploads/
 backend/.env
 backend/.env.*
+!backend/.env.example
 *.sqlite3
 
 # Node / Next
@@ -20,6 +21,7 @@ frontend/out/
 # Env files
 .env
 .env.*
+!backend/.env.example
 frontend/.env.local
 frontend/.env.production
 frontend/.env.development
