@@ -1107,18 +1107,29 @@ export default function MyRecordsPage() {
     };
   }, [profile, allDocuments, sortedTrends]);
 
-  // Trend with the largest absolute delta — this is the most "newsworthy" value
+  // Abnormal trend with the largest percentage change between its two most recent readings
   const featuredTrend = useMemo(() => {
     if (!sortedTrends.length) return null;
-    const withDelta = sortedTrends.filter(
-      (t) => t.delta !== null && t.delta !== undefined && t.points.length > 1
-    );
-    if (withDelta.length) {
-      return withDelta.reduce((max, t) =>
-        Math.abs(t.delta!) > Math.abs(max.delta!) ? t : max
+    const abnormalWithPct = sortedTrends.filter((t) => {
+      const flag = (t.latest?.flag || "").toLowerCase().trim();
+      const isAbnormal = flag && !["normal", "null", "none", "ok", ""].includes(flag);
+      return (
+        isAbnormal &&
+        t.delta !== null &&
+        t.delta !== undefined &&
+        t.points.length > 1 &&
+        t.previous?.value != null &&
+        t.previous.value !== 0
       );
+    });
+    if (abnormalWithPct.length) {
+      return abnormalWithPct.reduce((max, t) => {
+        const pct = Math.abs(t.delta! / t.previous!.value);
+        const maxPct = Math.abs(max.delta! / max.previous!.value);
+        return pct > maxPct ? t : max;
+      });
     }
-    return sortedTrends[0];
+    return null;
   }, [sortedTrends]);
 
   const pinnedTrends = useMemo(
