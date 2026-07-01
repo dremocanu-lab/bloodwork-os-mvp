@@ -36,6 +36,7 @@ type Medication = {
   status: string;
   route_form: string | null;
   is_uncertain: boolean;
+  created_at?: string | null;
 };
 
 type PCPDoc = {
@@ -58,15 +59,26 @@ type Lab = {
   category: string | null;
 };
 
-type TimelineEvent = {
-  id: number;
+type PcpTimelineEvent = {
+  id: string;
+  event_type:
+    | "lab_panel"
+    | "discharge_summary"
+    | "imaging_report"
+    | "clinical_note"
+    | "medication_record"
+    | "hospitalization_record"
+    | "procedure_report"
+    | "pathology_report"
+    | "source_document"
+    | "other";
   title: string;
-  event_type: string;
-  status: string;
-  admitted_at: string;
-  discharged_at: string | null;
-  hospital_name: string | null;
-  department: string | null;
+  date: string;
+  source_id: number | null;
+  source_type: string | null;
+  summary: string | null;
+  route: string | null;
+  is_source_linked: boolean;
 };
 
 type NotePreview = {
@@ -98,7 +110,7 @@ type PCPSummary = {
     lab_name: string | null;
     labs: Lab[];
   } | null;
-  timeline_preview: TimelineEvent[];
+  pcp_timeline: PcpTimelineEvent[];
   recent_notes: NotePreview[];
 };
 
@@ -106,6 +118,15 @@ type PCPTab = {
   patientId: number;
   patientName: string;
 };
+
+type TimelineFilter =
+  | "all"
+  | "lab_panel"
+  | "discharge_summary"
+  | "imaging_report"
+  | "clinical_note"
+  | "medication_record"
+  | "hospitalization_record";
 
 // ── Storage ───────────────────────────────────────────────────────────────────
 
@@ -121,11 +142,9 @@ function loadTabsFromStorage(): PCPTab[] {
     return [];
   }
 }
-
 function saveTabsToStorage(tabs: PCPTab[]) {
   localStorage.setItem(TABS_KEY, JSON.stringify(tabs));
 }
-
 function loadActiveFromStorage(): number | null {
   try {
     const raw = localStorage.getItem(ACTIVE_KEY);
@@ -134,7 +153,6 @@ function loadActiveFromStorage(): number | null {
     return null;
   }
 }
-
 function saveActiveToStorage(id: number | null) {
   if (id === null) localStorage.removeItem(ACTIVE_KEY);
   else localStorage.setItem(ACTIVE_KEY, String(id));
@@ -149,80 +167,232 @@ function formatDate(val?: string | null) {
   return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
+function formatDateShort(val?: string | null) {
+  if (!val) return "—";
+  const d = new Date(val);
+  if (Number.isNaN(d.getTime())) return val;
+  return d.toLocaleDateString(undefined, { month: "short", day: "numeric", year: "numeric" });
+}
+
 function ageSex(p: { age?: string | null; sex?: string | null }) {
   return [p.age, p.sex].filter(Boolean).join(" · ") || null;
+}
+
+function initials(name: string) {
+  return name
+    .trim()
+    .split(/\s+/)
+    .map((w) => w[0])
+    .slice(0, 2)
+    .join("")
+    .toUpperCase();
 }
 
 function sectionLabel(section: string) {
   const map: Record<string, string> = {
     bloodwork: "Lab panel",
     discharge_summary: "Discharge summary",
-    scans: "Imaging report",
+    scans: "Imaging",
     notes: "Clinical note",
-    medications: "Medication document",
-    hospitalizations: "Hospitalization record",
+    medications: "Medication doc",
+    hospitalizations: "Hospitalization",
     other: "Source record",
   };
   return map[section] ?? "Source record";
 }
 
-function flagColor(flag: string | null): string {
-  if (!flag) return "var(--muted)";
+function flagIsOutOfRange(flag: string | null) {
+  if (!flag) return false;
   const f = flag.toLowerCase();
-  if (f === "h" || f === "high" || f === "l" || f === "low" || f === "a" || f === "abnormal") {
-    return "var(--danger-text)";
-  }
-  return "var(--muted)";
+  return f === "h" || f === "high" || f === "l" || f === "low" || f === "a" || f === "abnormal";
 }
 
-// ── Small reusable card pieces ────────────────────────────────────────────────
+function flagColor(flag: string | null): string {
+  return flagIsOutOfRange(flag) ? "var(--danger-text)" : "inherit";
+}
 
-function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
+// ── Event type config ─────────────────────────────────────────────────────────
+
+type EventConfig = {
+  label: string;
+  color: string;
+  bg: string;
+  dot: string;
+};
+
+function getEventConfig(eventType: string): EventConfig {
+  const configs: Record<string, EventConfig> = {
+    lab_panel: {
+      label: "Lab panel",
+      color: "#6d5dfc",
+      bg: "color-mix(in srgb, #6d5dfc 10%, var(--panel-2))",
+      dot: "#6d5dfc",
+    },
+    discharge_summary: {
+      label: "Discharge summary",
+      color: "#7c3aed",
+      bg: "color-mix(in srgb, #7c3aed 10%, var(--panel-2))",
+      dot: "#7c3aed",
+    },
+    imaging_report: {
+      label: "Imaging report",
+      color: "#0891b2",
+      bg: "color-mix(in srgb, #0891b2 10%, var(--panel-2))",
+      dot: "#0891b2",
+    },
+    clinical_note: {
+      label: "Clinical note",
+      color: "#059669",
+      bg: "color-mix(in srgb, #059669 10%, var(--panel-2))",
+      dot: "#059669",
+    },
+    medication_record: {
+      label: "Medication record",
+      color: "#d97706",
+      bg: "color-mix(in srgb, #d97706 10%, var(--panel-2))",
+      dot: "#d97706",
+    },
+    hospitalization_record: {
+      label: "Hospitalization",
+      color: "#dc2626",
+      bg: "color-mix(in srgb, #dc2626 10%, var(--panel-2))",
+      dot: "#dc2626",
+    },
+    procedure_report: {
+      label: "Procedure report",
+      color: "#0891b2",
+      bg: "color-mix(in srgb, #0891b2 10%, var(--panel-2))",
+      dot: "#0891b2",
+    },
+    pathology_report: {
+      label: "Pathology report",
+      color: "#7c3aed",
+      bg: "color-mix(in srgb, #7c3aed 10%, var(--panel-2))",
+      dot: "#7c3aed",
+    },
+    source_document: {
+      label: "Source record",
+      color: "var(--muted)",
+      bg: "var(--panel-2)",
+      dot: "var(--border)",
+    },
+  };
+  return configs[eventType] ?? configs.source_document;
+}
+
+function getEventTypeLabel(eventType: string, t: (k: string) => string): string {
+  const map: Record<string, string> = {
+    lab_panel: t("pcpEventTypeLab"),
+    discharge_summary: t("pcpEventTypeDischarge"),
+    imaging_report: t("pcpEventTypeImaging"),
+    clinical_note: t("pcpEventTypeNote"),
+    medication_record: t("pcpEventTypeMedication"),
+    hospitalization_record: t("pcpEventTypeHospitalization"),
+    procedure_report: t("pcpEventTypeProcedure"),
+    pathology_report: t("pcpEventTypePathology"),
+    source_document: t("pcpEventTypeSource"),
+  };
+  return map[eventType] ?? t("pcpEventTypeOther");
+}
+
+function filterMatchesEvent(filter: TimelineFilter, event: PcpTimelineEvent): boolean {
+  if (filter === "all") return true;
+  if (filter === "lab_panel") return event.event_type === "lab_panel";
+  if (filter === "discharge_summary")
+    return event.event_type === "discharge_summary";
+  if (filter === "imaging_report") return event.event_type === "imaging_report";
+  if (filter === "clinical_note") return event.event_type === "clinical_note";
+  if (filter === "medication_record")
+    return event.event_type === "medication_record";
+  if (filter === "hospitalization_record")
+    return event.event_type === "hospitalization_record";
+  return true;
+}
+
+// ── Small shared UI pieces ────────────────────────────────────────────────────
+
+function Card({
+  children,
+  style,
+  className,
+}: {
+  children: React.ReactNode;
+  style?: React.CSSProperties;
+  className?: string;
+}) {
   return (
-    <div className="soft-card" style={{ padding: "16px 20px", ...style }}>
+    <div className={`soft-card ${className ?? ""}`} style={{ padding: "18px 20px", ...style }}>
       {children}
     </div>
   );
 }
 
-function SectionLabel({ children }: { children: React.ReactNode }) {
+function CardTitle({
+  title,
+  subtitle,
+  action,
+}: {
+  title: string;
+  subtitle?: string;
+  action?: React.ReactNode;
+}) {
   return (
     <div
       style={{
-        fontSize: 11,
-        fontWeight: 900,
-        letterSpacing: "0.07em",
-        textTransform: "uppercase",
-        color: "var(--muted)",
-        marginBottom: 12,
+        display: "flex",
+        alignItems: "flex-start",
+        justifyContent: "space-between",
+        gap: 12,
+        marginBottom: subtitle ? 2 : 14,
       }}
     >
-      {children}
+      <div>
+        <div style={{ fontWeight: 900, fontSize: 14, letterSpacing: "-0.01em" }}>{title}</div>
+        {subtitle && (
+          <div className="muted-text" style={{ fontSize: 11, marginTop: 2, marginBottom: 12 }}>
+            {subtitle}
+          </div>
+        )}
+      </div>
+      {action && <div style={{ flexShrink: 0 }}>{action}</div>}
     </div>
   );
 }
 
-function EmptyRow({ text }: { text: string }) {
-  return <p className="muted-text" style={{ fontSize: 13, margin: 0 }}>{text}</p>;
-}
-
-function StatusPill({ label, color }: { label: string; color?: string }) {
+function Pill({
+  label,
+  color,
+  bg,
+}: {
+  label: string;
+  color?: string;
+  bg?: string;
+}) {
   return (
     <span
       style={{
         display: "inline-flex",
         alignItems: "center",
-        padding: "2px 8px",
+        padding: "2px 9px",
         borderRadius: 999,
         fontSize: 11,
-        fontWeight: 800,
-        background: "var(--panel-2)",
+        fontWeight: 700,
+        background: bg ?? "var(--panel-2)",
         border: "1px solid var(--border)",
         color: color ?? "var(--muted)",
+        whiteSpace: "nowrap",
       }}
     >
       {label}
     </span>
+  );
+}
+
+function EmptyState({ text }: { text: string }) {
+  return (
+    <p className="muted-text" style={{ fontSize: 13, margin: "8px 0 0" }}>
+      {text}
+    </p>
   );
 }
 
@@ -232,14 +402,7 @@ function PCPBlockedPage({ user }: { user: CurrentUser }) {
   const { t } = useLanguage();
   return (
     <AppShell user={user} title={t("pcpWorkspace")}>
-      <div
-        style={{
-          maxWidth: 480,
-          margin: "60px auto",
-          textAlign: "center",
-          padding: "0 24px",
-        }}
-      >
+      <div style={{ maxWidth: 480, margin: "60px auto", textAlign: "center", padding: "0 24px" }}>
         <div
           style={{
             width: 64,
@@ -281,6 +444,7 @@ function PCPTabBar({
   onClose,
   onAdd,
   maxReached,
+  patients,
 }: {
   tabs: PCPTab[];
   activeId: number | null;
@@ -288,17 +452,19 @@ function PCPTabBar({
   onClose: (id: number) => void;
   onAdd: () => void;
   maxReached: boolean;
+  patients: PCPPatient[];
 }) {
   const { t } = useLanguage();
+  const patientMap = new Map(patients.map((p) => [p.id, p]));
+
   return (
     <div
       style={{
         display: "flex",
         alignItems: "stretch",
-        gap: 4,
+        gap: 3,
         overflowX: "auto",
-        padding: "0 0 1px",
-        borderBottom: "2px solid var(--border)",
+        padding: "0 0 0",
         marginBottom: 20,
         scrollbarWidth: "none",
         msOverflowStyle: "none",
@@ -306,6 +472,8 @@ function PCPTabBar({
     >
       {tabs.map((tab) => {
         const active = tab.patientId === activeId;
+        const patient = patientMap.get(tab.patientId);
+        const meta = patient ? ageSex(patient) : null;
         return (
           <div
             key={tab.patientId}
@@ -313,17 +481,17 @@ function PCPTabBar({
               display: "flex",
               alignItems: "center",
               gap: 6,
-              padding: "9px 14px 9px 16px",
-              borderRadius: "10px 10px 0 0",
-              border: "1px solid var(--border)",
-              borderBottom: active ? "2px solid var(--primary)" : "1px solid transparent",
+              padding: "8px 12px 8px 14px",
+              borderRadius: 12,
+              border: `1.5px solid ${active ? "var(--primary)" : "var(--border)"}`,
               background: active
-                ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
-                : "var(--panel-2)",
+                ? "color-mix(in srgb, var(--primary) 9%, var(--panel))"
+                : "var(--panel)",
               cursor: "pointer",
               flexShrink: 0,
-              maxWidth: 200,
-              transition: "background 0.12s, border-color 0.12s",
+              maxWidth: 220,
+              transition: "border-color 0.12s, background 0.12s",
+              boxShadow: active ? "0 2px 12px color-mix(in srgb, var(--primary) 18%, transparent)" : "none",
             }}
           >
             <button
@@ -334,31 +502,50 @@ function PCPTabBar({
                 border: "none",
                 padding: 0,
                 cursor: "pointer",
-                fontWeight: active ? 800 : 600,
-                fontSize: 13,
-                color: active ? "var(--primary)" : "var(--foreground)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-                maxWidth: 140,
+                textAlign: "left",
+                minWidth: 0,
               }}
             >
-              {tab.patientName}
+              <div
+                style={{
+                  fontWeight: active ? 800 : 600,
+                  fontSize: 13,
+                  color: active ? "var(--primary)" : "var(--text)",
+                  whiteSpace: "nowrap",
+                  overflow: "hidden",
+                  textOverflow: "ellipsis",
+                  maxWidth: 150,
+                }}
+              >
+                {tab.patientName}
+              </div>
+              {meta && (
+                <div
+                  className="muted-text"
+                  style={{ fontSize: 10, marginTop: 1, whiteSpace: "nowrap" }}
+                >
+                  {meta}
+                </div>
+              )}
             </button>
             <button
               type="button"
-              onClick={(e) => { e.stopPropagation(); onClose(tab.patientId); }}
+              onClick={(e) => {
+                e.stopPropagation();
+                onClose(tab.patientId);
+              }}
               title={t("pcpCloseTab")}
               style={{
                 background: "none",
                 border: "none",
-                padding: "0 2px",
+                padding: "2px 3px",
                 cursor: "pointer",
                 color: "var(--muted)",
-                fontSize: 15,
+                fontSize: 16,
                 lineHeight: 1,
                 flexShrink: 0,
                 borderRadius: 4,
+                marginLeft: 2,
               }}
             >
               ×
@@ -371,14 +558,18 @@ function PCPTabBar({
         type="button"
         onClick={onAdd}
         disabled={maxReached}
-        title={maxReached ? `${t("pcpMaxTabsReached")} ${t("pcpMaxTabsBody")}` : t("pcpAddPatient")}
+        title={
+          maxReached
+            ? `${t("pcpMaxTabsReached")} ${t("pcpMaxTabsBody")}`
+            : t("pcpAddPatient")
+        }
         style={{
           display: "flex",
           alignItems: "center",
           gap: 5,
-          padding: "9px 14px",
-          borderRadius: "10px 10px 0 0",
-          border: "1px dashed var(--border)",
+          padding: "8px 14px",
+          borderRadius: 12,
+          border: "1.5px dashed var(--border)",
           background: "transparent",
           cursor: maxReached ? "not-allowed" : "pointer",
           flexShrink: 0,
@@ -387,6 +578,7 @@ function PCPTabBar({
           color: maxReached ? "var(--muted)" : "var(--primary)",
           opacity: maxReached ? 0.5 : 1,
           whiteSpace: "nowrap",
+          transition: "border-color 0.12s",
         }}
       >
         + {t("pcpAddPatient")}
@@ -411,17 +603,18 @@ function PCPPatientSelectPanel({
   const { t } = useLanguage();
   const [query, setQuery] = useState("");
 
-  const filtered = patients.filter((p) =>
-    p.full_name.toLowerCase().includes(query.toLowerCase()) ||
-    (p.patient_identifier ?? "").toLowerCase().includes(query.toLowerCase())
+  const filtered = patients.filter(
+    (p) =>
+      p.full_name.toLowerCase().includes(query.toLowerCase()) ||
+      (p.patient_identifier ?? "").toLowerCase().includes(query.toLowerCase())
   );
 
-  const openIds = new Set(openTabs.map((t) => t.patientId));
+  const openIds = new Set(openTabs.map((tab) => tab.patientId));
 
   return (
-    <div style={{ maxWidth: 640 }}>
+    <div style={{ maxWidth: 620 }}>
       <Card>
-        <SectionLabel>{t("pcpCurrentApprovedPatients")}</SectionLabel>
+        <CardTitle title={t("pcpCurrentApprovedPatients")} />
 
         {maxReached && (
           <div
@@ -446,12 +639,9 @@ function PCPPatientSelectPanel({
           style={{ marginBottom: 14 }}
         />
 
-        {patients.length === 0 && (
-          <EmptyRow text={t("pcpNoPatients")} />
-        )}
-
+        {patients.length === 0 && <EmptyState text={t("pcpNoPatients")} />}
         {patients.length > 0 && filtered.length === 0 && (
-          <EmptyRow text="No matching patients." />
+          <EmptyState text="No matching patients." />
         )}
 
         <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
@@ -467,7 +657,9 @@ function PCPPatientSelectPanel({
                   padding: "10px 14px",
                   borderRadius: 12,
                   border: "1px solid var(--border)",
-                  background: isOpen ? "color-mix(in srgb, var(--primary) 5%, var(--panel-2))" : "var(--panel-2)",
+                  background: isOpen
+                    ? "color-mix(in srgb, var(--primary) 5%, var(--panel-2))"
+                    : "var(--panel-2)",
                 }}
               >
                 <div
@@ -480,17 +672,19 @@ function PCPPatientSelectPanel({
                     display: "flex",
                     alignItems: "center",
                     justifyContent: "center",
-                    fontWeight: 950,
+                    fontWeight: 900,
                     fontSize: 14,
                     flexShrink: 0,
                   }}
                 >
-                  {p.full_name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
+                  {initials(p.full_name)}
                 </div>
                 <div style={{ flex: 1, minWidth: 0 }}>
                   <div style={{ fontWeight: 800, fontSize: 14 }}>{p.full_name}</div>
                   {ageSex(p) && (
-                    <div className="muted-text" style={{ fontSize: 12 }}>{ageSex(p)}</div>
+                    <div className="muted-text" style={{ fontSize: 12 }}>
+                      {ageSex(p)}
+                    </div>
                   )}
                 </div>
                 <button
@@ -500,14 +694,20 @@ function PCPPatientSelectPanel({
                   onClick={() => onOpen(p)}
                   disabled={maxReached && !isOpen}
                 >
-                  {isOpen ? "Switch to tab" : t("pcpAddPatient")}
+                  {isOpen ? t("pcpSwitchToTab") : t("pcpAddPatient")}
                 </button>
               </div>
             );
           })}
         </div>
 
-        <div style={{ marginTop: 16, paddingTop: 14, borderTop: "1px solid var(--border)" }}>
+        <div
+          style={{
+            marginTop: 16,
+            paddingTop: 14,
+            borderTop: "1px solid var(--border)",
+          }}
+        >
           <Link
             href="/patients/search"
             className="secondary-btn"
@@ -521,142 +721,551 @@ function PCPPatientSelectPanel({
   );
 }
 
-// ── PCP patient profile sections ──────────────────────────────────────────────
+// ── Patient hero card ─────────────────────────────────────────────────────────
 
-function OverviewSection({ summary, patientId }: { summary: PCPSummary; patientId: number }) {
+function PatientHeroCard({
+  summary,
+  patientId,
+}: {
+  summary: PCPSummary;
+  patientId: number;
+}) {
   const { t } = useLanguage();
   const p = summary.patient;
+  const careCtx = summary.care_context;
+
+  const contextColor =
+    careCtx === "active_admission"
+      ? "var(--danger-text)"
+      : careCtx === "past_admission"
+      ? "var(--warn-text)"
+      : "var(--success-text)";
+  const contextBg =
+    careCtx === "active_admission"
+      ? "var(--danger-bg)"
+      : careCtx === "past_admission"
+      ? "var(--warn-bg)"
+      : "var(--success-bg)";
+
   return (
-    <Card>
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
+    <Card
+      style={{
+        marginBottom: 18,
+        background: "linear-gradient(135deg, var(--panel) 0%, color-mix(in srgb, var(--primary) 3%, var(--panel)) 100%)",
+        borderLeft: "3px solid var(--primary)",
+      }}
+    >
+      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
+        {/* Avatar */}
         <div
           style={{
-            width: 52,
-            height: 52,
+            width: 56,
+            height: 56,
             borderRadius: 999,
             background: "var(--primary)",
             color: "#fff",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
-            fontWeight: 950,
-            fontSize: 18,
+            fontWeight: 900,
+            fontSize: 20,
             flexShrink: 0,
+            boxShadow: "0 4px 14px color-mix(in srgb, var(--primary) 30%, transparent)",
           }}
         >
-          {p.full_name.trim().split(/\s+/).map((w) => w[0]).slice(0, 2).join("").toUpperCase()}
+          {initials(p.full_name)}
         </div>
-        <div style={{ flex: 1, minWidth: 0 }}>
-          <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 4 }}>{p.full_name}</div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6, marginBottom: 8 }}>
-            {ageSex(p) && <StatusPill label={ageSex(p)!} />}
-            <StatusPill label={t("pcpActiveAccess")} color="var(--success-text)" />
-            <StatusPill label={summary.care_context_label} />
-          </div>
-          {p.patient_identifier && (
-            <div className="muted-text" style={{ fontSize: 12 }}>
-              ID: {p.patient_identifier}
-              {p.bragi_code ? ` · Bragi: ${p.bragi_code}` : ""}
-            </div>
-          )}
-        </div>
-      </div>
 
-      <div
-        style={{
-          display: "flex",
-          gap: 8,
-          flexWrap: "wrap",
-          marginTop: 18,
-          paddingTop: 14,
-          borderTop: "1px solid var(--border)",
-        }}
-      >
-        <Link
-          href={`/patients/${patientId}`}
-          className="primary-btn"
-          style={{ fontSize: 13, textDecoration: "none" }}
+        {/* Name + meta */}
+        <div style={{ flex: 1, minWidth: 200 }}>
+          <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em", marginBottom: 6 }}>
+            {p.full_name}
+          </div>
+          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
+            {ageSex(p) && <Pill label={ageSex(p)!} />}
+            <Pill
+              label={t("pcpActiveAccess")}
+              color="var(--success-text)"
+              bg="var(--success-bg)"
+            />
+            <Pill
+              label={summary.care_context_label}
+              color={contextColor}
+              bg={contextBg}
+            />
+            {p.bragi_code && (
+              <Pill label={`Bragi: ${p.bragi_code}`} color="var(--muted)" />
+            )}
+            {p.patient_identifier && (
+              <Pill label={`ID: ${p.patient_identifier}`} color="var(--muted)" />
+            )}
+          </div>
+        </div>
+
+        {/* Quick actions */}
+        <div
+          style={{
+            display: "flex",
+            gap: 8,
+            flexWrap: "wrap",
+            alignItems: "center",
+          }}
         >
-          {t("pcpOpenFullChart")}
-        </Link>
-        <Link
-          href={`/patients/${patientId}/notes/new`}
-          className="secondary-btn"
-          style={{ fontSize: 13, textDecoration: "none" }}
-        >
-          {t("pcpAddNote")}
-        </Link>
-        <Link
-          href={`/patients/${patientId}/upload`}
-          className="secondary-btn"
-          style={{ fontSize: 13, textDecoration: "none" }}
-        >
-          {t("pcpUploadDocument")}
-        </Link>
-        <Link
-          href={`/patients/${patientId}/medications/list`}
-          className="secondary-btn"
-          style={{ fontSize: 13, textDecoration: "none" }}
-        >
-          {t("pcpViewMedications")}
-        </Link>
-        <Link
-          href={`/patients/${patientId}/timeline`}
-          className="secondary-btn"
-          style={{ fontSize: 13, textDecoration: "none" }}
-        >
-          {t("pcpViewTimeline")}
-        </Link>
+          <Link
+            href={`/patients/${patientId}`}
+            className="primary-btn"
+            style={{ fontSize: 13, textDecoration: "none" }}
+          >
+            {t("pcpOpenFullChart")}
+          </Link>
+          <Link
+            href={`/patients/${patientId}/notes/new`}
+            className="secondary-btn"
+            style={{ fontSize: 13, textDecoration: "none" }}
+          >
+            {t("pcpAddNote")}
+          </Link>
+          <Link
+            href={`/patients/${patientId}/upload`}
+            className="secondary-btn"
+            style={{ fontSize: 13, textDecoration: "none" }}
+          >
+            {t("pcpUploadDocument")}
+          </Link>
+          <Link
+            href={`/patients/${patientId}/timeline`}
+            className="secondary-btn"
+            style={{ fontSize: 13, textDecoration: "none" }}
+          >
+            {t("pcpViewTimeline")}
+          </Link>
+        </div>
       </div>
     </Card>
   );
 }
 
-function MedicationsSection({ medications, patientId }: { medications: Medication[]; patientId: number }) {
+// ── Timeline card ─────────────────────────────────────────────────────────────
+
+const TIMELINE_PAGE_SIZE = 10;
+
+const FILTERS: { key: TimelineFilter; labelKey: string }[] = [
+  { key: "all", labelKey: "pcpAllEvents" },
+  { key: "lab_panel", labelKey: "pcpLabsFilter" },
+  { key: "discharge_summary", labelKey: "pcpDocumentsFilter" },
+  { key: "imaging_report", labelKey: "pcpImagingFilter" },
+  { key: "clinical_note", labelKey: "pcpNotesFilter" },
+  { key: "medication_record", labelKey: "pcpMedicationsFilter" },
+  { key: "hospitalization_record", labelKey: "pcpHospitalizationsFilter" },
+];
+
+function TimelineCard({
+  events,
+  patientId,
+}: {
+  events: PcpTimelineEvent[];
+  patientId: number;
+}) {
   const { t } = useLanguage();
-  const active = medications.filter((m) => m.status === "active");
-  const other = medications.filter((m) => m.status !== "active");
-  const shown = [...active, ...other].slice(0, 8);
+  const [activeFilter, setActiveFilter] = useState<TimelineFilter>("all");
+  const [showAll, setShowAll] = useState(false);
+
+  const filtered = events.filter((e) => filterMatchesEvent(activeFilter, e));
+  const shown = showAll ? filtered : filtered.slice(0, TIMELINE_PAGE_SIZE);
+  const hasMore = filtered.length > TIMELINE_PAGE_SIZE && !showAll;
+
+  return (
+    <Card style={{ marginBottom: 14 }}>
+      <CardTitle
+        title={t("pcpTimeline")}
+        subtitle={t("pcpTimelineSubtitle")}
+        action={
+          <Link
+            href={`/patients/${patientId}/timeline`}
+            className="secondary-btn"
+            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+          >
+            {t("pcpOpenFullTimeline")} →
+          </Link>
+        }
+      />
+
+      {/* Filter chips */}
+      <div
+        style={{
+          display: "flex",
+          gap: 6,
+          flexWrap: "wrap",
+          marginBottom: 18,
+        }}
+      >
+        {FILTERS.map((f) => {
+          const count =
+            f.key === "all"
+              ? events.length
+              : events.filter((e) => filterMatchesEvent(f.key, e)).length;
+          if (count === 0 && f.key !== "all") return null;
+          const active = activeFilter === f.key;
+          return (
+            <button
+              key={f.key}
+              type="button"
+              onClick={() => {
+                setActiveFilter(f.key);
+                setShowAll(false);
+              }}
+              style={{
+                padding: "4px 12px",
+                borderRadius: 999,
+                border: `1.5px solid ${active ? "var(--primary)" : "var(--border)"}`,
+                background: active
+                  ? "color-mix(in srgb, var(--primary) 10%, var(--panel))"
+                  : "var(--panel-2)",
+                color: active ? "var(--primary)" : "var(--muted)",
+                fontWeight: active ? 800 : 600,
+                fontSize: 12,
+                cursor: "pointer",
+                whiteSpace: "nowrap",
+                transition: "border-color 0.12s, background 0.12s",
+              }}
+            >
+              {t(f.labelKey)} {count > 0 && <span style={{ opacity: 0.7 }}>{count}</span>}
+            </button>
+          );
+        })}
+      </div>
+
+      {/* Timeline list */}
+      {filtered.length === 0 ? (
+        <EmptyState text={t("pcpNoTimelineEvents")} />
+      ) : (
+        <div style={{ position: "relative" }}>
+          {/* Vertical rail */}
+          <div
+            style={{
+              position: "absolute",
+              left: 11,
+              top: 8,
+              bottom: 8,
+              width: 2,
+              background: "var(--border)",
+              borderRadius: 1,
+            }}
+          />
+
+          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
+            {shown.map((ev, idx) => {
+              const cfg = getEventConfig(ev.event_type);
+              const isLast = idx === shown.length - 1;
+              return (
+                <div
+                  key={ev.id}
+                  style={{
+                    display: "flex",
+                    gap: 16,
+                    paddingBottom: isLast ? 0 : 16,
+                    position: "relative",
+                  }}
+                >
+                  {/* Dot */}
+                  <div style={{ flexShrink: 0, width: 24, display: "flex", justifyContent: "center" }}>
+                    <div
+                      style={{
+                        width: 12,
+                        height: 12,
+                        borderRadius: 999,
+                        background: cfg.dot,
+                        border: "2px solid var(--panel)",
+                        boxShadow: `0 0 0 2px ${cfg.dot}`,
+                        marginTop: 6,
+                        zIndex: 1,
+                        position: "relative",
+                      }}
+                    />
+                  </div>
+
+                  {/* Content */}
+                  <div
+                    style={{
+                      flex: 1,
+                      minWidth: 0,
+                      padding: "10px 14px",
+                      borderRadius: 12,
+                      border: "1px solid var(--border)",
+                      background: "var(--panel-2)",
+                    }}
+                  >
+                    <div
+                      style={{
+                        display: "flex",
+                        alignItems: "flex-start",
+                        gap: 8,
+                        flexWrap: "wrap",
+                        marginBottom: 4,
+                      }}
+                    >
+                      <span
+                        style={{
+                          padding: "1px 8px",
+                          borderRadius: 999,
+                          fontSize: 10,
+                          fontWeight: 800,
+                          color: cfg.color,
+                          background: cfg.bg,
+                          border: `1px solid ${cfg.color}33`,
+                          whiteSpace: "nowrap",
+                          letterSpacing: "0.02em",
+                        }}
+                      >
+                        {getEventTypeLabel(ev.event_type, t)}
+                      </span>
+                      {ev.is_source_linked && (
+                        <span
+                          style={{
+                            padding: "1px 8px",
+                            borderRadius: 999,
+                            fontSize: 10,
+                            fontWeight: 700,
+                            color: "var(--success-text)",
+                            background: "var(--success-bg)",
+                            border: "1px solid #bbf7d033",
+                          }}
+                        >
+                          {t("pcpSourceLinkedEvent")}
+                        </span>
+                      )}
+                      <span className="muted-text" style={{ fontSize: 11, marginLeft: "auto" }}>
+                        {formatDateShort(ev.date)}
+                      </span>
+                    </div>
+
+                    <div
+                      style={{
+                        fontWeight: 700,
+                        fontSize: 13,
+                        marginBottom: ev.summary ? 4 : 0,
+                        overflow: "hidden",
+                        textOverflow: "ellipsis",
+                        whiteSpace: "nowrap",
+                      }}
+                      title={ev.title}
+                    >
+                      {ev.title}
+                    </div>
+
+                    {ev.summary && (
+                      <p
+                        className="muted-text"
+                        style={{ fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}
+                      >
+                        {ev.summary}
+                      </p>
+                    )}
+
+                    {ev.route && (
+                      <Link
+                        href={ev.route}
+                        className="secondary-btn"
+                        style={{
+                          fontSize: 11,
+                          padding: "3px 10px",
+                          textDecoration: "none",
+                          display: "inline-flex",
+                        }}
+                      >
+                        {t("pcpOpenSource")}
+                      </Link>
+                    )}
+                  </div>
+                </div>
+              );
+            })}
+          </div>
+
+          {hasMore && (
+            <div style={{ marginTop: 14, paddingLeft: 40 }}>
+              <button
+                type="button"
+                className="secondary-btn"
+                style={{ fontSize: 12 }}
+                onClick={() => setShowAll(true)}
+              >
+                {t("pcpShowMoreEvents")} ({filtered.length - TIMELINE_PAGE_SIZE} more)
+              </button>
+            </div>
+          )}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── Recent source records card ────────────────────────────────────────────────
+
+function RecentRecordsCard({
+  docs,
+  patientId,
+}: {
+  docs: PCPDoc[];
+  patientId: number;
+}) {
+  const { t } = useLanguage();
+  const shown = docs.slice(0, 5);
 
   return (
     <Card>
-      <SectionLabel>{t("pcpViewMedications")}</SectionLabel>
-      {shown.length === 0 && <EmptyRow text={t("pcpNoMedications")} />}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {shown.map((m) => (
-          <div
-            key={m.id}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--panel-2)",
-              display: "flex",
-              alignItems: "flex-start",
-              gap: 10,
-            }}
+      <CardTitle
+        title={t("pcpRecentRecords")}
+        action={
+          <Link
+            href={`/patients/${patientId}`}
+            className="secondary-btn"
+            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
           >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 800, fontSize: 13 }}>{m.name}</div>
-              <div className="muted-text" style={{ fontSize: 12 }}>
-                {[m.dose_strength, m.frequency, m.route_form].filter(Boolean).join(" · ") || "—"}
+            {t("pcpViewAllDocuments")} →
+          </Link>
+        }
+      />
+
+      {shown.length === 0 ? (
+        <EmptyState text={t("pcpNoRecentRecords")} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {shown.map((doc) => (
+            <div
+              key={doc.id}
+              style={{
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "var(--panel-2)",
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: 13,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {doc.report_name || doc.lab_name || doc.filename}
+                </div>
+                <div className="muted-text" style={{ fontSize: 11 }}>
+                  {sectionLabel(doc.section)} · {formatDate(doc.test_date)}
+                  {doc.is_verified ? " · Verified" : ""}
+                </div>
               </div>
+              <Link
+                href={`/documents/${doc.id}`}
+                className="secondary-btn"
+                style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", flexShrink: 0 }}
+              >
+                {t("pcpOpenDocument")}
+              </Link>
             </div>
-            <StatusPill
-              label={m.status}
-              color={m.status === "active" ? "var(--success-text)" : "var(--muted)"}
-            />
-          </div>
-        ))}
-      </div>
-      {medications.length > 8 && (
-        <div style={{ marginTop: 10 }}>
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── Medications card ──────────────────────────────────────────────────────────
+
+function MedicationsCard({
+  medications,
+  patientId,
+}: {
+  medications: Medication[];
+  patientId: number;
+}) {
+  const { t } = useLanguage();
+  const active = medications.filter((m) => m.status === "active");
+  const other = medications.filter((m) => m.status !== "active");
+  const ordered = [...active, ...other];
+  const shown = ordered.slice(0, 4);
+
+  return (
+    <Card style={{ marginBottom: 12 }}>
+      <CardTitle
+        title={t("pcpViewMedications")}
+        subtitle="Patient-entered medication records."
+        action={
           <Link
             href={`/patients/${patientId}/medications/list`}
             className="secondary-btn"
-            style={{ fontSize: 12, textDecoration: "none" }}
+            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
           >
-            View all {medications.length} medications
+            {t("pcpViewAllMedications")}
+          </Link>
+        }
+      />
+
+      {shown.length === 0 ? (
+        <EmptyState text={t("pcpNoMedications")} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+          {shown.map((m) => (
+            <div
+              key={m.id}
+              style={{
+                padding: "8px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "var(--panel-2)",
+                display: "flex",
+                alignItems: "center",
+                gap: 10,
+              }}
+            >
+              <div style={{ flex: 1, minWidth: 0 }}>
+                <div
+                  style={{
+                    fontWeight: 800,
+                    fontSize: 13,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {m.name}
+                </div>
+                <div
+                  className="muted-text"
+                  style={{
+                    fontSize: 11,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {[m.dose_strength, m.frequency, m.route_form].filter(Boolean).join(" · ") || "—"}
+                </div>
+              </div>
+              <Pill
+                label={m.status}
+                color={m.status === "active" ? "var(--success-text)" : "var(--muted)"}
+                bg={m.status === "active" ? "var(--success-bg)" : "var(--panel-2)"}
+              />
+            </div>
+          ))}
+        </div>
+      )}
+
+      {medications.length > 4 && (
+        <div className="muted-text" style={{ fontSize: 11, marginTop: 8 }}>
+          +{medications.length - 4} more ·{" "}
+          <Link
+            href={`/patients/${patientId}/medications/list`}
+            style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}
+          >
+            {t("pcpViewAllMedications")}
           </Link>
         </div>
       )}
@@ -664,239 +1273,313 @@ function MedicationsSection({ medications, patientId }: { medications: Medicatio
   );
 }
 
-function LatestLabsSection({ labs }: { labs: PCPSummary["latest_labs"] }) {
+// ── Latest labs card ──────────────────────────────────────────────────────────
+
+function LatestLabsCard({ labs }: { labs: PCPSummary["latest_labs"] }) {
   const { t } = useLanguage();
+
   if (!labs || labs.labs.length === 0) {
     return (
-      <Card>
-        <SectionLabel>{t("pcpLatestLabs")}</SectionLabel>
-        <EmptyRow text={t("pcpNoLabs")} />
+      <Card style={{ marginBottom: 12 }}>
+        <CardTitle title={t("pcpLatestLabs")} />
+        <EmptyState text={t("pcpNoLabs")} />
       </Card>
     );
   }
 
-  const shown = labs.labs.slice(0, 12);
-  const hasFlag = shown.some((l) => l.flag && l.flag.toLowerCase() !== "n");
+  const shown = labs.labs.slice(0, 8);
+  const hasFlag = shown.some((l) => flagIsOutOfRange(l.flag));
 
   return (
-    <Card>
-      <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 12 }}>
-        <div style={{ fontSize: 11, fontWeight: 900, letterSpacing: "0.07em", textTransform: "uppercase", color: "var(--muted)" }}>
-          {t("pcpLatestLabs")}
-        </div>
-        <div className="muted-text" style={{ fontSize: 11 }}>
-          {labs.lab_name || "Source document"} · {formatDate(labs.test_date)}
-        </div>
-      </div>
+    <Card style={{ marginBottom: 12 }}>
+      <CardTitle
+        title={t("pcpLatestLabs")}
+        subtitle={`${labs.lab_name || "Source document"} · ${formatDate(labs.test_date)}`}
+        action={
+          <Link
+            href={`/documents/${labs.document_id}`}
+            className="secondary-btn"
+            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
+          >
+            {t("pcpOpenLabPanel")}
+          </Link>
+        }
+      />
+
       {hasFlag && (
         <div
           className="muted-text"
           style={{
             fontSize: 11,
-            padding: "6px 10px",
+            padding: "5px 10px",
             borderRadius: 8,
             background: "var(--panel-2)",
             border: "1px solid var(--border)",
             marginBottom: 10,
           }}
         >
-          Out-of-range value present · Reference range from source document · Source-linked
+          {t("pcpOutOfRange")} · {t("pcpRefRangeSource")}
         </div>
       )}
+
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(180px, 1fr))",
-          gap: 8,
+          gridTemplateColumns: "repeat(2, 1fr)",
+          gap: 6,
         }}
       >
-        {shown.map((lab, i) => (
-          <div
-            key={i}
-            style={{
-              padding: "8px 10px",
-              borderRadius: 10,
-              border: `1px solid ${lab.flag && lab.flag.toLowerCase() !== "n" ? "color-mix(in srgb, var(--danger-text) 30%, transparent)" : "var(--border)"}`,
-              background: lab.flag && lab.flag.toLowerCase() !== "n" ? "color-mix(in srgb, var(--danger-bg) 30%, var(--panel-2))" : "var(--panel-2)",
-            }}
-          >
-            <div className="muted-text" style={{ fontSize: 11, marginBottom: 2 }}>{lab.name || "—"}</div>
-            <div style={{ fontWeight: 900, fontSize: 15, color: flagColor(lab.flag) }}>
-              {lab.value ?? "—"} <span style={{ fontWeight: 400, fontSize: 11 }}>{lab.unit ?? ""}</span>
+        {shown.map((lab, i) => {
+          const oor = flagIsOutOfRange(lab.flag);
+          return (
+            <div
+              key={i}
+              style={{
+                padding: "7px 10px",
+                borderRadius: 9,
+                border: `1px solid ${oor ? "color-mix(in srgb, var(--danger-text) 25%, transparent)" : "var(--border)"}`,
+                background: oor
+                  ? "color-mix(in srgb, var(--danger-bg) 40%, var(--panel-2))"
+                  : "var(--panel-2)",
+              }}
+            >
+              <div className="muted-text" style={{ fontSize: 10, marginBottom: 1 }}>
+                {lab.name || "—"}
+              </div>
+              <div
+                style={{
+                  fontWeight: 900,
+                  fontSize: 14,
+                  color: flagColor(lab.flag),
+                  lineHeight: 1.2,
+                }}
+              >
+                {lab.value ?? "—"}{" "}
+                <span style={{ fontWeight: 400, fontSize: 10, color: "var(--muted)" }}>
+                  {lab.unit ?? ""}
+                </span>
+              </div>
+              {lab.reference_range && (
+                <div className="muted-text" style={{ fontSize: 9, marginTop: 2 }}>
+                  {lab.reference_range}
+                </div>
+              )}
             </div>
-            {lab.reference_range && (
-              <div className="muted-text" style={{ fontSize: 10, marginTop: 2 }}>{lab.reference_range}</div>
-            )}
-          </div>
-        ))}
+          );
+        })}
       </div>
-      {labs.labs.length > 12 && (
-        <div className="muted-text" style={{ fontSize: 12, marginTop: 10 }}>
-          +{labs.labs.length - 12} more in source document
+
+      {labs.labs.length > 8 && (
+        <div className="muted-text" style={{ fontSize: 11, marginTop: 8 }}>
+          +{labs.labs.length - 8} {t("pcpMoreInSource")} ·{" "}
+          <Link
+            href={`/documents/${labs.document_id}`}
+            style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}
+          >
+            {t("pcpOpenLabPanel")}
+          </Link>
         </div>
       )}
-      <div style={{ marginTop: 12 }}>
-        <Link
-          href={`/documents/${labs.document_id}`}
-          className="secondary-btn"
-          style={{ fontSize: 12, textDecoration: "none" }}
-        >
-          {t("pcpOpenDocument")}
-        </Link>
-      </div>
     </Card>
   );
 }
 
-function RecentRecordsSection({ docs, patientId }: { docs: PCPDoc[]; patientId: number }) {
+// ── Notes card ────────────────────────────────────────────────────────────────
+
+function NotesCard({
+  notes,
+  patientId,
+}: {
+  notes: NotePreview[];
+  patientId: number;
+}) {
   const { t } = useLanguage();
+  const shown = notes.slice(0, 3);
+
   return (
-    <Card>
-      <SectionLabel>{t("pcpRecentRecords")}</SectionLabel>
-      {docs.length === 0 && <EmptyRow text={t("pcpNoRecentRecords")} />}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {docs.map((doc) => (
-          <div
-            key={doc.id}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 12,
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--panel-2)",
-            }}
+    <Card style={{ marginBottom: 12 }}>
+      <CardTitle
+        title={t("pcpNotes")}
+        action={
+          <Link
+            href={`/patients/${patientId}/notes/new`}
+            className="secondary-btn"
+            style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none" }}
           >
-            <div style={{ flex: 1, minWidth: 0 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, marginBottom: 2 }}>
-                {doc.report_name || doc.lab_name || doc.filename}
-              </div>
-              <div className="muted-text" style={{ fontSize: 11 }}>
-                {sectionLabel(doc.section)} · {formatDate(doc.test_date)}
-                {doc.is_verified ? " · Verified" : ""}
-              </div>
-            </div>
-            <Link
-              href={`/documents/${doc.id}`}
-              className="secondary-btn"
-              style={{ fontSize: 12, padding: "5px 12px", textDecoration: "none", flexShrink: 0 }}
+            + {t("pcpAddNote")}
+          </Link>
+        }
+      />
+
+      {shown.length === 0 ? (
+        <EmptyState text={t("pcpNoNotes")} />
+      ) : (
+        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+          {shown.map((n) => (
+            <div
+              key={n.id}
+              style={{
+                padding: "9px 12px",
+                borderRadius: 10,
+                border: "1px solid var(--border)",
+                background: "var(--panel-2)",
+              }}
             >
-              {t("pcpOpenDocument")}
-            </Link>
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 14 }}>
-        <Link
-          href={`/patients/${patientId}`}
-          className="secondary-btn"
-          style={{ fontSize: 12, textDecoration: "none" }}
-        >
-          {t("pcpOpenFullChart")} →
-        </Link>
-      </div>
-    </Card>
-  );
-}
-
-function TimelinePreviewSection({ events, patientId }: { events: TimelineEvent[]; patientId: number }) {
-  const { t } = useLanguage();
-  return (
-    <Card>
-      <SectionLabel>{t("pcpTimelinePreview")}</SectionLabel>
-      {events.length === 0 && <EmptyRow text={t("pcpNoTimeline")} />}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {events.map((e) => (
-          <div
-            key={e.id}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--panel-2)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 2 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, flex: 1, minWidth: 0 }}>{e.title}</div>
-              <StatusPill
-                label={e.status}
-                color={e.status === "active" ? "var(--success-text)" : "var(--muted)"}
-              />
-            </div>
-            <div className="muted-text" style={{ fontSize: 12 }}>
-              {formatDate(e.admitted_at)}
-              {e.discharged_at ? ` → ${formatDate(e.discharged_at)}` : ""}
-              {e.hospital_name ? ` · ${e.hospital_name}` : ""}
-            </div>
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 14 }}>
-        <Link
-          href={`/patients/${patientId}/timeline`}
-          className="secondary-btn"
-          style={{ fontSize: 12, textDecoration: "none" }}
-        >
-          {t("pcpOpenFullTimeline")} →
-        </Link>
-      </div>
-    </Card>
-  );
-}
-
-function NotesSection({ notes, patientId }: { notes: NotePreview[]; patientId: number }) {
-  const { t } = useLanguage();
-  return (
-    <Card>
-      <SectionLabel>{t("pcpNotes")}</SectionLabel>
-      {notes.length === 0 && <EmptyRow text={t("pcpNoNotes")} />}
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        {notes.map((n) => (
-          <div
-            key={n.id}
-            style={{
-              padding: "10px 12px",
-              borderRadius: 10,
-              border: "1px solid var(--border)",
-              background: "var(--panel-2)",
-            }}
-          >
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 4 }}>
-              <div style={{ fontWeight: 700, fontSize: 13, flex: 1, minWidth: 0 }}>
-                {n.report_name || n.filename}
+              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
+                <div
+                  style={{
+                    fontWeight: 700,
+                    fontSize: 13,
+                    flex: 1,
+                    minWidth: 0,
+                    overflow: "hidden",
+                    textOverflow: "ellipsis",
+                    whiteSpace: "nowrap",
+                  }}
+                >
+                  {n.report_name || n.filename}
+                </div>
+                <div className="muted-text" style={{ fontSize: 10, flexShrink: 0 }}>
+                  {formatDate(n.created_at)}
+                </div>
               </div>
-              <div className="muted-text" style={{ fontSize: 11, flexShrink: 0 }}>{formatDate(n.created_at)}</div>
-            </div>
-            {n.note_preview && (
-              <p className="muted-text" style={{ fontSize: 12, margin: 0, lineHeight: 1.5 }}>
-                {n.note_preview}{n.note_preview.length >= 200 ? "…" : ""}
-              </p>
-            )}
-            <div style={{ marginTop: 8 }}>
+              {n.note_preview && (
+                <p
+                  className="muted-text"
+                  style={{
+                    fontSize: 11,
+                    margin: "0 0 6px",
+                    lineHeight: 1.5,
+                    display: "-webkit-box",
+                    WebkitLineClamp: 2,
+                    WebkitBoxOrient: "vertical",
+                    overflow: "hidden",
+                  } as React.CSSProperties}
+                >
+                  {n.note_preview}
+                </p>
+              )}
               <Link
                 href={`/documents/${n.id}`}
                 className="secondary-btn"
-                style={{ fontSize: 12, padding: "4px 10px", textDecoration: "none" }}
+                style={{ fontSize: 10, padding: "3px 9px", textDecoration: "none" }}
               >
                 {t("pcpOpenNote")}
               </Link>
             </div>
-          </div>
-        ))}
-      </div>
-      <div style={{ marginTop: 14 }}>
-        <Link
-          href={`/patients/${patientId}/notes/new`}
-          className="secondary-btn"
-          style={{ fontSize: 12, textDecoration: "none" }}
+          ))}
+        </div>
+      )}
+    </Card>
+  );
+}
+
+// ── Care context card ─────────────────────────────────────────────────────────
+
+function CareContextCard({ summary }: { summary: PCPSummary }) {
+  const { t } = useLanguage();
+  const p = summary.patient;
+
+  const careCtx = summary.care_context;
+  const contextColor =
+    careCtx === "active_admission"
+      ? "var(--danger-text)"
+      : careCtx === "past_admission"
+      ? "var(--warn-text)"
+      : "var(--success-text)";
+  const contextBg =
+    careCtx === "active_admission"
+      ? "var(--danger-bg)"
+      : careCtx === "past_admission"
+      ? "var(--warn-bg)"
+      : "var(--success-bg)";
+
+  return (
+    <Card>
+      <CardTitle title={t("pcpCareContext")} />
+      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "8px 12px",
+            borderRadius: 10,
+            background: contextBg,
+            border: `1px solid ${contextColor}33`,
+          }}
         >
-          + {t("pcpAddNote")}
-        </Link>
+          <span className="muted-text" style={{ fontSize: 12 }}>
+            {t("pcpCareContext")}
+          </span>
+          <span style={{ fontWeight: 800, fontSize: 12, color: contextColor }}>
+            {summary.care_context_label}
+          </span>
+        </div>
+
+        {p.date_of_birth && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "7px 12px",
+              borderRadius: 10,
+              background: "var(--panel-2)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <span className="muted-text" style={{ fontSize: 12 }}>Date of birth</span>
+            <span style={{ fontWeight: 700, fontSize: 12 }}>{p.date_of_birth}</span>
+          </div>
+        )}
+
+        <div
+          style={{
+            display: "flex",
+            alignItems: "center",
+            justifyContent: "space-between",
+            padding: "7px 12px",
+            borderRadius: 10,
+            background: "var(--panel-2)",
+            border: "1px solid var(--border)",
+          }}
+        >
+          <span className="muted-text" style={{ fontSize: 12 }}>Access status</span>
+          <Pill label={t("pcpActiveAccess")} color="var(--success-text)" bg="var(--success-bg)" />
+        </div>
+
+        {p.bragi_code && (
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "space-between",
+              padding: "7px 12px",
+              borderRadius: 10,
+              background: "var(--panel-2)",
+              border: "1px solid var(--border)",
+            }}
+          >
+            <span className="muted-text" style={{ fontSize: 12 }}>Bragi code</span>
+            <span
+              style={{
+                fontWeight: 700,
+                fontSize: 12,
+                fontFamily: "monospace",
+                color: "var(--primary)",
+              }}
+            >
+              {p.bragi_code}
+            </span>
+          </div>
+        )}
       </div>
     </Card>
   );
 }
+
+// ── Patient profile (dashboard layout) ───────────────────────────────────────
 
 function PCPPatientProfile({
   patientId,
@@ -912,9 +1595,11 @@ function PCPPatientProfile({
   if (!accessOk) {
     return (
       <Card>
-        <div style={{ textAlign: "center", padding: "24px 0" }}>
+        <div style={{ textAlign: "center", padding: "28px 0" }}>
           <div style={{ fontSize: 32, marginBottom: 12 }}>🔒</div>
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>{t("pcpAccessRevoked")}</div>
+          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
+            {t("pcpAccessRevoked")}
+          </div>
           <p className="muted-text" style={{ fontSize: 13 }}>
             This patient&apos;s access is no longer active.
           </p>
@@ -932,31 +1617,70 @@ function PCPPatientProfile({
   }
 
   return (
-    <div style={{ display: "flex", flexDirection: "column", gap: 14 }}>
-      <OverviewSection summary={summary} patientId={patientId} />
+    <div>
+      {/* Hero card — full width */}
+      <PatientHeroCard summary={summary} patientId={patientId} />
 
+      {/* Main dashboard grid: 60% left / 40% right */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
+          gridTemplateColumns: "minmax(0, 3fr) minmax(0, 2fr)",
           gap: 14,
+          alignItems: "start",
         }}
       >
-        <MedicationsSection medications={summary.medications} patientId={patientId} />
-        <LatestLabsSection labs={summary.latest_labs} />
+        {/* Left column: Timeline + Recent Records */}
+        <div>
+          <TimelineCard events={summary.pcp_timeline ?? []} patientId={patientId} />
+          <RecentRecordsCard docs={summary.recent_documents} patientId={patientId} />
+        </div>
+
+        {/* Right column: Medications + Labs + Notes + Care Context */}
+        <div>
+          <MedicationsCard medications={summary.medications} patientId={patientId} />
+          <LatestLabsCard labs={summary.latest_labs} />
+          <NotesCard notes={summary.recent_notes} patientId={patientId} />
+          <CareContextCard summary={summary} />
+        </div>
       </div>
 
-      <RecentRecordsSection docs={summary.recent_documents} patientId={patientId} />
-
+      {/* Bottom CTA */}
       <div
+        className="soft-card"
         style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fill, minmax(300px, 1fr))",
-          gap: 14,
+          marginTop: 14,
+          padding: "14px 20px",
+          display: "flex",
+          gap: 10,
+          flexWrap: "wrap",
+          alignItems: "center",
         }}
       >
-        <TimelinePreviewSection events={summary.timeline_preview} patientId={patientId} />
-        <NotesSection notes={summary.recent_notes} patientId={patientId} />
+        <span className="muted-text" style={{ fontSize: 13, flex: 1 }}>
+          {t("pcpOpenFullChart")} · {t("pcpLongitudinalRecord")}
+        </span>
+        <Link
+          href={`/patients/${patientId}`}
+          className="secondary-btn"
+          style={{ fontSize: 13, textDecoration: "none" }}
+        >
+          {t("pcpOpenFullChart")} →
+        </Link>
+        <Link
+          href={`/patients/${patientId}/timeline`}
+          className="secondary-btn"
+          style={{ fontSize: 13, textDecoration: "none" }}
+        >
+          {t("pcpOpenFullTimeline")} →
+        </Link>
+        <Link
+          href={`/patients/${patientId}/medications/list`}
+          className="secondary-btn"
+          style={{ fontSize: 13, textDecoration: "none" }}
+        >
+          {t("pcpViewAllMedications")} →
+        </Link>
       </div>
     </div>
   );
@@ -974,10 +1698,10 @@ export default function PCPWorkspacePage() {
   const [openTabs, setOpenTabs] = useState<PCPTab[]>([]);
   const [activeId, setActiveIdState] = useState<number | null>(null);
 
-  // summary cache: patientId → summary | null | "revoked"
-  const [summaryCache, setSummaryCache] = useState<Record<number, PCPSummary | null | "revoked">>({});
+  const [summaryCache, setSummaryCache] = useState<
+    Record<number, PCPSummary | null | "revoked">
+  >({});
   const [loadingCache, setLoadingCache] = useState<Record<number, boolean>>({});
-
   const [showAddPanel, setShowAddPanel] = useState(false);
   const [maxTabsWarning, setMaxTabsWarning] = useState(false);
 
@@ -989,7 +1713,6 @@ export default function PCPWorkspacePage() {
     saveActiveToStorage(id);
   }
 
-  // Load user + approved patients
   useEffect(() => {
     async function init() {
       try {
@@ -1003,12 +1726,10 @@ export default function PCPWorkspacePage() {
 
         setUser(u);
 
-        // Only fetch PCP patients if PCP or admin
         if (u.role === "admin" || u.doctor_type === "pcp") {
           const patientsRes = await api.get<PCPPatient[]>("/pcp/patients");
           setApprovedPatients(patientsRes.data);
 
-          // Restore tabs from localStorage and validate access
           const savedTabs = loadTabsFromStorage();
           const savedActive = loadActiveFromStorage();
 
@@ -1033,32 +1754,30 @@ export default function PCPWorkspacePage() {
     init();
   }, [router]);
 
-  const loadSummary = useCallback(
-    (patientId: number) => {
-      if (summaryRef.current[patientId] !== undefined) return;
-      setLoadingCache((prev) => ({ ...prev, [patientId]: true }));
-      api
-        .get<PCPSummary>(`/pcp/patients/${patientId}/summary`)
-        .then((res) => setSummaryCache((prev) => ({ ...prev, [patientId]: res.data })))
-        .catch((err) => {
-          const status = err?.response?.status;
-          setSummaryCache((prev) => ({
-            ...prev,
-            [patientId]: status === 403 ? "revoked" : null,
-          }));
-        })
-        .finally(() => setLoadingCache((prev) => ({ ...prev, [patientId]: false })));
-    },
-    []
-  );
+  const loadSummary = useCallback((patientId: number) => {
+    if (summaryRef.current[patientId] !== undefined) return;
+    setLoadingCache((prev) => ({ ...prev, [patientId]: true }));
+    api
+      .get<PCPSummary>(`/pcp/patients/${patientId}/summary`)
+      .then((res) => setSummaryCache((prev) => ({ ...prev, [patientId]: res.data })))
+      .catch((err) => {
+        const status = err?.response?.status;
+        setSummaryCache((prev) => ({
+          ...prev,
+          [patientId]: status === 403 ? "revoked" : null,
+        }));
+      })
+      .finally(() =>
+        setLoadingCache((prev) => ({ ...prev, [patientId]: false }))
+      );
+  }, []);
 
   useEffect(() => {
     if (activeId !== null && !showAddPanel) loadSummary(activeId);
   }, [activeId, showAddPanel, loadSummary]);
 
   function openPatient(p: PCPPatient) {
-    // If already open, switch to it
-    const existing = openTabs.find((t) => t.patientId === p.id);
+    const existing = openTabs.find((tab) => tab.patientId === p.id);
     if (existing) {
       setActiveId(p.id);
       setShowAddPanel(false);
@@ -1078,11 +1797,10 @@ export default function PCPWorkspacePage() {
   }
 
   function closeTab(patientId: number) {
-    const newTabs = openTabs.filter((t) => t.patientId !== patientId);
+    const newTabs = openTabs.filter((tab) => tab.patientId !== patientId);
     setOpenTabs(newTabs);
     saveTabsToStorage(newTabs);
     setMaxTabsWarning(false);
-
     if (activeId === patientId) {
       const next = newTabs.length > 0 ? newTabs[newTabs.length - 1].patientId : null;
       setActiveId(next);
@@ -1114,13 +1832,13 @@ export default function PCPWorkspacePage() {
 
   if (!user) return null;
 
-  // Non-PCP doctors see blocked page
   if (user.role === "doctor" && user.doctor_type !== "pcp") {
     return <PCPBlockedPage user={user} />;
   }
 
   const activeSummaryRaw = activeId !== null ? summaryCache[activeId] : undefined;
-  const activeSummary = activeSummaryRaw === "revoked" ? null : (activeSummaryRaw ?? null);
+  const activeSummary =
+    activeSummaryRaw === "revoked" ? null : (activeSummaryRaw ?? null);
   const activeAccessOk = activeSummaryRaw !== "revoked";
   const activeLoading = activeId !== null && loadingCache[activeId];
 
@@ -1151,6 +1869,7 @@ export default function PCPWorkspacePage() {
         onClose={closeTab}
         onAdd={handleAddClick}
         maxReached={openTabs.length >= MAX_TABS}
+        patients={approvedPatients}
       />
 
       {showPanel && (
@@ -1162,8 +1881,8 @@ export default function PCPWorkspacePage() {
         />
       )}
 
-      {showProfile && (
-        activeLoading ? (
+      {showProfile &&
+        (activeLoading ? (
           <div className="muted-text" style={{ padding: "40px 0", textAlign: "center" }}>
             Loading patient data…
           </div>
@@ -1173,8 +1892,7 @@ export default function PCPWorkspacePage() {
             summary={activeSummary}
             accessOk={activeAccessOk}
           />
-        )
-      )}
+        ))}
     </AppShell>
   );
 }

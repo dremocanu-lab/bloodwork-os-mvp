@@ -1662,12 +1662,21 @@ def pcp_get_patient_summary(
             }
             break
 
-    # Timeline preview (last 5 events)
-    timeline_events = (
+    # Patient events for hospitalization timeline entries
+    patient_events = (
         db.query(models.PatientEvent)
         .filter(models.PatientEvent.patient_id == patient_id)
         .order_by(models.PatientEvent.id.desc())
-        .limit(5)
+        .limit(20)
+        .all()
+    )
+
+    # All documents for timeline (broader than recent_docs)
+    all_docs_for_timeline = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient_id)
+        .order_by(models.Document.id.desc())
+        .limit(40)
         .all()
     )
 
@@ -1679,6 +1688,70 @@ def pcp_get_patient_summary(
         .limit(5)
         .all()
     )
+
+    _SECTION_EVENT_TYPE = {
+        "bloodwork": "lab_panel",
+        "discharge_summary": "discharge_summary",
+        "scans": "imaging_report",
+        "notes": "clinical_note",
+        "medications": "medication_record",
+        "hospitalizations": "hospitalization_record",
+        "procedures": "procedure_report",
+        "pathology": "pathology_report",
+    }
+
+    def _doc_summary(doc) -> str:
+        et = _SECTION_EVENT_TYPE.get(doc.section, "source_document")
+        if et == "lab_panel":
+            return "Lab panel with structured values extracted."
+        if et == "clinical_note":
+            return "Clinical note recorded in patient file."
+        if et == "discharge_summary":
+            return "Discharge summary recorded."
+        if et == "imaging_report":
+            return "Imaging report recorded in patient file."
+        if et == "medication_record":
+            return "Medication document recorded."
+        return "Source document recorded in patient file."
+
+    pcp_timeline = []
+
+    for doc in all_docs_for_timeline:
+        pcp_timeline.append({
+            "id": f"doc_{doc.id}",
+            "event_type": _SECTION_EVENT_TYPE.get(doc.section, "source_document"),
+            "title": doc.report_name or doc.lab_name or doc.filename,
+            "date": doc.test_date or doc.collected_on or doc.created_at or "",
+            "source_id": doc.id,
+            "source_type": "document",
+            "summary": _doc_summary(doc),
+            "route": f"/documents/{doc.id}",
+            "is_source_linked": True,
+        })
+
+    for ev in patient_events:
+        parts = [p for p in [ev.hospital_name, ev.department] if p]
+        pcp_timeline.append({
+            "id": f"event_{ev.id}",
+            "event_type": "hospitalization_record",
+            "title": ev.title,
+            "date": ev.admitted_at or "",
+            "source_id": None,
+            "source_type": "event",
+            "summary": " · ".join(parts) if parts else None,
+            "route": None,
+            "is_source_linked": False,
+        })
+
+    def _sort_key(e):
+        d = e["date"] or "1970-01-01"
+        try:
+            from datetime import datetime as _dt
+            return _dt.fromisoformat(d.replace("Z", "+00:00")).timestamp()
+        except Exception:
+            return 0.0
+
+    pcp_timeline.sort(key=_sort_key, reverse=True)
 
     return {
         "patient": {
@@ -1702,6 +1775,7 @@ def pcp_get_patient_summary(
                 "status": m.status,
                 "route_form": m.route_form,
                 "is_uncertain": bool(m.is_uncertain),
+                "created_at": m.created_at,
             }
             for m in medications
         ],
@@ -1719,19 +1793,7 @@ def pcp_get_patient_summary(
             for d in recent_docs
         ],
         "latest_labs": latest_labs,
-        "timeline_preview": [
-            {
-                "id": e.id,
-                "title": e.title,
-                "event_type": e.event_type,
-                "status": e.status,
-                "admitted_at": e.admitted_at,
-                "discharged_at": e.discharged_at,
-                "hospital_name": e.hospital_name,
-                "department": e.department,
-            }
-            for e in timeline_events
-        ],
+        "pcp_timeline": pcp_timeline,
         "recent_notes": [
             {
                 "id": n.id,
