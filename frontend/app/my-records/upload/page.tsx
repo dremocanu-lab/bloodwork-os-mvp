@@ -390,7 +390,7 @@ export default function MyRecordsUploadPage() {
         <button
           type="button"
           className="b-btn b-btn-secondary"
-          onClick={() => router.push("C:/Program Files/Git/my-records")}
+          onClick={() => router.push("/my-records")}
         >
           {labels.back}
         </button>
@@ -602,7 +602,7 @@ export default function MyRecordsUploadPage() {
             <button
               type="button"
               className="b-btn b-btn-secondary"
-              onClick={() => router.push("C:/Program Files/Git/my-records")}
+              onClick={() => router.push("/my-records")}
             >
               {labels.continue}
             </button>
