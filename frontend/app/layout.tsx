@@ -18,6 +18,12 @@ export const metadata = {
  *
  * Runs before hydration, reads the same key the toggle writes, and falls back
  * to the OS preference when the user has not chosen.
+ *
+ * Rendered as the first child of <body> rather than inside a manual <head>:
+ * node_modules/next/dist/docs (layout.md) says a root layout should not
+ * hand-roll <head>, and metadata already goes through the Metadata API
+ * above. As the first thing in the body it still executes before the rest of
+ * the document paints, which is all the no-flash guarantee needs.
  */
 const THEME_BOOTSTRAP = `
 (function () {
@@ -39,10 +45,8 @@ export default function RootLayout({
 }>) {
   return (
     <html lang="en" suppressHydrationWarning>
-      <head>
-        <script dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
-      </head>
       <body suppressHydrationWarning>
+        <script id="bragi-theme" dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
         <UploadManagerProvider>{children}</UploadManagerProvider>
       </body>
     </html>
