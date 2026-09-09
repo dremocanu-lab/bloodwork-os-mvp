@@ -1,292 +1,139 @@
-﻿"use client";
+"use client";
+
+/**
+ * Desktop sidebar / mobile drawer.
+ *
+ * Rebuilt around three ideas:
+ *  - Navigation is a list of links, not a stack of primary/secondary buttons.
+ *    The active item is the only one with brand colour, so "where am I" is
+ *    answerable at a glance.
+ *  - Preferences (language, appearance, sign out) moved out of the nav into
+ *    the account menu at the bottom, freeing the space they used to occupy
+ *    above the actual destinations.
+ *  - The brand lockup is a 24px mark plus the workspace name, not an 88px
+ *    logo block. Role context stays visible but costs one line.
+ */
 
 import Link from "next/link";
-import { usePathname, useRouter } from "next/navigation";
-import BragiLogo from "@/components/bragi-logo";
-import ThemeToggle from "@/components/theme-toggle";
+import { usePathname } from "next/navigation";
 import { useLanguage } from "@/lib/i18n";
+import {
+  activeNavKey,
+  flattenNav,
+  getHomeHref,
+  getNavGroups,
+  getOrgLabel,
+  getWorkspaceLabel,
+  type NavUser,
+} from "@/lib/navigation";
+import AccountMenu from "@/components/account-menu";
+import { IconClose } from "@/components/ui/icon";
 
-type SidebarUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin" | "care_partner";
-  department?: string | null;
-  hospital_name?: string | null;
-  doctor_type?: "pcp" | "specialist" | null;
-};
-
-type SidebarProps = {
-  user: SidebarUser;
-  mobileOpen?: boolean;
-  onCloseMobile?: () => void;
-};
-
-function getHomeHref(user: SidebarUser) {
-  if (user.role === "patient") return "/my-records";
-  if (user.role === "doctor") return "/my-patients";
-  if (user.role === "care_partner") return "/care-partner";
-  return "/assignments";
+function BragiMark({ size = 22 }: { size?: number }) {
+  return (
+    <svg
+      viewBox="0 0 56 68"
+      width={(size * 56) / 68}
+      height={size}
+      fill="none"
+      aria-hidden="true"
+      style={{ flexShrink: 0 }}
+    >
+      <path
+        d="M6 4h44a2 2 0 0 1 2 2v32c0 16-28 26-28 26S-4 54-4 38V6a2 2 0 0 1 2-2Z"
+        transform="translate(4)"
+        fill="#82C09A"
+      />
+      <rect x="14" y="28" width="28" height="6" rx="3" fill="#fff" />
+      <rect x="25" y="17" width="6" height="28" rx="3" fill="#fff" />
+    </svg>
+  );
 }
 
-export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: SidebarProps) {
+export default function Sidebar({
+  user,
+  mobileOpen = false,
+  onCloseMobile,
+}: {
+  user: NavUser;
+  mobileOpen?: boolean;
+  onCloseMobile?: () => void;
+}) {
   const pathname = usePathname();
-  const router = useRouter();
-  const { language, setLanguage, t } = useLanguage();
+  const { t } = useLanguage();
 
-  const isPCP = user.role === "doctor" && user.doctor_type === "pcp";
-
-  const navByRole: Record<SidebarUser["role"], { label: string; href: string }[]> = {
-    doctor: [
-      ...(isPCP ? [{ label: t("pcpWorkspace"), href: "/pcp/workspace" }] : []),
-      { label: t("myCurrentPatients"), href: "/my-patients" },
-      { label: t("searchPatients"), href: "/patients/search" },
-    ],
-    patient: [
-      { label: t("myRecords"), href: "/my-records" },
-      { label: t("myAccess"), href: "/my-records/access" },
-      { label: t("patientSettings"), href: "/my-records/settings" },
-    ],
-    admin: [
-      { label: t("assignPatients"), href: "/assignments" },
-      { label: t("adminDoctorsNav"), href: "/admin/doctors" },
-      { label: "Analyte gaps", href: "/admin/analytes" },
-    ],
-    care_partner: [
-      { label: t("sharedWithMe"), href: "/care-partner/shared" },
-      { label: t("myDependants"), href: "/care-partner/dependants" },
-    ],
-  };
-
-  const navItems = navByRole[user.role];
-
-  function logout() {
-    localStorage.removeItem("access_token");
-    localStorage.removeItem("user");
-    router.push("/login");
-  }
-
-  function getWorkspaceLabel() {
-    if (user.role === "doctor") {
-      return `${user.department || t("department")} · ${user.hospital_name || t("hospital")}`;
-    }
-
-    if (user.role === "admin") {
-      return `${user.department || t("department")} ${t("admin")} · ${user.hospital_name || t("hospital")}`;
-    }
-
-    if (user.role === "care_partner") return t("carePartnerPortal");
-
-    return t("patientPortal");
-  }
-
-  function getRoleLabel() {
-    if (user.role === "doctor") return t("doctorWorkspace");
-    if (user.role === "admin") return t("adminWorkspace");
-    if (user.role === "care_partner") return t("carePartnerWorkspace");
-    return t("patientPortal");
-  }
+  const groups = getNavGroups(user, t);
+  const activeKey = activeNavKey(flattenNav(groups), pathname);
+  const org = getOrgLabel(user, t);
 
   return (
     <>
       <aside
         className={`app-sidebar ${mobileOpen ? "mobile-open" : ""}`}
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          height: "100dvh",
-          overflow: "hidden",
-        }}
+        aria-label={getWorkspaceLabel(user, t)}
       >
-        <div
-          style={{
-            display: "grid",
-            gap: 16,
-            overflowY: "auto",
-            paddingBottom: 16,
-          }}
-        >
-          <div className="app-sidebar-brand" style={{ display: "flex", flexDirection: "column", alignItems: "center", textAlign: "center" }}>
-            <Link
-              href={getHomeHref(user)}
-              onClick={onCloseMobile}
-              style={{
-                display: "flex",
-                justifyContent: "center",
-                textDecoration: "none",
-                color: "inherit",
-              }}
-            >
-              <BragiLogo height={88} showText />
-            </Link>
-
-            <div className="muted-text" style={{ marginTop: 10, fontSize: 13 }}>
-              {t("clinicalWorkspace")}
-            </div>
-          </div>
-
-          <div className="soft-card-tight" style={{ padding: 16 }}>
-            <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 12 }}>
-              <div
-                style={{
-                  width: 36,
-                  height: 36,
-                  borderRadius: 999,
-                  background: "var(--primary)",
-                  color: "#fff",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "center",
-                  fontWeight: 950,
-                  fontSize: 15,
-                  letterSpacing: "-0.02em",
-                  flexShrink: 0,
-                }}
-              >
-                {user.full_name.charAt(0).toUpperCase()}
-              </div>
-
-              <div
-                style={{
-                  display: "inline-flex",
-                  padding: "5px 9px",
-                  borderRadius: 999,
-                  background: "var(--panel-2)",
-                  color: "var(--muted)",
-                  fontSize: 12,
-                  fontWeight: 900,
-                }}
-              >
-                {getRoleLabel()}
-              </div>
-            </div>
-
-            <div style={{ fontWeight: 900, lineHeight: 1.25 }}>{user.full_name}</div>
-
-            <div
-              className="muted-text"
-              style={{
-                marginTop: 5,
-                fontSize: 13,
-                overflowWrap: "anywhere",
-                lineHeight: 1.35,
-              }}
-            >
-              {user.email}
-            </div>
-
-            <div className="muted-text" style={{ marginTop: 9, fontSize: 13, lineHeight: 1.45 }}>
-              {getWorkspaceLabel()}
-            </div>
-          </div>
-
-          <div
-            className="soft-card-tight"
-            style={{
-              padding: 14,
-              display: "grid",
-              gap: 12,
-            }}
+        <div className="b-side-brand">
+          <Link
+            href={getHomeHref(user)}
+            onClick={onCloseMobile}
+            className="b-side-brand"
+            style={{ border: 0, height: "auto", padding: 0, flex: 1, minWidth: 0 }}
           >
-            <div>
-              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
-                {t("language")}
-              </div>
+            <BragiMark size={22} />
+            <span className="b-side-brand-text">
+              <span className="b-side-brand-name">bragi</span>
+              <span className="b-side-brand-role">{getWorkspaceLabel(user, t)}</span>
+            </span>
+          </Link>
 
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "1fr 1fr",
-                  gap: 8,
-                }}
-              >
-                <button
-                  type="button"
-                  className={language === "en" ? "primary-btn" : "secondary-btn"}
-                  onClick={() => setLanguage("en")}
-                  style={{ justifyContent: "center" }}
-                >
-                  EN
-                </button>
+          {/* Drawer close affordance, mobile only. */}
+          <button
+            type="button"
+            className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+            onClick={onCloseMobile}
+            aria-label={t("navClose")}
+            style={{ display: mobileOpen ? "inline-flex" : "none" }}
+          >
+            <IconClose size={15} />
+          </button>
+        </div>
 
-                <button
-                  type="button"
-                  className={language === "ro" ? "primary-btn" : "secondary-btn"}
-                  onClick={() => setLanguage("ro")}
-                  style={{ justifyContent: "center" }}
-                >
-                  RO
-                </button>
-              </div>
+        <nav className="b-side-scroll">
+          {groups.map((group) => (
+            <div key={group.key} style={{ minWidth: 0 }}>
+              {group.label ? <div className="b-side-group">{group.label}</div> : null}
+
+              {group.items.map((item) => {
+                const Icon = item.icon;
+                const isActive = activeKey === item.key;
+
+                return (
+                  <Link
+                    key={item.key}
+                    href={item.href}
+                    onClick={onCloseMobile}
+                    className="b-nav-item"
+                    aria-current={isActive ? "page" : undefined}
+                  >
+                    <Icon size={15} className="b-nav-icon" />
+                    <span className="b-nav-label">{item.label}</span>
+                  </Link>
+                );
+              })}
             </div>
+          ))}
+        </nav>
 
-            <div>
-              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
-                {t("theme")}
-              </div>
-
-              <ThemeToggle compact />
+        <div className="b-side-foot">
+          {org ? (
+            <div
+              className="b-account-sub"
+              style={{ padding: "0 6px 6px", whiteSpace: "normal", lineHeight: 1.35 }}
+            >
+              {org}
             </div>
-
-            <button type="button" className="secondary-btn" onClick={logout}>
-              {t("logout")}
-            </button>
-          </div>
-
-          <nav style={{ display: "grid", gap: 10 }}>
-            {navItems.map((item) => {
-              const active =
-            pathname === item.href ||
-            (pathname.startsWith(`${item.href}/`) &&
-              !navItems.some(
-                (other) =>
-                  other.href !== item.href &&
-                  (pathname === other.href || pathname.startsWith(`${other.href}/`))
-              ));
-
-              return (
-                <Link
-                  key={item.href}
-                  href={item.href}
-                  onClick={onCloseMobile}
-                  className={active ? "primary-btn" : "secondary-btn"}
-                  style={{
-                    justifyContent: "flex-start",
-                    textDecoration: "none",
-                    width: "100%",
-                  }}
-                >
-                  {item.label}
-                </Link>
-              );
-            })}
-
-            {user.role === "patient" && (
-              <>
-                <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
-                <Link
-                  href="/my-records/upload"
-                  onClick={onCloseMobile}
-                  className="sidebar-upload-btn"
-                >
-                  ↑ {t("uploadDocuments")}
-                </Link>
-              </>
-            )}
-
-            {user.role === "care_partner" && (
-              <>
-                <div style={{ height: 1, background: "var(--border)", margin: "2px 0" }} />
-                <Link
-                  href="/care-partner/upload"
-                  onClick={onCloseMobile}
-                  className="sidebar-upload-btn"
-                >
-                  ↑ {t("uploadDocuments")}
-                </Link>
-              </>
-            )}
-          </nav>
+          ) : null}
+          <AccountMenu user={user} />
         </div>
       </aside>
 
@@ -294,7 +141,8 @@ export default function Sidebar({ user, mobileOpen = false, onCloseMobile }: Sid
         type="button"
         className={`sidebar-overlay ${mobileOpen ? "open" : ""}`}
         onClick={onCloseMobile}
-        aria-label="Close sidebar"
+        aria-label={t("navClose")}
+        tabIndex={mobileOpen ? 0 : -1}
       />
     </>
   );

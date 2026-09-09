@@ -127,7 +127,7 @@ export default function MedicationsListPage() {
         className="soft-card-tight"
         style={{ marginBottom: 20, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 800, color: "var(--primary)", marginBottom: 4 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>
           {t("medSafetyTitle")}
         </div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
@@ -149,8 +149,8 @@ export default function MedicationsListPage() {
               style={{ padding: "14px 18px", cursor: "pointer" }}
               onClick={onClick}
             >
-              <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
-              <div style={{ fontSize: 34, fontWeight: 950, letterSpacing: "-0.04em", lineHeight: 1, marginTop: 6 }}>{value}</div>
+              <div className="muted-text" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em" }}>{label}</div>
+              <div style={{ fontSize: 21, fontWeight: 600, letterSpacing: "-0.04em", lineHeight: 1, marginTop: 6 }}>{value}</div>
             </div>
           ))}
         </div>
@@ -196,14 +196,14 @@ export default function MedicationsListPage() {
                 <div style={{ minWidth: 0 }}>
                   <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
                     <span style={{
-                      padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                      padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
                       background: statusStyle.bg, color: statusStyle.text,
                     }}>
                       {STATUS_LABELS[med.status] || med.status}
                     </span>
                     {med.is_uncertain && (
                       <span style={{
-                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
                         background: "var(--warn-bg)", color: "var(--warn-text)",
                       }}>
                         {t("medDoseNotVerified")}
@@ -211,14 +211,14 @@ export default function MedicationsListPage() {
                     )}
                     {med.official_match_status === "matched" && (
                       <span style={{
-                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
                         background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
                       }}>
                         {t("medOfficialInfoAvailable")}
                       </span>
                     )}
                   </div>
-                  <div style={{ fontSize: 18, fontWeight: 800, letterSpacing: "-0.02em" }}>{med.name}</div>
+                  <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>{med.name}</div>
                   <div className="muted-text" style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6 }}>
                     {[med.dose_strength, med.route_form, med.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
                   </div>
@@ -246,7 +246,7 @@ export default function MedicationsListPage() {
 
         {filtered.length === 0 && medications.length === 0 && (
           <div className="soft-card" style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 10 }}>{t("noMedicationsYet")}</div>
+            <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 10 }}>{t("noMedicationsYet")}</div>
             <div className="muted-text" style={{ marginBottom: 20, lineHeight: 1.65 }}>
               {t("noMedicationsYetDesc")}
             </div>

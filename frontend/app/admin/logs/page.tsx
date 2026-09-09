@@ -1,20 +1,40 @@
-﻿"use client";
+"use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Admin - audit log.
+ *
+ * Was one 18px-padded card per log entry with an 18px/950 action title and a
+ * pill restating the admin's name - about 140px per row, for a view whose
+ * entire purpose is scanning many entries. Now an audit table: timestamp in
+ * tabular figures, action, actor, subject, expandable details.
+ *
+ * NOTE: this route calls GET /admin/action-logs, which does not exist on the
+ * backend (it returns 404), so the page has never been able to show data.
+ * That is a pre-existing gap, not something this phase introduced, and adding
+ * the endpoint is out of scope for a frontend/UI pass. The page now fails
+ * cleanly with a retry instead of dumping a raw red error box.
+ *
+ * Pattern reference: Stripe events log - dense rows, monospace-ish
+ * timestamps, expand for the payload.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
-
-type CurrentUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin";
-  department?: string | null;
-  hospital_name?: string | null;
-};
+import {
+  CellPrimary,
+  Column,
+  DataTable,
+  EmptyState,
+  ErrorNote,
+  TableSkeleton,
+  Toolbar,
+} from "@/components/ui";
+import { IconList } from "@/components/ui/icon";
+import type { NavUser } from "@/lib/navigation";
 
 type Log = {
   id: number;
@@ -37,11 +57,15 @@ function prettyAction(action: string) {
 
 function prettyDateTime(value?: string | null) {
   if (!value) return "—";
-
-  const d = new Date(value);
-  if (Number.isNaN(d.getTime())) return value;
-
-  return d.toLocaleString();
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleString(undefined, {
+    year: "2-digit",
+    month: "short",
+    day: "2-digit",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
 }
 
 export default function AdminLogsPage() {
@@ -49,47 +73,47 @@ export default function AdminLogsPage() {
   const { t } = useLanguage();
 
   const [logs, setLogs] = useState<Log[]>([]);
-  const [user, setUser] = useState<CurrentUser | null>(null);
+  const [user, setUser] = useState<NavUser | null>(null);
   const [query, setQuery] = useState("");
+  const [expanded, setExpanded] = useState<number | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  async function loadData() {
-    const me = await api.get<CurrentUser>("/auth/me");
-
+  const loadData = useCallback(async () => {
+    const me = await api.get<NavUser>("/auth/me");
     if (me.data.role !== "admin") {
       router.push(getHomeByRole(me.data.role));
       return;
     }
-
     setUser(me.data);
 
-    const res = await api.get<Log[]>("/admin/action-logs");
-    setLogs(res.data);
-  }
+    const response = await api.get<Log[]>("/admin/action-logs");
+    setLogs(response.data);
+  }, [router]);
+
+  const init = useCallback(async () => {
+    try {
+      setError("");
+      setLoading(true);
+      await loadData();
+    } catch (err) {
+      setError(getErrorMessage(err, t("failedLoadActivityLog")));
+    } finally {
+      setLoading(false);
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [loadData]);
 
   useEffect(() => {
-    async function init() {
-      try {
-        setError("");
-        await loadData();
-      } catch (err) {
-        setError(getErrorMessage(err, t("failedLoadActivityLog")));
-      } finally {
-        setLoading(false);
-      }
-    }
-
     init();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   const filteredLogs = useMemo(() => {
     const term = query.trim().toLowerCase();
-
     return logs
       .filter((log) => {
         if (!term) return true;
-
         return [
           log.admin_name,
           log.action,
@@ -106,144 +130,146 @@ export default function AdminLogsPage() {
       .sort((a, b) => String(b.timestamp || "").localeCompare(String(a.timestamp || "")));
   }, [logs, query]);
 
+  const columns: Column<Log>[] = useMemo(
+    () => [
+      {
+        key: "timestamp",
+        header: t("timestamp"),
+        width: 150,
+        sortable: true,
+        sortValue: (row) => row.timestamp || "",
+        render: (row) => (
+          <span className="tnum" style={{ color: "var(--text-2)" }}>
+            {prettyDateTime(row.timestamp)}
+          </span>
+        ),
+      },
+      {
+        key: "action",
+        header: "Action",
+        sortable: true,
+        sortValue: (row) => row.action,
+        render: (row) => (
+          <CellPrimary
+            title={prettyAction(row.action)}
+            sub={row.details ? row.details.slice(0, 70) : undefined}
+          />
+        ),
+      },
+      {
+        key: "admin",
+        header: t("admin"),
+        sortable: true,
+        sortValue: (row) => row.admin_name || "",
+        hideBelow: 640,
+        render: (row) => (
+          <span style={{ color: "var(--text-2)" }}>{valueOrDash(row.admin_name)}</span>
+        ),
+      },
+      {
+        key: "subject",
+        header: "Subject",
+        hideBelow: 900,
+        render: (row) => {
+          const parts = [
+            row.patient_name ? `${t("patientLabel")}: ${row.patient_name}` : null,
+            row.doctor_name ? `${t("doctorLabel")}: ${row.doctor_name}` : null,
+          ].filter(Boolean);
+          return parts.length ? (
+            <span className="b-cell-sub">{parts.join(" · ")}</span>
+          ) : (
+            <span className="b-range">—</span>
+          );
+        },
+      },
+      {
+        key: "details",
+        header: <span className="sr-only">{t("details")}</span>,
+        width: 90,
+        render: (row) =>
+          row.details ? (
+            <div className="b-row-actions">
+              <button
+                type="button"
+                className="b-btn b-btn-ghost b-btn-sm"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  setExpanded((current) => (current === row.id ? null : row.id));
+                }}
+                aria-expanded={expanded === row.id}
+              >
+                {t("details")}
+              </button>
+            </div>
+          ) : null,
+      },
+    ],
+    [expanded, t]
+  );
+
   if (loading || !user) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingActivityLog")}</p>
+      <main className="app-page-bg" style={{ padding: "var(--s6)" }}>
+        <div className="b-surface">
+          <TableSkeleton rows={8} columns={4} />
+        </div>
       </main>
     );
   }
 
+  const expandedLog = filteredLogs.find((log) => log.id === expanded);
+
   return (
     <AppShell user={user} title={t("activityLog")} subtitle={t("activityLogSubtitle")}>
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
+      <div className="b-stack">
+        {error ? <ErrorNote onRetry={init}>{error}</ErrorNote> : null}
 
-      <div className="soft-card" style={{ padding: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            marginBottom: 18,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div className="section-title">{t("adminActions")}</div>
-            <div className="muted-text" style={{ marginTop: 6 }}>
-              {t("adminActionsDesc")}
-            </div>
-          </div>
-
-          <div
-            style={{
-              display: "inline-flex",
-              padding: "7px 11px",
-              borderRadius: 999,
-              background: "var(--panel-2)",
-              color: "var(--muted)",
-              fontWeight: 900,
-              fontSize: 12,
-              border: "1px solid var(--border)",
-            }}
-          >
-            {filteredLogs.length} {t("records")}
-          </div>
-        </div>
-
-        <div style={{ marginBottom: 18 }}>
-          <input
-            className="text-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={t("search")}
+        <section className="b-surface">
+          <Toolbar
+            search={query}
+            onSearch={setQuery}
+            searchPlaceholder={t("search")}
+            count={filteredLogs.length}
+            countLabel={t("records").toLowerCase()}
           />
-        </div>
 
-        <div style={{ display: "grid", gap: 14 }}>
-          {filteredLogs.map((log) => (
-            <div key={log.id} className="soft-card-tight" style={{ padding: 18 }}>
-              <div
-                style={{
-                  display: "grid",
-                  gridTemplateColumns: "minmax(0, 1fr) auto",
-                  gap: 16,
-                  alignItems: "start",
-                }}
-              >
-                <div>
-                  <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 950, fontSize: 18 }}>
-                      {prettyAction(log.action)}
-                    </div>
+          <DataTable
+            rows={filteredLogs}
+            columns={columns}
+            rowKey={(row) => row.id}
+            caption={t("adminActions")}
+            emptyState={
+              <EmptyState
+                icon={<IconList size={17} />}
+                title={error ? t("failedLoadActivityLog") : t("noActivityLogs")}
+                description={error ? undefined : t("noActivityLogsDesc")}
+                actions={
+                  error ? (
+                    <button type="button" className="b-btn b-btn-secondary" onClick={init}>
+                      {t("navRetry")}
+                    </button>
+                  ) : null
+                }
+              />
+            }
+          />
 
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        padding: "5px 10px",
-                        borderRadius: 999,
-                        background: "var(--panel-2)",
-                        color: "var(--muted)",
-                        fontWeight: 900,
-                        fontSize: 12,
-                        border: "1px solid var(--border)",
-                      }}
-                    >
-                      {t("admin")}: {valueOrDash(log.admin_name)}
-                    </span>
-                  </div>
-
-                  <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.7 }}>
-                    {log.patient_name ? `${t("patientLabel")}: ${log.patient_name} · ` : ""}
-                    {log.doctor_name ? `${t("doctorLabel")}: ${log.doctor_name} · ` : ""}
-                    {t("timestamp")}: {prettyDateTime(log.timestamp)}
-                  </div>
-
-                  {log.details && (
-                    <div
-                      style={{
-                        marginTop: 12,
-                        padding: 12,
-                        borderRadius: 16,
-                        background: "var(--panel-2)",
-                        border: "1px solid var(--border)",
-                        lineHeight: 1.6,
-                      }}
-                    >
-                      <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 4 }}>
-                        {t("details")}
-                      </div>
-                      {log.details}
-                    </div>
-                  )}
-                </div>
-              </div>
+          {expandedLog?.details ? (
+            <div
+              className="b-view-enter"
+              style={{
+                padding: "var(--s3) var(--s4)",
+                borderTop: "1px solid var(--border)",
+                background: "var(--surface-2)",
+              }}
+            >
+              <div className="b-label">{t("details")}</div>
+              <p style={{ margin: "4px 0 0", lineHeight: "var(--lh)", overflowWrap: "anywhere" }}>
+                {expandedLog.details}
+              </p>
             </div>
-          ))}
-
-          {!filteredLogs.length && (
-            <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{t("noActivityLogs")}</div>
-              <div className="muted-text" style={{ marginTop: 8 }}>
-                {t("noActivityLogsDesc")}
-              </div>
-            </div>
-          )}
-        </div>
+          ) : null}
+        </section>
       </div>
     </AppShell>
   );

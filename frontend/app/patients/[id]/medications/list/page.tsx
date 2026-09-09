@@ -37,32 +37,32 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 
 function OfficialBadge({ status }: { status?: string | null }) {
   if (!status || status === "pending") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--panel-2)", color: "var(--muted)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
       Looking up…
     </span>
   );
   if (status === "matched") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)" }}>
       Official info matched
     </span>
   );
   if (status === "not_matched") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--panel-2)", color: "var(--muted)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
       No official match
     </span>
   );
   if (status === "vague") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
       Name too vague
     </span>
   );
   if (status === "multiple") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
       Multiple matches
     </span>
   );
   if (status === "error") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--panel-2)", color: "var(--muted)" }}>
+    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
       Lookup error
     </span>
   );
@@ -174,7 +174,7 @@ export default function DoctorMedicationsListPage() {
 
       {/* Safety notice */}
       <div className="soft-card-tight" style={{ marginBottom: 20, padding: 14, background: "var(--panel-2)" }}>
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>{t("medDoctorViewOnlyTitle")}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{t("medDoctorViewOnlyTitle")}</div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
           {t("medDoctorViewOnlyDesc")}
         </div>
@@ -192,8 +192,8 @@ export default function DoctorMedicationsListPage() {
             { label: t("officialInfoMatched"), value: stats.matched, accent: stats.matched > 0 ? "var(--primary)" : undefined },
           ].map(({ label, value, accent }) => (
             <div key={label} className="soft-card" style={{ padding: "14px 16px" }}>
-              <div className="muted-text" style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
-              <div style={{ fontWeight: 800, fontSize: 22, letterSpacing: "-0.03em", color: accent || "var(--foreground)" }}>{value}</div>
+              <div className="muted-text" style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 6 }}>{label}</div>
+              <div style={{ fontWeight: 600, fontSize: 22, letterSpacing: "-0.03em", color: accent || "var(--text)" }}>{value}</div>
             </div>
           ))}
         </div>
@@ -249,17 +249,17 @@ export default function DoctorMedicationsListPage() {
               <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
                 <div style={{ minWidth: 0, flex: 1 }}>
                   <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 7 }}>
-                    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: statusStyle.bg, color: statusStyle.text }}>
+                    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
                       {STATUS_LABELS[med.status] || med.status}
                     </span>
                     {med.is_uncertain && (
-                      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+                      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
                         {t("medDoseNotVerified")}
                       </span>
                     )}
                     <OfficialBadge status={med.official_match_status} />
                   </div>
-                  <div style={{ fontSize: 17, fontWeight: 800, letterSpacing: "-0.02em", marginBottom: 5 }}>{med.name}</div>
+                  <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 5 }}>{med.name}</div>
                   <div className="muted-text" style={{ fontSize: 13 }}>
                     {[med.dose_strength, med.frequency, med.route_form].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
                   </div>

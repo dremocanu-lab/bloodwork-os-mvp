@@ -78,7 +78,7 @@ export default function EmergencyLoginPage() {
           <h1
             style={{
               fontSize: 22,
-              fontWeight: 900,
+              fontWeight: 600,
               letterSpacing: "-0.02em",
               margin: "16px 0 6px",
             }}

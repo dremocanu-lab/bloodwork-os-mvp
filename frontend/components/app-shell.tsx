@@ -1,124 +1,159 @@
-﻿"use client";
+"use client";
+
+/**
+ * Bragi application shell.
+ *
+ * Every authenticated surface in every role renders inside this. The header
+ * is compact and sticky (breadcrumb, title, actions) instead of a 34px/900
+ * heading floating in its own rounded card, and the page body is width-capped
+ * and centred so 1440px+ screens do not stretch tables to unreadable widths.
+ *
+ * Responsive strategy is CSS-first: the sidebar becomes an off-canvas drawer
+ * and the bottom bar appears via media query, so there is no layout flash
+ * from measuring the viewport in JS on first paint.
+ */
 
 import { ReactNode, useEffect, useState } from "react";
-import BragiLogo from "@/components/bragi-logo";
+import { usePathname } from "next/navigation";
+import Link from "next/link";
 import Sidebar from "@/components/sidebar";
+import BottomNav from "@/components/bottom-nav";
 import { useLanguage } from "@/lib/i18n";
+import { getWorkspaceLabel, type NavUser } from "@/lib/navigation";
+import { IconChevronRight, IconMenu } from "@/components/ui/icon";
 
-type ShellUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin" | "care_partner";
-  department?: string | null;
-  hospital_name?: string | null;
-  doctor_type?: "pcp" | "specialist" | null;
-};
+export type Crumb = { label: string; href?: string };
 
 type AppShellProps = {
-  user: ShellUser;
+  user: NavUser;
   title: string;
   subtitle?: string;
   children: ReactNode;
+  /** Header actions, right-aligned. Keep to two or three. */
   rightContent?: ReactNode;
+  /** Trail above the title. The workspace root is prepended automatically. */
+  breadcrumbs?: Crumb[];
+  /**
+   * Rendered flush under the header, outside the padded body - for a patient
+   * context bar, a tab row or a filter strip that should span full width.
+   */
+  banner?: ReactNode;
+  /** Patient surfaces read better a little looser than clinical/admin ones. */
+  density?: "compact" | "default" | "comfortable";
+  /** Suppress the page header when a surface supplies its own context bar. */
+  hideHeader?: boolean;
 };
 
-function useViewportFlags() {
-  const [width, setWidth] = useState<number>(1440);
-
-  useEffect(() => {
-    const onResize = () => setWidth(window.innerWidth);
-    onResize();
-
-    window.addEventListener("resize", onResize);
-    return () => window.removeEventListener("resize", onResize);
-  }, []);
-
-  return {
-    isMobile: width < 900,
-    isTablet: width >= 900 && width < 1200,
-    isDesktop: width >= 1200,
-  };
-}
-
-export default function AppShell({ user, title, subtitle, children, rightContent }: AppShellProps) {
-  const { isMobile } = useViewportFlags();
+export default function AppShell({
+  user,
+  title,
+  subtitle,
+  children,
+  rightContent,
+  breadcrumbs,
+  banner,
+  density,
+  hideHeader = false,
+}: AppShellProps) {
   const { t } = useLanguage();
+  const pathname = usePathname();
   const [mobileOpen, setMobileOpen] = useState(false);
 
-  function getWorkspaceLabel() {
-    if (user.role === "doctor") return t("doctorWorkspace");
-    if (user.role === "admin") return t("adminWorkspace");
-    if (user.role === "care_partner") return t("carePartnerWorkspace");
-    return t("patientPortal");
-  }
-
+  // Close the drawer on navigation so it never survives a route change.
   useEffect(() => {
-    if (!isMobile) {
-      setMobileOpen(false);
-    }
-  }, [isMobile]);
+    setMobileOpen(false);
+  }, [pathname]);
+
+  // Lock background scroll while the drawer is open.
+  useEffect(() => {
+    if (!mobileOpen) return;
+    const previous = document.body.style.overflow;
+    document.body.style.overflow = "hidden";
+    return () => {
+      document.body.style.overflow = previous;
+    };
+  }, [mobileOpen]);
+
+  const resolvedDensity =
+    density ?? (user.role === "patient" || user.role === "care_partner" ? "comfortable" : "compact");
+
+  const densityClass =
+    resolvedDensity === "comfortable"
+      ? "density-comfortable"
+      : resolvedDensity === "compact"
+      ? "density-compact"
+      : "";
 
   return (
-    <div className="app-shell-root">
+    <div className={`app-shell-root ${densityClass}`}>
       <Sidebar user={user} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
 
-      <main className="app-shell-main">
-        {isMobile && (
-          <div
-            className="soft-card app-mobile-topbar"
-            style={{
-              position: "sticky",
-              top: 12,
-              zIndex: 20,
-              marginBottom: 14,
-            }}
+      <div className="app-shell-main">
+        {/* Mobile: menu + which workspace you are in. Kept to 48px so it costs
+            almost nothing of a phone screen. It shows the workspace rather
+            than the page title, because the page title is already the h1
+            directly below - repeating it wasted a line and told the user
+            nothing new about where they were. */}
+        <div className="app-mobile-topbar">
+          <button
+            type="button"
+            className="b-btn b-btn-ghost b-btn-icon"
+            onClick={() => setMobileOpen(true)}
+            aria-label={t("navOpenMenu")}
+            aria-expanded={mobileOpen}
           >
-            <button type="button" className="secondary-btn" onClick={() => setMobileOpen(true)}>
-              {t("menu")}
-            </button>
+            <IconMenu size={18} />
+          </button>
 
-            <div style={{ minWidth: 0 }}>
-              <BragiLogo height={36} showText={false} />
-              <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>
-                {getWorkspaceLabel()}
-              </div>
-            </div>
-          </div>
-        )}
-
-        <div className="soft-card app-shell-header">
-          <div
-            className="app-shell-header-row"
-            style={{
-              alignItems: "flex-start",
-              gap: 16,
-            }}
-          >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="app-shell-title">{title}</div>
-              {subtitle ? <div className="muted-text app-shell-subtitle">{subtitle}</div> : null}
-            </div>
-
-            {rightContent ? (
-              <div
-                className="app-shell-header-actions"
-                style={{
-                  display: "flex",
-                  gap: 10,
-                  flexWrap: "wrap",
-                  justifyContent: "flex-end",
-                  alignItems: "center",
-                }}
-              >
-                {rightContent}
-              </div>
-            ) : null}
+          <div style={{ minWidth: 0, flex: 1 }}>
+            <div className="app-mobile-brand">{getWorkspaceLabel(user, t)}</div>
           </div>
         </div>
 
-        <div style={{ minWidth: 0 }}>{children}</div>
-      </main>
+        {!hideHeader ? (
+          <header className="app-shell-header">
+            <div className="app-shell-header-row">
+              <div style={{ minWidth: 0, flex: 1 }}>
+                {breadcrumbs?.length ? (
+                  <nav className="b-crumbs" aria-label="Breadcrumb">
+                    <span className="b-side-brand-role" style={{ flexShrink: 0 }}>
+                      {getWorkspaceLabel(user, t)}
+                    </span>
+                    {breadcrumbs.map((crumb) => (
+                      <span
+                        key={`${crumb.label}-${crumb.href ?? ""}`}
+                        style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0 }}
+                      >
+                        <IconChevronRight size={11} className="b-crumbs-sep" />
+                        {crumb.href ? (
+                          <Link href={crumb.href}>{crumb.label}</Link>
+                        ) : (
+                          <span style={{ color: "var(--text-2)" }}>{crumb.label}</span>
+                        )}
+                      </span>
+                    ))}
+                  </nav>
+                ) : null}
+
+                <h1 className="app-shell-title">{title}</h1>
+                {subtitle ? <p className="app-shell-subtitle">{subtitle}</p> : null}
+              </div>
+
+              {rightContent ? (
+                <div className="app-shell-header-actions">{rightContent}</div>
+              ) : null}
+            </div>
+          </header>
+        ) : null}
+
+        {banner}
+
+        <main className="app-shell-body b-view-enter" style={{ minWidth: 0 }}>
+          {children}
+        </main>
+      </div>
+
+      <BottomNav user={user} />
     </div>
   );
 }

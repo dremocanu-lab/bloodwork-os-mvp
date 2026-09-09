@@ -98,10 +98,10 @@ function getFlagColor(flag?: string | null, value?: string | null) {
 function MetaItem({ label, value }: { label: string; value?: string | null }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 3 }}>
-      <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)" }}>
+      <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)" }}>
         {label}
       </span>
-      <span style={{ fontSize: 14, fontWeight: 900, letterSpacing: "-0.02em" }}>{valueOrDash(value)}</span>
+      <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.02em" }}>{valueOrDash(value)}</span>
     </div>
   );
 }
@@ -215,7 +215,7 @@ function DocumentViewInner() {
           className="soft-card"
           style={{ padding: 22, marginBottom: 20, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}
         >
-          <div style={{ fontWeight: 900, fontSize: 16, marginBottom: 6 }}>Could not load document</div>
+          <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 6 }}>Could not load document</div>
           <div style={{ fontSize: 13, lineHeight: 1.6 }}>{error}</div>
           <div style={{ marginTop: 16 }}>
             <button
@@ -236,18 +236,18 @@ function DocumentViewInner() {
             className="soft-card"
             style={{
               padding: 22,
-              background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 8%, var(--panel)), var(--panel))",
+              background: "var(--surface)",
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "flex-start" }}>
               <div>
-                <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.04em", marginBottom: 8 }}>
+                <div style={{ fontSize: 20, fontWeight: 600, letterSpacing: "-0.04em", marginBottom: 8 }}>
                   {parsed.report_name || doc.filename}
                 </div>
                 <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
                   <span
                     style={{
-                      fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em",
+                      fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em",
                       padding: "3px 9px", borderRadius: 999, background: "rgba(220,38,38,0.08)",
                       color: "#dc2626", border: "1px solid rgba(220,38,38,0.18)",
                     }}
@@ -256,7 +256,7 @@ function DocumentViewInner() {
                   </span>
                   <span
                     style={{
-                      fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em",
+                      fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em",
                       padding: "3px 9px", borderRadius: 999, background: "var(--panel-2)",
                       color: "var(--muted)", border: "1px solid var(--border)",
                     }}
@@ -266,7 +266,7 @@ function DocumentViewInner() {
                   {parsed.is_verified && (
                     <span
                       style={{
-                        fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em",
+                        fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em",
                         padding: "3px 9px", borderRadius: 999, background: "var(--success-bg)",
                         color: "var(--success-text)", border: "1px solid var(--success-border)",
                       }}
@@ -285,7 +285,7 @@ function DocumentViewInner() {
           {/* Patient + document meta */}
           <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(280px, 1fr))", gap: 16 }}>
             <div className="soft-card" style={{ padding: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
                 {t("patient")}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: "14px 16px" }}>
@@ -297,7 +297,7 @@ function DocumentViewInner() {
             </div>
 
             <div className="soft-card" style={{ padding: 20 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
                 {t("documentDetails")}
               </div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(130px, 1fr))", gap: "14px 16px" }}>
@@ -313,7 +313,7 @@ function DocumentViewInner() {
           {/* Note body */}
           {isNote && parsed.note_body && (
             <div className="soft-card" style={{ padding: 22 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 14 }}>
                 {t("clinicalNote")}
               </div>
               <div
@@ -328,13 +328,13 @@ function DocumentViewInner() {
           {/* Lab results */}
           {!isNote && orderedGroups.length > 0 && (
             <div className="soft-card" style={{ padding: 22 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 16 }}>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 16 }}>
                 {t("structuredData")} · {(parsed.labs || []).length} {t("structuredLabRowsExtracted")}
               </div>
               <div style={{ display: "flex", flexDirection: "column", gap: 18 }}>
                 {orderedGroups.map(({ title, rows }) => (
                   <div key={title}>
-                    <div style={{ fontWeight: 950, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--muted)", marginBottom: 8 }}>
+                    <div style={{ fontWeight: 600, fontSize: 12, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--muted)", marginBottom: 8 }}>
                       {title}
                     </div>
                     <div className="soft-card-tight" style={{ padding: 0, overflow: "hidden" }}>
@@ -358,11 +358,11 @@ function DocumentViewInner() {
                                 <td data-label={t("test")}>
                                   <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
                                     {abnormal && <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />}
-                                    <span style={{ fontWeight: 900 }}>{bestName(lab)}</span>
+                                    <span style={{ fontWeight: 600 }}>{bestName(lab)}</span>
                                   </div>
                                 </td>
                                 <td data-label={t("value")}>
-                                  <span style={{ fontWeight: 900 }}>{nil ? "nil" : valueOrDash(lab.value)}</span>
+                                  <span style={{ fontWeight: 600 }}>{nil ? "nil" : valueOrDash(lab.value)}</span>
                                 </td>
                                 <td data-label={t("unit")}>
                                   <span className="muted-text">{valueOrDash(lab.unit)}</span>
@@ -371,7 +371,7 @@ function DocumentViewInner() {
                                   <span className="muted-text">{valueOrDash(lab.reference_range)}</span>
                                 </td>
                                 <td data-label={t("flag")}>
-                                  <span style={{ display: "inline-flex", padding: "4px 9px", borderRadius: 999, border: `1px solid ${fc.border}`, background: fc.bg, color: fc.color, fontSize: 11, fontWeight: 900 }}>
+                                  <span style={{ display: "inline-flex", padding: "4px 9px", borderRadius: 999, border: `1px solid ${fc.border}`, background: fc.bg, color: fc.color, fontSize: 11, fontWeight: 600 }}>
                                     {nil ? "nil" : hasDisplayableFlag(lab.flag) ? lab.flag : "—"}
                                   </span>
                                 </td>

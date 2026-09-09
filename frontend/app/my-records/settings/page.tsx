@@ -52,7 +52,7 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
         padding: "3px 9px",
         borderRadius: 999,
         fontSize: 11,
-        fontWeight: 800,
+        fontWeight: 600,
         letterSpacing: "0.01em",
         background: tone === "primary" ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)",
         color: tone === "primary" ? "var(--primary)" : "var(--muted)",
@@ -64,6 +64,15 @@ function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone
   );
 }
 
+/**
+ * Settings toggle.
+ *
+ * Was a <div role="switch"> with no accessible name, no keyboard handling and
+ * a <label> wrapping it (which would have double-fired the click had the div
+ * been focusable at all). Now a real button with role="switch", an accessible
+ * name and the shared switch styling, so it is operable by keyboard and
+ * announced correctly.
+ */
 function Toggle({
   checked,
   onChange,
@@ -76,47 +85,28 @@ function Toggle({
   label: string;
 }) {
   return (
-    <label
+    <div
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 12,
-        cursor: disabled ? "not-allowed" : "pointer",
+        gap: "var(--s3)",
         opacity: disabled ? 0.6 : 1,
-        userSelect: "none",
       }}
     >
-      <div
-        onClick={() => !disabled && onChange(!checked)}
+      <button
+        type="button"
         role="switch"
         aria-checked={checked}
-        style={{
-          width: 44,
-          height: 24,
-          borderRadius: 999,
-          background: checked ? "var(--primary)" : "var(--border)",
-          position: "relative",
-          transition: "background 0.18s",
-          flexShrink: 0,
-          cursor: disabled ? "not-allowed" : "pointer",
-        }}
+        aria-label={label}
+        disabled={disabled}
+        onClick={() => !disabled && onChange(!checked)}
+        className="b-switch"
       >
-        <div
-          style={{
-            position: "absolute",
-            top: 3,
-            left: checked ? 23 : 3,
-            width: 18,
-            height: 18,
-            borderRadius: 999,
-            background: "white",
-            boxShadow: "0 1px 3px rgba(0,0,0,0.18)",
-            transition: "left 0.18s",
-          }}
-        />
-      </div>
-      <span style={{ fontSize: 14, fontWeight: 700 }}>{label}</span>
-    </label>
+        <span className="b-switch-knob" />
+      </button>
+
+      <span style={{ fontSize: "var(--fs-body)", fontWeight: 500 }}>{label}</span>
+    </div>
   );
 }
 
@@ -360,7 +350,7 @@ export default function PatientSettingsPage() {
                   alignItems: "center",
                   gap: 12,
                   padding: "14px 18px",
-                  borderRadius: 18,
+                  borderRadius: "var(--r-lg)",
                   background: "var(--panel-2)",
                   border: "1px solid var(--border)",
                   marginBottom: 14,
@@ -370,7 +360,7 @@ export default function PatientSettingsPage() {
                   style={{
                     fontFamily: "monospace",
                     fontSize: 22,
-                    fontWeight: 950,
+                    fontWeight: 600,
                     letterSpacing: "0.08em",
                     flex: 1,
                     color: "var(--primary)",
@@ -418,7 +408,7 @@ export default function PatientSettingsPage() {
                 <span
                   style={{
                     fontSize: 10,
-                    fontWeight: 900,
+                    fontWeight: 600,
                     textTransform: "uppercase",
                     letterSpacing: "0.07em",
                     color: "var(--primary)",
@@ -448,7 +438,7 @@ export default function PatientSettingsPage() {
           <div
             style={{
               padding: "16px 18px",
-              borderRadius: 14,
+              borderRadius: "var(--r-md)",
               border: "1px solid var(--border)",
               background: "var(--panel-2)",
               marginBottom: 16,
@@ -466,7 +456,7 @@ export default function PatientSettingsPage() {
           <div
             style={{
               padding: "12px 16px",
-              borderRadius: 12,
+              borderRadius: "var(--r-md)",
               background: emergencyEnabled
                 ? "color-mix(in srgb, var(--primary) 8%, var(--panel-2))"
                 : "var(--panel-2)",
@@ -563,7 +553,7 @@ export default function PatientSettingsPage() {
                   }}
                 >
                   <div style={{ flex: 1, minWidth: 0 }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 2 }}>{c.name}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 2 }}>{c.name}</div>
                     <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.55 }}>
                       {[c.relationship, c.phone, c.notes].filter(Boolean).join(" · ") || "—"}
                     </div>
@@ -716,7 +706,7 @@ export default function PatientSettingsPage() {
             style={{ padding: 28, maxWidth: 440, width: "100%" }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10 }}>
+            <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 10 }}>
               {t("regenerateCodeConfirmTitle")}
             </div>
             <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65, marginBottom: 22 }}>
@@ -769,7 +759,7 @@ export default function PatientSettingsPage() {
             }}
             onClick={(e) => e.stopPropagation()}
           >
-            <div style={{ fontWeight: 950, fontSize: 18, marginBottom: 10, color: "var(--danger-text)" }}>
+            <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 10, color: "var(--danger-text)" }}>
               {t("deleteAccount")}
             </div>
             <div
@@ -779,7 +769,7 @@ export default function PatientSettingsPage() {
                 lineHeight: 1.65,
                 marginBottom: 18,
                 padding: "12px 14px",
-                borderRadius: 14,
+                borderRadius: "var(--r-md)",
                 background: "var(--danger-bg)",
                 color: "var(--danger-text)",
                 border: "1px solid var(--danger-border)",
@@ -789,7 +779,7 @@ export default function PatientSettingsPage() {
             </div>
             <div style={{ marginBottom: 16 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
+                <span className="muted-text" style={{ fontSize: 12, fontWeight: 600 }}>
                   Type <strong>delete</strong> to confirm
                 </span>
                 <input
@@ -858,7 +848,7 @@ function ContactForm({
     <div
       style={{
         padding: "16px 18px",
-        borderRadius: 14,
+        borderRadius: "var(--r-md)",
         border: "1px solid var(--border)",
         background: "var(--panel-2)",
         display: "grid",

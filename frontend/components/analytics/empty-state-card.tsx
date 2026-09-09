@@ -24,7 +24,7 @@ export default function EmptyStateCard({ title, description, icon = "○" }: Pro
       <div
         aria-hidden
         style={{
-          fontSize: 28,
+          fontSize: 19,
           lineHeight: 1,
           color: "var(--muted)",
           opacity: 0.6,
@@ -33,7 +33,7 @@ export default function EmptyStateCard({ title, description, icon = "○" }: Pro
       >
         {icon}
       </div>
-      <div style={{ fontWeight: 700, fontSize: 14, color: "var(--foreground)" }}>{title}</div>
+      <div style={{ fontWeight: 700, fontSize: 14, color: "var(--text)" }}>{title}</div>
       {description && (
         <div className="muted-text" style={{ fontSize: 12, maxWidth: 360, lineHeight: 1.5 }}>
           {description}

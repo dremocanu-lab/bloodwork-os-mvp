@@ -69,7 +69,7 @@ function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
           background: "var(--success-bg)",
           color: "var(--success-text)",
           border: "1px solid var(--success-border)",
-          fontWeight: 950,
+          fontWeight: 600,
           flex: "0 0 auto",
         }}
       >
@@ -90,7 +90,7 @@ function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
           background: "var(--danger-bg)",
           color: "var(--danger-text)",
           border: "1px solid var(--danger-border)",
-          fontWeight: 950,
+          fontWeight: 600,
           flex: "0 0 auto",
         }}
       >
@@ -274,14 +274,14 @@ export default function CarePartnerUploadPage() {
       <div style={{ display: "grid", gap: 20 }}>
         {dependants.length === 0 ? (
           <div className="soft-card" style={{ padding: 32, textAlign: "center" }}>
-            <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>{t("noDependantsYet")}</div>
+            <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 8 }}>{t("noDependantsYet")}</div>
             <div className="muted-text">{t("noDependantsUploadDesc")}</div>
           </div>
         ) : (
           <>
             {/* Patient selector */}
             <div className="soft-card" style={{ padding: 20 }}>
-              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
+              <div className="muted-text" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                 {t("uploadingFor")}
               </div>
               <div
@@ -307,7 +307,7 @@ export default function CarePartnerUploadPage() {
 
             {/* Section selector */}
             <div className="soft-card" style={{ padding: 20 }}>
-              <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginBottom: 8 }}>
+              <div className="muted-text" style={{ fontSize: 12, fontWeight: 600, marginBottom: 8 }}>
                 {t("documentType")}
               </div>
               <div
@@ -342,7 +342,7 @@ export default function CarePartnerUploadPage() {
               <div
                 style={{
                   border: `2px dashed ${dragActive ? "var(--primary)" : "var(--border)"}`,
-                  borderRadius: 12,
+                  borderRadius: "var(--r-md)",
                   padding: "32px 20px",
                   textAlign: "center",
                   background: dragActive
@@ -353,7 +353,7 @@ export default function CarePartnerUploadPage() {
                 }}
                 onClick={() => hiddenFileInputRef.current?.click()}
               >
-                <div style={{ fontWeight: 900, fontSize: 16 }}>{t("dragFilesHere")}</div>
+                <div style={{ fontWeight: 600, fontSize: 16 }}>{t("dragFilesHere")}</div>
                 <div className="muted-text" style={{ marginTop: 6 }}>{t("orBrowse")}</div>
                 <input
                   ref={hiddenFileInputRef}
@@ -372,7 +372,7 @@ export default function CarePartnerUploadPage() {
             {uploadRows.length > 0 && (
               <div className="soft-card" style={{ padding: 20 }}>
                 <div style={{ marginBottom: 12, display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                  <div className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
+                  <div className="muted-text" style={{ fontSize: 12, fontWeight: 600 }}>
                     {uploadRows.length} {t("filesSelected")}
                   </div>
                   {items.length > 0 && (
@@ -402,7 +402,7 @@ export default function CarePartnerUploadPage() {
                     >
                       <UploadRowStatus status={row.status} />
                       <div>
-                        <div style={{ fontWeight: 900, fontSize: 13 }}>{row.filename}</div>
+                        <div style={{ fontWeight: 600, fontSize: 13 }}>{row.filename}</div>
                         <div className="muted-text" style={{ fontSize: 12 }}>
                           {formatFileSize(row.size)}
                           {row.message ? ` · ${row.message}` : ""}

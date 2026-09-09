@@ -1,6 +1,22 @@
 "use client";
 
-import { useEffect, useMemo, useRef, useState } from "react";
+/**
+ * Patient home - my record.
+ *
+ * Before: a 14,500px scroll (and 36,000px once the trend panels stopped
+ * collapsing) - a 40px hero figure, a featured chart, a pinned column, then
+ * every one of ~50 analytes as its own card with two charts mounted at once.
+ *
+ * After: the same workspace structure the clinician sees, tuned for a
+ * patient: Overview / Timeline / Labs / Documents, comfortable density,
+ * plainer language, and explanations where a clinician would just get a
+ * number. Every capability is preserved - featured trend, pinning (max 3),
+ * per-analyte expansion with source reports, section browsing with
+ * department/hospital/year filters, pagination, original-file opening,
+ * background-upload refresh.
+ */
+
+import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { useUploadManager } from "@/components/upload-provider";
@@ -8,15 +24,41 @@ import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
+import { hasReferenceBand, Sparkline, TrendChart } from "@/components/ui/trend";
+import {
+  CellPrimary,
+  Chip,
+  Column,
+  DataTable,
+  Dialog,
+  EmptyState,
+  ErrorNote,
+  FilterChip,
+  LabValue,
+  Menu,
+  MenuItem,
+  Metric,
+  Metrics,
+  Notice,
+  SectionHead,
+  Status,
+  TableSkeleton,
+  Tabs,
+  Toolbar,
+} from "@/components/ui";
+import {
+  IconChevronDown,
+  IconChevronRight,
+  IconDocument,
+  IconExternal,
+  IconLab,
+  IconPill,
+  IconPlus,
+  IconUpload,
+} from "@/components/ui/icon";
+import type { NavUser } from "@/lib/navigation";
 
-type CurrentUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin";
-  department?: string | null;
-  hospital_name?: string | null;
-};
+/* ── Types ──────────────────────────────────────────────────────────────── */
 
 type UploadedBy = {
   id: number;
@@ -133,6 +175,16 @@ type AdmissionParent = TimelineItem & {
   parentRank: number;
 };
 
+type Medication = {
+  id: number;
+  name: string;
+  status: string;
+  dose_strength?: string | null;
+  frequency?: string | null;
+};
+
+type RecordTab = "overview" | "timeline" | "labs" | "documents";
+
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
   "bloodwork",
   "discharge_summary",
@@ -141,84 +193,50 @@ const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
   "other",
 ];
 
-const PAGE_SIZE = 10;
+const PAGE_SIZE = 20;
+const TREND_POINTS = 8;
+const MAX_PINNED = 3;
 
+/** Analytes a patient is most likely to be looking for, listed first. */
 const TREND_PRIORITY_WORDS = [
-  "rbc",
-  "red blood",
-  "hemoglobin",
-  "hgb",
-  "hematocrit",
-  "hct",
-  "mcv",
-  "mch",
-  "mchc",
-  "rdw",
-  "wbc",
-  "white blood",
-  "neut",
-  "lymph",
-  "mono",
-  "eosin",
-  "baso",
-  "platelet",
-  "plt",
-  "mpv",
-  "glucose",
-  "creatinine",
-  "creatinina",
-  "urea",
-  "alt",
-  "ast",
-  "bilirubin",
-  "cholesterol",
-  "triglyceride",
-  "tsh",
+  "rbc", "red blood", "hemoglobin", "hgb", "hematocrit", "hct", "mcv", "mch",
+  "mchc", "rdw", "wbc", "white blood", "neut", "lymph", "mono", "eosin",
+  "baso", "platelet", "plt", "mpv", "glucose", "creatinine", "creatinina",
+  "urea", "alt", "ast", "bilirubin", "cholesterol", "triglyceride", "tsh",
 ];
+
+/* ── Helpers (behaviour unchanged) ──────────────────────────────────────── */
 
 function parseDateTime(value?: string | null) {
   if (!value) return 0;
-
   const normalized = value.trim();
   const direct = new Date(normalized).getTime();
-
   if (!Number.isNaN(direct)) return direct;
 
-  const dateTimeMatch = normalized.match(
-    /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
-  );
+  const match = normalized.match(/^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/);
+  if (!match) return 0;
 
-  if (dateTimeMatch) {
-    const day = Number(dateTimeMatch[1]);
-    const month = Number(dateTimeMatch[2]);
-    const yearRaw = Number(dateTimeMatch[3]);
-    const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
-    const hour = dateTimeMatch[4] ? Number(dateTimeMatch[4]) : 0;
-    const minute = dateTimeMatch[5] ? Number(dateTimeMatch[5]) : 0;
-
-    const parsed = new Date(year, month - 1, day, hour, minute).getTime();
-
-    if (!Number.isNaN(parsed)) return parsed;
-  }
-
-  return 0;
+  const day = Number(match[1]);
+  const month = Number(match[2]);
+  const yearRaw = Number(match[3]);
+  const year = yearRaw < 100 ? 2000 + yearRaw : yearRaw;
+  const hour = match[4] ? Number(match[4]) : 0;
+  const minute = match[5] ? Number(match[5]) : 0;
+  const parsed = new Date(year, month - 1, day, hour, minute).getTime();
+  return Number.isNaN(parsed) ? 0 : parsed;
 }
 
 function compareDatesDescending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
-
   if (aTime || bTime) return bTime - aTime;
-
   return (b || "").localeCompare(a || "");
 }
 
 function compareDatesAscending(a?: string | null, b?: string | null) {
   const aTime = parseDateTime(a);
   const bTime = parseDateTime(b);
-
   if (aTime || bTime) return aTime - bTime;
-
   return (a || "").localeCompare(b || "");
 }
 
@@ -228,11 +246,10 @@ function getYearFromDate(value?: string | null) {
   return String(new Date(time).getFullYear());
 }
 
-function formatAxisDate(value?: string | null) {
+function formatShortDate(value?: string | null) {
+  if (!value) return "—";
   const time = parseDateTime(value);
-
-  if (!time) return value || "—";
-
+  if (!time) return value;
   return new Date(time).toLocaleDateString(undefined, {
     day: "2-digit",
     month: "short",
@@ -240,20 +257,16 @@ function formatAxisDate(value?: string | null) {
   });
 }
 
-function formatAxisNumber(value: number) {
-  if (Math.abs(value) >= 100) return value.toFixed(0);
-  if (Math.abs(value) >= 10) return value.toFixed(1);
-  if (Math.abs(value) >= 1) return value.toFixed(2).replace(/\.?0+$/, "");
-  return value.toFixed(3).replace(/\.?0+$/, "");
+function formatLongDate(value?: string | null) {
+  if (!value) return "—";
+  const time = parseDateTime(value);
+  if (!time) return value;
+  return new Date(time).toLocaleDateString(undefined, {
+    day: "2-digit",
+    month: "short",
+    year: "numeric",
+  });
 }
-
-function formatShortMonthYear(value?: string | null) {
-  if (!value) return null;
-  const ts = new Date(value).getTime();
-  if (!ts || Number.isNaN(ts)) return null;
-  return new Date(ts).toLocaleDateString(undefined, { month: "short", year: "numeric" });
-}
-
 
 function normalizeProfile(profile: MyProfileResponse): MyProfileResponse {
   return {
@@ -284,18 +297,13 @@ function getDocumentClinicalDate(doc: DocumentCard) {
 }
 
 function getDocumentDateLabel(doc: DocumentCard) {
-  const clinicalDate = getDocumentClinicalDate(doc);
-
-  if (!clinicalDate) return "No date";
-
   if (doc.collected_on) return `Collected ${doc.collected_on}`;
   if (doc.test_date) return `Test date ${doc.test_date}`;
   if (doc.reported_on) return `Reported ${doc.reported_on}`;
   if (doc.registered_on) return `Registered ${doc.registered_on}`;
   if (doc.generated_on) return `Generated ${doc.generated_on}`;
   if (doc.created_at) return `Uploaded ${doc.created_at}`;
-
-  return clinicalDate;
+  return "No date";
 }
 
 function getEventDate(event: PatientEvent) {
@@ -304,12 +312,10 @@ function getEventDate(event: PatientEvent) {
 
 function uploaderSubtitle(doc: DocumentCard) {
   const uploader = doc.uploaded_by;
-
-  if (!uploader) return "Uploaded by unknown user";
-
-  const details = [uploader.full_name, uploader.department, uploader.hospital_name].filter(Boolean);
-
-  return `Uploaded by ${details.join(" · ")}`;
+  if (!uploader) return "Unknown source";
+  return [uploader.full_name, uploader.department, uploader.hospital_name]
+    .filter(Boolean)
+    .join(" · ");
 }
 
 function isDischargeDocument(doc: DocumentCard | TimelineItem) {
@@ -322,10 +328,7 @@ function isDischargeDocument(doc: DocumentCard | TimelineItem) {
 }
 
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
-  if (isDischargeDocument(doc)) {
-    return `/documents/${documentId}/discharge`;
-  }
-
+  if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
   return `/documents/${documentId}`;
 }
 
@@ -333,363 +336,29 @@ function isInsideDateRange(date?: string | null, start?: string | null, end?: st
   const dateTime = parseDateTime(date);
   const startTime = parseDateTime(start);
   const endTime = parseDateTime(end);
-
   if (!dateTime || !startTime) return false;
-
-  if (!endTime) {
-    return dateTime >= startTime;
-  }
-
+  if (!endTime) return dateTime >= startTime;
   return dateTime >= startTime && dateTime <= endTime;
 }
 
 function getTrendPriority(trend: BloodworkTrend) {
-  const name = `${trend.test_key || ""} ${trend.display_name || ""} ${trend.canonical_name || ""} ${
-    trend.category || ""
-  }`.toLowerCase();
-
+  const name = `${trend.test_key || ""} ${trend.display_name || ""} ${
+    trend.canonical_name || ""
+  } ${trend.category || ""}`.toLowerCase();
   const index = TREND_PRIORITY_WORDS.findIndex((word) => name.includes(word));
-
-  if (index === -1) return 999;
-
-  return index;
+  return index === -1 ? 999 : index;
 }
 
-function getSortedTrendPoints(points: TrendPoint[]) {
-  return [...points].sort((a, b) => compareDatesAscending(a.date, b.date));
+function isFlagAbnormal(flag?: string | null) {
+  const value = (flag || "").toLowerCase().trim();
+  return Boolean(value) && !["normal", "null", "none", "ok", ""].includes(value);
 }
 
-function getMostRecentTrendPoints(points: TrendPoint[], count = 5) {
-  return getSortedTrendPoints(points)
-    .slice(-count)
-    .sort((a, b) => compareDatesAscending(a.date, b.date));
+function recentPoints(points: TrendPoint[], limit = TREND_POINTS) {
+  return [...points].sort((a, b) => compareDatesAscending(a.date, b.date)).slice(-limit);
 }
 
-function buildYAxisTicks(values: number[]) {
-  if (!values.length) return [0, 1];
-
-  const min = Math.min(...values);
-  const max = Math.max(...values);
-
-  if (min === max) {
-    const spread = Math.abs(min) < 1 ? 0.5 : Math.abs(min) * 0.15;
-    return [min - spread, min, min + spread];
-  }
-
-  const rawPadding = (max - min) * 0.18;
-  const paddedMin = min - rawPadding;
-  const paddedMax = max + rawPadding;
-  const step = (paddedMax - paddedMin) / 4;
-
-  return [0, 1, 2, 3, 4].map((index) => paddedMin + step * index);
-}
-
-function TrendChart({
-  points,
-  highlightedDocumentId,
-  expanded = false,
-  unit,
-}: {
-  points: TrendPoint[];
-  highlightedDocumentId?: number | null;
-  expanded?: boolean;
-  unit?: string | null;
-}) {
-  if (!points.length) return null;
-
-  const sortedPoints = getSortedTrendPoints(points);
-
-  const width = 1000;
-  const height = expanded ? 360 : 150;
-
-  const margin = expanded
-    ? { top: 58, right: 36, bottom: 64, left: 82 }
-    : { top: 24, right: 24, bottom: 24, left: 24 };
-
-  const plotWidth = width - margin.left - margin.right;
-  const plotHeight = height - margin.top - margin.bottom;
-
-  const values = sortedPoints.map((point) => point.value);
-  const yTicks = buildYAxisTicks(values);
-  const yMin = Math.min(...yTicks);
-  const yMax = Math.max(...yTicks);
-  const yRange = yMax - yMin || 1;
-
-  const coords = sortedPoints.map((point, index) => {
-    const x = margin.left + (index * plotWidth) / Math.max(sortedPoints.length - 1, 1);
-    const y = margin.top + plotHeight - ((point.value - yMin) / yRange) * plotHeight;
-
-    return { x, y, point };
-  });
-
-  const highlightedCoord =
-    coords.find((coord) => coord.point.document_id === highlightedDocumentId) || null;
-
-  const tooltipWidth = expanded ? 196 : 154;
-  const tooltipHeight = expanded ? 52 : 42;
-
-  let tooltipX = highlightedCoord ? highlightedCoord.x - tooltipWidth / 2 : 0;
-  if (tooltipX < 10) tooltipX = 10;
-  if (tooltipX + tooltipWidth > width - 10) tooltipX = width - tooltipWidth - 10;
-
-  const tooltipY = highlightedCoord
-    ? Math.max(8, highlightedCoord.y - tooltipHeight - 16)
-    : 0;
-
-  const linePoints = coords.map((coord) => `${coord.x},${coord.y}`).join(" ");
-
-  return (
-    <svg
-      width="100%"
-      height="100%"
-      viewBox={`0 0 ${width} ${height}`}
-      preserveAspectRatio="none"
-      style={{ display: "block", width: "100%", height: "100%", overflow: "visible" }}
-    >
-      {expanded && (
-        <>
-          <text x={margin.left} y={24} fill="var(--muted)" fontSize="13" fontWeight="850">
-            Value {unit ? `(${unit})` : ""}
-          </text>
-
-          <text
-            x={width - margin.right}
-            y={height - 12}
-            textAnchor="end"
-            fill="var(--muted)"
-            fontSize="13"
-            fontWeight="850"
-          >
-            Collection date
-          </text>
-
-          {yTicks.map((tick, index) => {
-            const y = margin.top + plotHeight - ((tick - yMin) / yRange) * plotHeight;
-
-            return (
-              <g key={`y-tick-${index}`}>
-                <line
-                  x1={margin.left}
-                  y1={y}
-                  x2={width - margin.right}
-                  y2={y}
-                  stroke="var(--border)"
-                  strokeWidth="1"
-                  opacity={index === 0 ? 0.9 : 0.55}
-                />
-                <text
-                  x={margin.left - 12}
-                  y={y + 4}
-                  textAnchor="end"
-                  fill="var(--muted)"
-                  fontSize="12"
-                  fontWeight="800"
-                >
-                  {formatAxisNumber(tick)}
-                </text>
-              </g>
-            );
-          })}
-
-          <line
-            x1={margin.left}
-            y1={margin.top}
-            x2={margin.left}
-            y2={margin.top + plotHeight}
-            stroke="var(--border)"
-            strokeWidth="1.25"
-          />
-          <line
-            x1={margin.left}
-            y1={margin.top + plotHeight}
-            x2={width - margin.right}
-            y2={margin.top + plotHeight}
-            stroke="var(--border)"
-            strokeWidth="1.25"
-          />
-
-          {coords.map((coord, index) => (
-            <g key={`x-tick-${coord.point.document_id}-${index}`}>
-              <line
-                x1={coord.x}
-                y1={margin.top + plotHeight}
-                x2={coord.x}
-                y2={margin.top + plotHeight + 6}
-                stroke="var(--border)"
-                strokeWidth="1"
-              />
-              <text
-                x={coord.x}
-                y={margin.top + plotHeight + 28}
-                textAnchor="middle"
-                fill="var(--muted)"
-                fontSize="12"
-                fontWeight="800"
-              >
-                {formatAxisDate(coord.point.date)}
-              </text>
-            </g>
-          ))}
-        </>
-      )}
-
-      {!expanded && (
-        <>
-          <line
-            x1={margin.left}
-            y1={margin.top + plotHeight}
-            x2={width - margin.right}
-            y2={margin.top + plotHeight}
-            stroke="var(--border)"
-            strokeWidth="1"
-            opacity="0.65"
-          />
-          <line
-            x1={margin.left}
-            y1={margin.top + plotHeight / 2}
-            x2={width - margin.right}
-            y2={margin.top + plotHeight / 2}
-            stroke="var(--border)"
-            strokeWidth="1"
-            opacity="0.35"
-          />
-        </>
-      )}
-
-      <polyline
-        fill="none"
-        stroke="var(--primary)"
-        strokeWidth={expanded ? 4 : 4.25}
-        strokeLinecap="round"
-        strokeLinejoin="round"
-        points={linePoints}
-      />
-
-      {coords.map((coord, index) => {
-        const highlighted = highlightedDocumentId === coord.point.document_id;
-
-        return (
-          <circle
-            key={`trend-point-${coord.point.document_id}-${index}`}
-            cx={coord.x}
-            cy={coord.y}
-            r={highlighted ? (expanded ? 10 : 8) : expanded ? 5.5 : 5}
-            fill={highlighted ? "#f97316" : "var(--primary)"}
-            stroke={highlighted ? "#fed7aa" : "var(--panel)"}
-            strokeWidth={highlighted ? 6 : 3}
-            style={{ transition: "r 180ms ease, fill 180ms ease, stroke-width 180ms ease" }}
-          />
-        );
-      })}
-
-      {highlightedCoord && (
-        <g style={{ pointerEvents: "none" }}>
-          <line
-            x1={highlightedCoord.x}
-            y1={highlightedCoord.y - 2}
-            x2={highlightedCoord.x}
-            y2={tooltipY + tooltipHeight}
-            stroke="#f97316"
-            strokeWidth="1.5"
-            strokeDasharray="4 4"
-            opacity="0.9"
-          />
-          <rect
-            x={tooltipX}
-            y={tooltipY}
-            width={tooltipWidth}
-            height={tooltipHeight}
-            rx={expanded ? 15 : 12}
-            fill="#ffffff"
-            stroke="#f97316"
-            strokeWidth="1.6"
-            filter="drop-shadow(0px 14px 28px rgba(0, 0, 0, 0.35))"
-          />
-          <text
-            x={tooltipX + 13}
-            y={tooltipY + (expanded ? 21 : 17)}
-            fill="#0f172a"
-            fontSize={expanded ? 14 : 12}
-            fontWeight="900"
-          >
-            {highlightedCoord.point.value_display} {unit || ""}
-          </text>
-          <text
-            x={tooltipX + 13}
-            y={tooltipY + (expanded ? 40 : 33)}
-            fill="#475569"
-            fontSize={expanded ? 12 : 10.5}
-            fontWeight="800"
-          >
-            {formatAxisDate(highlightedCoord.point.date)}
-          </text>
-        </g>
-      )}
-    </svg>
-  );
-}
-
-function SelectFilter({
-  label,
-  value,
-  options,
-  onChange,
-  calendarLike,
-}: {
-  label: string;
-  value: string;
-  options: string[];
-  onChange: (value: string) => void;
-  calendarLike?: boolean;
-}) {
-  return (
-    <label style={{ display: "grid", gap: 6, minWidth: 180 }}>
-      <span className="muted-text" style={{ fontSize: 12, fontWeight: 850 }}>
-        {label}
-      </span>
-
-      <div style={{ position: "relative" }}>
-        <select
-          value={value}
-          onChange={(event) => onChange(event.target.value)}
-          className="text-input"
-          style={{
-            appearance: "none",
-            width: "100%",
-            paddingRight: 40,
-            borderRadius: 16,
-            background: calendarLike
-              ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 8%, var(--panel)), var(--panel))"
-              : "var(--panel)",
-            fontWeight: 850,
-            cursor: "pointer",
-          }}
-        >
-          <option value="">All</option>
-          {options.map((option) => (
-            <option key={option} value={option}>
-              {calendarLike ? `📅 ${option}` : option}
-            </option>
-          ))}
-        </select>
-
-        <span
-          style={{
-            position: "absolute",
-            right: 14,
-            top: "50%",
-            transform: "translateY(-50%)",
-            pointerEvents: "none",
-            color: "var(--muted)",
-            fontWeight: 950,
-          }}
-        >
-          ▼
-        </span>
-      </div>
-    </label>
-  );
-}
+/* ── Page ───────────────────────────────────────────────────────────────── */
 
 export default function MyRecordsPage() {
   const router = useRouter();
@@ -700,51 +369,45 @@ export default function MyRecordsPage() {
     bloodwork: t("bloodwork"),
     discharge_summary: "Discharge summaries",
     scans: t("scans"),
-    hospitalizations: "Hospitalizations",
+    hospitalizations: "Hospital stays",
     other: "Other",
   };
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<NavUser | null>(null);
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
   const [trends, setTrends] = useState<BloodworkTrend[]>([]);
+  const [medications, setMedications] = useState<Medication[]>([]);
+
+  const [tab, setTab] = useState<RecordTab>("overview");
+
   const [activeSection, setActiveSection] =
     useState<keyof MyProfileResponse["sections"]>("bloodwork");
-
+  const [docQuery, setDocQuery] = useState("");
   const [departmentFilter, setDepartmentFilter] = useState("");
   const [hospitalFilter, setHospitalFilter] = useState("");
   const [yearFilter, setYearFilter] = useState("");
   const [visibleCount, setVisibleCount] = useState(PAGE_SIZE);
 
+  const [labQuery, setLabQuery] = useState("");
+  const [labAbnormalOnly, setLabAbnormalOnly] = useState(false);
   const [expandedTrendKey, setExpandedTrendKey] = useState<string | null>(null);
-  const [hoveredTrendPoint, setHoveredTrendPoint] = useState<Record<string, number | null>>({});
   const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
   const [pinsLoaded, setPinsLoaded] = useState(false);
-
-  const [medications, setMedications] = useState<Array<{ id: number; name: string; status: string; dose_strength?: string | null; frequency?: string | null }>>([]);
-  const [visibleMedCount, setVisibleMedCount] = useState(5);
+  const [featuredPickerOpen, setFeaturedPickerOpen] = useState(false);
+  const [featuredOverride, setFeaturedOverride] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
   function togglePin(testKey: string) {
     setPinnedTrendKeys((prev) => {
-      if (prev.includes(testKey)) return prev.filter((k) => k !== testKey);
-      if (prev.length >= 3) return prev;
+      if (prev.includes(testKey)) return prev.filter((key) => key !== testKey);
+      if (prev.length >= MAX_PINNED) return prev;
       return [...prev, testKey];
     });
   }
 
-  async function fetchMe() {
-    try {
-      const response = await api.get<CurrentUser>("/auth/me");
-      setCurrentUser(response.data);
-      return response.data;
-    } catch {
-      localStorage.removeItem("access_token");
-      router.push("/login");
-      return null;
-    }
-  }
+  /* --- Data ------------------------------------------------------------ */
 
   async function fetchProfile() {
     const response = await api.get<MyProfileResponse>("/my/profile");
@@ -767,59 +430,22 @@ export default function MyRecordsPage() {
       const profileResponse = await fetchProfile();
       await Promise.all([fetchTrends(profileResponse.patient.id), refreshUploadJobs()]);
     } catch {
-      // Silent refresh should never break the page.
+      // A silent refresh must never break the page.
     }
-  }
-
-  async function openOriginal(documentId: number) {
-    try {
-      setError("");
-
-      const response = await api.get(`/documents/${documentId}/file`, {
-        responseType: "blob",
-      });
-
-      const rawContentType = response.headers["content-type"];
-      const contentType =
-        typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
-
-      const blob = new Blob([response.data], { type: contentType });
-      const fileUrl = window.URL.createObjectURL(blob);
-
-      window.open(fileUrl, "_blank", "noopener,noreferrer");
-
-      setTimeout(() => {
-        window.URL.revokeObjectURL(fileUrl);
-      }, 60_000);
-    } catch (err) {
-      setError(getErrorMessage(err, t("failedOpenOriginal")));
-    }
-  }
-
-  function openStructuredDocument(doc: DocumentCard) {
-    router.push(getStructuredDocumentPath(doc, doc.id));
-  }
-
-  function openTimelineDocument(documentId: number, item?: TimelineItem) {
-    if (item) {
-      router.push(getStructuredDocumentPath(item, documentId));
-      return;
-    }
-
-    const foundDocument = allDocuments.find((doc) => doc.id === documentId);
-
-    if (foundDocument) {
-      router.push(getStructuredDocumentPath(foundDocument, documentId));
-      return;
-    }
-
-    router.push(`/documents/${documentId}`);
   }
 
   useEffect(() => {
     async function init() {
-      const me = await fetchMe();
-      if (!me) return;
+      let me: NavUser | null = null;
+      try {
+        const response = await api.get<NavUser>("/auth/me");
+        me = response.data;
+        setCurrentUser(response.data);
+      } catch {
+        localStorage.removeItem("access_token");
+        router.push("/login");
+        return;
+      }
 
       if (me.role !== "patient") {
         router.push(getHomeByRole(me.role));
@@ -831,10 +457,10 @@ export default function MyRecordsPage() {
         const profileResponse = await fetchProfile();
         await fetchTrends(profileResponse.patient.id);
         try {
-          const medResponse = await api.get<Array<{ id: number; name: string; status: string; dose_strength?: string | null; frequency?: string | null }>>("/my/medications");
+          const medResponse = await api.get<Medication[]>("/my/medications");
           setMedications(medResponse.data);
         } catch {
-          // medications are non-critical — page still loads
+          // Medications are non-critical - the record still loads.
         }
       } catch (err) {
         setError(getErrorMessage(err, t("failedLoadRecords")));
@@ -847,11 +473,11 @@ export default function MyRecordsPage() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
+  // A finished background upload should appear without a manual reload.
   useEffect(() => {
     function handleUploadComplete() {
       void refreshRecordsSilently();
     }
-
     window.addEventListener("bloodwork-upload-complete", handleUploadComplete);
     return () => window.removeEventListener("bloodwork-upload-complete", handleUploadComplete);
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -859,11 +485,9 @@ export default function MyRecordsPage() {
 
   useEffect(() => {
     if (activeCount <= 0) return;
-
     const interval = window.setInterval(() => {
       void refreshRecordsSilently();
     }, 4000);
-
     return () => window.clearInterval(interval);
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [activeCount]);
@@ -877,9 +501,8 @@ export default function MyRecordsPage() {
 
   useEffect(() => {
     if (!currentUser || pinsLoaded) return;
-    const storageKey = `pinned_trends_patient_${currentUser.id}`;
     try {
-      const stored = localStorage.getItem(storageKey);
+      const stored = localStorage.getItem(`pinned_trends_patient_${currentUser.id}`);
       if (stored) {
         const parsed = JSON.parse(stored);
         if (Array.isArray(parsed)) setPinnedTrendKeys(parsed);
@@ -892,17 +515,20 @@ export default function MyRecordsPage() {
 
   useEffect(() => {
     if (!currentUser || !pinsLoaded) return;
-    const storageKey = `pinned_trends_patient_${currentUser.id}`;
     try {
-      localStorage.setItem(storageKey, JSON.stringify(pinnedTrendKeys));
+      localStorage.setItem(
+        `pinned_trends_patient_${currentUser.id}`,
+        JSON.stringify(pinnedTrendKeys)
+      );
     } catch {
       // ignore storage errors
     }
   }, [pinnedTrendKeys, currentUser, pinsLoaded]);
 
+  /* --- Derived --------------------------------------------------------- */
+
   const allDocuments = useMemo(() => {
     if (!profile) return [];
-
     return SECTION_ORDER.flatMap((section) => profile.sections[section] || []).sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
@@ -910,7 +536,6 @@ export default function MyRecordsPage() {
 
   const docsForActiveSection = useMemo(() => {
     if (!profile) return [];
-
     return [...(profile.sections[activeSection] || [])].sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
@@ -924,7 +549,6 @@ export default function MyRecordsPage() {
     docsForActiveSection.forEach((doc) => {
       if (doc.uploaded_by?.department) departments.add(doc.uploaded_by.department);
       if (doc.uploaded_by?.hospital_name) hospitals.add(doc.uploaded_by.hospital_name);
-
       const year = getYearFromDate(getDocumentClinicalDate(doc));
       if (year) years.add(year);
     });
@@ -937,14 +561,19 @@ export default function MyRecordsPage() {
   }, [docsForActiveSection]);
 
   const filteredDocsForSection = useMemo(() => {
+    const term = docQuery.trim().toLowerCase();
     return docsForActiveSection.filter((doc) => {
-      const departmentMatches = !departmentFilter || doc.uploaded_by?.department === departmentFilter;
-      const hospitalMatches = !hospitalFilter || doc.uploaded_by?.hospital_name === hospitalFilter;
-      const yearMatches = !yearFilter || getYearFromDate(getDocumentClinicalDate(doc)) === yearFilter;
-
-      return departmentMatches && hospitalMatches && yearMatches;
+      if (departmentFilter && doc.uploaded_by?.department !== departmentFilter) return false;
+      if (hospitalFilter && doc.uploaded_by?.hospital_name !== hospitalFilter) return false;
+      if (yearFilter && getYearFromDate(getDocumentClinicalDate(doc)) !== yearFilter) return false;
+      if (!term) return true;
+      return [doc.report_name, doc.filename, doc.lab_name, uploaderSubtitle(doc)]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term);
     });
-  }, [docsForActiveSection, departmentFilter, hospitalFilter, yearFilter]);
+  }, [docsForActiveSection, docQuery, departmentFilter, hospitalFilter, yearFilter]);
 
   const visibleDocsForSection = filteredDocsForSection.slice(0, visibleCount);
 
@@ -954,7 +583,6 @@ export default function MyRecordsPage() {
     const sortedDocuments = [...allDocuments].sort((a, b) =>
       compareDatesDescending(getDocumentClinicalDate(a), getDocumentClinicalDate(b))
     );
-
     const usedDocumentIds = new Set<number>();
 
     const dischargeParents: AdmissionParent[] = sortedDocuments
@@ -964,11 +592,9 @@ export default function MyRecordsPage() {
         type: "document",
         date: doc.reported_on || doc.collected_on || getDocumentClinicalDate(doc),
         title: valueOrDash(doc.report_name || "Discharge summary"),
-        subtitle: `${doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"}${
-          doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""
-        } · ${sectionLabels[doc.section] || "Discharge summary"} · ${uploaderSubtitle(doc)} · ${
-          doc.is_verified ? t("verified") : t("unverified")
-        }`,
+        subtitle: `${
+          doc.collected_on ? `Admitted ${doc.collected_on}` : "Admission date unknown"
+        }${doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""} · ${uploaderSubtitle(doc)}`,
         documentId: doc.id,
         section: doc.section,
         children: [],
@@ -981,10 +607,10 @@ export default function MyRecordsPage() {
       id: `event-${event.id}`,
       type: "event",
       date: getEventDate(event),
-      title: event.title || "Hospitalization",
-      subtitle: `${event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")} · ${t(
-        "doctor"
-      )} ${valueOrDash(event.doctor_name)} · ${valueOrDash(event.department)} · ${valueOrDash(
+      title: event.title || "Hospital stay",
+      subtitle: `${
+        event.status === "active" ? t("activeHospitalization") : t("dischargedHospitalization")
+      } · ${t("doctor")} ${valueOrDash(event.doctor_name)} · ${valueOrDash(
         event.hospital_name
       )}`,
       eventId: event.id,
@@ -998,9 +624,8 @@ export default function MyRecordsPage() {
     const admissionParents = [...dischargeParents, ...eventParents]
       .filter((parent) => parent.admissionStart || parent.admissionEnd)
       .sort((a, b) => {
-        const dateDifference = compareDatesDescending(a.date, b.date);
-        if (dateDifference !== 0) return dateDifference;
-        return a.parentRank - b.parentRank;
+        const difference = compareDatesDescending(a.date, b.date);
+        return difference !== 0 ? difference : a.parentRank - b.parentRank;
       });
 
     const documentToTimelineItem = (doc: DocumentCard): TimelineItem => ({
@@ -1008,35 +633,27 @@ export default function MyRecordsPage() {
       type: "document",
       date: getDocumentClinicalDate(doc),
       title: valueOrDash(doc.report_name || doc.filename),
-      subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabels[doc.section] || doc.section} · ${uploaderSubtitle(
-        doc
-      )} · ${doc.is_verified ? t("verified") : t("unverified")}`,
+      // Category is rendered by the timeline row, so it is not repeated here.
+      subtitle: `${getDocumentDateLabel(doc)} · ${uploaderSubtitle(doc)}`,
       documentId: doc.id,
       section: doc.section,
     });
 
     for (const parent of admissionParents) {
-      const children = sortedDocuments
+      parent.children = sortedDocuments
         .filter((doc) => {
           if (usedDocumentIds.has(doc.id)) return false;
           if (isDischargeDocument(doc)) return false;
-
           const belongs = isInsideDateRange(
             getDocumentClinicalDate(doc),
             parent.admissionStart,
             parent.admissionEnd
           );
-
-          if (belongs) {
-            usedDocumentIds.add(doc.id);
-          }
-
+          if (belongs) usedDocumentIds.add(doc.id);
           return belongs;
         })
         .map(documentToTimelineItem)
         .sort((a, b) => compareDatesAscending(a.date, b.date));
-
-      parent.children = children;
     }
 
     const parentDocumentIds = new Set(
@@ -1044,8 +661,7 @@ export default function MyRecordsPage() {
     );
 
     const standaloneDocuments = sortedDocuments
-      .filter((doc) => !usedDocumentIds.has(doc.id))
-      .filter((doc) => !parentDocumentIds.has(doc.id))
+      .filter((doc) => !usedDocumentIds.has(doc.id) && !parentDocumentIds.has(doc.id))
       .map(documentToTimelineItem);
 
     return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
@@ -1056,773 +672,1044 @@ export default function MyRecordsPage() {
   const sortedTrends = useMemo(() => {
     return [...trends]
       .map((trend) => {
-        const sortedPoints = getSortedTrendPoints(trend.points || []);
-        const latest = sortedPoints[sortedPoints.length - 1] || trend.latest;
-        const previous = sortedPoints[sortedPoints.length - 2] || trend.previous || null;
-
+        const points = recentPoints(trend.points || []);
+        const latest = points[points.length - 1] || trend.latest;
+        const previous = points[points.length - 2] || trend.previous || null;
         return {
           ...trend,
-          points: sortedPoints,
+          points,
           latest,
           previous,
-          delta: latest && previous ? Number((latest.value - previous.value).toFixed(2)) : trend.delta,
+          delta:
+            latest && previous ? Number((latest.value - previous.value).toFixed(2)) : trend.delta,
         };
       })
       .sort((a, b) => {
-        const priorityDifference = getTrendPriority(a) - getTrendPriority(b);
-
-        if (priorityDifference !== 0) return priorityDifference;
-
-        const abnormalA = a.latest?.flag && a.latest.flag !== "Normal" ? 1 : 0;
-        const abnormalB = b.latest?.flag && b.latest.flag !== "Normal" ? 1 : 0;
-
+        const priority = getTrendPriority(a) - getTrendPriority(b);
+        if (priority !== 0) return priority;
+        const abnormalA = isFlagAbnormal(a.latest?.flag) ? 1 : 0;
+        const abnormalB = isFlagAbnormal(b.latest?.flag) ? 1 : 0;
         if (abnormalA !== abnormalB) return abnormalB - abnormalA;
-
         return a.display_name.localeCompare(b.display_name);
       });
   }, [trends]);
 
-  const trendsRef = useRef<HTMLDivElement>(null);
+  const visibleTrends = useMemo(() => {
+    const term = labQuery.trim().toLowerCase();
+    return sortedTrends.filter((trend) => {
+      if (labAbnormalOnly && !isFlagAbnormal(trend.latest?.flag)) return false;
+      if (!term) return true;
+      return [trend.display_name, trend.category, trend.unit]
+        .filter(Boolean)
+        .join(" ")
+        .toLowerCase()
+        .includes(term);
+    });
+  }, [sortedTrends, labQuery, labAbnormalOnly]);
 
-  const snapshotData = useMemo(() => {
-    if (!profile) return null;
-    const recentDoc = allDocuments[0];
-    const recentBloodwork = allDocuments.find((d) => d.section === "bloodwork");
-    const recentDischarge = allDocuments.find((d) => isDischargeDocument(d));
-    const abnormalCount = sortedTrends.filter((tr) => {
-      const flag = (tr.latest?.flag || "").toLowerCase().trim();
-      return flag && !["normal", "null", "none", "ok", ""].includes(flag);
-    }).length;
-    return {
-      totalDocs: allDocuments.length,
-      recentDocDate: recentDoc ? getDocumentClinicalDate(recentDoc) : null,
-      bloodworkCount: profile.sections.bloodwork.length,
-      recentBloodworkDate: recentBloodwork ? getDocumentClinicalDate(recentBloodwork) : null,
-      hospitalizationCount: profile.sections.discharge_summary.length,
-      recentDischargeDate: recentDischarge
-        ? recentDischarge.reported_on || recentDischarge.collected_on || null
-        : null,
-      abnormalCount,
-      trendsCount: sortedTrends.length,
-    };
-  }, [profile, allDocuments, sortedTrends]);
+  const abnormalCount = useMemo(
+    () => sortedTrends.filter((trend) => isFlagAbnormal(trend.latest?.flag)).length,
+    [sortedTrends]
+  );
 
-  // Abnormal trend with the largest percentage change between its two most recent readings
+  /**
+   * Featured: the abnormal result that moved most in percentage terms since
+   * the previous reading - the thing a patient most likely wants to see.
+   */
   const featuredTrend = useMemo(() => {
     if (!sortedTrends.length) return null;
-    const abnormalWithPct = sortedTrends.filter((t) => {
-      const flag = (t.latest?.flag || "").toLowerCase().trim();
-      const isAbnormal = flag && !["normal", "null", "none", "ok", ""].includes(flag);
-      return (
-        isAbnormal &&
-        t.delta !== null &&
-        t.delta !== undefined &&
-        t.points.length > 1 &&
-        t.previous?.value != null &&
-        t.previous.value !== 0
-      );
-    });
-    if (abnormalWithPct.length) {
-      return abnormalWithPct.reduce((max, t) => {
-        const pct = Math.abs(t.delta! / t.previous!.value);
-        const maxPct = Math.abs(max.delta! / max.previous!.value);
-        return pct > maxPct ? t : max;
-      });
+    if (featuredOverride) {
+      return sortedTrends.find((trend) => trend.test_key === featuredOverride) ?? sortedTrends[0];
     }
-    return null;
-  }, [sortedTrends]);
+
+    const candidates = sortedTrends.filter(
+      (trend) =>
+        isFlagAbnormal(trend.latest?.flag) &&
+        trend.delta != null &&
+        trend.points.length > 1 &&
+        trend.previous?.value != null &&
+        trend.previous.value !== 0
+    );
+
+    if (!candidates.length) return null;
+
+    return candidates.reduce((max, trend) => {
+      const pct = Math.abs(trend.delta! / trend.previous!.value);
+      const maxPct = Math.abs(max.delta! / max.previous!.value);
+      return pct > maxPct ? trend : max;
+    });
+  }, [sortedTrends, featuredOverride]);
 
   const pinnedTrends = useMemo(
     () =>
       pinnedTrendKeys
-        .map((key) => sortedTrends.find((t) => t.test_key === key))
-        .filter((t): t is (typeof sortedTrends)[0] => Boolean(t)),
+        .map((key) => sortedTrends.find((trend) => trend.test_key === key))
+        .filter((trend): trend is (typeof sortedTrends)[0] => Boolean(trend)),
     [pinnedTrendKeys, sortedTrends]
   );
 
-  if (loading) {
+  const activeMeds = medications.filter(
+    (med) => med.status === "active" || med.status === "as_needed"
+  );
+
+  /* --- Actions --------------------------------------------------------- */
+
+  async function openOriginal(documentId: number) {
+    try {
+      setError("");
+      const response = await api.get(`/documents/${documentId}/file`, { responseType: "blob" });
+      const rawContentType = response.headers["content-type"];
+      const contentType =
+        typeof rawContentType === "string" ? rawContentType : "application/octet-stream";
+      const blob = new Blob([response.data], { type: contentType });
+      const fileUrl = window.URL.createObjectURL(blob);
+      window.open(fileUrl, "_blank", "noopener,noreferrer");
+      setTimeout(() => window.URL.revokeObjectURL(fileUrl), 60_000);
+    } catch (err) {
+      setError(getErrorMessage(err, t("failedOpenOriginal")));
+    }
+  }
+
+  function openStructuredDocument(doc: DocumentCard) {
+    router.push(getStructuredDocumentPath(doc, doc.id));
+  }
+
+  function openTimelineDocument(documentId: number) {
+    const found = allDocuments.find((doc) => doc.id === documentId);
+    router.push(found ? getStructuredDocumentPath(found, documentId) : `/documents/${documentId}`);
+  }
+
+  /* --- Columns --------------------------------------------------------- */
+
+  const documentColumns: Column<DocumentCard>[] = useMemo(
+    () => [
+      {
+        key: "doc",
+        header: "Document",
+        sortable: true,
+        sortValue: (row) => row.report_name || row.filename,
+        render: (row) => (
+          <CellPrimary
+            title={valueOrDash(row.report_name || row.filename)}
+            sub={
+              <>
+                {sectionLabels[row.section] || row.section}
+                {row.lab_name ? ` · ${row.lab_name}` : ""}
+                {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
+              </>
+            }
+          />
+        ),
+      },
+      {
+        key: "date",
+        header: "Date",
+        width: 110,
+        sortable: true,
+        sortValue: (row) => parseDateTime(getDocumentClinicalDate(row)),
+        render: (row) => (
+          <span
+            className="tnum"
+            style={{ color: "var(--text-2)" }}
+            title={getDocumentDateLabel(row)}
+          >
+            {formatShortDate(getDocumentClinicalDate(row))}
+          </span>
+        ),
+      },
+      {
+        key: "source",
+        header: "From",
+        hideBelow: 1100,
+        render: (row) => <span className="b-cell-sub">{uploaderSubtitle(row)}</span>,
+      },
+      {
+        key: "status",
+        header: "Status",
+        width: 120,
+        hideBelow: 640,
+        render: (row) =>
+          row.is_verified ? (
+            <Status tone="ok">{t("verified")}</Status>
+          ) : (
+            <Status tone="muted">{t("unverified")}</Status>
+          ),
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        width: 104,
+        render: (row) => (
+          <div className="b-row-actions">
+            <button
+              type="button"
+              className="b-btn b-btn-secondary b-btn-sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                openStructuredDocument(row);
+              }}
+            >
+              {t("open")}
+            </button>
+            <Menu label="More actions">
+              <MenuItem icon={<IconExternal size={13} />} onClick={() => openOriginal(row.id)}>
+                {t("openOriginal")}
+              </MenuItem>
+            </Menu>
+          </div>
+        ),
+      },
+    ],
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+    [t]
+  );
+
+  /* --- Render ---------------------------------------------------------- */
+
+  if (loading || !currentUser || !profile) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loadingYourRecords")}</p>
+      <main className="app-page-bg" style={{ padding: "var(--s6)" }}>
+        <div className="b-surface">
+          <TableSkeleton rows={7} columns={4} />
+        </div>
       </main>
     );
   }
 
-  if (!currentUser || !profile) {
-    return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{error || t("loadingYourRecords")}</p>
-      </main>
-    );
-  }
+  const tabs = [
+    { key: "overview", label: t("navOverview") },
+    { key: "timeline", label: t("navTimeline"), count: myTimeline.length || undefined },
+    { key: "labs", label: t("navLabs"), count: sortedTrends.length || undefined },
+    { key: "documents", label: t("navDocuments"), count: allDocuments.length || undefined },
+  ];
 
-  const snap = snapshotData!;
+  const pinnedStrip = pinnedTrends.length ? (
+    <section className="b-surface">
+      <SectionHead
+        title={t("pinnedTrends")}
+        actions={
+          <span className="b-range">
+            {pinnedTrends.length}/{MAX_PINNED}
+          </span>
+        }
+      />
+      <div
+        style={{
+          display: "grid",
+          gridTemplateColumns: "repeat(auto-fit, minmax(200px, 1fr))",
+          gap: 1,
+          background: "var(--border)",
+          borderTop: "1px solid var(--border)",
+        }}
+      >
+        {pinnedTrends.map((trend) => (
+          <div key={trend.test_key} style={{ background: "var(--surface)", padding: "12px 14px" }}>
+            <div style={{ display: "flex", alignItems: "baseline", gap: 6 }}>
+              <span className="b-cell-title" style={{ flex: 1 }}>
+                {trend.display_name}
+              </span>
+              <button
+                type="button"
+                className="b-btn b-btn-ghost b-btn-sm"
+                onClick={() => togglePin(trend.test_key)}
+              >
+                {t("unpin")}
+              </button>
+            </div>
+            <div style={{ marginTop: 3, fontSize: 17, fontWeight: 600 }}>
+              <LabValue
+                value={valueOrDash(trend.latest?.value_display)}
+                unit={trend.unit}
+                flag={trend.latest?.flag}
+              />
+            </div>
+            <div className="b-range">{formatShortDate(trend.latest?.date)}</div>
+            <div style={{ marginTop: 6 }}>
+              <Sparkline
+                points={trend.points}
+                tone={isFlagAbnormal(trend.latest?.flag) ? "danger" : "brand"}
+                height={24}
+              />
+            </div>
+          </div>
+        ))}
+      </div>
+    </section>
+  ) : null;
+
+  const featuredPanel = featuredTrend ? (
+    <section className="b-surface">
+      <SectionHead
+        title={featuredTrend.display_name}
+        description={t("featuredLabTrendLabel")}
+        actions={
+          <>
+            <button
+              type="button"
+              className="b-btn b-btn-secondary b-btn-sm"
+              onClick={() => setFeaturedPickerOpen(true)}
+            >
+              {t("navChange")}
+              <IconChevronDown size={12} />
+            </button>
+            <button
+              type="button"
+              className="b-btn b-btn-secondary b-btn-sm"
+              onClick={() => togglePin(featuredTrend.test_key)}
+              disabled={
+                !pinnedTrendKeys.includes(featuredTrend.test_key) &&
+                pinnedTrendKeys.length >= MAX_PINNED
+              }
+            >
+              {pinnedTrendKeys.includes(featuredTrend.test_key) ? t("unpin") : t("pin")}
+            </button>
+          </>
+        }
+      />
+
+      <div className="b-section-body">
+        <div
+          style={{
+            display: "flex",
+            alignItems: "baseline",
+            gap: "var(--s6)",
+            flexWrap: "wrap",
+            marginBottom: "var(--s3)",
+          }}
+        >
+          <div>
+            <div className="b-label">{t("latest")}</div>
+            <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.025em" }}>
+              <LabValue
+                value={valueOrDash(featuredTrend.latest?.value_display)}
+                unit={featuredTrend.unit}
+                flag={featuredTrend.latest?.flag}
+              />
+            </div>
+            <div className="b-range">{formatLongDate(featuredTrend.latest?.date)}</div>
+          </div>
+
+          <div>
+            <div className="b-label">{t("previous")}</div>
+            <div className="tnum" style={{ fontSize: 15, color: "var(--text-2)" }}>
+              {valueOrDash(featuredTrend.previous?.value_display)}
+            </div>
+          </div>
+
+          <div>
+            <div className="b-label">{t("delta")}</div>
+            <div
+              className="tnum"
+              style={{
+                fontSize: 15,
+                fontWeight: 600,
+                color:
+                  featuredTrend.delta == null
+                    ? "var(--muted)"
+                    : featuredTrend.delta > 0
+                    ? "var(--danger)"
+                    : "var(--info)",
+              }}
+            >
+              {featuredTrend.delta == null
+                ? "—"
+                : `${featuredTrend.delta > 0 ? "+" : ""}${featuredTrend.delta}`}
+            </div>
+          </div>
+
+          {featuredTrend.latest?.reference_range ? (
+            <div>
+              <div className="b-label">{t("ref")}</div>
+              <div className="tnum" style={{ fontSize: 15, color: "var(--text-2)" }}>
+                {featuredTrend.latest.reference_range}
+              </div>
+            </div>
+          ) : null}
+        </div>
+
+        <TrendChart
+          points={featuredTrend.points}
+          unit={featuredTrend.unit}
+          referenceRange={featuredTrend.latest?.reference_range}
+          height={210}
+          formatDate={formatShortDate}
+          onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+        />
+
+        {/* Patients get the plain-language explanation a clinician does not
+            need: the shaded band is the normal range for this test. */}
+        {hasReferenceBand(featuredTrend.latest?.reference_range) ? (
+          <p className="b-meta" style={{ marginTop: "var(--s2)" }}>
+            The shaded band shows the normal range for this test. A result outside it is not
+            necessarily a problem — discuss it with your doctor.
+          </p>
+        ) : null}
+      </div>
+    </section>
+  ) : null;
 
   return (
     <AppShell
       user={currentUser}
       title={t("myRecords")}
+      subtitle={profile.patient.full_name}
+      density="comfortable"
+      banner={
+        <div className="b-ctx">
+          <div className="b-ctx-tabs">
+            <Tabs
+              tabs={tabs}
+              activeTab={tab}
+              onChange={(key) => setTab(key as RecordTab)}
+              ariaLabel={t("myRecords")}
+            />
+          </div>
+        </div>
+      }
       rightContent={
         <button
           type="button"
-          className="primary-btn"
-          style={{ whiteSpace: "nowrap" }}
+          className="b-btn b-btn-primary"
           onClick={() => router.push("/my-records/upload")}
         >
+          <IconUpload size={14} />
           {t("uploadDocuments")}
         </button>
       }
     >
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 16,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
+      <div className="b-stack b-view-enter" key={tab}>
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      {/* Featured chart + pinned trends */}
-      <div className="records-featured-grid">
-        {/* Featured chart */}
-        <div className="soft-card" style={{ padding: 20, overflow: "hidden" }}>
-          {featuredTrend ? (
-            <>
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 16, gap: 12 }}>
-                <div>
-                  <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 6 }}>
-                    {t("featuredLabTrendLabel")}
-                  </div>
-                  <div style={{ fontSize: 20, fontWeight: 950, letterSpacing: "-0.03em", lineHeight: 1.2 }}>
-                    {featuredTrend.display_name}
-                  </div>
-                  <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                    {valueOrDash(featuredTrend.category)} · {valueOrDash(featuredTrend.unit)}
-                  </div>
-                </div>
-                <div style={{ textAlign: "right", flexShrink: 0 }}>
-                  <div style={{ fontSize: 40, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color: "var(--primary)" }}>
-                    {valueOrDash(featuredTrend.latest?.value_display)}
-                  </div>
-                  <div className="muted-text" style={{ fontSize: 11, marginTop: 5 }}>
-                    {t("latest")} · {formatShortMonthYear(featuredTrend.latest?.date) ?? "—"}
-                  </div>
-                  {featuredTrend.delta !== null && featuredTrend.delta !== undefined && (
-                    <div style={{ fontSize: 12, fontWeight: 900, marginTop: 4, color: "var(--muted)" }}>
-                      {featuredTrend.delta > 0 ? `+${featuredTrend.delta}` : `${featuredTrend.delta}`} {t("fromPrev")}
-                    </div>
-                  )}
-                </div>
-              </div>
+        {activeCount > 0 ? (
+          <Notice>
+            <span className="b-status b-status-processing" />
+            {activeCount === 1
+              ? "1 document is being processed. It will appear here automatically."
+              : `${activeCount} documents are being processed. They will appear here automatically.`}
+          </Notice>
+        ) : null}
 
-              <div style={{ height: 300 }}>
-                <TrendChart
-                  points={getMostRecentTrendPoints(featuredTrend.points, 8)}
-                  expanded
-                  unit={featuredTrend.unit}
-                />
-              </div>
+        {/* ── Overview ──────────────────────────────────────────────────── */}
+        {tab === "overview" ? (
+          <>
+            <Metrics>
+              <Metric label={t("records")} value={allDocuments.length} />
+              <Metric label={t("bloodwork")} value={profile.sections.bloodwork.length} />
+              <Metric
+                label="Results outside range"
+                value={abnormalCount}
+                tone={abnormalCount > 0 ? "alert" : undefined}
+              />
+              <Metric label="Hospital stays" value={profile.sections.discharge_summary.length} />
+              <Metric label={t("myMedications")} value={activeMeds.length} />
+            </Metrics>
 
-              <div style={{ marginTop: 14, paddingTop: 14, borderTop: "1px solid var(--border)", display: "flex", justifyContent: "space-between", alignItems: "center" }}>
-                <div className="muted-text" style={{ fontSize: 12 }}>
-                  {snap.trendsCount} {t("labTrendsTracked")}
-                </div>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  style={{ fontSize: 13 }}
-                  onClick={() => {
-                    setActiveSection("bloodwork");
-                    setTimeout(
-                      () => trendsRef.current?.scrollIntoView({ behavior: "smooth", block: "start" }),
-                      60
-                    );
-                  }}
-                >
-                  {t("viewAllTrends")}
-                </button>
-              </div>
-            </>
-          ) : (
-            <div>
-              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 12 }}>
-                {t("featuredLabTrendEmpty")}
-              </div>
-              <div className="muted-text" style={{ marginBottom: 16 }}>
-                {t("noBloodworkDataYet")}
-              </div>
-              <button type="button" className="primary-btn" onClick={() => router.push("/my-records/upload")}>
-                {t("uploadFirstDocument")}
-              </button>
-            </div>
-          )}
-        </div>
+            {pinnedStrip}
 
-        {/* Pinned trends column */}
-        <div style={{ display: "grid", gap: 10 }}>
-          {pinnedTrends.length > 0 ? (
-            pinnedTrends.map((trend) => (
-              <div
-                key={trend.test_key}
-                className="soft-card"
-                style={{ padding: 14, position: "relative" }}
-              >
-                <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 8, marginBottom: 8 }}>
-                  <div style={{ fontWeight: 900, fontSize: 13, lineHeight: 1.3, minWidth: 0 }}>
-                    {trend.display_name}
-                  </div>
-                  <button
-                    type="button"
-                    onClick={() => togglePin(trend.test_key)}
-                    style={{
-                      flexShrink: 0,
-                      width: 22,
-                      height: 22,
-                      borderRadius: 999,
-                      border: "1px solid var(--border)",
-                      background: "var(--panel-2)",
-                      color: "var(--muted)",
-                      cursor: "pointer",
-                      display: "flex",
-                      alignItems: "center",
-                      justifyContent: "center",
-                      fontSize: 13,
-                      lineHeight: 1,
-                      padding: 0,
-                    }}
-                    title={t("unpin")}
-                  >
-                    ×
-                  </button>
-                </div>
-
-                <div style={{ fontSize: 30, fontWeight: 950, letterSpacing: "-0.04em", lineHeight: 1, color: "var(--primary)" }}>
-                  {valueOrDash(trend.latest?.value_display)}
-                </div>
-
-                <div className="muted-text" style={{ fontSize: 11, marginTop: 5, display: "flex", gap: 6 }}>
-                  <span>
-                    {trend.delta !== null && trend.delta !== undefined
-                      ? trend.delta > 0
-                        ? `↑ +${trend.delta}`
-                        : `↓ ${trend.delta}`
-                      : "—"}
-                  </span>
-                  <span>·</span>
-                  <span>{formatShortMonthYear(trend.latest?.date) ?? "—"}</span>
-                </div>
-
-                <div style={{ height: 62, marginTop: 10 }}>
-                  <TrendChart points={getMostRecentTrendPoints(trend.points, 5)} unit={trend.unit} />
-                </div>
-              </div>
-            ))
-          ) : (
-            <div
-              className="soft-card"
-              style={{
-                padding: 18,
-                borderStyle: "dashed",
-                borderColor: "var(--border)",
-              }}
-            >
-              <div style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", marginBottom: 10 }}>
-                {t("pinnedTrends")}
-              </div>
-              <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-                {t("pinnedTrendsHint")}
-              </div>
-            </div>
-          )}
-
-          {pinnedTrends.length > 0 && pinnedTrends.length < 3 && (
-            <div
-              className="muted-text"
-              style={{ fontSize: 11, textAlign: "center", padding: "6px 0" }}
-            >
-              {3 - pinnedTrends.length} {3 - pinnedTrends.length === 1 ? t("slotRemaining") : t("slotsRemaining")}
-            </div>
-          )}
-        </div>
-      </div>
-
-      {/* Medications summary card */}
-      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
-        <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap", marginBottom: medications.length > 0 ? 14 : 0 }}>
-          <div>
-            <div className="section-title" style={{ marginBottom: 4 }}>{t("myMedications")}</div>
-            <div className="muted-text" style={{ fontSize: 13 }}>{t("medCardSubtitle")}</div>
-          </div>
-          <div style={{ display: "flex", gap: 8, flexShrink: 0 }}>
-            <button type="button" className="secondary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications")}>
-              {t("viewAll").replace(" →", "")}
-            </button>
-            <button type="button" className="primary-btn" style={{ fontSize: 13 }} onClick={() => router.push("/my-records/medications/new")}>
-              {t("add")}
-            </button>
-          </div>
-        </div>
-
-        {medications.length === 0 ? (
-          <div className="muted-text" style={{ fontSize: 13 }}>{t("noMedicationsYet")}.</div>
-        ) : (
-          <div style={{ display: "grid", gap: 8 }}>
-            {medications
-              .filter((m) => m.status === "active" || m.status === "as_needed")
-              .slice(0, visibleMedCount)
-              .map((m) => (
-                <button
-                  key={m.id}
-                  type="button"
-                  onClick={() => router.push(`/my-records/medications/${m.id}`)}
-                  className="soft-card-tight"
-                  style={{ padding: "12px 14px", textAlign: "left", display: "flex", justifyContent: "space-between", alignItems: "center", gap: 12, cursor: "pointer" }}
-                >
-                  <div style={{ minWidth: 0 }}>
-                    <div style={{ fontWeight: 800, fontSize: 15 }}>{m.name}</div>
-                    <div className="muted-text" style={{ fontSize: 12, marginTop: 3 }}>
-                      {[m.dose_strength, m.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
-                    </div>
-                  </div>
-                  <span style={{
-                    flexShrink: 0, padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
-                    background: m.status === "active" ? "var(--success-bg)" : "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
-                    color: m.status === "active" ? "var(--success-text)" : "var(--primary)",
-                  }}>
-                    {m.status === "active" ? t("active") : t("medStatusAsNeeded")}
-                  </span>
-                </button>
-              ))}
-            {medications.filter((m) => m.status === "active" || m.status === "as_needed").length > visibleMedCount && (
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ fontSize: 13, marginTop: 4 }}
-                onClick={() => setVisibleMedCount((c) => c + 5)}
-              >
-                {t("showMore")}
-              </button>
-            )}
-          </div>
-        )}
-      </div>
-
-      {/* Timeline */}
-      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
-        <div style={{ marginBottom: 16 }}>
-          <div className="section-title" style={{ marginBottom: 4 }}>{t("myTimeline")}</div>
-          <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-            {t("timelineCardDesc")}
-          </div>
-        </div>
-
-        <ClinicalTimeline
-          items={myTimeline}
-          maxItems={10}
-          onOpenDocument={openTimelineDocument}
-          onSeeFullTimeline={() => router.push("/my-records/timeline")}
-          showSeeFullTimeline
-          emptyText={t("noTimelineActivity")}
-        />
-      </div>
-
-      {/* Section browser */}
-      <div className="soft-card" style={{ padding: 20, marginBottom: 14 }}>
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          {SECTION_ORDER.map((section) => (
-            <button
-              key={section}
-              className={activeSection === section ? "primary-btn" : "secondary-btn"}
-              onClick={() => setActiveSection(section)}
-            >
-              {sectionLabels[section]} ({profile.sections[section].length})
-            </button>
-          ))}
-        </div>
-
-        <div
-          className="soft-card-tight"
-          style={{
-            padding: 14,
-            marginBottom: 16,
-            background: "var(--panel-2)",
-            display: "flex",
-            gap: 12,
-            flexWrap: "wrap",
-            alignItems: "end",
-          }}
-        >
-          <SelectFilter
-            label="Department"
-            value={departmentFilter}
-            options={filterOptions.departments}
-            onChange={(value) => { setDepartmentFilter(value); setVisibleCount(PAGE_SIZE); }}
-          />
-          <SelectFilter
-            label="Hospital"
-            value={hospitalFilter}
-            options={filterOptions.hospitals}
-            onChange={(value) => { setHospitalFilter(value); setVisibleCount(PAGE_SIZE); }}
-          />
-          <SelectFilter
-            label="Year"
-            value={yearFilter}
-            options={filterOptions.years}
-            calendarLike
-            onChange={(value) => { setYearFilter(value); setVisibleCount(PAGE_SIZE); }}
-          />
-          {(departmentFilter || hospitalFilter || yearFilter) && (
-            <button
-              className="secondary-btn"
-              onClick={() => { setDepartmentFilter(""); setHospitalFilter(""); setYearFilter(""); setVisibleCount(PAGE_SIZE); }}
-            >
-              Clear filters
-            </button>
-          )}
-        </div>
-
-        <div style={{ display: "grid", gap: 12 }}>
-          {visibleDocsForSection.map((doc) => (
-            <div key={doc.id} className="soft-card-tight interactive-card" style={{ padding: 16 }}>
-              <div className="doc-card-grid">
-                <div>
-                  <div style={{ fontWeight: 800, fontSize: 16 }}>
-                    {valueOrDash(doc.report_name || doc.filename)}
-                  </div>
-                  <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5, fontSize: 13 }}>
-                    {uploaderSubtitle(doc)}
-                  </div>
-                  <div style={{ marginTop: 8 }}>
-                    <span
-                      style={{
-                        display: "inline-flex",
-                        padding: "4px 9px",
-                        borderRadius: 999,
-                        background: doc.is_verified ? "var(--success-bg)" : "var(--warn-bg)",
-                        color: doc.is_verified ? "var(--success-text)" : "var(--warn-text)",
-                        fontSize: 11,
-                        fontWeight: 800,
-                      }}
-                    >
-                      {doc.is_verified ? t("verified") : t("unverified")}
-                    </span>
-                  </div>
-                  <div className="muted-text" style={{ marginTop: 8, fontSize: 13 }}>
-                    {valueOrDash(doc.report_type)} · {getDocumentDateLabel(doc)}
-                  </div>
-                  <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                    {doc.section === "discharge_summary"
-                      ? "Narrative discharge record"
-                      : `${valueOrDash(doc.lab_name)} · ${valueOrDash(doc.sample_type)}`}
-                  </div>
-                </div>
-
-                <div>
-                  <div className="muted-text" style={{ fontSize: 12 }}>Source</div>
-                  <div style={{ marginTop: 5, fontWeight: 700, fontSize: 14 }}>
-                    {sectionLabels[doc.section] || doc.section}
-                  </div>
-                  <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
-                    {valueOrDash(doc.referring_doctor)}
-                  </div>
-                </div>
-
-                <div style={{ display: "grid", gap: 8, minWidth: 140 }}>
-                  <button className="secondary-btn" onClick={() => openOriginal(doc.id)}>
-                    {t("openOriginal")}
-                  </button>
-                  <button className="primary-btn" onClick={() => openStructuredDocument(doc)}>
-                    {doc.section === "discharge_summary" ? "Open Discharge" : t("structuredView")}
-                  </button>
-                </div>
-              </div>
-            </div>
-          ))}
-
-          {!filteredDocsForSection.length && (
-            <div className="muted-text">{t("noRecordsInSection")}</div>
-          )}
-
-          {visibleCount < filteredDocsForSection.length && (
-            <button
-              className="secondary-btn"
-              style={{ justifySelf: "center", marginTop: 4, padding: "11px 18px", borderRadius: 16, fontWeight: 950 }}
-              onClick={() => setVisibleCount((current) => current + PAGE_SIZE)}
-            >
-              Show More
-            </button>
-          )}
-        </div>
-      </div>
-
-      {/* Lab trends */}
-      {activeSection === "bloodwork" && (
-        <div className="soft-card" style={{ padding: 20 }} ref={trendsRef}>
-          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", marginBottom: 14 }}>
-            <div>
-              <div className="section-title" style={{ marginBottom: 4 }}>{t("bloodworkTrends")}</div>
-              <div className="muted-text" style={{ fontSize: 13 }}>
-                {t("pinSortedHint")}
-              </div>
-            </div>
-            {pinnedTrendKeys.length > 0 && (
-              <div
-                className="muted-text"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 900,
-                  padding: "4px 10px",
-                  borderRadius: 999,
-                  background: "color-mix(in srgb, var(--primary) 10%, var(--panel-2))",
-                  color: "var(--primary)",
-                  flexShrink: 0,
-                }}
-              >
-                {pinnedTrendKeys.length}/3 {t("pinnedBadge").toLowerCase()}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "grid", gap: 14 }}>
-            {sortedTrends.map((trend) => {
-              const expanded = expandedTrendKey === trend.test_key;
-              const graphPoints = getMostRecentTrendPoints(trend.points, 5);
-              const allReportPoints = [...trend.points].sort((a, b) =>
-                compareDatesDescending(a.date, b.date)
-              );
-              const highlightedDocumentId = hoveredTrendPoint[trend.test_key] ?? null;
-              const isPinned = pinnedTrendKeys.includes(trend.test_key);
-              const canPin = isPinned || pinnedTrendKeys.length < 3;
-
-              return (
-                <div
-                  key={trend.test_key}
-                  className="soft-card-tight interactive-card"
-                  style={{ padding: 18, overflow: "hidden" }}
-                >
-                  <div
-                    className="trend-item-header"
-                    style={{
-                      gridTemplateColumns: expanded
-                        ? "minmax(0, 1fr) auto auto"
-                        : "minmax(0, 1fr) 420px auto auto",
-                    }}
-                  >
-                    <div>
-                      <div style={{ display: "flex", alignItems: "center", gap: 8 }}>
-                        <div style={{ fontWeight: 800, fontSize: 18 }}>{trend.display_name}</div>
-                        {isPinned && (
-                          <span
-                            style={{
-                              fontSize: 10,
-                              fontWeight: 900,
-                              letterSpacing: "0.06em",
-                              textTransform: "uppercase",
-                              padding: "2px 7px",
-                              borderRadius: 999,
-                              background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
-                              color: "var(--primary)",
-                            }}
-                          >
-                            {t("pinnedBadge")}
-                          </span>
-                        )}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 4 }}>
-                        {valueOrDash(trend.category)} · {t("unit")} {valueOrDash(trend.unit)}
-                      </div>
-
-                      <div
-                        style={{
-                          display: "grid",
-                          gridTemplateColumns: "repeat(3, minmax(0, 1fr))",
-                          gap: 12,
-                          marginTop: 14,
-                        }}
-                      >
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>{t("latest")}</div>
-                          <div style={{ fontWeight: 800, fontSize: 24 }}>
-                            {valueOrDash(trend.latest?.value_display)}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>{t("previous")}</div>
-                          <div style={{ fontWeight: 800, fontSize: 24 }}>
-                            {trend.previous ? valueOrDash(trend.previous.value_display) : "—"}
-                          </div>
-                        </div>
-                        <div>
-                          <div className="muted-text" style={{ fontSize: 12 }}>{t("delta")}</div>
-                          <div style={{ fontWeight: 800, fontSize: 24 }}>
-                            {trend.delta === null || trend.delta === undefined
-                              ? "—"
-                              : trend.delta > 0
-                              ? `+${trend.delta}`
-                              : `${trend.delta}`}
-                          </div>
-                        </div>
-                      </div>
-
-                      <div className="muted-text" style={{ marginTop: 10 }}>
-                        {t("latestSample")}: {valueOrDash(trend.latest?.date)} · {t("ref")}{" "}
-                        {valueOrDash(trend.latest?.reference_range)}
-                      </div>
-                    </div>
-
-                    {!expanded && (
-                      <div
-                        className="trend-sparkline-col"
-                        style={{ justifySelf: "stretch", opacity: 1, transition: "opacity 220ms ease" }}
-                      >
-                        <TrendChart
-                          points={graphPoints}
-                          highlightedDocumentId={highlightedDocumentId}
-                          unit={trend.unit}
-                        />
-                      </div>
-                    )}
-
-                    {/* Pin button */}
+            {featuredPanel ?? (
+              <section className="b-surface">
+                <EmptyState
+                  icon={<IconLab size={17} />}
+                  title={t("noBloodworkDataYet")}
+                  description={t("featuredLabTrendEmpty")}
+                  actions={
                     <button
                       type="button"
-                      className="secondary-btn"
-                      disabled={!canPin}
-                      onClick={() => togglePin(trend.test_key)}
-                      style={{
-                        fontSize: 12,
-                        opacity: !canPin ? 0.4 : 1,
-                        background: isPinned
-                          ? "color-mix(in srgb, var(--primary) 10%, var(--panel-2))"
-                          : undefined,
-                        color: isPinned ? "var(--primary)" : undefined,
-                        borderColor: isPinned
-                          ? "color-mix(in srgb, var(--primary) 30%, transparent)"
-                          : undefined,
-                      }}
+                      className="b-btn b-btn-primary"
+                      onClick={() => router.push("/my-records/upload")}
                     >
-                      {isPinned ? t("unpin") : t("pin")}
+                      <IconUpload size={14} />
+                      {t("uploadFirstDocument")}
                     </button>
+                  }
+                />
+              </section>
+            )}
 
+            <section className="b-surface">
+              <SectionHead
+                title={t("myMedications")}
+                count={activeMeds.length}
+                description={t("medCardSubtitle")}
+                actions={
+                  <>
                     <button
-                      className="secondary-btn"
-                      style={{ fontSize: 12 }}
-                      onClick={() => setExpandedTrendKey(expanded ? null : trend.test_key)}
+                      type="button"
+                      className="b-btn b-btn-secondary b-btn-sm"
+                      onClick={() => router.push("/my-records/medications")}
                     >
-                      {expanded ? "Collapse" : "Expand"}
+                      {t("viewAll").replace(" →", "")}
                     </button>
+                    <button
+                      type="button"
+                      className="b-btn b-btn-secondary b-btn-sm"
+                      onClick={() => router.push("/my-records/medications/new")}
+                    >
+                      <IconPlus size={13} />
+                      {t("add")}
+                    </button>
+                  </>
+                }
+              />
+              <div className="b-section-body b-section-body-flush">
+                {activeMeds.length ? (
+                  <div className="b-list">
+                    {activeMeds.slice(0, 5).map((med) => (
+                      <button
+                        key={med.id}
+                        type="button"
+                        className="b-list-row"
+                        onClick={() => router.push(`/my-records/medications/${med.id}`)}
+                      >
+                        <span className="b-list-main">
+                          <span className="b-list-title">{med.name}</span>
+                          <span className="b-list-sub">
+                            {[med.dose_strength, med.frequency].filter(Boolean).join(" · ") ||
+                              t("medNoDoseFrequency")}
+                          </span>
+                        </span>
+                        <span className="b-list-trail">
+                          <Status tone={med.status === "active" ? "ok" : "info"}>
+                            {med.status === "active" ? t("active") : t("medStatusAsNeeded")}
+                          </Status>
+                        </span>
+                      </button>
+                    ))}
                   </div>
+                ) : (
+                  <EmptyState
+                    icon={<IconPill size={17} />}
+                    title={t("noMedicationsYet")}
+                    actions={
+                      <button
+                        type="button"
+                        className="b-btn b-btn-secondary"
+                        onClick={() => router.push("/my-records/medications/new")}
+                      >
+                        <IconPlus size={14} />
+                        {t("add")}
+                      </button>
+                    }
+                  />
+                )}
+              </div>
+            </section>
 
+            <section className="b-surface">
+              <SectionHead
+                title={t("myTimeline")}
+                description={t("timelineCardDesc")}
+                actions={
+                  <button
+                    type="button"
+                    className="b-btn b-btn-secondary b-btn-sm"
+                    onClick={() => setTab("timeline")}
+                  >
+                    {t("viewAll").replace(" →", "")}
+                    <IconChevronRight size={12} />
+                  </button>
+                }
+              />
+              <div className="b-section-body b-section-body-flush">
+                <ClinicalTimeline
+                  items={myTimeline}
+                  maxItems={6}
+                  onOpenDocument={openTimelineDocument}
+                  emptyText={t("noTimelineActivity")}
+                />
+              </div>
+            </section>
+
+            <section className="b-surface">
+              <SectionHead
+                title="Who can see my record"
+                count={profile.doctor_access.length}
+                actions={
+                  <button
+                    type="button"
+                    className="b-btn b-btn-secondary b-btn-sm"
+                    onClick={() => router.push("/my-records/access")}
+                  >
+                    {t("myAccess")}
+                    <IconChevronRight size={12} />
+                  </button>
+                }
+              />
+              <div className="b-section-body b-section-body-flush">
+                {profile.doctor_access.length ? (
+                  <div className="b-list">
+                    {profile.doctor_access.slice(0, 5).map((doctor) => (
+                      <div
+                        key={doctor.doctor_user_id}
+                        className="b-list-row"
+                        style={{ cursor: "default" }}
+                      >
+                        <span className="b-list-main">
+                          <span className="b-list-title">{doctor.doctor_name}</span>
+                          <span className="b-list-sub">
+                            {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
+                          </span>
+                        </span>
+                        <span className="b-list-trail">
+                          <Status tone="ok">Access granted</Status>
+                        </span>
+                      </div>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState
+                    title="No one else has access"
+                    description="Only you can see this record right now."
+                  />
+                )}
+              </div>
+            </section>
+          </>
+        ) : null}
+
+        {/* ── Timeline ──────────────────────────────────────────────────── */}
+        {tab === "timeline" ? (
+          <section className="b-surface">
+            <SectionHead
+              title={t("myTimeline")}
+              count={myTimeline.length}
+              description={t("timelineCardDesc")}
+              actions={
+                <button
+                  type="button"
+                  className="b-btn b-btn-secondary b-btn-sm"
+                  onClick={() => router.push("/my-records/timeline")}
+                >
+                  {t("seeFullTimeline")}
+                  <IconExternal size={12} />
+                </button>
+              }
+            />
+            <div className="b-section-body b-section-body-flush">
+              <ClinicalTimeline
+                items={myTimeline}
+                maxItems={50}
+                onOpenDocument={openTimelineDocument}
+                onSeeFullTimeline={() => router.push("/my-records/timeline")}
+                showSeeFullTimeline
+                emptyText={t("noTimelineActivity")}
+              />
+            </div>
+          </section>
+        ) : null}
+
+        {/* ── Labs ──────────────────────────────────────────────────────── */}
+        {tab === "labs" ? (
+          <>
+            {pinnedStrip}
+            {featuredPanel}
+
+            <section className="b-surface">
+              <SectionHead
+                title={t("bloodworkTrends")}
+                count={sortedTrends.length}
+                description={t("pinSortedHint")}
+              />
+
+              <Toolbar
+                search={labQuery}
+                onSearch={setLabQuery}
+                searchPlaceholder="Search results…"
+                filters={
+                  <FilterChip
+                    label="Outside range"
+                    count={abnormalCount}
+                    active={labAbnormalOnly}
+                    onClick={() => setLabAbnormalOnly((value) => !value)}
+                  />
+                }
+                count={visibleTrends.length}
+                countLabel="results"
+              />
+
+              {!visibleTrends.length ? (
+                <EmptyState
+                  icon={<IconLab size={17} />}
+                  title={t("noNumericTrends")}
+                  description={t("noBloodworkDataYet")}
+                />
+              ) : (
+                <div>
                   <div
-                    className="trend-expand-body"
+                    className="b-trend-row only-desktop"
                     style={{
-                      gridTemplateRows: expanded ? "1fr" : "0fr",
-                      opacity: expanded ? 1 : 0,
-                      transform: expanded
-                        ? "scale(1) translateY(0)"
-                        : "scale(0.985) translateY(-10px)",
+                      minHeight: 32,
+                      background: "var(--surface-2)",
+                      color: "var(--muted)",
+                      fontSize: "var(--fs-xs)",
+                      cursor: "default",
                     }}
                   >
-                    <div style={{ overflow: "hidden" }}>
-                      <div
-                        style={{
-                          marginTop: 18,
-                          padding: 20,
-                          borderRadius: 22,
-                          border: "1px solid var(--border)",
-                          background: "linear-gradient(180deg, var(--panel), var(--panel-2))",
-                          width: "100%",
-                          height: 410,
-                          boxSizing: "border-box",
-                        }}
-                      >
-                        <TrendChart
-                          points={graphPoints}
-                          highlightedDocumentId={highlightedDocumentId}
-                          expanded
-                          unit={trend.unit}
-                        />
-                      </div>
-                    </div>
+                    <span>Test</span>
+                    <span style={{ textAlign: "right" }}>{t("latest")}</span>
+                    <span style={{ textAlign: "right" }}>{t("delta")}</span>
+                    <span>Over time</span>
+                    <span style={{ textAlign: "right" }}>Date</span>
+                    <span />
                   </div>
 
-                  {expanded && (
-                    <div
-                      style={{
-                        marginTop: 18,
-                        paddingTop: 16,
-                        borderTop: "1px solid var(--border)",
-                        display: "grid",
-                        gap: 10,
-                      }}
-                    >
-                      <div style={{ fontWeight: 900 }}>Reports used in this trend</div>
+                  {visibleTrends.map((trend) => {
+                    const abnormal = isFlagAbnormal(trend.latest?.flag);
+                    const expanded = expandedTrendKey === trend.test_key;
+                    const pinned = pinnedTrendKeys.includes(trend.test_key);
 
-                      {allReportPoints.map((point, index) => {
-                        const isHighlighted = highlightedDocumentId === point.document_id;
+                    return (
+                      <div key={trend.test_key}>
+                        <button
+                          type="button"
+                          className="b-trend-row"
+                          aria-expanded={expanded}
+                          onClick={() => setExpandedTrendKey(expanded ? null : trend.test_key)}
+                        >
+                          <span style={{ minWidth: 0 }}>
+                            <span className="b-cell-title" style={{ display: "block" }}>
+                              {trend.display_name}
+                            </span>
+                            <span className="b-cell-sub" style={{ display: "block" }}>
+                              {valueOrDash(trend.category)}
+                              {trend.unit ? ` · ${trend.unit}` : ""}
+                            </span>
+                          </span>
 
-                        return (
-                          <button
-                            key={`${trend.test_key}-${point.document_id}-${point.date}-${index}`}
-                            onMouseEnter={() =>
-                              setHoveredTrendPoint((prev) => ({
-                                ...prev,
-                                [trend.test_key]: point.document_id,
-                              }))
-                            }
-                            onMouseLeave={() =>
-                              setHoveredTrendPoint((prev) => ({
-                                ...prev,
-                                [trend.test_key]: null,
-                              }))
-                            }
-                            onClick={() => router.push(`/documents/${point.document_id}`)}
+                          <span style={{ textAlign: "right" }}>
+                            <LabValue
+                              value={valueOrDash(trend.latest?.value_display)}
+                              flag={trend.latest?.flag}
+                            />
+                          </span>
+
+                          <span
+                            className="tnum"
                             style={{
-                              border: `1px solid ${isHighlighted ? "var(--primary)" : "var(--border)"}`,
-                              background: isHighlighted
-                                ? "color-mix(in srgb, var(--primary) 8%, var(--panel))"
-                                : "var(--panel)",
-                              borderRadius: 16,
-                              padding: 14,
-                              textAlign: "left",
-                              cursor: "pointer",
-                              display: "grid",
-                              gridTemplateColumns: "1fr auto",
-                              gap: 12,
-                              alignItems: "center",
-                              transition: "all 150ms ease",
+                              textAlign: "right",
+                              fontSize: "var(--fs-xs)",
+                              color:
+                                trend.delta == null || trend.delta === 0
+                                  ? "var(--faint)"
+                                  : trend.delta > 0
+                                  ? "var(--danger)"
+                                  : "var(--info)",
                             }}
                           >
-                            <div>
-                              <div style={{ fontWeight: 850 }}>
-                                {valueOrDash(point.report_name || `Report ${point.document_id}`)}
-                              </div>
-                              <div className="muted-text" style={{ marginTop: 4 }}>
-                                {valueOrDash(point.date)} · Ref {valueOrDash(point.reference_range)}
-                              </div>
-                            </div>
-                            <div style={{ fontWeight: 950 }}>
-                              {valueOrDash(point.value_display)} {trend.unit || ""}
-                            </div>
-                          </button>
-                        );
-                      })}
-                    </div>
-                  )}
-                </div>
-              );
-            })}
+                            {trend.delta == null
+                              ? "—"
+                              : trend.delta === 0
+                              ? "0"
+                              : `${trend.delta > 0 ? "+" : ""}${trend.delta}`}
+                          </span>
 
-            {!sortedTrends.length && <div className="muted-text">{t("noNumericTrends")}</div>}
-          </div>
+                          <span className="b-trend-spark">
+                            <Sparkline
+                              points={trend.points}
+                              tone={abnormal ? "danger" : "brand"}
+                              height={26}
+                            />
+                          </span>
+
+                          <span
+                            className="b-range"
+                            style={{ textAlign: "right", whiteSpace: "nowrap" }}
+                          >
+                            {formatShortDate(trend.latest?.date)}
+                          </span>
+
+                          <span
+                            style={{
+                              display: "inline-flex",
+                              alignItems: "center",
+                              gap: 4,
+                              color: "var(--faint)",
+                            }}
+                          >
+                            {pinned ? (
+                              <span className="b-chip b-chip-brand">{t("pinnedBadge")}</span>
+                            ) : null}
+                            <IconChevronDown
+                              size={13}
+                              style={{
+                                transform: expanded ? "rotate(180deg)" : "none",
+                                transition: "transform var(--dur-2) var(--ease)",
+                              }}
+                            />
+                          </span>
+                        </button>
+
+                        {expanded ? (
+                          <div
+                            className="b-view-enter"
+                            style={{
+                              padding: "var(--s3) var(--s4) var(--s4)",
+                              background: "var(--surface-2)",
+                              borderBottom: "1px solid var(--border)",
+                            }}
+                          >
+                            <div
+                              style={{
+                                display: "flex",
+                                gap: "var(--s2)",
+                                justifyContent: "flex-end",
+                                marginBottom: "var(--s2)",
+                              }}
+                            >
+                              <button
+                                type="button"
+                                className="b-btn b-btn-secondary b-btn-sm"
+                                onClick={() => togglePin(trend.test_key)}
+                                disabled={!pinned && pinnedTrendKeys.length >= MAX_PINNED}
+                              >
+                                {pinned ? t("unpin") : t("pin")}
+                              </button>
+                            </div>
+
+                            <TrendChart
+                              points={trend.points}
+                              unit={trend.unit}
+                              referenceRange={trend.latest?.reference_range}
+                              height={190}
+                              formatDate={formatShortDate}
+                              onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+                            />
+
+                            <div className="b-label" style={{ marginTop: "var(--s4)" }}>
+                              Where these results come from
+                            </div>
+                            <div className="b-list" style={{ marginTop: 4 }}>
+                              {[...trend.points]
+                                .sort((a, b) => compareDatesDescending(a.date, b.date))
+                                .map((point, index) => (
+                                  <button
+                                    key={`${trend.test_key}-${point.document_id}-${index}`}
+                                    type="button"
+                                    className="b-list-row"
+                                    style={{ paddingLeft: 0, paddingRight: 0 }}
+                                    onClick={() => router.push(`/documents/${point.document_id}`)}
+                                  >
+                                    <span className="b-list-main">
+                                      <span className="b-list-title">
+                                        {valueOrDash(
+                                          point.report_name || `Report ${point.document_id}`
+                                        )}
+                                      </span>
+                                      <span className="b-list-sub">
+                                        {formatLongDate(point.date)}
+                                        {point.reference_range
+                                          ? ` · ${t("ref")} ${point.reference_range}`
+                                          : ""}
+                                      </span>
+                                    </span>
+                                    <span className="b-list-trail">
+                                      <LabValue
+                                        value={valueOrDash(point.value_display)}
+                                        unit={trend.unit}
+                                        flag={point.flag}
+                                      />
+                                      <IconChevronRight size={13} className="b-list-chevron" />
+                                    </span>
+                                  </button>
+                                ))}
+                            </div>
+                          </div>
+                        ) : null}
+                      </div>
+                    );
+                  })}
+                </div>
+              )}
+            </section>
+          </>
+        ) : null}
+
+        {/* ── Documents ─────────────────────────────────────────────────── */}
+        {tab === "documents" ? (
+          <section className="b-surface">
+            <SectionHead
+              title={t("navDocuments")}
+              count={allDocuments.length}
+              actions={
+                <button
+                  type="button"
+                  className="b-btn b-btn-primary b-btn-sm"
+                  onClick={() => router.push("/my-records/upload")}
+                >
+                  <IconUpload size={13} />
+                  {t("uploadDocuments")}
+                </button>
+              }
+            />
+
+            <Toolbar
+              search={docQuery}
+              onSearch={setDocQuery}
+              searchPlaceholder="Search documents…"
+              filters={SECTION_ORDER.map((section) => (
+                <FilterChip
+                  key={section}
+                  label={sectionLabels[section] || section}
+                  count={profile.sections[section].length}
+                  active={activeSection === section}
+                  onClick={() => setActiveSection(section)}
+                />
+              ))}
+              count={filteredDocsForSection.length}
+              countLabel="documents"
+            />
+
+            {filterOptions.departments.length ||
+            filterOptions.hospitals.length ||
+            filterOptions.years.length ? (
+              <div className="b-toolbar" style={{ minHeight: 42, background: "var(--surface-2)" }}>
+                {filterOptions.hospitals.length ? (
+                  <select
+                    className="b-input"
+                    value={hospitalFilter}
+                    onChange={(event) => setHospitalFilter(event.target.value)}
+                    aria-label="Hospital"
+                    style={{ height: "var(--ctl-h)", width: "auto", minWidth: 140 }}
+                  >
+                    <option value="">All hospitals</option>
+                    {filterOptions.hospitals.map((hospital) => (
+                      <option key={hospital} value={hospital}>
+                        {hospital}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+
+                {filterOptions.departments.length ? (
+                  <select
+                    className="b-input"
+                    value={departmentFilter}
+                    onChange={(event) => setDepartmentFilter(event.target.value)}
+                    aria-label="Department"
+                    style={{ height: "var(--ctl-h)", width: "auto", minWidth: 140 }}
+                  >
+                    <option value="">All departments</option>
+                    {filterOptions.departments.map((department) => (
+                      <option key={department} value={department}>
+                        {department}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+
+                {filterOptions.years.length ? (
+                  <select
+                    className="b-input"
+                    value={yearFilter}
+                    onChange={(event) => setYearFilter(event.target.value)}
+                    aria-label="Year"
+                    style={{ height: "var(--ctl-h)", width: "auto", minWidth: 110 }}
+                  >
+                    <option value="">All years</option>
+                    {filterOptions.years.map((year) => (
+                      <option key={year} value={year}>
+                        {year}
+                      </option>
+                    ))}
+                  </select>
+                ) : null}
+
+                {departmentFilter || hospitalFilter || yearFilter ? (
+                  <button
+                    type="button"
+                    className="b-btn b-btn-ghost b-btn-sm"
+                    onClick={() => {
+                      setDepartmentFilter("");
+                      setHospitalFilter("");
+                      setYearFilter("");
+                    }}
+                  >
+                    {t("navClear")}
+                  </button>
+                ) : null}
+              </div>
+            ) : null}
+
+            <DataTable
+              rows={visibleDocsForSection}
+              columns={documentColumns}
+              rowKey={(row) => row.id}
+              onRowClick={openStructuredDocument}
+              caption={`${sectionLabels[activeSection]} documents`}
+              emptyState={
+                <EmptyState
+                  icon={<IconDocument size={17} />}
+                  title={t("noRecordsInSection")}
+                  actions={
+                    <button
+                      type="button"
+                      className="b-btn b-btn-secondary"
+                      onClick={() => router.push("/my-records/upload")}
+                    >
+                      <IconUpload size={14} />
+                      {t("uploadDocuments")}
+                    </button>
+                  }
+                />
+              }
+            />
+
+            {visibleCount < filteredDocsForSection.length ? (
+              <div
+                style={{
+                  display: "flex",
+                  justifyContent: "center",
+                  padding: "var(--s3)",
+                  borderTop: "1px solid var(--border)",
+                }}
+              >
+                <button
+                  type="button"
+                  className="b-btn b-btn-secondary b-btn-sm"
+                  onClick={() => setVisibleCount((count) => count + PAGE_SIZE)}
+                >
+                  {t("showMore")}
+                </button>
+              </div>
+            ) : null}
+          </section>
+        ) : null}
+      </div>
+
+      <Dialog
+        open={featuredPickerOpen}
+        onClose={() => setFeaturedPickerOpen(false)}
+        title={t("featuredLabTrendLabel")}
+      >
+        <div className="b-list">
+          {sortedTrends.map((trend) => (
+            <button
+              key={trend.test_key}
+              type="button"
+              className="b-list-row"
+              aria-current={trend.test_key === featuredTrend?.test_key ? "page" : undefined}
+              onClick={() => {
+                setFeaturedOverride(trend.test_key);
+                setFeaturedPickerOpen(false);
+              }}
+            >
+              <span className="b-list-main">
+                <span className="b-list-title">{trend.display_name}</span>
+                <span className="b-list-sub">
+                  {valueOrDash(trend.category)}
+                  {trend.unit ? ` · ${trend.unit}` : ""}
+                </span>
+              </span>
+              <span className="b-list-trail">
+                <LabValue
+                  value={valueOrDash(trend.latest?.value_display)}
+                  flag={trend.latest?.flag}
+                />
+              </span>
+            </button>
+          ))}
         </div>
-      )}
+      </Dialog>
     </AppShell>
   );
 }

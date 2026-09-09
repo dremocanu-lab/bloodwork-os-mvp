@@ -35,7 +35,7 @@ export default function EmergencySplashPage() {
           className="muted-text"
           style={{
             fontSize: 12,
-            fontWeight: 900,
+            fontWeight: 600,
             textTransform: "uppercase",
             letterSpacing: "0.14em",
             marginBottom: 14,
@@ -46,8 +46,8 @@ export default function EmergencySplashPage() {
 
         <h1
           style={{
-            fontSize: 44,
-            fontWeight: 900,
+            fontSize: 26,
+            fontWeight: 600,
             letterSpacing: "-0.035em",
             lineHeight: 1.1,
             margin: "0 0 18px 0",
@@ -77,7 +77,7 @@ export default function EmergencySplashPage() {
             fontSize: 17,
             fontWeight: 700,
             textDecoration: "none",
-            borderRadius: 12,
+            borderRadius: "var(--r-md)",
           }}
         >
           {t("emergencyEnterPortal")}
@@ -97,14 +97,14 @@ export default function EmergencySplashPage() {
             padding: "20px 26px",
             background: "rgba(220,38,38,0.06)",
             border: "1px solid rgba(220,38,38,0.18)",
-            borderRadius: 14,
+            borderRadius: "var(--r-md)",
             textAlign: "left",
           }}
         >
           <div
             style={{
               fontSize: 11,
-              fontWeight: 900,
+              fontWeight: 600,
               textTransform: "uppercase",
               letterSpacing: "0.07em",
               color: "#dc2626",

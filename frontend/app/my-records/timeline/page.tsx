@@ -346,11 +346,11 @@ function statusPillStyle(value: string, active: boolean) {
   return { background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))", color: "var(--primary)", border: "1px solid color-mix(in srgb, var(--primary) 30%, transparent)" };
 }
 
-function StatBadge({ count, label, color = "var(--foreground)" }: { count: number; label: string; color?: string }) {
+function StatBadge({ count, label, color = "var(--text)" }: { count: number; label: string; color?: string }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", alignItems: "flex-end", gap: 1 }}>
-      <span style={{ fontSize: 22, fontWeight: 950, letterSpacing: "-0.05em", lineHeight: 1, color }}>{count}</span>
-      <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--muted)", lineHeight: 1 }}>{label}</span>
+      <span style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.05em", lineHeight: 1, color }}>{count}</span>
+      <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", color: "var(--muted)", lineHeight: 1 }}>{label}</span>
     </div>
   );
 }
@@ -504,7 +504,7 @@ export default function MyRecordsTimelinePage() {
           style={{
             padding: "20px 24px",
             borderBottom: "1px solid var(--border)",
-            background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 7%, var(--panel)), var(--panel))",
+            background: "var(--surface)",
             display: "flex",
             alignItems: "flex-start",
             justifyContent: "space-between",
@@ -513,7 +513,7 @@ export default function MyRecordsTimelinePage() {
           }}
         >
           <div>
-            <div style={{ fontSize: 19, fontWeight: 950, letterSpacing: "-0.04em" }}>Clinical timeline</div>
+            <div style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.04em" }}>Clinical timeline</div>
             <div className="muted-text" style={{ marginTop: 5, fontSize: 13, lineHeight: 1.5, maxWidth: 520 }}>
               Discharge summaries create admission episodes. Bloodwork, scans, and other records group inside admissions by date.
             </div>
@@ -556,6 +556,7 @@ export default function MyRecordsTimelinePage() {
               value={yearFilter}
               onChange={(e) => setYearFilter(e.target.value)}
               className="text-input"
+              aria-label="Filter by year"
               style={{ fontSize: 13, minWidth: 120, flex: "0 0 auto", height: 36 }}
             >
               <option value="all">All years</option>
@@ -564,7 +565,7 @@ export default function MyRecordsTimelinePage() {
               ))}
             </select>
 
-            <span className="muted-text" style={{ fontSize: 12, fontWeight: 900, whiteSpace: "nowrap" }}>
+            <span className="muted-text" style={{ fontSize: 12, fontWeight: 600, whiteSpace: "nowrap" }}>
               {hasActiveFilters
                 ? `${filteredDocuments.length} of ${allDocuments.length} records`
                 : `${allDocuments.length} records`}
@@ -581,7 +582,7 @@ export default function MyRecordsTimelinePage() {
                   background: "transparent",
                   color: "var(--muted)",
                   fontSize: 12,
-                  fontWeight: 900,
+                  fontWeight: 600,
                   cursor: "pointer",
                   whiteSpace: "nowrap",
                 }}
@@ -608,7 +609,7 @@ export default function MyRecordsTimelinePage() {
                       background: s.background,
                       color: s.color,
                       fontSize: 12,
-                      fontWeight: 900,
+                      fontWeight: 600,
                       cursor: "pointer",
                       transition: "background 130ms ease, color 130ms ease, border-color 130ms ease",
                     }}
@@ -634,7 +635,7 @@ export default function MyRecordsTimelinePage() {
                       background: s.background,
                       color: s.color,
                       fontSize: 12,
-                      fontWeight: 900,
+                      fontWeight: 600,
                       cursor: "pointer",
                       transition: "background 130ms ease, color 130ms ease, border-color 130ms ease",
                     }}

@@ -6,6 +6,7 @@ import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import { CHART_SERIES } from "@/lib/chart-theme";
 import { formatPatientAge } from "@/lib/patient-age";
 import type { BloodworkTrend } from "@/lib/analytes/types";
 import { enrichBloodworkTrend } from "@/lib/analytes/match";
@@ -82,19 +83,23 @@ const STATUS_CELL: Record<AnalyticsLabStatus, { bg: string; dot: string }> = {
   not_numeric: { bg: "rgba(148,163,184,0.06)", dot: "#94a3b8" },
 };
 
-const NOT_PRESENT_BG = "rgba(148,163,184,0.06)";
+const NOT_PRESENT_BG = "var(--surface-3)";
 
-const SECTION_SERIES_COLORS = [
-  "#7c3aed",
-  "#0284c7",
-  "#0891b2",
-  "#16a34a",
-  "#dc2626",
-  "#6b7280",
-];
+/**
+ * Chart colours come from the shared Bragi chart theme rather than being
+ * hard-coded here, so the Analytics page, the lab-trend sparklines and the
+ * expanded trend figures all draw from one palette and follow light/dark.
+ *
+ * The previous constants were a fixed six-colour list (violet, two blues, a
+ * green, a red, a grey) plus a `#94a3b8` axis and a `var(--text)` text
+ * colour - a variable that is not defined anywhere in the app, so tooltip and
+ * axis text fell back to the browser default and was near-invisible in dark
+ * mode.
+ */
+const SECTION_SERIES_COLORS = CHART_SERIES;
 
-const AXIS_COLOR = "#94a3b8";
-const GRID_LINE = "color-mix(in srgb, var(--border) 60%, transparent)";
+const AXIS_COLOR = "var(--chart-axis)";
+const GRID_LINE = "var(--chart-grid)";
 
 // ── Helpers ───────────────────────────────────────────────────────────────────
 
@@ -117,11 +122,13 @@ function latestByMarker(values: AnalyticsLabValue[]): Map<string, AnalyticsLabVa
 
 function tooltipBox(): Record<string, unknown> {
   return {
-    backgroundColor: "var(--panel)",
+    backgroundColor: "var(--surface)",
     borderColor: "var(--border)",
     borderWidth: 1,
-    textStyle: { color: "var(--foreground)", fontSize: 12 },
-    extraCssText: "border-radius:10px;box-shadow:0 8px 24px rgba(0,0,0,0.35);",
+    padding: [7, 10],
+    textStyle: { color: "var(--text)", fontSize: 12 },
+    extraCssText:
+      "border-radius:6px;box-shadow:0 4px 12px rgba(15,23,42,.1);font-variant-numeric:tabular-nums;",
   };
 }
 
@@ -370,7 +377,7 @@ export default function PatientAnalyticsPage() {
         }}
       >
         <div>
-          <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>{patientName}</div>
+          <div style={{ fontWeight: 600, fontSize: 17, letterSpacing: "-0.02em" }}>{patientName}</div>
           <div className="muted-text" style={{ fontSize: 13, marginTop: 3 }}>
             {[patientAge, profile?.patient.sex, profile?.patient.patient_identifier]
               .filter(Boolean)
@@ -431,7 +438,7 @@ export default function PatientAnalyticsPage() {
               className="muted-text"
               style={{
                 fontSize: 10,
-                fontWeight: 900,
+                fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 marginBottom: 6,
@@ -441,10 +448,10 @@ export default function PatientAnalyticsPage() {
             </div>
             <div
               style={{
-                fontWeight: 800,
+                fontWeight: 600,
                 fontSize: 22,
                 letterSpacing: "-0.03em",
-                color: accent || "var(--foreground)",
+                color: accent || "var(--text)",
               }}
             >
               {value}
@@ -560,7 +567,7 @@ export default function PatientAnalyticsPage() {
             key={tab.key}
             type="button"
             className={activeTab === tab.key ? "primary-btn" : "secondary-btn"}
-            style={{ borderRadius: 12, padding: "8px 16px", fontSize: 13 }}
+            style={{ borderRadius: "var(--r-md)", padding: "8px 16px", fontSize: 13 }}
             onClick={() => setActiveTab(tab.key)}
           >
             {tab.label}
@@ -717,10 +724,10 @@ function OverviewTab({
       else counts[v.status]++;
     }
     const rows = [
-      { label: t("inRange"), value: counts.in_range, color: "#16a34a" },
-      { label: t("outOfRange"), value: counts.out_of_range, color: "#dc2626" },
-      { label: t("noReferenceRange"), value: counts.no_reference_range, color: "#d97706" },
-      { label: t("notPresent"), value: counts.not_numeric, color: "#6b7280" },
+      { label: t("inRange"), value: counts.in_range, color: "var(--ok)" },
+      { label: t("outOfRange"), value: counts.out_of_range, color: "var(--danger)" },
+      { label: t("noReferenceRange"), value: counts.no_reference_range, color: "var(--warn)" },
+      { label: t("notPresent"), value: counts.not_numeric, color: "var(--faint)" },
     ];
     return {
       backgroundColor: "transparent",
@@ -780,11 +787,11 @@ function OverviewTab({
                     {[med.dose_strength, med.frequency].filter(Boolean).join(" · ") || "—"}
                   </div>
                   <div style={{ display: "flex", gap: 6, marginTop: 8, flexWrap: "wrap" }}>
-                    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--panel-2)", color: "var(--muted)" }}>
+                    <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
                       {med.status}
                     </span>
                     {med.is_uncertain && (
-                      <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+                      <span style={{ padding: "2px 8px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
                         {t("sourceRequiresVerification")}
                       </span>
                     )}
@@ -913,7 +920,7 @@ function MatrixTab({
                 background: "var(--panel)",
                 padding: "6px 10px",
                 fontSize: 10,
-                fontWeight: 900,
+                fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.05em",
                 color: "var(--muted)",
@@ -950,7 +957,7 @@ function MatrixTab({
                   background: "var(--panel-2)",
                   padding: "5px 10px",
                   fontSize: 10,
-                  fontWeight: 800,
+                  fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: "0.05em",
                   color: "var(--muted)",
@@ -1111,7 +1118,7 @@ function TrendsTab({
           smooth: true,
           symbolSize: 8,
           data: selectedValues.map((v) => v.value_numeric),
-          lineStyle: { color: "#7c3aed", width: 2 },
+          lineStyle: { color: "var(--chart-1)", width: 1.75 },
           itemStyle: {
             color: (p: { dataIndex: number }) => {
               const v = selectedValues[p.dataIndex];
@@ -1141,7 +1148,7 @@ function TrendsTab({
           className="text-input"
           value={activeMarkerKey || ""}
           onChange={(e) => onSelectMarker(e.target.value)}
-          style={{ borderRadius: 12, padding: "9px 32px 9px 12px", fontSize: 13, width: "100%" }}
+          style={{ borderRadius: "var(--r-md)", padding: "9px 32px 9px 12px", fontSize: 13, width: "100%" }}
         >
           {markers.map((m) => (
             <option key={m.marker_key} value={m.marker_key}>
@@ -1177,7 +1184,7 @@ function TrendsTab({
               { label: "Δ", value: delta === null ? "—" : `${delta > 0 ? "+" : ""}${delta.toFixed(2)}` },
             ].map(({ label, value }) => (
               <div key={label} className="soft-card-tight" style={{ padding: "12px 14px" }}>
-                <div className="muted-text" style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
+                <div className="muted-text" style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}>
                   {label}
                 </div>
                 <div style={{ fontWeight: 700, fontSize: 15 }}>{value}</div>
@@ -1200,7 +1207,7 @@ function TrendsTab({
 function TrendBadge({ direction, t }: { direction?: AnalyticsLabValue["trend"]; t: Translate }) {
   if (!direction || direction === "insufficient_data") {
     return (
-      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: "var(--panel-2)", color: "var(--muted)" }}>
+      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
         {t("notEnoughDataShort")}
       </span>
     );
@@ -1212,7 +1219,7 @@ function TrendBadge({ direction, t }: { direction?: AnalyticsLabValue["trend"]; 
   } as const;
   const c = map[direction];
   return (
-    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800, background: c.bg, color: c.color }}>
+    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: c.bg, color: c.color }}>
       {c.sym} {t("trendColumn")}
     </span>
   );
@@ -1262,10 +1269,10 @@ function CategoriesTab({
       xAxis: { type: "value", axisLabel: { color: AXIS_COLOR, fontSize: 10 }, splitLine: { lineStyle: { color: GRID_LINE } } },
       yAxis: { type: "category", data: cats, axisLabel: { color: AXIS_COLOR, fontSize: 10 } },
       series: [
-        { name: t("inRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.in_range), itemStyle: { color: "#16a34a" } },
-        { name: t("outOfRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.out_of_range), itemStyle: { color: "#dc2626" } },
-        { name: t("noReferenceRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.no_ref), itemStyle: { color: "#d97706" } },
-        { name: t("qualitativeResult"), type: "bar", stack: "x", data: categoryData.map((c) => c.qualitative), itemStyle: { color: "#0284c7" } },
+        { name: t("inRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.in_range), itemStyle: { color: "var(--ok)" } },
+        { name: t("outOfRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.out_of_range), itemStyle: { color: "var(--danger)" } },
+        { name: t("noReferenceRange"), type: "bar", stack: "x", data: categoryData.map((c) => c.no_ref), itemStyle: { color: "var(--warn)" } },
+        { name: t("qualitativeResult"), type: "bar", stack: "x", data: categoryData.map((c) => c.qualitative), itemStyle: { color: "var(--chart-5)" } },
       ],
     };
   }, [categoryData, t]);
@@ -1579,7 +1586,7 @@ function AdvancedTab({
       <div>
         <div
           className="muted-text"
-          style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}
+          style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.07em", marginBottom: 12 }}
         >
           {t("advancedVisualizations")}
         </div>
@@ -1881,7 +1888,7 @@ function RadarView({ values, t }: { values: AnalyticsLabValue[]; t: Translate })
               value: normalized,
               name: selectedPanel.label,
               areaStyle: { color: "rgba(124,58,237,0.18)" },
-              lineStyle: { color: "#7c3aed", width: 2 },
+              lineStyle: { color: "var(--chart-1)", width: 1.75 },
               itemStyle: { color: "#7c3aed" },
             },
           ],
@@ -2218,7 +2225,7 @@ function SmallMultiplesAdvView({ values, t }: { values: AnalyticsLabValue[]; t: 
                   type: "line",
                   data: marker.points.map((p) => p.value),
                   smooth: 0.4,
-                  lineStyle: { color: "#7c3aed", width: 2 },
+                  lineStyle: { color: "var(--chart-1)", width: 1.75 },
                   itemStyle: { color: "#7c3aed" },
                   symbolSize: 5,
                   areaStyle: { color: "rgba(124,58,237,0.10)" },

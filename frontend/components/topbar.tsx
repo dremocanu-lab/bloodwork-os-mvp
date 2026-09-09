@@ -45,7 +45,7 @@ export default function Topbar({
           {t("topbarSearch")}
         </div>
 
-        <div style={{ fontSize: 36, fontWeight: 800, lineHeight: 1.1 }}>{title}</div>
+        <div style={{ fontSize: 19, fontWeight: 600, lineHeight: 1.1 }}>{title}</div>
         {subtitle && (
           <div style={{ marginTop: 8, fontSize: 15, color: "#6b7280" }}>{subtitle}</div>
         )}

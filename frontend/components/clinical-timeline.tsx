@@ -1,6 +1,30 @@
 "use client";
 
+/**
+ * Clinical timeline.
+ *
+ * Rebuilt for long histories. The previous version rendered every event as a
+ * gradient-filled rounded card with a 950-weight title, a coloured pill and a
+ * full-size "Open" button - roughly 90px per event, so ten years of records
+ * was unreadable, and nested admissions produced cards inside cards inside
+ * cards.
+ *
+ * Now: events are ~40px rows on a hairline spine, grouped under sticky
+ * month anchors so the reader always knows which period they are looking at.
+ * Admissions keep their grouping but collapse by default, expanding in place
+ * to reveal the records that fall inside the stay. Category is a small
+ * coloured node rather than a badge, and the whole row is the click target.
+ *
+ * Pattern reference: Calendly scheduled-events (sticky date bands + compact
+ * rows), Basecamp latest-activity (date anchors), Stripe events list.
+ *
+ * The props API is unchanged, so every existing caller keeps working.
+ */
+
+import { useMemo, useState } from "react";
 import { useLanguage } from "@/lib/i18n";
+import { IconChevronDown, IconChevronRight } from "@/components/ui/icon";
+import { EmptyState } from "@/components/ui";
 
 type TimelineItem = {
   id: string;
@@ -26,16 +50,13 @@ type ClinicalTimelineProps = {
 
 function parseDateTime(value?: string | null) {
   if (!value) return 0;
-
   const normalized = value.trim();
   const direct = new Date(normalized).getTime();
-
   if (!Number.isNaN(direct)) return direct;
 
   const match = normalized.match(
     /^(\d{1,2})[./-](\d{1,2})[./-](\d{2,4})(?:\s+(\d{1,2}):(\d{2}))?/
   );
-
   if (!match) return 0;
 
   const day = Number(match[1]);
@@ -46,29 +67,27 @@ function parseDateTime(value?: string | null) {
   const minute = match[5] ? Number(match[5]) : 0;
 
   const parsed = new Date(year, month - 1, day, hour, minute).getTime();
-
   return Number.isNaN(parsed) ? 0 : parsed;
 }
 
-function formatShortDate(value?: string | null) {
-  if (!value) return "—";
-
+/** "12 Mar" - the day within its month group. */
+function formatDayLabel(value?: string | null) {
   const time = parseDateTime(value);
-
-  if (!time) return value;
-
-  return new Date(time).toLocaleDateString(undefined, {
-    month: "short",
-    day: "2-digit",
-  });
+  if (!time) return "—";
+  return new Date(time).toLocaleDateString(undefined, { day: "2-digit", month: "short" });
 }
 
-function getYear(value?: string | null, noDateText = "No date") {
-  const time = parseDateTime(value);
-
+/** "March 2026" - the sticky group anchor. */
+function formatPeriod(time: number, noDateText: string) {
   if (!time) return noDateText;
+  return new Date(time).toLocaleDateString(undefined, { month: "long", year: "numeric" });
+}
 
-  return String(new Date(time).getFullYear());
+function periodKey(value?: string | null) {
+  const time = parseDateTime(value);
+  if (!time) return "unknown";
+  const date = new Date(time);
+  return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
 function getTypeLabel(item: TimelineItem, t: (key: string) => string) {
@@ -82,382 +101,82 @@ function getTypeLabel(item: TimelineItem, t: (key: string) => string) {
   return t("record");
 }
 
-function getItemTone(item: TimelineItem) {
-  if (item.section === "discharge_summary") {
-    return {
-      dot: "var(--primary)",
-      bg: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-      border: "color-mix(in srgb, var(--primary) 32%, var(--border))",
-      pillBg: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
-      pillText: "var(--primary)",
-    };
-  }
-
-  if (item.type === "event" || item.section === "hospitalizations") {
-    return {
-      dot: "var(--success-text)",
-      bg: "linear-gradient(135deg, color-mix(in srgb, var(--success-bg) 72%, var(--panel)), var(--panel))",
-      border: "var(--success-border)",
-      pillBg: "var(--success-bg)",
-      pillText: "var(--success-text)",
-    };
-  }
-
-  if (item.section === "bloodwork") {
-    return {
-      dot: "var(--danger-text)",
-      bg: "var(--panel)",
-      border: "var(--border)",
-      pillBg: "var(--danger-bg)",
-      pillText: "var(--danger-text)",
-    };
-  }
-
-  if (item.section === "scans") {
-    return {
-      dot: "var(--warn-text)",
-      bg: "var(--panel)",
-      border: "var(--border)",
-      pillBg: "var(--warn-bg)",
-      pillText: "var(--warn-text)",
-    };
-  }
-
-  return {
-    dot: "var(--muted)",
-    bg: "var(--panel)",
-    border: "var(--border)",
-    pillBg: "var(--panel-2)",
-    pillText: "var(--muted)",
-  };
+/**
+ * The node colour encodes the record category. Kept to the semantic set so a
+ * timeline reads as one system rather than a colour wheel - and crucially,
+ * bloodwork is no longer red by default (red now means "abnormal", not
+ * "this is a blood test").
+ */
+function nodeClass(item: TimelineItem) {
+  if (item.section === "discharge_summary") return "b-tl-node-brand";
+  if (item.type === "event" || item.section === "hospitalizations") return "b-tl-node-ok";
+  if (item.section === "scans") return "b-tl-node-warn";
+  if (item.section === "notes") return "b-tl-node-info";
+  return "";
 }
 
-function TimelineButton({
+function TimelineRow({
   item,
-  compact = false,
-  onOpenDocument,
-  onOpenEvent,
+  onOpen,
+  expandable,
+  expanded,
+  onToggle,
+  childCount,
+  indented,
 }: {
   item: TimelineItem;
-  compact?: boolean;
-  onOpenDocument?: (documentId: number) => void;
-  onOpenEvent?: (eventId: number) => void;
+  onOpen?: () => void;
+  expandable?: boolean;
+  expanded?: boolean;
+  onToggle?: () => void;
+  childCount?: number;
+  indented?: boolean;
 }) {
   const { t } = useLanguage();
-  const tone = getItemTone(item);
-  const canOpen = Boolean(
-    (item.documentId && onOpenDocument) || (item.eventId && onOpenEvent)
-  );
-
-  function handleOpen() {
-    if (item.documentId && onOpenDocument) {
-      onOpenDocument(item.documentId);
-      return;
-    }
-
-    if (item.eventId && onOpenEvent) {
-      onOpenEvent(item.eventId);
-    }
-  }
 
   return (
-    <div
-      className="soft-card-tight"
-      style={{
-        padding: compact ? 12 : 15,
-        background: tone.bg,
-        borderColor: tone.border,
-        display: "grid",
-        gridTemplateColumns: canOpen ? "minmax(0, 1fr) auto" : "minmax(0, 1fr)",
-        gap: 12,
-        alignItems: "center",
-        borderRadius: compact ? 16 : 18,
-      }}
+    <button
+      type="button"
+      className="b-tl-event"
+      aria-expanded={expandable ? expanded : undefined}
+      onClick={expandable ? onToggle : onOpen}
+      style={indented ? { paddingLeft: "calc(var(--s4) + 28px)" } : undefined}
     >
-      <div style={{ minWidth: 0 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            gap: 9,
-            minWidth: 0,
-            flexWrap: "wrap",
-          }}
-        >
-          <span
+      <span className="b-tl-date">{formatDayLabel(item.date)}</span>
+
+      <span className="b-tl-spine" aria-hidden="true">
+        <span className={`b-tl-node ${nodeClass(item)}`} />
+      </span>
+
+      {/* data-date feeds the mobile layout, where the date gutter collapses
+          into the main column via CSS rather than duplicating the node. */}
+      <span className="b-tl-main" data-date={formatDayLabel(item.date)}>
+        <span className="b-tl-title">{item.title}</span>
+        <span className="b-tl-sub">
+          <span style={{ color: "var(--text-2)" }}>{getTypeLabel(item, t)}</span>
+          {item.subtitle ? ` · ${item.subtitle}` : ""}
+        </span>
+      </span>
+
+      <span className="b-tl-trail">
+        {expandable && childCount ? (
+          <span className="b-tab-count">{childCount}</span>
+        ) : null}
+
+        {expandable ? (
+          <IconChevronDown
+            size={13}
             style={{
-              width: compact ? 7 : 8,
-              height: compact ? 7 : 8,
-              borderRadius: 999,
-              background: tone.dot,
-              flex: "0 0 auto",
+              color: "var(--faint)",
+              transform: expanded ? "rotate(180deg)" : "none",
+              transition: "transform var(--dur-2) var(--ease)",
             }}
           />
-
-          <div
-            className="timeline-item-title"
-            style={{
-              fontWeight: 950,
-              fontSize: compact ? 13 : 15,
-              letterSpacing: "-0.025em",
-              minWidth: 0,
-              overflow: "hidden",
-              textOverflow: "ellipsis",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {item.title}
-          </div>
-
-          <span
-            style={{
-              display: "inline-flex",
-              padding: compact ? "4px 7px" : "5px 8px",
-              borderRadius: 999,
-              background: tone.pillBg,
-              color: tone.pillText,
-              fontSize: compact ? 10 : 11,
-              fontWeight: 950,
-              lineHeight: 1,
-            }}
-          >
-            {getTypeLabel(item, t)}
-          </span>
-        </div>
-
-        <div
-          className="muted-text timeline-item-subtitle"
-          style={{
-            marginTop: compact ? 5 : 7,
-            lineHeight: 1.45,
-            fontSize: compact ? 12 : 13,
-          }}
-        >
-          {item.subtitle}
-        </div>
-      </div>
-
-      {canOpen && (
-        <button
-          type="button"
-          className="secondary-btn"
-          onClick={handleOpen}
-          style={{
-            borderRadius: 14,
-            padding: compact ? "8px 11px" : "10px 13px",
-            fontSize: compact ? 12 : 13,
-            fontWeight: 950,
-            whiteSpace: "nowrap",
-          }}
-        >
-          {t("open")}
-        </button>
-      )}
-    </div>
-  );
-}
-
-function AdmissionGroup({
-  item,
-  onOpenDocument,
-  onOpenEvent,
-}: {
-  item: TimelineItem;
-  onOpenDocument?: (documentId: number) => void;
-  onOpenEvent?: (eventId: number) => void;
-}) {
-  const { t } = useLanguage();
-  const children = item.children || [];
-  const tone = getItemTone(item);
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "96px minmax(0, 1fr)",
-        gap: 14,
-        alignItems: "start",
-      }}
-    >
-      <div
-        style={{
-          paddingTop: 8,
-          textAlign: "right",
-          position: "sticky",
-          top: 10,
-        }}
-      >
-        <div
-          style={{
-            fontWeight: 950,
-            fontSize: 16,
-            letterSpacing: "-0.045em",
-          }}
-        >
-          {getYear(item.date, t("noDate"))}
-        </div>
-        <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
-          {formatShortDate(item.date)}
-        </div>
-      </div>
-
-      <div style={{ position: "relative", paddingLeft: 18 }}>
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 17,
-            bottom: 12,
-            width: 2,
-            borderRadius: 999,
-            background:
-              children.length > 0
-                ? "linear-gradient(180deg, var(--primary), color-mix(in srgb, var(--primary) 18%, var(--border)))"
-                : "var(--border)",
-          }}
-        />
-
-        <div
-          style={{
-            position: "absolute",
-            left: -4,
-            top: 13,
-            width: 10,
-            height: 10,
-            borderRadius: 999,
-            background: tone.dot,
-            boxShadow: "0 0 0 5px var(--panel)",
-          }}
-        />
-
-        <div
-          className="soft-card-tight"
-          style={{
-            padding: 16,
-            background:
-              "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-            borderColor: "color-mix(in srgb, var(--primary) 34%, var(--border))",
-            borderRadius: 22,
-          }}
-        >
-          <TimelineButton
-            item={item}
-            onOpenDocument={onOpenDocument}
-            onOpenEvent={onOpenEvent}
-          />
-
-          {children.length > 0 && (
-            <div style={{ marginTop: 14 }}>
-              <div
-                className="muted-text"
-                style={{
-                  fontSize: 12,
-                  fontWeight: 950,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.05em",
-                  marginBottom: 10,
-                }}
-              >
-                {t("recordsDuringAdmission")}
-              </div>
-
-              <div style={{ display: "grid", gap: 9 }}>
-                {children.map((child) => (
-                  <TimelineButton
-                    key={child.id}
-                    item={child}
-                    compact
-                    onOpenDocument={onOpenDocument}
-                    onOpenEvent={onOpenEvent}
-                  />
-                ))}
-              </div>
-            </div>
-          )}
-
-          {!children.length && (
-            <div
-              className="muted-text"
-              style={{
-                marginTop: 10,
-                fontSize: 12,
-                lineHeight: 1.5,
-              }}
-            >
-              {t("noLinkedRecordsInAdmission")}
-            </div>
-          )}
-        </div>
-      </div>
-    </div>
-  );
-}
-
-function RegularTimelineItem({
-  item,
-  onOpenDocument,
-  onOpenEvent,
-}: {
-  item: TimelineItem;
-  onOpenDocument?: (documentId: number) => void;
-  onOpenEvent?: (eventId: number) => void;
-}) {
-  const { t } = useLanguage();
-  const tone = getItemTone(item);
-
-  return (
-    <div
-      style={{
-        display: "grid",
-        gridTemplateColumns: "96px minmax(0, 1fr)",
-        gap: 14,
-        alignItems: "start",
-      }}
-    >
-      <div style={{ paddingTop: 8, textAlign: "right" }}>
-        <div
-          style={{
-            fontWeight: 950,
-            fontSize: 16,
-            letterSpacing: "-0.045em",
-          }}
-        >
-          {getYear(item.date, t("noDate"))}
-        </div>
-        <div className="muted-text" style={{ fontSize: 12, fontWeight: 900, marginTop: 3 }}>
-          {formatShortDate(item.date)}
-        </div>
-      </div>
-
-      <div style={{ position: "relative", paddingLeft: 18 }}>
-        <div
-          style={{
-            position: "absolute",
-            left: 0,
-            top: 17,
-            bottom: -15,
-            width: 2,
-            borderRadius: 999,
-            background: "var(--border)",
-          }}
-        />
-
-        <div
-          style={{
-            position: "absolute",
-            left: -4,
-            top: 13,
-            width: 10,
-            height: 10,
-            borderRadius: 999,
-            background: tone.dot,
-            boxShadow: "0 0 0 5px var(--panel)",
-          }}
-        />
-
-        <TimelineButton item={item} onOpenDocument={onOpenDocument} onOpenEvent={onOpenEvent} />
-      </div>
-    </div>
+        ) : onOpen ? (
+          <IconChevronRight size={13} className="b-list-chevron" />
+        ) : null}
+      </span>
+    </button>
   );
 }
 
@@ -471,76 +190,139 @@ export default function ClinicalTimeline({
   emptyText,
 }: ClinicalTimelineProps) {
   const { t } = useLanguage();
+  const [expandedIds, setExpandedIds] = useState<Set<string>>(new Set());
+
   const visibleItems = typeof maxItems === "number" ? items.slice(0, maxItems) : items;
   const hiddenCount = Math.max(items.length - visibleItems.length, 0);
-  const empty = emptyText ?? t("noTimelineActivity");
+
+  // Group into calendar months so the sticky anchors have something to say.
+  const groups = useMemo(() => {
+    const map = new Map<string, { key: string; time: number; items: TimelineItem[] }>();
+
+    for (const item of visibleItems) {
+      const key = periodKey(item.date);
+      const existing = map.get(key);
+      if (existing) {
+        existing.items.push(item);
+      } else {
+        map.set(key, { key, time: parseDateTime(item.date), items: [item] });
+      }
+    }
+
+    return Array.from(map.values());
+  }, [visibleItems]);
+
+  function toggle(id: string) {
+    setExpandedIds((previous) => {
+      const next = new Set(previous);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
+  function openItem(item: TimelineItem) {
+    if (item.documentId && onOpenDocument) {
+      onOpenDocument(item.documentId);
+      return;
+    }
+    if (item.eventId && onOpenEvent) onOpenEvent(item.eventId);
+  }
+
+  function canOpen(item: TimelineItem) {
+    return Boolean((item.documentId && onOpenDocument) || (item.eventId && onOpenEvent));
+  }
 
   if (!items.length) {
-    return (
-      <div
-        className="soft-card-tight"
-        style={{
-          padding: 18,
-          background: "var(--panel-2)",
-        }}
-      >
-        <div className="muted-text">{empty}</div>
-      </div>
-    );
+    return <EmptyState title={emptyText ?? t("noTimelineActivity")} />;
   }
 
   return (
-    <div style={{ display: "grid", gap: 14 }}>
-      <div style={{ display: "grid", gap: 16 }}>
-        {visibleItems.map((item) => {
-          const hasChildren = Boolean(item.children?.length);
+    <div className="b-timeline">
+      {groups.map((group) => (
+        <div className="b-tl-group" key={group.key}>
+          <div className="b-tl-anchor">
+            {formatPeriod(group.time, t("noDate"))}
+            <span className="b-tl-anchor-count">
+              {group.items.length}{" "}
+              {group.items.length === 1 ? t("record").toLowerCase() : t("records").toLowerCase()}
+            </span>
+          </div>
 
-          if (hasChildren || item.section === "discharge_summary" || item.section === "hospitalizations") {
+          {group.items.map((item) => {
+            const children = item.children || [];
+            const isGroup = children.length > 0;
+            const expanded = expandedIds.has(item.id);
+
             return (
-              <AdmissionGroup
-                key={item.id}
-                item={item}
-                onOpenDocument={onOpenDocument}
-                onOpenEvent={onOpenEvent}
-              />
+              <div key={item.id}>
+                <TimelineRow
+                  item={item}
+                  onOpen={canOpen(item) ? () => openItem(item) : undefined}
+                  expandable={isGroup}
+                  expanded={expanded}
+                  onToggle={() => toggle(item.id)}
+                  childCount={children.length}
+                />
+
+                {/* Records that fall inside an admission, indented under it
+                    rather than nested in another card. */}
+                {isGroup && expanded ? (
+                  <div className="b-view-enter" style={{ background: "var(--surface-2)" }}>
+                    {canOpen(item) ? (
+                      <button
+                        type="button"
+                        className="b-tl-event"
+                        onClick={() => openItem(item)}
+                        style={{ paddingLeft: "calc(var(--s4) + 28px)" }}
+                      >
+                        <span className="b-tl-date" />
+                        <span className="b-tl-spine" aria-hidden="true">
+                          <span className="b-tl-node b-tl-node-brand" />
+                        </span>
+                        <span className="b-tl-main">
+                          <span className="b-tl-title" style={{ color: "var(--primary)" }}>
+                            {t("open")} — {item.title}
+                          </span>
+                        </span>
+                        <span className="b-tl-trail">
+                          <IconChevronRight size={13} className="b-list-chevron" />
+                        </span>
+                      </button>
+                    ) : null}
+
+                    {children.map((child) => (
+                      <TimelineRow
+                        key={child.id}
+                        item={child}
+                        indented
+                        onOpen={canOpen(child) ? () => openItem(child) : undefined}
+                      />
+                    ))}
+                  </div>
+                ) : null}
+              </div>
             );
-          }
+          })}
+        </div>
+      ))}
 
-          return (
-            <RegularTimelineItem
-              key={item.id}
-              item={item}
-              onOpenDocument={onOpenDocument}
-              onOpenEvent={onOpenEvent}
-            />
-          );
-        })}
-      </div>
-
-      {showSeeFullTimeline && onSeeFullTimeline && (
+      {showSeeFullTimeline && onSeeFullTimeline ? (
         <div
           style={{
             display: "flex",
             justifyContent: "center",
-            paddingTop: 4,
+            padding: "var(--s3)",
+            borderTop: "1px solid var(--border)",
           }}
         >
-          <button
-            type="button"
-            className="secondary-btn"
-            onClick={onSeeFullTimeline}
-            style={{
-              borderRadius: 16,
-              padding: "12px 16px",
-              fontWeight: 950,
-            }}
-          >
+          <button type="button" className="b-btn b-btn-secondary b-btn-sm" onClick={onSeeFullTimeline}>
             {hiddenCount > 0
-              ? `${t("seeFullTimeline")} (${hiddenCount} ${t("moreLabel")})`
+              ? `${t("seeFullTimeline")} · ${hiddenCount} ${t("moreLabel")}`
               : t("seeFullTimeline")}
           </button>
         </div>
-      )}
+      ) : null}
     </div>
   );
 }

@@ -61,7 +61,7 @@ const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
 function Field({ label, value }: { label: string; value?: string | null }) {
   return (
     <div>
-      <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+      <div className="muted-text" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
         {label}
       </div>
       <div style={{ fontWeight: 700, fontSize: 15 }}>{valueOrDash(value)}</div>
@@ -258,18 +258,18 @@ export default function MedicationDetailPage() {
             <div className="section-title" style={{ marginBottom: 18 }}>{t("medDetails")}</div>
 
             {error && (
-              <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 12, background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontSize: 14 }}>
+              <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: "var(--r-md)", background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontSize: 14 }}>
                 {error}
               </div>
             )}
 
             <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medName")} <span style={{ color: "var(--danger-text)" }}>*</span></span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medName")} <span style={{ color: "var(--danger-text)" }}>*</span></span>
               <input className="text-input" type="text" value={editName} onChange={(e) => setEditName(e.target.value)} required />
             </label>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("status")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("status")}</span>
               <select className="text-input" value={editStatus} onChange={(e) => setEditStatus(e.target.value)} style={{ cursor: "pointer" }}>
                 {STATUS_OPTIONS.map((opt) => <option key={opt.value} value={opt.value}>{opt.label}</option>)}
               </select>
@@ -277,30 +277,30 @@ export default function MedicationDetailPage() {
 
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseStrength")}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medDoseStrength")}</span>
                 <input className="text-input" type="text" value={editDose} onChange={(e) => setEditDose(e.target.value)} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medFrequency")}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medFrequency")}</span>
                 <input className="text-input" type="text" value={editFrequency} onChange={(e) => setEditFrequency(e.target.value)} />
               </label>
             </div>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRouteForm")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medRouteForm")}</span>
               <input className="text-input" type="text" value={editRoute} onChange={(e) => setEditRoute(e.target.value)} />
             </label>
 
             <label style={{ display: "flex", gap: 10, alignItems: "flex-start", marginBottom: 20, cursor: "pointer" }}>
               <input type="checkbox" checked={editUncertain} onChange={(e) => setEditUncertain(e.target.checked)} style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }} />
               <div>
-                <div style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseNotVerified")}</div>
+                <div style={{ fontSize: 13, fontWeight: 600 }}>{t("medDoseNotVerified")}</div>
                 <div className="muted-text" style={{ fontSize: 12 }}>{t("medDoseNotVerifiedHint")}</div>
               </div>
             </label>
 
             <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRecordedReason")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medRecordedReason")}</span>
               <textarea className="text-input" rows={2} value={editReason} onChange={(e) => setEditReason(e.target.value)} style={{ resize: "vertical" }} />
             </label>
           </div>
@@ -309,20 +309,20 @@ export default function MedicationDetailPage() {
             <div className="section-title" style={{ marginBottom: 18 }}>{t("medOptionalDetails")}</div>
             <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 800 }}>{t("startDate")}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("startDate")}</span>
                 <input className="text-input" type="date" value={editStartDate} onChange={(e) => setEditStartDate(e.target.value)} />
               </label>
               <label style={{ display: "grid", gap: 6 }}>
-                <span style={{ fontSize: 13, fontWeight: 800 }}>{t("stopDate")}</span>
+                <span style={{ fontSize: 13, fontWeight: 600 }}>{t("stopDate")}</span>
                 <input className="text-input" type="date" value={editStopDate} onChange={(e) => setEditStopDate(e.target.value)} />
               </label>
             </div>
             <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medPrescribedBy")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medPrescribedBy")}</span>
               <input className="text-input" type="text" value={editPrescriber} onChange={(e) => setEditPrescriber(e.target.value)} />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medAdditionalNotes")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medAdditionalNotes")}</span>
               <textarea className="text-input" rows={3} value={editExtraInfo} onChange={(e) => setEditExtraInfo(e.target.value)} style={{ resize: "vertical" }} />
             </label>
           </div>
@@ -365,7 +365,7 @@ export default function MedicationDetailPage() {
         className="soft-card-tight"
         style={{ marginBottom: 20, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 800, color: "var(--primary)", marginBottom: 3 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 3 }}>
           {t("medSafetyTitleSingle")}
         </div>
         <div className="muted-text" style={{ fontSize: 12 }}>
@@ -376,7 +376,7 @@ export default function MedicationDetailPage() {
       {/* Delete confirmation */}
       {confirmDelete && (
         <div className="soft-card" style={{ marginBottom: 20, padding: 20, borderColor: "var(--danger-border)", background: "color-mix(in srgb, var(--danger-bg) 60%, var(--panel))" }}>
-          <div style={{ fontWeight: 800, color: "var(--danger-text)", marginBottom: 8 }}>{t("medDeleteTitle")}</div>
+          <div style={{ fontWeight: 600, color: "var(--danger-text)", marginBottom: 8 }}>{t("medDeleteTitle")}</div>
           <div className="muted-text" style={{ marginBottom: 16, fontSize: 13 }}>{t("medDeleteDesc")}</div>
           <div style={{ display: "flex", gap: 10 }}>
             <button type="button" className="primary-btn" style={{ background: "var(--danger-text)" }} onClick={handleDelete} disabled={deleting}>
@@ -390,11 +390,11 @@ export default function MedicationDetailPage() {
       {/* Main info */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 800, background: statusStyle.bg, color: statusStyle.text }}>
+          <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
             {STATUS_LABELS[med.status] || med.status}
           </span>
           {med.is_uncertain && (
-            <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+            <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
               {t("medDoseNotVerified")}
             </span>
           )}
@@ -413,7 +413,7 @@ export default function MedicationDetailPage() {
 
         {med.extra_info && (
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-            <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+            <div className="muted-text" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
               {t("medAdditionalNotes")}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.7 }}>{med.extra_info}</div>
@@ -504,7 +504,7 @@ export default function MedicationDetailPage() {
           <div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
               <span style={{
-                padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
                 background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
               }}>
                 {t("medMatchMatched")}
@@ -547,7 +547,7 @@ export default function MedicationDetailPage() {
               <div style={{ display: "grid", gap: 14 }}>
                 {Object.entries(sections).map(([title, content]) => (
                   <div key={title} className="soft-card-tight" style={{ padding: 16 }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>{title}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title}</div>
                     <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
                       {content}
                     </div>

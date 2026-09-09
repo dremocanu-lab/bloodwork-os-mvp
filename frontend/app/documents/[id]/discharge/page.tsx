@@ -251,10 +251,10 @@ function mergeFirstPageSections(rawSections: DischargeSection[]) {
 function MetaField({ label, value }: { label: string; value?: string | number | null }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", lineHeight: 1 }}>
+      <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", lineHeight: 1 }}>
         {label}
       </span>
-      <span style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+      <span style={{ fontSize: 14, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
         {displayValue(value)}
       </span>
     </div>
@@ -284,10 +284,10 @@ function SegmentedControl({
               borderRadius: 999,
               padding: "7px 14px",
               fontSize: 12,
-              fontWeight: 950,
+              fontWeight: 600,
               letterSpacing: "-0.01em",
               background: isActive ? "var(--panel)" : "transparent",
-              color: isActive ? "var(--foreground)" : "var(--muted)",
+              color: isActive ? "var(--text)" : "var(--muted)",
               cursor: "pointer",
               boxShadow: isActive ? "0 1px 4px rgba(0,0,0,0.09)" : "none",
               transition: "background 160ms ease, color 160ms ease, box-shadow 160ms ease",
@@ -306,7 +306,7 @@ function StatusDot({ verified, t }: { verified: boolean; t: (k: string) => strin
   return (
     <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
       <span style={{ width: 6, height: 6, borderRadius: 999, background: color, flexShrink: 0 }} />
-      <span style={{ fontSize: 12, fontWeight: 900, color, letterSpacing: "-0.01em" }}>
+      <span style={{ fontSize: 12, fontWeight: 600, color, letterSpacing: "-0.01em" }}>
         {verified ? t("verified") : t("unverified")}
       </span>
     </div>
@@ -321,15 +321,15 @@ function FontSizeControl({ fontSize, onChange }: { fontSize: number; onChange: (
         type="button"
         onClick={() => onChange(Math.max(FONT_SIZE_MIN, fontSize - 1))}
         disabled={fontSize <= FONT_SIZE_MIN}
-        style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: "transparent", color: fontSize <= FONT_SIZE_MIN ? "var(--muted)" : "var(--foreground)", fontSize: 16, fontWeight: 700, cursor: fontSize <= FONT_SIZE_MIN ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+        style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: "transparent", color: fontSize <= FONT_SIZE_MIN ? "var(--muted)" : "var(--text)", fontSize: 16, fontWeight: 700, cursor: fontSize <= FONT_SIZE_MIN ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
         title={t("smallerText")}
       >−</button>
-      <span style={{ fontSize: 11, fontWeight: 950, color: "var(--muted)", minWidth: 26, textAlign: "center" }}>{fontSize}</span>
+      <span style={{ fontSize: 11, fontWeight: 600, color: "var(--muted)", minWidth: 26, textAlign: "center" }}>{fontSize}</span>
       <button
         type="button"
         onClick={() => onChange(Math.min(FONT_SIZE_MAX, fontSize + 1))}
         disabled={fontSize >= FONT_SIZE_MAX}
-        style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: "transparent", color: fontSize >= FONT_SIZE_MAX ? "var(--muted)" : "var(--foreground)", fontSize: 16, fontWeight: 700, cursor: fontSize >= FONT_SIZE_MAX ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
+        style={{ width: 28, height: 28, borderRadius: 999, border: "none", background: "transparent", color: fontSize >= FONT_SIZE_MAX ? "var(--muted)" : "var(--text)", fontSize: 16, fontWeight: 700, cursor: fontSize >= FONT_SIZE_MAX ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", lineHeight: 1 }}
         title={t("largerText")}
       >+</button>
     </div>
@@ -431,12 +431,12 @@ function SectionTextPanel({
         <div>
           <div className="section-title">{section.title}</div>
           {section.original_titles?.length ? (
-            <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 900, letterSpacing: "0.02em" }}>
+            <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 600, letterSpacing: "0.02em" }}>
               {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
             </div>
           ) : null}
           {section.formatting_method && section.formatting_method !== "raw_ocr" ? (
-            <div className="muted-text" style={{ marginTop: 4, fontSize: 11, fontWeight: 800 }}>
+            <div className="muted-text" style={{ marginTop: 4, fontSize: 11, fontWeight: 600 }}>
               {t("aiLayoutFormatted")}
               {section.formatting_confidence !== null && section.formatting_confidence !== undefined
                 ? ` · ${Math.round(section.formatting_confidence * 100)}%`
@@ -482,8 +482,8 @@ function SectionTextPanel({
               background: "transparent",
               outline: "none",
               fontSize: 12,
-              fontWeight: 800,
-              color: "var(--foreground)",
+              fontWeight: 600,
+              color: "var(--text)",
               flex: 1,
               minWidth: 0,
             }}
@@ -501,40 +501,48 @@ function SectionTextPanel({
 
         {query.trim() && (
           <div style={{ display: "flex", alignItems: "center", gap: 6, flexShrink: 0 }}>
-            <span style={{ fontSize: 11, fontWeight: 900, color: matchCount > 0 ? "var(--muted)" : "var(--danger-text)", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: 11, fontWeight: 600, color: matchCount > 0 ? "var(--muted)" : "var(--danger-text)", whiteSpace: "nowrap" }}>
               {matchCount > 0 ? `${matchIndex + 1} / ${matchCount}` : t("noMatches") || "No matches"}
             </span>
             <button
               type="button"
               onClick={prevMatch}
               disabled={matchCount === 0}
-              style={{ width: 28, height: 28, borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: matchCount === 0 ? "var(--muted)" : "var(--foreground)", cursor: matchCount === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}
+              style={{ width: 28, height: 28, borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: matchCount === 0 ? "var(--muted)" : "var(--text)", cursor: matchCount === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}
             >↑</button>
             <button
               type="button"
               onClick={nextMatch}
               disabled={matchCount === 0}
-              style={{ width: 28, height: 28, borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: matchCount === 0 ? "var(--muted)" : "var(--foreground)", cursor: matchCount === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}
+              style={{ width: 28, height: 28, borderRadius: 999, border: "1px solid var(--border)", background: "var(--panel-2)", color: matchCount === 0 ? "var(--muted)" : "var(--text)", cursor: matchCount === 0 ? "not-allowed" : "pointer", display: "flex", alignItems: "center", justifyContent: "center", fontSize: 13 }}
             >↓</button>
           </div>
         )}
       </div>
 
-      {/* Text content */}
+      {/* Text content.
+          Capped at a 78-character measure: clinical prose set across a
+          1400px panel is genuinely hard to read, and long-document
+          readability is the whole point of this surface. */}
       <div
         ref={contentRef}
-        className="soft-card-tight"
-        style={{ padding: 22, background: "var(--panel-2)", minHeight: 0, overflow: "auto", borderRadius: 20 }}
+        className="b-surface-2"
+        style={{
+          padding: "var(--s5)",
+          minHeight: 0,
+          overflow: "auto",
+        }}
       >
         <pre
           style={{
             margin: 0,
+            maxWidth: "78ch",
             whiteSpace: "pre-wrap",
             fontFamily: READER_FONT,
             fontSize: fontSize,
-            lineHeight: 1.7,
-            fontWeight: 450,
-            color: "var(--foreground)",
+            lineHeight: 1.68,
+            fontWeight: 400,
+            color: "var(--text-2)",
             tabSize: 4,
             overflowWrap: "break-word",
             wordBreak: "normal",
@@ -580,7 +588,7 @@ function AdminBoxesPanel({
       <div style={{ marginBottom: 18 }}>
         <div className="section-title">{section.title}</div>
         {section.original_titles?.length ? (
-          <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 900, letterSpacing: "0.02em" }}>
+          <div className="muted-text" style={{ marginTop: 5, fontSize: 11, fontWeight: 600, letterSpacing: "0.02em" }}>
             {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
           </div>
         ) : null}
@@ -769,10 +777,10 @@ export default function DischargeStructuredPage() {
     return (
       <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
         <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
-          <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>{t("couldNotLoadDischargeSummary")}</div>
+          <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>{t("couldNotLoadDischargeSummary")}</div>
           <div className="muted-text" style={{ lineHeight: 1.6 }}>{t("dischargeSummaryBadFormat")}</div>
           {error ? (
-            <div style={{ marginTop: 14, padding: 14, borderRadius: 16, background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontWeight: 800, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
+            <div style={{ marginTop: 14, padding: 14, borderRadius: "var(--r-lg)", background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontWeight: 600, lineHeight: 1.5, whiteSpace: "pre-wrap" }}>
               {error}
             </div>
           ) : null}
@@ -805,7 +813,7 @@ export default function DischargeStructuredPage() {
           {canDelete && (
             <button
               onClick={() => setConfirmDeleteOpen(true)}
-              style={{ border: "1px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: 14, padding: "11px 15px", fontWeight: 950, cursor: "pointer" }}
+              style={{ border: "1px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: "var(--r-md)", padding: "11px 15px", fontWeight: 600, cursor: "pointer" }}
             >
               {t("delete")}
             </button>
@@ -818,10 +826,10 @@ export default function DischargeStructuredPage() {
       {confirmDeleteOpen && (
         <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.42)", display: "grid", placeItems: "center", padding: 20, backdropFilter: "blur(10px)" }}>
           <div className="soft-card" style={{ width: "min(520px, 100%)", padding: 28, boxShadow: "0 30px 90px rgba(15,23,42,0.32)" }}>
-            <div style={{ fontSize: 22, fontWeight: 950, letterSpacing: "-0.05em" }}>{t("deleteThisDischargeSummary")}</div>
+            <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.05em" }}>{t("deleteThisDischargeSummary")}</div>
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>{t("deleteDischargeDesc")}</div>
             <div className="soft-card-tight" style={{ marginTop: 18, padding: 16, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 950 }}>{parsed.report_name || documentData.filename}</div>
+              <div style={{ fontWeight: 600 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>{t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)}</div>
             </div>
             <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
@@ -829,7 +837,7 @@ export default function DischargeStructuredPage() {
               <button
                 onClick={deleteDocument}
                 disabled={deleting}
-                style={{ border: "1px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: 14, padding: "11px 18px", fontWeight: 950, cursor: deleting ? "not-allowed" : "pointer" }}
+                style={{ border: "1px solid var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", borderRadius: "var(--r-md)", padding: "11px 18px", fontWeight: 600, cursor: deleting ? "not-allowed" : "pointer" }}
               >
                 {deleting ? t("deleting") : t("deleteSummary")}
               </button>
@@ -861,7 +869,7 @@ export default function DischargeStructuredPage() {
           />
           <div style={{ width: 1, height: 18, background: "var(--border)", flexShrink: 0 }} />
           <StatusDot verified={Boolean(parsed.is_verified)} t={t} />
-          <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)", letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
+          <span style={{ fontSize: 12, fontWeight: 600, color: "var(--muted)", letterSpacing: "-0.01em", whiteSpace: "nowrap" }}>
             {sections.length} {t("sectionsSidebar").toLowerCase()}
           </span>
         </div>
@@ -874,12 +882,12 @@ export default function DischargeStructuredPage() {
             </>
           )}
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>{t("patient")}</span>
-            <span style={{ fontSize: 13, fontWeight: 950, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>{valueOrDash(parsed.patient_name)}</span>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>{t("patient")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>{valueOrDash(parsed.patient_name)}</span>
           </div>
           <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-            <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>{t("hospitalization")}</span>
-            <span style={{ fontSize: 13, fontWeight: 950, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
+            <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)" }}>{t("hospitalization")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600, letterSpacing: "-0.02em", whiteSpace: "nowrap" }}>
               {valueOrDash(parsed.collected_on)} — {valueOrDash(parsed.reported_on)}
             </span>
           </div>
@@ -924,7 +932,7 @@ export default function DischargeStructuredPage() {
                       }}
                     >
                       <div>
-                        <div style={{ fontWeight: 900 }}>{cp.care_partner_name}</div>
+                        <div style={{ fontWeight: 600 }}>{cp.care_partner_name}</div>
                         <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
                           {cp.care_partner_email}
                         </div>
@@ -977,7 +985,7 @@ export default function DischargeStructuredPage() {
               }}
             >
               <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", padding: "2px 2px 0 8px" }}>
-                <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)" }}>
+                <span style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.1em", color: "var(--muted)" }}>
                   {t("sectionsSidebar")}
                 </span>
                 <button
@@ -994,7 +1002,7 @@ export default function DischargeStructuredPage() {
                     background: "var(--panel-2)",
                     color: "var(--muted)",
                     fontSize: 11,
-                    fontWeight: 900,
+                    fontWeight: 600,
                     letterSpacing: "0.02em",
                     cursor: "pointer",
                     transition: "color 160ms ease, background 160ms ease",
@@ -1044,7 +1052,7 @@ export default function DischargeStructuredPage() {
                         style={{
                           fontSize: 12.5,
                           fontWeight: active ? 950 : 800,
-                          color: active ? "var(--foreground)" : "var(--muted)",
+                          color: active ? "var(--text)" : "var(--muted)",
                           lineHeight: 1.35,
                           overflow: "hidden",
                           textOverflow: "ellipsis",
@@ -1100,7 +1108,7 @@ export default function DischargeStructuredPage() {
                   position: "absolute",
                   left: 0, right: 0,
                   top: 50, bottom: 0,
-                  background: "linear-gradient(to bottom, transparent, color-mix(in srgb, var(--primary) 55%, transparent) 35%, color-mix(in srgb, var(--primary) 45%, transparent))",
+                  background: "linear-gradient(to bottom, transparent, var(--border) 35%, var(--border))",
                   pointerEvents: "none",
                   borderRadius: "0 0 6px 6px",
                 }}
@@ -1112,7 +1120,7 @@ export default function DischargeStructuredPage() {
         {/* Reader panel */}
         <section
           className="soft-card-tight"
-          style={{ padding: 24, background: "var(--panel)", borderRadius: 20, height: "100%", minHeight: 0, display: "grid", gridTemplateRows: "minmax(0, 1fr)", overflow: "hidden", position: "relative" }}
+          style={{ padding: 24, background: "var(--panel)", borderRadius: "var(--r-lg)", height: "100%", minHeight: 0, display: "grid", gridTemplateRows: "minmax(0, 1fr)", overflow: "hidden", position: "relative" }}
         >
           {readerMode === "original" ? (
             <OriginalLayoutViewer layout={parsed.original_layout} mode="lines" />
@@ -1165,7 +1173,7 @@ export default function DischargeStructuredPage() {
                   <div style={{ display: "grid", gap: 10, minHeight: 0, overflowY: "auto", paddingRight: 8, alignContent: "start" }}>
                     {(parsed.audit_logs || []).map((log, index) => (
                       <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
-                        <div style={{ fontWeight: 950 }}>{log.action}</div>
+                        <div style={{ fontWeight: 600 }}>{log.action}</div>
                         <div className="muted-text" style={{ marginTop: 5, fontSize: 13 }}>{valueOrDash(log.actor)} · {formatDate(log.timestamp)}</div>
                         {log.details && <div className="muted-text" style={{ marginTop: 8, lineHeight: 1.55 }}>{log.details}</div>}
                       </div>

@@ -5,6 +5,14 @@ import { useRouter } from "next/navigation";
 import EmergencyShell from "@/components/emergency-shell";
 import { useLanguage } from "@/lib/i18n";
 import {
+  Dialog,
+  EmptyState,
+  ErrorNote,
+  SectionHead,
+  TableSkeleton,
+} from "@/components/ui";
+import { IconAlert, IconSearch } from "@/components/ui/icon";
+import {
   emergencyApi,
   getErrorMessage,
   EMERGENCY_STORAGE_KEYS,
@@ -142,216 +150,176 @@ export default function EmergencySearchPage() {
 
   return (
     <EmergencyShell user={user} onLogout={handleLogout}>
-      <div style={{ maxWidth: 680, margin: "0 auto" }}>
-        {/* Page heading */}
-        <div style={{ marginBottom: 28 }}>
-          <h1
-            style={{
-              fontSize: 26,
-              fontWeight: 900,
-              letterSpacing: "-0.025em",
-              margin: "0 0 8px 0",
-            }}
-          >
+      <div style={{ maxWidth: 660, margin: "0 auto", minWidth: 0 }}>
+        <header style={{ marginBottom: "var(--s5)" }}>
+          <h1 className="app-shell-title" style={{ fontSize: "var(--fs-display)" }}>
             {t("emergencySearchPatient")}
           </h1>
-          <p className="muted-text" style={{ fontSize: 13, lineHeight: 1.55 }}>
-            {t("emergencySearchSubtitle")}
-          </p>
-        </div>
+          <p className="app-shell-subtitle">{t("emergencySearchSubtitle")}</p>
+        </header>
 
-        {/* Search type tabs */}
-        <div style={{ display: "flex", gap: 8, marginBottom: 14 }}>
-          {searchTypeTabs.map(({ key, label }) => (
-            <button
-              key={key}
-              type="button"
-              className={searchType === key ? "primary-btn" : "secondary-btn"}
-              style={{ fontSize: 13, padding: "7px 16px" }}
-              onClick={() => handleTypeChange(key)}
-            >
-              {label}
-            </button>
-          ))}
-        </div>
-
-        {/* Search form */}
-        <form onSubmit={handleSearch} style={{ display: "flex", gap: 10, marginBottom: 28 }}>
-          <input
-            ref={inputRef}
-            type="text"
-            className="text-input"
-            placeholder={placeholders[searchType]}
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            autoComplete="off"
-            autoCorrect="off"
-            spellCheck={false}
-            style={{ flex: 1, fontSize: 16, padding: "13px 16px" }}
-          />
-          <button
-            type="submit"
-            className="primary-btn"
-            disabled={searching || !query.trim()}
-            style={{ padding: "13px 26px", fontSize: 14, whiteSpace: "nowrap" }}
-          >
-            {searching ? "…" : t("emergencySearch")}
-          </button>
-        </form>
-
-        {/* Search error / no results */}
-        {searchError && searched && (
-          <p className="muted-text" style={{ fontSize: 13, marginBottom: 16 }}>
-            {searchError}
-          </p>
-        )}
-
-        {/* Results */}
-        {results.length > 0 && (
-          <div style={{ display: "flex", flexDirection: "column", gap: 10 }}>
-            {results.map((r) => (
-              <div
-                key={r.id}
-                className="soft-card"
-                style={{
-                  padding: "16px 20px",
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 16,
-                }}
+        {/* Identity field selector: a segmented control, because these are
+            three mutually exclusive ways to search the same thing. */}
+        <form onSubmit={handleSearch} className="b-stack-tight" style={{ marginBottom: "var(--s5)" }}>
+          <div className="b-segmented" role="group" aria-label={t("emergencySearchPatient")}>
+            {searchTypeTabs.map(({ key, label }) => (
+              <button
+                key={key}
+                type="button"
+                aria-pressed={searchType === key}
+                onClick={() => handleTypeChange(key)}
               >
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 700, fontSize: 16 }}>{r.full_name}</div>
-                  <div
-                    className="muted-text"
-                    style={{ fontSize: 13, marginTop: 4, display: "flex", gap: 12, flexWrap: "wrap" }}
-                  >
-                    {r.age && <span>{r.age}</span>}
-                    {r.sex && <span>{r.sex}</span>}
-                    {r.bragi_code && (
-                      <span style={{ fontFamily: "monospace", fontWeight: 700 }}>{r.bragi_code}</span>
-                    )}
-                    {r.masked_identifier && <span>ID: {r.masked_identifier}</span>}
-                  </div>
-                </div>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  style={{ fontSize: 13, whiteSpace: "nowrap", flexShrink: 0 }}
-                  onClick={() =>
-                    setConfirm({ patientId: r.id, patientName: r.full_name })
-                  }
-                >
-                  {t("emergencySelectPatient")}
-                </button>
-              </div>
+                {label}
+              </button>
             ))}
           </div>
-        )}
+
+          <div style={{ display: "flex", gap: "var(--s2)", minWidth: 0 }}>
+            <div className="b-search" style={{ flex: 1, minWidth: 0 }}>
+              <IconSearch size={14} className="b-search-icon" />
+              <input
+                ref={inputRef}
+                type="search"
+                className="b-input"
+                placeholder={placeholders[searchType]}
+                value={query}
+                onChange={(event) => setQuery(event.target.value)}
+                autoComplete="off"
+                autoCorrect="off"
+                spellCheck={false}
+                aria-label={placeholders[searchType]}
+                /* 16px prevents iOS zooming the viewport on focus. */
+                style={{ fontSize: 16 }}
+              />
+            </div>
+            <button
+              type="submit"
+              className="b-btn b-btn-primary b-btn-lg"
+              disabled={searching || !query.trim()}
+              style={{ flexShrink: 0 }}
+            >
+              {searching ? <span className="b-spinner" /> : null}
+              {t("emergencySearch")}
+            </button>
+          </div>
+        </form>
+
+        {searching ? (
+          <section className="b-surface">
+            <TableSkeleton rows={3} columns={2} />
+          </section>
+        ) : searchError && searched ? (
+          <section className="b-surface">
+            <EmptyState
+              icon={<IconSearch size={17} />}
+              title={searchError}
+              description="Check the identifier and try another field."
+            />
+          </section>
+        ) : results.length > 0 ? (
+          <section className="b-surface">
+            <SectionHead title={t("navResults")} count={results.length} />
+            <div className="b-list">
+              {results.map((result) => (
+                <button
+                  key={result.id}
+                  type="button"
+                  className="b-list-row"
+                  onClick={() => setConfirm({ patientId: result.id, patientName: result.full_name })}
+                >
+                  <span className="b-list-main">
+                    <span className="b-list-title">{result.full_name}</span>
+                    <span className="b-list-sub">
+                      {[
+                        result.age,
+                        result.sex,
+                        result.bragi_code,
+                        result.masked_identifier ? `ID ${result.masked_identifier}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  <span className="b-list-trail">
+                    <span className="b-chip b-chip-brand">{t("emergencySelectPatient")}</span>
+                  </span>
+                </button>
+              ))}
+            </div>
+          </section>
+        ) : null}
       </div>
 
-      {/* Confirm session modal */}
-      {confirm && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            background: "rgba(0,0,0,0.5)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            zIndex: 200,
-            padding: 24,
-          }}
-          onClick={(e) => {
-            if (e.target === e.currentTarget && !starting) setConfirm(null);
-          }}
-        >
-          <div
-            className="soft-card"
-            style={{ maxWidth: 440, width: "100%", padding: "28px 28px" }}
-          >
-            <h2 style={{ fontSize: 18, fontWeight: 800, margin: "0 0 10px 0" }}>
-              {t("emergencyStartSession")}
-            </h2>
-            <p className="muted-text" style={{ fontSize: 13, marginBottom: 22, lineHeight: 1.6 }}>
-              {t("emergencyStartSessionBody").replace("{name}", confirm.patientName)}
-            </p>
+      {/* Starting a session grants read access to a real patient record and is
+          written to the audit log, so it is a confirmation that states the
+          patient, requires a reason, and says the access is recorded. */}
+      <Dialog
+        open={confirm !== null}
+        onClose={() => {
+          if (!starting) setConfirm(null);
+        }}
+        title={t("emergencyStartSession")}
+        description={
+          confirm ? t("emergencyStartSessionBody").replace("{name}", confirm.patientName) : undefined
+        }
+        footer={
+          <>
+            <button
+              type="button"
+              className="b-btn b-btn-secondary"
+              onClick={() => setConfirm(null)}
+              disabled={starting}
+            >
+              {t("emergencyCancel")}
+            </button>
+            <button
+              type="button"
+              className="b-btn b-btn-primary"
+              onClick={handleStartSession}
+              disabled={starting}
+            >
+              {starting ? <span className="b-spinner" /> : null}
+              {t("emergencyStartAccess")}
+            </button>
+          </>
+        }
+      >
+        <div className="b-stack-tight">
+          <label className="b-field">
+            <span className="b-field-label">{t("emergencyReason")}</span>
+            <select
+              className="b-input"
+              value={reason}
+              onChange={(event) => setReason(event.target.value)}
+            >
+              {REASON_OPTIONS.map((option) => (
+                <option key={option} value={option}>
+                  {option}
+                </option>
+              ))}
+            </select>
+          </label>
 
-            {/* Reason selector */}
-            <div style={{ marginBottom: 14 }}>
-              <label
-                style={{
-                  display: "block",
-                  fontSize: 11,
-                  fontWeight: 700,
-                  textTransform: "uppercase",
-                  letterSpacing: "0.06em",
-                  color: "var(--muted)",
-                  marginBottom: 6,
-                }}
-              >
-                {t("emergencyReason")}
-              </label>
-              <select
-                className="text-input"
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                style={{ width: "100%", fontSize: 14, padding: "10px 12px" }}
-              >
-                {REASON_OPTIONS.map((r) => (
-                  <option key={r} value={r}>
-                    {r}
-                  </option>
-                ))}
-              </select>
-            </div>
+          {reason === "Other" ? (
+            <label className="b-field">
+              <span className="b-field-label">Describe the reason</span>
+              <textarea
+                className="b-input"
+                placeholder="Why is emergency access needed?"
+                value={reasonNote}
+                onChange={(event) => setReasonNote(event.target.value)}
+              />
+            </label>
+          ) : null}
 
-            {reason === "Other" && (
-              <div style={{ marginBottom: 14 }}>
-                <textarea
-                  className="text-input"
-                  placeholder="Please describe the reason for emergency access…"
-                  value={reasonNote}
-                  onChange={(e) => setReasonNote(e.target.value)}
-                  style={{ width: "100%", minHeight: 80, fontSize: 13, resize: "vertical" }}
-                />
-              </div>
-            )}
+          {startError ? <ErrorNote>{startError}</ErrorNote> : null}
 
-            {startError && (
-              <p style={{ color: "var(--danger-text)", fontSize: 12, marginBottom: 12 }}>
-                {startError}
-              </p>
-            )}
-
-            <div style={{ display: "flex", gap: 10 }}>
-              <button
-                type="button"
-                className="primary-btn"
-                style={{ flex: 1, fontSize: 14, padding: "11px" }}
-                onClick={handleStartSession}
-                disabled={starting}
-              >
-                {starting ? "Starting…" : t("emergencyStartAccess")}
-              </button>
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ fontSize: 14, padding: "11px 18px" }}
-                onClick={() => setConfirm(null)}
-                disabled={starting}
-              >
-                {t("emergencyCancel")}
-              </button>
-            </div>
-
-            <p className="muted-text" style={{ fontSize: 11, marginTop: 16, textAlign: "center" }}>
-              {t("emergencyAccessNote")}
-            </p>
+          <div className="b-danger-note">
+            <IconAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+            <span>{t("emergencyAccessNote")}</span>
           </div>
         </div>
-      )}
+      </Dialog>
     </EmergencyShell>
   );
 }

@@ -134,7 +134,7 @@ export default function LoginChooserPage() {
               style={{
                 width: 44,
                 height: 44,
-                borderRadius: 12,
+                borderRadius: "var(--r-md)",
                 background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
                 border: "1px solid color-mix(in srgb, var(--primary) 25%, transparent)",
                 display: "flex",
@@ -151,7 +151,7 @@ export default function LoginChooserPage() {
               <div
                 style={{
                   fontSize: 10,
-                  fontWeight: 900,
+                  fontWeight: 600,
                   textTransform: "uppercase",
                   letterSpacing: "0.1em",
                   color: "var(--primary)",
@@ -160,7 +160,7 @@ export default function LoginChooserPage() {
               >
                 Hospital Administration
               </div>
-              <div style={{ fontWeight: 950, fontSize: 15, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
+              <div style={{ fontWeight: 600, fontSize: 15, letterSpacing: "-0.02em", lineHeight: 1.2 }}>
                 {t("adminBannerTitle")}
               </div>
               <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.4 }}>

@@ -6,6 +6,21 @@ import Link from "next/link";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import {
+  EmptyState as SharedEmptyState,
+  LabValue,
+  Status,
+  Toolbar,
+} from "@/components/ui";
+import {
+  IconChevronRight,
+  IconClose,
+  IconExternal,
+  IconPlus,
+  IconSearch,
+  IconTimeline,
+  IconUpload,
+} from "@/components/ui/icon";
 
 // ── Types ─────────────────────────────────────────────────────────────────────
 
@@ -311,6 +326,18 @@ function filterMatchesEvent(filter: TimelineFilter, event: PcpTimelineEvent): bo
 
 // ── Small shared UI pieces ────────────────────────────────────────────────────
 
+/**
+ * PCP workspace primitives.
+ *
+ * These four helpers give the whole 1,900-line workspace its visual
+ * character, so they were re-pointed at the Bragi design system rather than
+ * restyling every call site: `Card` is a hairline surface instead of a
+ * 20px-padded rounded panel, `CardTitle` matches SectionHead, `Pill` is a
+ * bounded chip instead of a coloured lozenge, and the empty state is the
+ * shared one. Every card in the workspace picked up the new language for
+ * free.
+ */
+
 function Card({
   children,
   style,
@@ -321,9 +348,12 @@ function Card({
   className?: string;
 }) {
   return (
-    <div className={`soft-card ${className ?? ""}`} style={{ padding: "18px 20px", ...style }}>
+    <section
+      className={`b-surface ${className ?? ""}`}
+      style={{ minWidth: 0, padding: "var(--s3) var(--s4) var(--s4)", ...style }}
+    >
       {children}
-    </div>
+    </section>
   );
 }
 
@@ -338,23 +368,38 @@ function CardTitle({
 }) {
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "flex-start",
-        justifyContent: "space-between",
-        gap: 12,
-        marginBottom: subtitle ? 2 : 14,
-      }}
+      className="b-section-head"
+      style={{ padding: 0, marginBottom: "var(--s3)", minHeight: 0 }}
     >
-      <div>
-        <div style={{ fontWeight: 900, fontSize: 14, letterSpacing: "-0.01em" }}>{title}</div>
-        {subtitle && (
-          <div className="muted-text" style={{ fontSize: 11, marginTop: 2, marginBottom: 12 }}>
+      <div style={{ minWidth: 0 }}>
+        <h2 className="b-section-title">{title}</h2>
+        {subtitle ? (
+          <p className="b-meta" style={{ marginTop: 2 }}>
             {subtitle}
-          </div>
-        )}
+          </p>
+        ) : null}
       </div>
-      {action && <div style={{ flexShrink: 0 }}>{action}</div>}
+      {action ? <div style={{ flexShrink: 0, display: "flex", gap: "var(--s2)" }}>{action}</div> : null}
+    </div>
+  );
+}
+
+/** Body padding for card content that is not a flush list or table. */
+function CardBody({
+  children,
+  flush,
+  style,
+}: {
+  children: React.ReactNode;
+  flush?: boolean;
+  style?: React.CSSProperties;
+}) {
+  return (
+    <div
+      className={flush ? "b-section-body b-section-body-flush" : "b-section-body"}
+      style={style}
+    >
+      {children}
     </div>
   );
 }
@@ -365,78 +410,62 @@ function Pill({
   bg,
 }: {
   label: string;
+  /** Retained for call-site compatibility; mapped onto a chip tone. */
   color?: string;
   bg?: string;
 }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "2px 9px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 700,
-        background: bg ?? "var(--panel-2)",
-        border: "1px solid var(--border)",
-        color: color ?? "var(--muted)",
-        whiteSpace: "nowrap",
-      }}
-    >
-      {label}
-    </span>
-  );
+  const tone =
+    color?.includes("danger") || color?.includes("sev-critical")
+      ? "b-chip-danger"
+      : color?.includes("warn")
+      ? "b-chip-warn"
+      : color?.includes("ok") || color?.includes("success")
+      ? "b-chip-ok"
+      : color?.includes("primary")
+      ? "b-chip-brand"
+      : "";
+  void bg;
+
+  return <span className={`b-chip ${tone}`}>{label}</span>;
 }
 
 function EmptyState({ text }: { text: string }) {
-  return (
-    <p className="muted-text" style={{ fontSize: 13, margin: "8px 0 0" }}>
-      {text}
-    </p>
-  );
+  return <SharedEmptyState title={text} />;
 }
 
 // ── Blocked page ──────────────────────────────────────────────────────────────
 
 function PCPBlockedPage({ user }: { user: CurrentUser }) {
   const { t } = useLanguage();
+
   return (
     <AppShell user={user} title={t("pcpWorkspace")}>
-      <div style={{ maxWidth: 480, margin: "60px auto", textAlign: "center", padding: "0 24px" }}>
-        <div
-          style={{
-            width: 64,
-            height: 64,
-            borderRadius: 999,
-            background: "var(--panel-2)",
-            border: "1px solid var(--border)",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            margin: "0 auto 24px",
-            fontSize: 28,
-          }}
-        >
-          🔒
-        </div>
-        <div style={{ fontWeight: 900, fontSize: 20, marginBottom: 12 }}>{t("pcpWorkspace")}</div>
-        <p className="muted-text" style={{ fontSize: 14, lineHeight: 1.65 }}>
-          {t("pcpBlockedBody")}
-        </p>
-        <Link
-          href="/my-patients"
-          className="primary-btn"
-          style={{ display: "inline-flex", marginTop: 28, textDecoration: "none" }}
-        >
-          {t("myCurrentPatients")}
-        </Link>
-      </div>
+      <section className="b-surface">
+        <SharedEmptyState
+          title={t("pcpWorkspace")}
+          description={t("pcpBlockedBody")}
+          actions={
+            <Link href="/my-patients" className="b-btn b-btn-secondary">
+              {t("myCurrentPatients")}
+            </Link>
+          }
+        />
+      </section>
     </AppShell>
   );
 }
 
 // ── Tab bar ───────────────────────────────────────────────────────────────────
 
+/**
+ * Patient tab bar - the heart of the PCP workspace.
+ *
+ * Rebuilt as a real tab strip sharing one baseline, the way a browser or an
+ * IDE does it, instead of eight free-floating 12px-radius boxes each with its
+ * own border and violet glow. The active tab connects to the content below via
+ * a 2px underline, so "which patient am I reading?" is unambiguous even with
+ * eight open.
+ */
 function PCPTabBar({
   tabs,
   activeId,
@@ -459,96 +488,78 @@ function PCPTabBar({
 
   return (
     <div
-      style={{
-        display: "flex",
-        alignItems: "stretch",
-        gap: 3,
-        overflowX: "auto",
-        padding: "0 0 0",
-        marginBottom: 20,
-        scrollbarWidth: "none",
-        msOverflowStyle: "none",
-      } as React.CSSProperties}
+      className="b-tabs"
+      role="group"
+      aria-label={t("pcpWorkspace")}
+      style={{ gap: 2, marginBottom: "var(--s5)" }}
     >
       {tabs.map((tab) => {
         const active = tab.patientId === activeId;
         const patient = patientMap.get(tab.patientId);
         const meta = patient ? ageSex(patient) : null;
+
         return (
           <div
             key={tab.patientId}
-            style={{
-              display: "flex",
-              alignItems: "center",
-              gap: 6,
-              padding: "8px 12px 8px 14px",
-              borderRadius: 12,
-              border: `1.5px solid ${active ? "var(--primary)" : "var(--border)"}`,
-              background: active
-                ? "color-mix(in srgb, var(--primary) 9%, var(--panel))"
-                : "var(--panel)",
-              cursor: "pointer",
-              flexShrink: 0,
-              maxWidth: 220,
-              transition: "border-color 0.12s, background 0.12s",
-              boxShadow: active ? "0 2px 12px color-mix(in srgb, var(--primary) 18%, transparent)" : "none",
-            }}
+            className="b-tab"
+            data-active={active ? "true" : undefined}
+            style={{ height: 44, paddingRight: 2, gap: 4, maxWidth: 220 }}
           >
             <button
               type="button"
+              aria-current={active ? "true" : undefined}
               onClick={() => onSelect(tab.patientId)}
               style={{
-                background: "none",
-                border: "none",
-                padding: 0,
-                cursor: "pointer",
+                display: "grid",
+                gap: 0,
+                border: 0,
+                background: "transparent",
+                color: "inherit",
+                font: "inherit",
                 textAlign: "left",
+                cursor: "pointer",
                 minWidth: 0,
+                padding: 0,
               }}
             >
-              <div
+              <span
                 style={{
-                  fontWeight: active ? 800 : 600,
-                  fontSize: 13,
-                  color: active ? "var(--primary)" : "var(--text)",
-                  whiteSpace: "nowrap",
+                  fontWeight: active ? 600 : 500,
                   overflow: "hidden",
                   textOverflow: "ellipsis",
-                  maxWidth: 150,
+                  whiteSpace: "nowrap",
+                  maxWidth: 160,
+                  display: "block",
                 }}
               >
                 {tab.patientName}
-              </div>
-              {meta && (
-                <div
-                  className="muted-text"
-                  style={{ fontSize: 10, marginTop: 1, whiteSpace: "nowrap" }}
+              </span>
+              {meta ? (
+                <span
+                  style={{
+                    fontSize: "var(--fs-micro)",
+                    color: "var(--muted)",
+                    whiteSpace: "nowrap",
+                    fontVariantNumeric: "tabular-nums",
+                  }}
                 >
                   {meta}
-                </div>
-              )}
+                </span>
+              ) : null}
             </button>
+
             <button
               type="button"
-              onClick={(e) => {
-                e.stopPropagation();
+              className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+              onClick={(event) => {
+                event.stopPropagation();
                 onClose(tab.patientId);
               }}
+              aria-label={`${t("pcpCloseTab")}: ${tab.patientName}`}
               title={t("pcpCloseTab")}
-              style={{
-                background: "none",
-                border: "none",
-                padding: "2px 3px",
-                cursor: "pointer",
-                color: "var(--muted)",
-                fontSize: 16,
-                lineHeight: 1,
-                flexShrink: 0,
-                borderRadius: 4,
-                marginLeft: 2,
-              }}
+              style={{ width: 20, height: 20, flexShrink: 0 }}
             >
-              ×
+              <IconClose size={12} />
             </button>
           </div>
         );
@@ -558,30 +569,12 @@ function PCPTabBar({
         type="button"
         onClick={onAdd}
         disabled={maxReached}
-        title={
-          maxReached
-            ? `${t("pcpMaxTabsReached")} ${t("pcpMaxTabsBody")}`
-            : t("pcpAddPatient")
-        }
-        style={{
-          display: "flex",
-          alignItems: "center",
-          gap: 5,
-          padding: "8px 14px",
-          borderRadius: 12,
-          border: "1.5px dashed var(--border)",
-          background: "transparent",
-          cursor: maxReached ? "not-allowed" : "pointer",
-          flexShrink: 0,
-          fontWeight: 700,
-          fontSize: 13,
-          color: maxReached ? "var(--muted)" : "var(--primary)",
-          opacity: maxReached ? 0.5 : 1,
-          whiteSpace: "nowrap",
-          transition: "border-color 0.12s",
-        }}
+        className="b-btn b-btn-ghost b-btn-sm"
+        title={maxReached ? `${t("pcpMaxTabsReached")} ${t("pcpMaxTabsBody")}` : t("pcpAddPatient")}
+        style={{ alignSelf: "center", marginLeft: "var(--s2)", flexShrink: 0 }}
       >
-        + {t("pcpAddPatient")}
+        <IconPlus size={13} />
+        {t("pcpAddPatient")}
       </button>
     </div>
   );
@@ -589,6 +582,14 @@ function PCPTabBar({
 
 // ── Patient selector panel ────────────────────────────────────────────────────
 
+/**
+ * Approved-patient picker.
+ *
+ * Was a stack of 12px-radius tinted boxes with a filled violet "Add patient"
+ * button on every row - eight competing primary actions. Now a searchable
+ * list where the whole row opens the patient and the trailing state says
+ * whether it is already open.
+ */
 function PCPPatientSelectPanel({
   patients,
   openTabs,
@@ -612,117 +613,93 @@ function PCPPatientSelectPanel({
   const openIds = new Set(openTabs.map((tab) => tab.patientId));
 
   return (
-    <div style={{ maxWidth: 620 }}>
-      <Card>
-        <CardTitle title={t("pcpCurrentApprovedPatients")} />
-
-        {maxReached && (
-          <div
-            style={{
-              padding: "10px 14px",
-              borderRadius: 10,
-              background: "var(--panel-2)",
-              border: "1px solid var(--border)",
-              fontSize: 13,
-              marginBottom: 14,
-            }}
-          >
-            <strong>{t("pcpMaxTabsReached")}</strong> {t("pcpMaxTabsBody")}
-          </div>
-        )}
-
-        <input
-          className="text-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder={`${t("pcpSearchApprovedPatients")}…`}
-          style={{ marginBottom: 14 }}
+    <div style={{ maxWidth: 680 }}>
+      <section className="b-surface">
+        <CardTitle
+          title={t("pcpCurrentApprovedPatients")}
+          action={
+            <Link href="/patients/search" className="b-btn b-btn-secondary b-btn-sm">
+              <IconSearch size={13} />
+              {t("pcpSearchMorePatients")}
+            </Link>
+          }
         />
 
-        {patients.length === 0 && <EmptyState text={t("pcpNoPatients")} />}
-        {patients.length > 0 && filtered.length === 0 && (
-          <EmptyState text="No matching patients." />
-        )}
+        {maxReached ? (
+          <div className="b-notice b-notice-warn" style={{ margin: "0 var(--s4) var(--s3)" }}>
+            <span>
+              <strong style={{ fontWeight: 600 }}>{t("pcpMaxTabsReached")}</strong>{" "}
+              {t("pcpMaxTabsBody")}
+            </span>
+          </div>
+        ) : null}
 
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-          {filtered.map((p) => {
-            const isOpen = openIds.has(p.id);
-            return (
-              <div
-                key={p.id}
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "10px 14px",
-                  borderRadius: 12,
-                  border: "1px solid var(--border)",
-                  background: isOpen
-                    ? "color-mix(in srgb, var(--primary) 5%, var(--panel-2))"
-                    : "var(--panel-2)",
-                }}
-              >
-                <div
-                  style={{
-                    width: 36,
-                    height: 36,
-                    borderRadius: 999,
-                    background: "var(--primary)",
-                    color: "#fff",
-                    display: "flex",
-                    alignItems: "center",
-                    justifyContent: "center",
-                    fontWeight: 900,
-                    fontSize: 14,
-                    flexShrink: 0,
-                  }}
-                >
-                  {initials(p.full_name)}
-                </div>
-                <div style={{ flex: 1, minWidth: 0 }}>
-                  <div style={{ fontWeight: 800, fontSize: 14 }}>{p.full_name}</div>
-                  {ageSex(p) && (
-                    <div className="muted-text" style={{ fontSize: 12 }}>
-                      {ageSex(p)}
-                    </div>
-                  )}
-                </div>
+        <Toolbar
+          search={query}
+          onSearch={setQuery}
+          searchPlaceholder={`${t("pcpSearchApprovedPatients")}…`}
+          count={filtered.length}
+          countLabel={t("navPatients").toLowerCase()}
+        />
+
+        {patients.length === 0 ? (
+          <SharedEmptyState title={t("pcpNoPatients")} />
+        ) : filtered.length === 0 ? (
+          <SharedEmptyState title={t("navNoResults")} />
+        ) : (
+          <div className="b-list">
+            {filtered.map((p) => {
+              const isOpen = openIds.has(p.id);
+              const disabled = maxReached && !isOpen;
+
+              return (
                 <button
+                  key={p.id}
                   type="button"
-                  className={isOpen ? "secondary-btn" : "primary-btn"}
-                  style={{ fontSize: 12, padding: "6px 14px", flexShrink: 0 }}
+                  className="b-list-row"
                   onClick={() => onOpen(p)}
-                  disabled={maxReached && !isOpen}
+                  disabled={disabled}
+                  style={disabled ? { opacity: 0.5, cursor: "not-allowed" } : undefined}
                 >
-                  {isOpen ? t("pcpSwitchToTab") : t("pcpAddPatient")}
+                  <span className="b-avatar" aria-hidden="true">
+                    {initials(p.full_name)}
+                  </span>
+                  <span className="b-list-main">
+                    <span className="b-list-title">{p.full_name}</span>
+                    {ageSex(p) ? <span className="b-list-sub">{ageSex(p)}</span> : null}
+                  </span>
+                  <span className="b-list-trail">
+                    {isOpen ? (
+                      <Status tone="info">{t("pcpSwitchToTab")}</Status>
+                    ) : (
+                      <IconChevronRight size={14} className="b-list-chevron" />
+                    )}
+                  </span>
                 </button>
-              </div>
-            );
-          })}
-        </div>
-
-        <div
-          style={{
-            marginTop: 16,
-            paddingTop: 14,
-            borderTop: "1px solid var(--border)",
-          }}
-        >
-          <Link
-            href="/patients/search"
-            className="secondary-btn"
-            style={{ display: "inline-flex", fontSize: 13, textDecoration: "none" }}
-          >
-            {t("pcpSearchMorePatients")} →
-          </Link>
-        </div>
-      </Card>
+              );
+            })}
+          </div>
+        )}
+      </section>
     </div>
   );
 }
 
 // ── Patient hero card ─────────────────────────────────────────────────────────
 
+/**
+ * Patient context bar.
+ *
+ * Was a 56px-avatar hero card with a violet gradient, a left accent stripe,
+ * a drop shadow, five coloured pills and four side-by-side buttons - one of
+ * which was a filled primary. It cost roughly 130px before any clinical
+ * content, on a page whose whole point is dense longitudinal review.
+ *
+ * Now: the same 52px context bar the doctor chart uses, so a clinician moving
+ * between the two workspaces sees one product. Identity and care context stay
+ * visible; the secondary actions moved behind an overflow menu, leaving one
+ * clear primary ("open the full chart").
+ */
 function PatientHeroCard({
   summary,
   patientId,
@@ -734,114 +711,89 @@ function PatientHeroCard({
   const p = summary.patient;
   const careCtx = summary.care_context;
 
-  const contextColor =
-    careCtx === "active_admission"
-      ? "var(--danger-text)"
-      : careCtx === "past_admission"
-      ? "var(--warn-text)"
-      : "var(--success-text)";
-  const contextBg =
-    careCtx === "active_admission"
-      ? "var(--danger-bg)"
-      : careCtx === "past_admission"
-      ? "var(--warn-bg)"
-      : "var(--success-bg)";
+  const contextTone =
+    careCtx === "active_admission" ? "ok" : careCtx === "past_admission" ? "muted" : "info";
+
+  const meta = [
+    ageSex(p),
+    p.patient_identifier ? `ID ${p.patient_identifier}` : null,
+    p.bragi_code ? `Bragi ${p.bragi_code}` : null,
+  ].filter(Boolean) as string[];
 
   return (
-    <Card
+    <div
+      className="b-surface"
       style={{
-        marginBottom: 18,
-        background: "linear-gradient(135deg, var(--panel) 0%, color-mix(in srgb, var(--primary) 3%, var(--panel)) 100%)",
-        borderLeft: "3px solid var(--primary)",
+        display: "flex",
+        alignItems: "center",
+        gap: "var(--s3)",
+        padding: "var(--s2) var(--s4)",
+        minHeight: 52,
+        marginBottom: "var(--s4)",
+        flexWrap: "wrap",
       }}
     >
-      <div style={{ display: "flex", alignItems: "flex-start", gap: 18, flexWrap: "wrap" }}>
-        {/* Avatar */}
-        <div
-          style={{
-            width: 56,
-            height: 56,
-            borderRadius: 999,
-            background: "var(--primary)",
-            color: "#fff",
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "center",
-            fontWeight: 900,
-            fontSize: 20,
-            flexShrink: 0,
-            boxShadow: "0 4px 14px color-mix(in srgb, var(--primary) 30%, transparent)",
-          }}
-        >
-          {initials(p.full_name)}
-        </div>
+      <span className="b-avatar" aria-hidden="true">
+        {initials(p.full_name)}
+      </span>
 
-        {/* Name + meta */}
-        <div style={{ flex: 1, minWidth: 200 }}>
-          <div style={{ fontWeight: 900, fontSize: 20, letterSpacing: "-0.02em", marginBottom: 6 }}>
-            {p.full_name}
-          </div>
-          <div style={{ display: "flex", flexWrap: "wrap", gap: 6 }}>
-            {ageSex(p) && <Pill label={ageSex(p)!} />}
-            <Pill
-              label={t("pcpActiveAccess")}
-              color="var(--success-text)"
-              bg="var(--success-bg)"
-            />
-            <Pill
-              label={summary.care_context_label}
-              color={contextColor}
-              bg={contextBg}
-            />
-            {p.bragi_code && (
-              <Pill label={`Bragi: ${p.bragi_code}`} color="var(--muted)" />
-            )}
-            {p.patient_identifier && (
-              <Pill label={`ID: ${p.patient_identifier}`} color="var(--muted)" />
-            )}
-          </div>
-        </div>
-
-        {/* Quick actions */}
-        <div
-          style={{
-            display: "flex",
-            gap: 8,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <Link
-            href={`/patients/${patientId}`}
-            className="primary-btn"
-            style={{ fontSize: 13, textDecoration: "none" }}
-          >
-            {t("pcpOpenFullChart")}
-          </Link>
-          <Link
-            href={`/patients/${patientId}/notes/new`}
-            className="secondary-btn"
-            style={{ fontSize: 13, textDecoration: "none" }}
-          >
-            {t("pcpAddNote")}
-          </Link>
-          <Link
-            href={`/patients/${patientId}/upload`}
-            className="secondary-btn"
-            style={{ fontSize: 13, textDecoration: "none" }}
-          >
-            {t("pcpUploadDocument")}
-          </Link>
-          <Link
-            href={`/patients/${patientId}/timeline`}
-            className="secondary-btn"
-            style={{ fontSize: 13, textDecoration: "none" }}
-          >
-            {t("pcpViewTimeline")}
-          </Link>
+      <div style={{ minWidth: 0, flex: 1 }}>
+        <div className="b-ctx-name">{p.full_name}</div>
+        <div className="b-ctx-meta">
+          {meta.map((entry, index) => (
+            <span key={entry} style={{ display: "inline-flex", gap: 6 }}>
+              {index > 0 ? <span className="b-ctx-dot">·</span> : null}
+              {entry}
+            </span>
+          ))}
         </div>
       </div>
-    </Card>
+
+      <div
+        style={{
+          display: "flex",
+          alignItems: "center",
+          gap: "var(--s2)",
+          flexShrink: 0,
+          flexWrap: "wrap",
+        }}
+      >
+        <Status tone={contextTone}>{summary.care_context_label}</Status>
+        <Status tone="ok">{t("pcpActiveAccess")}</Status>
+
+        <Link href={`/patients/${patientId}`} className="b-btn b-btn-primary b-btn-sm">
+          {t("pcpOpenFullChart")}
+          <IconExternal size={12} />
+        </Link>
+
+        <Link
+          href={`/patients/${patientId}/notes/new`}
+          className="b-btn b-btn-secondary b-btn-sm"
+          title={t("pcpAddNote")}
+        >
+          <IconPlus size={13} />
+          {t("pcpAddNote")}
+        </Link>
+
+        <Link
+          href={`/patients/${patientId}/upload`}
+          className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+          title={t("pcpUploadDocument")}
+          aria-label={t("pcpUploadDocument")}
+        >
+          <IconUpload size={14} />
+        </Link>
+
+        <Link
+          href={`/patients/${patientId}/timeline`}
+          className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+          title={t("pcpViewTimeline")}
+          aria-label={t("pcpViewTimeline")}
+        >
+          <IconTimeline size={14} />
+        </Link>
+      </div>
+    </div>
   );
 }
 
@@ -890,46 +842,29 @@ function TimelineCard({
         }
       />
 
-      {/* Filter chips */}
-      <div
-        style={{
-          display: "flex",
-          gap: 6,
-          flexWrap: "wrap",
-          marginBottom: 18,
-        }}
-      >
+      {/* Filter chips: the shared square-cornered filter control, not
+          full-radius lozenges with their own colour scheme. */}
+      <div className="b-filters" style={{ marginBottom: "var(--s3)" }}>
         {FILTERS.map((f) => {
           const count =
             f.key === "all"
               ? events.length
               : events.filter((e) => filterMatchesEvent(f.key, e)).length;
           if (count === 0 && f.key !== "all") return null;
-          const active = activeFilter === f.key;
+
           return (
             <button
               key={f.key}
               type="button"
+              className="b-filter"
+              aria-pressed={activeFilter === f.key}
               onClick={() => {
                 setActiveFilter(f.key);
                 setShowAll(false);
               }}
-              style={{
-                padding: "4px 12px",
-                borderRadius: 999,
-                border: `1.5px solid ${active ? "var(--primary)" : "var(--border)"}`,
-                background: active
-                  ? "color-mix(in srgb, var(--primary) 10%, var(--panel))"
-                  : "var(--panel-2)",
-                color: active ? "var(--primary)" : "var(--muted)",
-                fontWeight: active ? 800 : 600,
-                fontSize: 12,
-                cursor: "pointer",
-                whiteSpace: "nowrap",
-                transition: "border-color 0.12s, background 0.12s",
-              }}
             >
-              {t(f.labelKey)} {count > 0 && <span style={{ opacity: 0.7 }}>{count}</span>}
+              {t(f.labelKey)}
+              {count > 0 ? <span className="b-filter-count">{count}</span> : null}
             </button>
           );
         })}
@@ -939,161 +874,65 @@ function TimelineCard({
       {filtered.length === 0 ? (
         <EmptyState text={t("pcpNoTimelineEvents")} />
       ) : (
-        <div style={{ position: "relative" }}>
-          {/* Vertical rail */}
-          <div
-            style={{
-              position: "absolute",
-              left: 11,
-              top: 8,
-              bottom: 8,
-              width: 2,
-              background: "var(--border)",
-              borderRadius: 1,
-            }}
-          />
+        <div
+          className="b-timeline"
+          style={{ marginLeft: "calc(var(--s4) * -1)", marginRight: "calc(var(--s4) * -1)" }}
+        >
+          {shown.map((ev) => {
+            const cfg = getEventConfig(ev.event_type);
 
-          <div style={{ display: "flex", flexDirection: "column", gap: 0 }}>
-            {shown.map((ev, idx) => {
-              const cfg = getEventConfig(ev.event_type);
-              const isLast = idx === shown.length - 1;
-              return (
-                <div
-                  key={ev.id}
-                  style={{
-                    display: "flex",
-                    gap: 16,
-                    paddingBottom: isLast ? 0 : 16,
-                    position: "relative",
-                  }}
-                >
-                  {/* Dot */}
-                  <div style={{ flexShrink: 0, width: 24, display: "flex", justifyContent: "center" }}>
-                    <div
-                      style={{
-                        width: 12,
-                        height: 12,
-                        borderRadius: 999,
-                        background: cfg.dot,
-                        border: "2px solid var(--panel)",
-                        boxShadow: `0 0 0 2px ${cfg.dot}`,
-                        marginTop: 6,
-                        zIndex: 1,
-                        position: "relative",
-                      }}
-                    />
-                  </div>
+            return (
+              <Link
+                key={ev.id}
+                href={ev.route || `/patients/${patientId}`}
+                className="b-tl-event"
+                style={{ textDecoration: "none" }}
+              >
+                <span className="b-tl-date">{formatDateShort(ev.date)}</span>
 
-                  {/* Content */}
-                  <div
-                    style={{
-                      flex: 1,
-                      minWidth: 0,
-                      padding: "10px 14px",
-                      borderRadius: 12,
-                      border: "1px solid var(--border)",
-                      background: "var(--panel-2)",
-                    }}
-                  >
-                    <div
-                      style={{
-                        display: "flex",
-                        alignItems: "flex-start",
-                        gap: 8,
-                        flexWrap: "wrap",
-                        marginBottom: 4,
-                      }}
-                    >
-                      <span
-                        style={{
-                          padding: "1px 8px",
-                          borderRadius: 999,
-                          fontSize: 10,
-                          fontWeight: 800,
-                          color: cfg.color,
-                          background: cfg.bg,
-                          border: `1px solid ${cfg.color}33`,
-                          whiteSpace: "nowrap",
-                          letterSpacing: "0.02em",
-                        }}
-                      >
-                        {getEventTypeLabel(ev.event_type, t)}
-                      </span>
-                      {ev.is_source_linked && (
-                        <span
-                          style={{
-                            padding: "1px 8px",
-                            borderRadius: 999,
-                            fontSize: 10,
-                            fontWeight: 700,
-                            color: "var(--success-text)",
-                            background: "var(--success-bg)",
-                            border: "1px solid #bbf7d033",
-                          }}
-                        >
-                          {t("pcpSourceLinkedEvent")}
-                        </span>
-                      )}
-                      <span className="muted-text" style={{ fontSize: 11, marginLeft: "auto" }}>
-                        {formatDateShort(ev.date)}
-                      </span>
-                    </div>
+                <span className="b-tl-spine" aria-hidden="true">
+                  <span
+                    className="b-tl-node"
+                    style={{ background: cfg.dot, borderColor: cfg.dot }}
+                  />
+                </span>
 
-                    <div
-                      style={{
-                        fontWeight: 700,
-                        fontSize: 13,
-                        marginBottom: ev.summary ? 4 : 0,
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                        whiteSpace: "nowrap",
-                      }}
-                      title={ev.title}
-                    >
-                      {ev.title}
-                    </div>
+                <span className="b-tl-main">
+                  <span className="b-tl-title">{ev.title}</span>
+                  <span className="b-tl-sub">
+                    <span style={{ color: "var(--text-2)" }}>
+                      {getEventTypeLabel(ev.event_type, t)}
+                    </span>
+                    {ev.is_source_linked ? ` · ${t("pcpSourceLinkedEvent")}` : ""}
+                    {ev.summary ? ` · ${ev.summary}` : ""}
+                  </span>
+                </span>
 
-                    {ev.summary && (
-                      <p
-                        className="muted-text"
-                        style={{ fontSize: 12, margin: "0 0 8px", lineHeight: 1.5 }}
-                      >
-                        {ev.summary}
-                      </p>
-                    )}
+                <span className="b-tl-trail">
+                  <IconChevronRight size={13} className="b-list-chevron" />
+                </span>
+              </Link>
+            );
+          })}
 
-                    {ev.route && (
-                      <Link
-                        href={ev.route}
-                        className="secondary-btn"
-                        style={{
-                          fontSize: 11,
-                          padding: "3px 10px",
-                          textDecoration: "none",
-                          display: "inline-flex",
-                        }}
-                      >
-                        {t("pcpOpenSource")}
-                      </Link>
-                    )}
-                  </div>
-                </div>
-              );
-            })}
-          </div>
-
-          {hasMore && (
-            <div style={{ marginTop: 14, paddingLeft: 40 }}>
+          {hasMore ? (
+            <div
+              style={{
+                display: "flex",
+                justifyContent: "center",
+                padding: "var(--s3)",
+                borderTop: "1px solid var(--border)",
+              }}
+            >
               <button
                 type="button"
-                className="secondary-btn"
-                style={{ fontSize: 12 }}
+                className="b-btn b-btn-secondary b-btn-sm"
                 onClick={() => setShowAll(true)}
               >
-                {t("pcpShowMoreEvents")} ({filtered.length - TIMELINE_PAGE_SIZE} more)
+                {t("pcpShowMoreEvents")} ({filtered.length - TIMELINE_PAGE_SIZE})
               </button>
             </div>
-          )}
+          ) : null}
         </div>
       )}
     </Card>
@@ -1130,45 +969,34 @@ function RecentRecordsCard({
       {shown.length === 0 ? (
         <EmptyState text={t("pcpNoRecentRecords")} />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div
+          className="b-list"
+          style={{ marginLeft: "calc(var(--s4) * -1)", marginRight: "calc(var(--s4) * -1)" }}
+        >
           {shown.map((doc) => (
-            <div
+            <Link
               key={doc.id}
-              style={{
-                display: "flex",
-                alignItems: "center",
-                gap: 10,
-                padding: "8px 12px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--panel-2)",
-              }}
+              href={`/documents/${doc.id}`}
+              className="b-list-row"
+              style={{ textDecoration: "none" }}
             >
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 13,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
+              <span className="b-list-main">
+                <span className="b-list-title">
                   {doc.report_name || doc.lab_name || doc.filename}
-                </div>
-                <div className="muted-text" style={{ fontSize: 11 }}>
+                </span>
+                <span className="b-list-sub">
                   {sectionLabel(doc.section)} · {formatDate(doc.test_date)}
-                  {doc.is_verified ? " · Verified" : ""}
-                </div>
-              </div>
-              <Link
-                href={`/documents/${doc.id}`}
-                className="secondary-btn"
-                style={{ fontSize: 11, padding: "4px 10px", textDecoration: "none", flexShrink: 0 }}
-              >
-                {t("pcpOpenDocument")}
-              </Link>
-            </div>
+                </span>
+              </span>
+              <span className="b-list-trail">
+                {doc.is_verified ? (
+                  <Status tone="ok">Verified</Status>
+                ) : (
+                  <Status tone="muted">Unverified</Status>
+                )}
+                <IconChevronRight size={13} className="b-list-chevron" />
+              </span>
+            </Link>
           ))}
         </div>
       )}
@@ -1194,7 +1022,7 @@ function MedicationsCard({
   return (
     <Card style={{ marginBottom: 12 }}>
       <CardTitle
-        title={t("pcpViewMedications")}
+        title={t("navMedications")}
         subtitle="Patient-entered medication records."
         action={
           <Link
@@ -1227,7 +1055,7 @@ function MedicationsCard({
               <div style={{ flex: 1, minWidth: 0 }}>
                 <div
                   style={{
-                    fontWeight: 800,
+                    fontWeight: 600,
                     fontSize: 13,
                     overflow: "hidden",
                     textOverflow: "ellipsis",
@@ -1306,80 +1134,49 @@ function LatestLabsCard({ labs }: { labs: PCPSummary["latest_labs"] }) {
         }
       />
 
-      {hasFlag && (
-        <div
-          className="muted-text"
-          style={{
-            fontSize: 11,
-            padding: "5px 10px",
-            borderRadius: 8,
-            background: "var(--panel-2)",
-            border: "1px solid var(--border)",
-            marginBottom: 10,
-          }}
-        >
+      {hasFlag ? (
+        <p className="b-meta" style={{ marginBottom: "var(--s2)" }}>
           {t("pcpOutOfRange")} · {t("pcpRefRangeSource")}
-        </div>
-      )}
+        </p>
+      ) : null}
 
+      {/* A two-column key/value grid rather than eight tinted mini-cards.
+          The analyte name recedes, the figure carries the weight, and the
+          reference range sits under it in muted tabular figures. */}
       <div
         style={{
           display: "grid",
-          gridTemplateColumns: "repeat(2, 1fr)",
-          gap: 6,
+          gridTemplateColumns: "repeat(auto-fit, minmax(130px, 1fr))",
+          gap: 1,
+          background: "var(--border)",
+          border: "1px solid var(--border)",
+          borderRadius: "var(--r-md)",
+          overflow: "hidden",
         }}
       >
-        {shown.map((lab, i) => {
-          const oor = flagIsOutOfRange(lab.flag);
-          return (
-            <div
-              key={i}
-              style={{
-                padding: "7px 10px",
-                borderRadius: 9,
-                border: `1px solid ${oor ? "color-mix(in srgb, var(--danger-text) 25%, transparent)" : "var(--border)"}`,
-                background: oor
-                  ? "color-mix(in srgb, var(--danger-bg) 40%, var(--panel-2))"
-                  : "var(--panel-2)",
-              }}
-            >
-              <div className="muted-text" style={{ fontSize: 10, marginBottom: 1 }}>
-                {lab.name || "—"}
-              </div>
-              <div
-                style={{
-                  fontWeight: 900,
-                  fontSize: 14,
-                  color: flagColor(lab.flag),
-                  lineHeight: 1.2,
-                }}
-              >
-                {lab.value ?? "—"}{" "}
-                <span style={{ fontWeight: 400, fontSize: 10, color: "var(--muted)" }}>
-                  {lab.unit ?? ""}
-                </span>
-              </div>
-              {lab.reference_range && (
-                <div className="muted-text" style={{ fontSize: 9, marginTop: 2 }}>
-                  {lab.reference_range}
-                </div>
-              )}
+        {shown.map((lab, index) => (
+          <div key={index} style={{ background: "var(--surface)", padding: "7px 10px" }}>
+            <div className="b-cell-sub" title={lab.name || undefined}>
+              {lab.name || "—"}
             </div>
-          );
-        })}
+            <div style={{ fontSize: "var(--fs-body)", marginTop: 1 }}>
+              <LabValue value={lab.value ?? "—"} unit={lab.unit} flag={lab.flag} />
+            </div>
+            {lab.reference_range ? (
+              <div className="b-range">{lab.reference_range}</div>
+            ) : null}
+          </div>
+        ))}
       </div>
 
-      {labs.labs.length > 8 && (
-        <div className="muted-text" style={{ fontSize: 11, marginTop: 8 }}>
+      {labs.labs.length > 8 ? (
+        <p className="b-meta" style={{ marginTop: "var(--s2)" }}>
           +{labs.labs.length - 8} {t("pcpMoreInSource")} ·{" "}
-          <Link
-            href={`/documents/${labs.document_id}`}
-            style={{ color: "var(--primary)", textDecoration: "none", fontWeight: 700 }}
-          >
+          <Link href={`/documents/${labs.document_id}`} style={{ color: "var(--primary)", fontWeight: 500 }}>
             {t("pcpOpenLabPanel")}
           </Link>
-        </div>
-      )}
+        </p>
+      ) : null}
     </Card>
   );
 }
@@ -1414,59 +1211,39 @@ function NotesCard({
       {shown.length === 0 ? (
         <EmptyState text={t("pcpNoNotes")} />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
+        <div
+          className="b-list"
+          style={{ marginLeft: "calc(var(--s4) * -1)", marginRight: "calc(var(--s4) * -1)" }}
+        >
           {shown.map((n) => (
-            <div
+            <Link
               key={n.id}
-              style={{
-                padding: "9px 12px",
-                borderRadius: 10,
-                border: "1px solid var(--border)",
-                background: "var(--panel-2)",
-              }}
+              href={`/documents/${n.id}`}
+              className="b-list-row"
+              style={{ textDecoration: "none", alignItems: "flex-start" }}
             >
-              <div style={{ display: "flex", alignItems: "center", gap: 8, marginBottom: 3 }}>
-                <div
-                  style={{
-                    fontWeight: 700,
-                    fontSize: 13,
-                    flex: 1,
-                    minWidth: 0,
-                    overflow: "hidden",
-                    textOverflow: "ellipsis",
-                    whiteSpace: "nowrap",
-                  }}
-                >
-                  {n.report_name || n.filename}
-                </div>
-                <div className="muted-text" style={{ fontSize: 10, flexShrink: 0 }}>
-                  {formatDate(n.created_at)}
-                </div>
-              </div>
-              {n.note_preview && (
-                <p
-                  className="muted-text"
-                  style={{
-                    fontSize: 11,
-                    margin: "0 0 6px",
-                    lineHeight: 1.5,
-                    display: "-webkit-box",
-                    WebkitLineClamp: 2,
-                    WebkitBoxOrient: "vertical",
-                    overflow: "hidden",
-                  } as React.CSSProperties}
-                >
-                  {n.note_preview}
-                </p>
-              )}
-              <Link
-                href={`/documents/${n.id}`}
-                className="secondary-btn"
-                style={{ fontSize: 10, padding: "3px 9px", textDecoration: "none" }}
-              >
-                {t("pcpOpenNote")}
-              </Link>
-            </div>
+              <span className="b-list-main">
+                <span className="b-list-title">{n.report_name || n.filename}</span>
+                {n.note_preview ? (
+                  <span
+                    className="b-list-sub"
+                    style={{
+                      display: "-webkit-box",
+                      WebkitLineClamp: 2,
+                      WebkitBoxOrient: "vertical",
+                      overflow: "hidden",
+                      whiteSpace: "normal",
+                    } as React.CSSProperties}
+                  >
+                    {n.note_preview}
+                  </span>
+                ) : null}
+              </span>
+              <span className="b-list-trail">
+                <span className="b-range">{formatDate(n.created_at)}</span>
+                <IconChevronRight size={13} className="b-list-chevron" />
+              </span>
+            </Link>
           ))}
         </div>
       )}
@@ -1476,110 +1253,59 @@ function NotesCard({
 
 // ── Care context card ─────────────────────────────────────────────────────────
 
+/**
+ * Care context.
+ *
+ * Was four rounded, tinted, bordered rows - one of them a green-on-green
+ * pill inside a green box. Now a plain key/value block: the label recedes,
+ * the value is the content, and only the access state carries a status dot.
+ */
 function CareContextCard({ summary }: { summary: PCPSummary }) {
   const { t } = useLanguage();
   const p = summary.patient;
-
   const careCtx = summary.care_context;
-  const contextColor =
-    careCtx === "active_admission"
-      ? "var(--danger-text)"
-      : careCtx === "past_admission"
-      ? "var(--warn-text)"
-      : "var(--success-text)";
-  const contextBg =
-    careCtx === "active_admission"
-      ? "var(--danger-bg)"
-      : careCtx === "past_admission"
-      ? "var(--warn-bg)"
-      : "var(--success-bg)";
+
+  const contextTone =
+    careCtx === "active_admission" ? "ok" : careCtx === "past_admission" ? "muted" : "muted";
 
   return (
     <Card>
       <CardTitle title={t("pcpCareContext")} />
-      <div style={{ display: "flex", flexDirection: "column", gap: 8 }}>
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "8px 12px",
-            borderRadius: 10,
-            background: contextBg,
-            border: `1px solid ${contextColor}33`,
-          }}
-        >
-          <span className="muted-text" style={{ fontSize: 12 }}>
-            {t("pcpCareContext")}
-          </span>
-          <span style={{ fontWeight: 800, fontSize: 12, color: contextColor }}>
-            {summary.care_context_label}
-          </span>
+      <div className="b-kv">
+        <div className="b-kv-key">{t("pcpCareContext")}</div>
+        <div className="b-kv-value">
+          <Status tone={contextTone}>{summary.care_context_label}</Status>
         </div>
 
-        {p.date_of_birth && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "7px 12px",
-              borderRadius: 10,
-              background: "var(--panel-2)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            <span className="muted-text" style={{ fontSize: 12 }}>Date of birth</span>
-            <span style={{ fontWeight: 700, fontSize: 12 }}>{p.date_of_birth}</span>
-          </div>
-        )}
+        {p.date_of_birth ? (
+          <>
+            <div className="b-kv-key">Date of birth</div>
+            <div className="b-kv-value num">{p.date_of_birth}</div>
+          </>
+        ) : null}
 
-        <div
-          style={{
-            display: "flex",
-            alignItems: "center",
-            justifyContent: "space-between",
-            padding: "7px 12px",
-            borderRadius: 10,
-            background: "var(--panel-2)",
-            border: "1px solid var(--border)",
-          }}
-        >
-          <span className="muted-text" style={{ fontSize: 12 }}>Access status</span>
-          <Pill label={t("pcpActiveAccess")} color="var(--success-text)" bg="var(--success-bg)" />
+        <div className="b-kv-key">Access status</div>
+        <div className="b-kv-value">
+          <Status tone="ok">{t("pcpActiveAccess")}</Status>
         </div>
 
-        {p.bragi_code && (
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "space-between",
-              padding: "7px 12px",
-              borderRadius: 10,
-              background: "var(--panel-2)",
-              border: "1px solid var(--border)",
-            }}
-          >
-            <span className="muted-text" style={{ fontSize: 12 }}>Bragi code</span>
-            <span
-              style={{
-                fontWeight: 700,
-                fontSize: 12,
-                fontFamily: "monospace",
-                color: "var(--primary)",
-              }}
-            >
-              {p.bragi_code}
-            </span>
-          </div>
-        )}
+        {p.bragi_code ? (
+          <>
+            <div className="b-kv-key">Bragi code</div>
+            <div className="b-kv-value num">{p.bragi_code}</div>
+          </>
+        ) : null}
+
+        {p.patient_identifier ? (
+          <>
+            <div className="b-kv-key">Patient ID</div>
+            <div className="b-kv-value num">{p.patient_identifier}</div>
+          </>
+        ) : null}
       </div>
     </Card>
   );
 }
-
-// ── Patient profile (dashboard layout) ───────────────────────────────────────
 
 function PCPPatientProfile({
   patientId,
@@ -1596,8 +1322,8 @@ function PCPPatientProfile({
     return (
       <Card>
         <div style={{ textAlign: "center", padding: "28px 0" }}>
-          <div style={{ fontSize: 32, marginBottom: 12 }}>🔒</div>
-          <div style={{ fontWeight: 800, fontSize: 16, marginBottom: 8 }}>
+          <div style={{ fontSize: 19, marginBottom: 12 }}>🔒</div>
+          <div style={{ fontWeight: 600, fontSize: 16, marginBottom: 8 }}>
             {t("pcpAccessRevoked")}
           </div>
           <p className="muted-text" style={{ fontSize: 13 }}>

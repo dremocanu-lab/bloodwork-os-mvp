@@ -129,7 +129,7 @@ export default function MyDependantsPage() {
                 className="soft-card-tight"
                 style={{ padding: 18 }}
               >
-                <div style={{ fontWeight: 900, fontSize: 16 }}>{dep.full_name}</div>
+                <div style={{ fontWeight: 600, fontSize: 16 }}>{dep.full_name}</div>
                 {dep.date_of_birth && (
                   <div className="muted-text" style={{ marginTop: 4 }}>
                     {t("dateOfBirth")}: {dep.date_of_birth}
@@ -150,7 +150,7 @@ export default function MyDependantsPage() {
 
         <div className="soft-card-tight" style={{ marginTop: 20, padding: 20 }}>
           <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 950, fontSize: 14, letterSpacing: "-0.02em" }}>
+            <div style={{ fontWeight: 600, fontSize: 14, letterSpacing: "-0.02em" }}>
               {t("addAnotherDependant")}
             </div>
             <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>

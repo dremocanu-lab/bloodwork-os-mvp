@@ -1,19 +1,38 @@
 "use client";
 
-import { useEffect, useState } from "react";
+/**
+ * Admin - doctor detail and caseload.
+ *
+ * Two changes that matter here beyond the visual pass:
+ *
+ *  1. Ending an assignment revokes a clinician's access to a patient record.
+ *     It used to happen on a single click of a quiet secondary button. It now
+ *     goes through a confirmation that names the doctor and the patient, which
+ *     is what the brief asks for on sensitive access changes.
+ *  2. The two patient lists became tables with a sortable assignment date, so
+ *     an administrator can actually audit a caseload.
+ */
+
+import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
-
-type CurrentUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin" | "care_partner";
-  department?: string | null;
-  hospital_name?: string | null;
-};
+import {
+  CellPrimary,
+  Column,
+  ConfirmDialog,
+  DataTable,
+  EmptyState,
+  ErrorNote,
+  Metric,
+  Metrics,
+  Status,
+  TableSkeleton,
+  Tabs,
+} from "@/components/ui";
+import { IconUsers } from "@/components/ui/icon";
+import type { NavUser } from "@/lib/navigation";
 
 type DoctorDetail = {
   id: number;
@@ -35,14 +54,7 @@ type CurrentPatient = {
   assigned_at: string;
 };
 
-type HistoryEntry = {
-  assignment_id: number;
-  patient_id: number;
-  full_name: string;
-  date_of_birth?: string | null;
-  cnp?: string | null;
-  patient_identifier?: string | null;
-  assigned_at: string;
+type HistoryEntry = CurrentPatient & {
   ended_at?: string | null;
   is_active: boolean;
 };
@@ -50,14 +62,25 @@ type HistoryEntry = {
 function maskCnp(cnp?: string | null): string {
   if (!cnp) return "—";
   if (cnp.length <= 4) return cnp;
-  return "•".repeat(cnp.length - 4) + cnp.slice(-4);
+  return "•".repeat(Math.min(cnp.length - 4, 9)) + cnp.slice(-4);
 }
 
-function formatDate(v?: string | null) {
-  if (!v) return "—";
-  const d = new Date(v);
-  if (Number.isNaN(d.getTime())) return v;
-  return d.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+function formatDate(value?: string | null) {
+  if (!value) return "—";
+  const date = new Date(value);
+  if (Number.isNaN(date.getTime())) return value;
+  return date.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
+}
+
+function initials(name: string) {
+  return (
+    name
+      .trim()
+      .split(/\s+/)
+      .slice(0, 2)
+      .map((part) => part.charAt(0).toUpperCase())
+      .join("") || "P"
+  );
 }
 
 export default function DoctorDetailPage() {
@@ -66,7 +89,7 @@ export default function DoctorDetailPage() {
   const doctorId = params?.id as string;
   const { t } = useLanguage();
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<NavUser | null>(null);
   const [doctor, setDoctor] = useState<DoctorDetail | null>(null);
   const [currentPatients, setCurrentPatients] = useState<CurrentPatient[]>([]);
   const [history, setHistory] = useState<HistoryEntry[]>([]);
@@ -75,22 +98,26 @@ export default function DoctorDetailPage() {
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [endingId, setEndingId] = useState<number | null>(null);
   const [endError, setEndError] = useState("");
+  const [pendingEnd, setPendingEnd] = useState<CurrentPatient | null>(null);
 
   useEffect(() => {
     async function init() {
       try {
-        const me = await api.get<CurrentUser>("/auth/me");
-        if (me.data.role !== "admin") { router.replace("/login"); return; }
+        const me = await api.get<NavUser>("/auth/me");
+        if (me.data.role !== "admin") {
+          router.replace("/login");
+          return;
+        }
         setCurrentUser(me.data);
 
-        const [docRes, currentRes, histRes] = await Promise.all([
+        const [docResponse, currentResponse, historyResponse] = await Promise.all([
           api.get<DoctorDetail>(`/admin/doctors/${doctorId}`),
           api.get<CurrentPatient[]>(`/admin/doctors/${doctorId}/current-patients`),
           api.get<HistoryEntry[]>(`/admin/doctors/${doctorId}/patient-history`),
         ]);
-        setDoctor(docRes.data);
-        setCurrentPatients(currentRes.data || []);
-        setHistory(histRes.data || []);
+        setDoctor(docResponse.data);
+        setCurrentPatients(currentResponse.data || []);
+        setHistory(historyResponse.data || []);
       } catch (err) {
         setError(getErrorMessage(err, "Could not load doctor details."));
       } finally {
@@ -107,15 +134,16 @@ export default function DoctorDetailPage() {
       await api.post(`/admin/assignments/${assignmentId}/end`, {});
       setCurrentPatients((prev) => prev.filter((p) => p.assignment_id !== assignmentId));
       setHistory((prev) =>
-        prev.map((h) =>
-          h.assignment_id === assignmentId
-            ? { ...h, is_active: false, ended_at: new Date().toISOString() }
-            : h
+        prev.map((entry) =>
+          entry.assignment_id === assignmentId
+            ? { ...entry, is_active: false, ended_at: new Date().toISOString() }
+            : entry
         )
       );
       if (doctor) {
         setDoctor({ ...doctor, current_patient_count: doctor.current_patient_count - 1 });
       }
+      setPendingEnd(null);
     } catch (err) {
       setEndError(getErrorMessage(err, "Could not end assignment."));
     } finally {
@@ -123,20 +151,171 @@ export default function DoctorDetailPage() {
     }
   }
 
+  const currentColumns: Column<CurrentPatient>[] = useMemo(
+    () => [
+      {
+        key: "patient",
+        header: t("navPatients"),
+        sortable: true,
+        sortValue: (row) => row.full_name,
+        render: (row) => (
+          <CellPrimary
+            avatar={initials(row.full_name)}
+            title={row.full_name}
+            sub={
+              <>
+                {row.date_of_birth ? `DOB ${formatDate(row.date_of_birth)}` : null}
+                {row.cnp ? ` · CNP ${maskCnp(row.cnp)}` : null}
+              </>
+            }
+          />
+        ),
+      },
+      {
+        key: "assigned",
+        header: t("assignedOn"),
+        width: 150,
+        sortable: true,
+        sortValue: (row) => row.assigned_at || "",
+        hideBelow: 640,
+        render: (row) => (
+          <span className="tnum" style={{ color: "var(--text-2)" }}>
+            {formatDate(row.assigned_at)}
+          </span>
+        ),
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        width: 150,
+        render: (row) => (
+          <div className="b-row-actions">
+            <button
+              type="button"
+              className="b-btn b-btn-secondary b-btn-sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                router.push(`/patients/${row.patient_id}`);
+              }}
+            >
+              Open record
+            </button>
+            <button
+              type="button"
+              className="b-btn b-btn-danger-quiet b-btn-sm"
+              onClick={(event) => {
+                event.stopPropagation();
+                setPendingEnd(row);
+              }}
+              disabled={endingId === row.assignment_id}
+            >
+              {t("endAssignment")}
+            </button>
+          </div>
+        ),
+      },
+    ],
+    [endingId, router, t]
+  );
+
+  const historyColumns: Column<HistoryEntry>[] = useMemo(
+    () => [
+      {
+        key: "patient",
+        header: t("navPatients"),
+        sortable: true,
+        sortValue: (row) => row.full_name,
+        render: (row) => (
+          <CellPrimary
+            avatar={initials(row.full_name)}
+            title={row.full_name}
+            sub={
+              <>
+                {row.date_of_birth ? `DOB ${formatDate(row.date_of_birth)}` : null}
+                {row.cnp ? ` · CNP ${maskCnp(row.cnp)}` : null}
+              </>
+            }
+          />
+        ),
+      },
+      {
+        key: "assigned",
+        header: t("assignedOn"),
+        width: 140,
+        sortable: true,
+        sortValue: (row) => row.assigned_at || "",
+        hideBelow: 640,
+        render: (row) => (
+          <span className="tnum" style={{ color: "var(--text-2)" }}>
+            {formatDate(row.assigned_at)}
+          </span>
+        ),
+      },
+      {
+        key: "ended",
+        header: t("endedOn"),
+        width: 140,
+        sortable: true,
+        sortValue: (row) => row.ended_at || "",
+        hideBelow: 900,
+        render: (row) =>
+          row.ended_at ? (
+            <span className="tnum" style={{ color: "var(--text-2)" }}>
+              {formatDate(row.ended_at)}
+            </span>
+          ) : (
+            <span className="b-range">—</span>
+          ),
+      },
+      {
+        key: "status",
+        header: "Status",
+        width: 130,
+        sortable: true,
+        sortValue: (row) => (row.is_active ? 0 : 1),
+        render: (row) =>
+          row.is_active ? (
+            <Status tone="ok">{t("assignmentStatusActive")}</Status>
+          ) : (
+            <Status tone="muted">{t("assignmentStatusEnded")}</Status>
+          ),
+      },
+    ],
+    [t]
+  );
+
   if (loading || !currentUser) {
     return (
-      <main className="app-page-bg" style={{ padding: 24 }}>
-        <p className="muted-text">{t("loading")}</p>
+      <main className="app-page-bg" style={{ padding: "var(--s6)" }}>
+        <div className="b-surface">
+          <TableSkeleton rows={6} columns={3} />
+        </div>
       </main>
     );
   }
 
   if (!doctor) {
     return (
-      <AppShell user={currentUser} title="Doctor not found">
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div className="muted-text">{error || "Doctor not found."}</div>
-        </div>
+      <AppShell
+        user={currentUser}
+        title="Doctor not found"
+        breadcrumbs={[{ label: t("adminDoctorsNav"), href: "/admin/doctors" }]}
+      >
+        <section className="b-surface">
+          <EmptyState
+            title="Doctor not found"
+            description={error || "This doctor may have been removed."}
+            actions={
+              <button
+                type="button"
+                className="b-btn b-btn-secondary"
+                onClick={() => router.push("/admin/doctors")}
+              >
+                {t("adminDoctorsNav")}
+              </button>
+            }
+          />
+        </section>
       </AppShell>
     );
   }
@@ -145,200 +324,109 @@ export default function DoctorDetailPage() {
     <AppShell
       user={currentUser}
       title={doctor.full_name}
-      subtitle={[doctor.department, doctor.hospital_name].filter(Boolean).join(" · ")}
+      subtitle={[doctor.email, doctor.department, doctor.hospital_name]
+        .filter(Boolean)
+        .join(" · ")}
+      breadcrumbs={[
+        { label: t("adminDoctorsNav"), href: "/admin/doctors" },
+        { label: doctor.full_name },
+      ]}
+      banner={
+        <div className="b-ctx">
+          <div className="b-ctx-tabs">
+            <Tabs
+              tabs={[
+                {
+                  key: "current",
+                  label: t("currentPatientsTab"),
+                  count: currentPatients.length,
+                },
+                { key: "history", label: t("patientHistoryTab"), count: history.length },
+              ]}
+              activeTab={activeTab}
+              onChange={(key) => setActiveTab(key as "current" | "history")}
+              ariaLabel={doctor.full_name}
+            />
+          </div>
+        </div>
+      }
     >
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{ marginBottom: 20, padding: 16, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}
-        >
-          {error}
-        </div>
-      )}
+      <div className="b-stack b-view-enter" key={activeTab}>
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
+        {endError ? <ErrorNote>{endError}</ErrorNote> : null}
 
-      {/* Doctor header card */}
-      <div className="soft-card" style={{ padding: 24, marginBottom: 20 }}>
-        <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
-          <div
-            style={{
-              width: 52,
-              height: 52,
-              borderRadius: 999,
-              background: "color-mix(in srgb, var(--primary) 14%, var(--panel-2))",
-              border: "1px solid color-mix(in srgb, var(--primary) 22%, transparent)",
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "center",
-              fontWeight: 950,
-              fontSize: 20,
-              color: "var(--primary)",
-              flexShrink: 0,
-            }}
-          >
-            {doctor.full_name.charAt(0).toUpperCase()}
-          </div>
+        <Metrics>
+          <Metric label="Current patients" value={doctor.current_patient_count} />
+          <Metric label="Total assignments" value={doctor.historical_assignment_count} />
+          <Metric
+            label="Ended"
+            value={history.filter((entry) => !entry.is_active).length}
+          />
+        </Metrics>
 
-          <div style={{ flex: 1, minWidth: 0 }}>
-            <div style={{ fontWeight: 950, fontSize: 20, letterSpacing: "-0.04em", lineHeight: 1.15 }}>
-              {doctor.full_name}
-            </div>
-            <div className="muted-text" style={{ marginTop: 4, fontSize: 14 }}>{doctor.email}</div>
-            {(doctor.department || doctor.hospital_name) && (
-              <div
-                className="muted-text"
-                style={{ marginTop: 4, fontSize: 12, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}
-              >
-                {[doctor.department, doctor.hospital_name].filter(Boolean).join(" · ")}
-              </div>
-            )}
-          </div>
-
-          <div style={{ display: "flex", gap: 24, flexShrink: 0, alignItems: "flex-start" }}>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 26, fontWeight: 950, letterSpacing: "-0.05em", color: "var(--primary)" }}>
-                {doctor.current_patient_count}
-              </div>
-              <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                {t("currentPatientsCount")}
-              </div>
-            </div>
-            <div style={{ textAlign: "center" }}>
-              <div style={{ fontSize: 26, fontWeight: 950, letterSpacing: "-0.05em" }}>
-                {doctor.historical_assignment_count}
-              </div>
-              <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em" }}>
-                {t("historicalAssignmentsCount")}
-              </div>
-            </div>
-          </div>
-        </div>
+        <section className="b-surface">
+          {activeTab === "current" ? (
+            <DataTable
+              rows={currentPatients}
+              columns={currentColumns}
+              rowKey={(row) => row.assignment_id}
+              onRowClick={(row) => router.push(`/patients/${row.patient_id}`)}
+              caption={t("currentPatientsTab")}
+              initialSort={{ key: "assigned", dir: "desc" }}
+              emptyState={
+                <EmptyState
+                  icon={<IconUsers size={17} />}
+                  title={t("noCurrentPatientsAdmin")}
+                  actions={
+                    <button
+                      type="button"
+                      className="b-btn b-btn-secondary"
+                      onClick={() => router.push("/assignments")}
+                    >
+                      {t("assignPatients")}
+                    </button>
+                  }
+                />
+              }
+            />
+          ) : (
+            <DataTable
+              rows={history}
+              columns={historyColumns}
+              rowKey={(row) => row.assignment_id}
+              onRowClick={(row) => router.push(`/patients/${row.patient_id}`)}
+              caption={t("patientHistoryTab")}
+              initialSort={{ key: "assigned", dir: "desc" }}
+              emptyState={
+                <EmptyState icon={<IconUsers size={17} />} title={t("noPatientHistoryAdmin")} />
+              }
+            />
+          )}
+        </section>
       </div>
 
-      {/* Tabs */}
-      <div style={{ display: "flex", gap: 8, marginBottom: 16 }}>
-        {(["current", "history"] as const).map((tab) => (
-          <button
-            key={tab}
-            type="button"
-            className={activeTab === tab ? "primary-btn" : "secondary-btn"}
-            onClick={() => setActiveTab(tab)}
-            style={{ fontSize: 14 }}
-          >
-            {tab === "current" ? t("currentPatientsTab") : t("patientHistoryTab")}
-          </button>
-        ))}
-      </div>
-
-      {endError && (
-        <div
-          className="soft-card-tight"
-          style={{ marginBottom: 16, padding: 14, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13 }}
-        >
-          {endError}
-        </div>
-      )}
-
-      {/* Current Patients tab */}
-      {activeTab === "current" && (
-        <div className="soft-card" style={{ padding: 24 }}>
-          {currentPatients.length === 0 ? (
-            <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("noCurrentPatientsAdmin")}</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {currentPatients.map((p) => (
-                <div
-                  key={p.assignment_id}
-                  className="soft-card-tight"
-                  style={{
-                    padding: "14px 18px",
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0,1fr) auto",
-                    gap: 16,
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 950, fontSize: 15, letterSpacing: "-0.02em" }}>{p.full_name}</div>
-                    <div className="muted-text" style={{ marginTop: 5, fontSize: 12, display: "flex", gap: 14, flexWrap: "wrap" }}>
-                      {p.date_of_birth && <span>DOB: {formatDate(p.date_of_birth)}</span>}
-                      {p.cnp && <span>CNP: {maskCnp(p.cnp)}</span>}
-                      <span>{t("assignedOn")}: {formatDate(p.assigned_at)}</span>
-                    </div>
-                  </div>
-
-                  <button
-                    type="button"
-                    className="secondary-btn"
-                    onClick={() => endAssignment(p.assignment_id)}
-                    disabled={endingId === p.assignment_id}
-                    style={{ whiteSpace: "nowrap", fontSize: 13, color: "var(--danger-text)", borderColor: "var(--danger-border)" }}
-                  >
-                    {endingId === p.assignment_id ? t("endingAssignment") : t("endAssignment")}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
-
-      {/* Patient History tab */}
-      {activeTab === "history" && (
-        <div className="soft-card" style={{ padding: 24 }}>
-          {history.length === 0 ? (
-            <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("noPatientHistoryAdmin")}</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 10 }}>
-              {history.map((h) => (
-                <div
-                  key={h.assignment_id}
-                  className="soft-card-tight"
-                  style={{
-                    padding: "14px 18px",
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0,1fr) auto",
-                    gap: 16,
-                    alignItems: "center",
-                    opacity: h.is_active ? 1 : 0.7,
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 950, fontSize: 15, letterSpacing: "-0.02em" }}>{h.full_name}</div>
-                    <div className="muted-text" style={{ marginTop: 5, fontSize: 12, display: "flex", gap: 14, flexWrap: "wrap" }}>
-                      {h.date_of_birth && <span>DOB: {formatDate(h.date_of_birth)}</span>}
-                      {h.cnp && <span>CNP: {maskCnp(h.cnp)}</span>}
-                      <span>{t("assignedOn")}: {formatDate(h.assigned_at)}</span>
-                      {h.ended_at && <span>{t("endedOn")}: {formatDate(h.ended_at)}</span>}
-                    </div>
-                  </div>
-
-                  <span
-                    style={{
-                      fontSize: 12,
-                      fontWeight: 900,
-                      padding: "4px 10px",
-                      borderRadius: 999,
-                      background: h.is_active
-                        ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))"
-                        : "var(--panel-2)",
-                      color: h.is_active ? "var(--primary)" : "var(--muted)",
-                      border: `1px solid ${h.is_active ? "color-mix(in srgb, var(--primary) 25%, transparent)" : "var(--border)"}`,
-                      whiteSpace: "nowrap",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {h.is_active ? t("assignmentStatusActive") : t("assignmentStatusEnded")}
-                  </span>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
-      )}
+      {/* Access revocation is irreversible from this screen, so it names both
+          parties and what the doctor loses before it happens. */}
+      <ConfirmDialog
+        open={pendingEnd !== null}
+        onClose={() => setPendingEnd(null)}
+        onConfirm={() => pendingEnd && endAssignment(pendingEnd.assignment_id)}
+        title={t("endAssignment")}
+        confirmLabel={
+          endingId !== null ? t("endingAssignment") : t("endAssignment")
+        }
+        busy={endingId !== null}
+        consequence={
+          pendingEnd ? (
+            <>
+              <strong style={{ fontWeight: 600 }}>{doctor.full_name}</strong> will immediately lose
+              access to <strong style={{ fontWeight: 600 }}>{pendingEnd.full_name}</strong>&apos;s
+              record. The assignment stays in the history log and can be re-created from Assign
+              Patients.
+            </>
+          ) : null
+        }
+      />
     </AppShell>
   );
 }

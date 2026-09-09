@@ -6,6 +6,7 @@ import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
+import { LabValue, Status } from "@/components/ui";
 
 type CurrentUser = {
   id: number;
@@ -298,16 +299,28 @@ function MetaField({
 }) {
   return (
     <div style={{ display: "flex", flexDirection: "column", gap: 4 }}>
-      <span style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.09em", color: "var(--muted)", lineHeight: 1 }}>
-        {label}
-      </span>
-      <span style={{ fontSize: 14, fontWeight: 950, letterSpacing: "-0.02em", lineHeight: 1.3, wordBreak: "break-word" }}>
+      <span className="b-label">{label}</span>
+      <span
+        style={{
+          fontSize: "var(--fs-body)",
+          fontWeight: 500,
+          lineHeight: 1.35,
+          wordBreak: "break-word",
+        }}
+      >
         {value === null || value === undefined || value === "" ? "—" : String(value)}
       </span>
     </div>
   );
 }
 
+/**
+ * Document status.
+ *
+ * Was a 999px pill with a 12px/900 label and a coloured fill. Now the shared
+ * dot-plus-text status, so a document header carrying three states reads as
+ * information rather than as three competing chips.
+ */
 function StatusPill({
   children,
   tone = "neutral",
@@ -315,49 +328,10 @@ function StatusPill({
   children: React.ReactNode;
   tone?: "neutral" | "success" | "warn" | "danger";
 }) {
-  const styles =
-    tone === "success"
-      ? {
-          background: "var(--success-bg)",
-          color: "var(--success-text)",
-          borderColor: "var(--success-border)",
-        }
-      : tone === "warn"
-      ? {
-          background: "var(--warn-bg)",
-          color: "var(--warn-text)",
-          borderColor: "var(--warn-border)",
-        }
-      : tone === "danger"
-      ? {
-          background: "var(--danger-bg)",
-          color: "var(--danger-text)",
-          borderColor: "var(--danger-border)",
-        }
-      : {
-          background: "var(--panel-2)",
-          color: "var(--muted)",
-          borderColor: "var(--border)",
-        };
+  const mapped =
+    tone === "success" ? "ok" : tone === "warn" ? "warn" : tone === "danger" ? "danger" : "muted";
 
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        borderRadius: 999,
-        padding: "7px 11px",
-        border: `1px solid ${styles.borderColor}`,
-        background: styles.background,
-        color: styles.color,
-        fontWeight: 900,
-        fontSize: 12,
-        lineHeight: 1,
-      }}
-    >
-      {children}
-    </span>
-  );
+  return <Status tone={mapped}>{children}</Status>;
 }
 
 function SectionHeader({
@@ -380,15 +354,15 @@ function SectionHeader({
         marginBottom: 16,
       }}
     >
-      <div>
-        <div className="section-title">{title}</div>
-        {subtitle && (
-          <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.55 }}>
+      <div style={{ minWidth: 0 }}>
+        <h2 className="b-section-title">{title}</h2>
+        {subtitle ? (
+          <p className="b-meta" style={{ marginTop: 2 }}>
             {subtitle}
-          </div>
-        )}
+          </p>
+        ) : null}
       </div>
-      {right}
+      {right ? <div style={{ display: "flex", gap: "var(--s2)", flexShrink: 0 }}>{right}</div> : null}
     </div>
   );
 }
@@ -408,7 +382,7 @@ function TextInput({
 }) {
   return (
     <label style={{ display: "grid", gap: 8 }}>
-      <span className="muted-text" style={{ fontSize: 12, fontWeight: 900 }}>
+      <span className="muted-text" style={{ fontSize: 12, fontWeight: 600 }}>
         {label}
       </span>
       <input
@@ -867,7 +841,7 @@ export default function DocumentStructuredPage() {
         }}
       >
         <div className="soft-card-tight" style={{ padding: 22, maxWidth: 620 }}>
-          <div style={{ fontSize: 22, fontWeight: 950, marginBottom: 8 }}>
+          <div style={{ fontSize: 22, fontWeight: 600, marginBottom: 8 }}>
             {t("couldNotLoadDocument")}
           </div>
 
@@ -880,11 +854,11 @@ export default function DocumentStructuredPage() {
               style={{
                 marginTop: 14,
                 padding: 14,
-                borderRadius: 16,
+                borderRadius: "var(--r-lg)",
                 background: "var(--danger-bg)",
                 color: "var(--danger-text)",
                 border: "1px solid var(--danger-border)",
-                fontWeight: 800,
+                fontWeight: 600,
                 lineHeight: 1.5,
                 whiteSpace: "pre-wrap",
               }}
@@ -921,24 +895,36 @@ export default function DocumentStructuredPage() {
       }
     >
       <style jsx global>{`
+        /* Matches the shared .b-table geometry so a document's lab table and
+           the workspace tables read as the same component. */
         .document-lab-table {
           width: 100%;
           border-collapse: separate;
           border-spacing: 0;
+          font-size: var(--fs-sm);
         }
 
         .document-lab-table th {
           text-align: left;
-          font-size: 12px;
+          height: 32px;
+          padding: 0 12px;
+          font-size: var(--fs-xs);
+          font-weight: 500;
           color: var(--muted);
-          font-weight: 950;
-          padding: 12px 14px;
+          background: var(--surface-2);
           border-bottom: 1px solid var(--border);
-          background: var(--panel-2);
+          white-space: nowrap;
+        }
+
+        .document-lab-table th.num,
+        .document-lab-table td.num {
+          text-align: right;
+          font-variant-numeric: tabular-nums;
         }
 
         .document-lab-table td {
-          padding: 14px;
+          height: var(--row-h);
+          padding: 0 12px;
           border-bottom: 1px solid var(--border);
           vertical-align: middle;
         }
@@ -947,20 +933,28 @@ export default function DocumentStructuredPage() {
           border-bottom: 0;
         }
 
-        .document-lab-table tr.abnormal-row td {
-          background: color-mix(in srgb, var(--danger-bg) 72%, transparent);
+        /* An abnormal row gets a 2px inline marker, not a pink wash across
+           every cell - when most rows are abnormal a fill says nothing. */
+        .document-lab-table tr.abnormal-row td:first-child {
+          box-shadow: inset 2px 0 0 var(--danger);
         }
 
         .document-lab-table tr.nil-row td {
-          opacity: 0.82;
+          color: var(--muted);
+        }
+
+        .document-lab-table tbody tr:hover td {
+          background: var(--surface-hover);
         }
 
         .document-edit-grid {
           display: grid;
-          grid-template-columns: repeat(auto-fit, minmax(320px, 1fr));
-          gap: 20px;
+          grid-template-columns: repeat(auto-fit, minmax(300px, 1fr));
+          gap: var(--s4);
         }
 
+        /* Below tablet each row becomes a labelled stack, so nothing is
+           squeezed and no column is dropped. */
         @media (max-width: 900px) {
           .document-lab-table,
           .document-lab-table thead,
@@ -977,21 +971,32 @@ export default function DocumentStructuredPage() {
 
           .document-lab-table tr {
             border-bottom: 1px solid var(--border);
-            padding: 10px 0;
+            padding: var(--s2) 0;
+          }
+
+          .document-lab-table tr.abnormal-row {
+            box-shadow: inset 2px 0 0 var(--danger);
+          }
+
+          .document-lab-table tr.abnormal-row td:first-child {
+            box-shadow: none;
           }
 
           .document-lab-table td {
+            height: auto;
             border-bottom: 0;
-            padding: 8px 12px;
+            padding: 3px var(--s3);
+            text-align: left !important;
+            display: flex;
+            align-items: baseline;
+            gap: var(--s2);
           }
 
           .document-lab-table td::before {
             content: attr(data-label);
-            display: block;
+            flex: 0 0 92px;
             color: var(--muted);
-            font-size: 11px;
-            font-weight: 900;
-            margin-bottom: 4px;
+            font-size: var(--fs-xs);
           }
         }
       `}</style>
@@ -1032,14 +1037,14 @@ export default function DocumentStructuredPage() {
               boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
             }}
           >
-            <div style={{ fontSize: 24, fontWeight: 950, letterSpacing: "-0.05em" }}>{t("deleteThisReport")}</div>
+            <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.05em" }}>{t("deleteThisReport")}</div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
               {t("deleteReportDesc")}
             </div>
 
             <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{parsed.report_name || documentData.filename}</div>
+              <div style={{ fontWeight: 600 }}>{parsed.report_name || documentData.filename}</div>
               <div className="muted-text" style={{ marginTop: 5 }}>
                 {t("uploadedBy")} {valueOrDash(documentData.uploaded_by?.full_name)}
               </div>
@@ -1056,9 +1061,9 @@ export default function DocumentStructuredPage() {
                   border: "1px solid var(--danger-border)",
                   background: "var(--danger-bg)",
                   color: "var(--danger-text)",
-                  borderRadius: 14,
+                  borderRadius: "var(--r-md)",
                   padding: "11px 15px",
-                  fontWeight: 950,
+                  fontWeight: 600,
                   cursor: deleting ? "not-allowed" : "pointer",
                 }}
               >
@@ -1070,48 +1075,29 @@ export default function DocumentStructuredPage() {
       )}
 
       <div
-        className="soft-card"
-        style={{
-          padding: 22,
-          marginBottom: 24,
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
-        }}
+        className="b-surface"
+        style={{ padding: "var(--s3) var(--s4)", marginBottom: "var(--s4)" }}
       >
         <div style={{ display: "flex", justifyContent: "space-between", gap: 16, flexWrap: "wrap", alignItems: "center" }}>
           <div>
             <div style={{ display: "flex", gap: 14, flexWrap: "wrap", alignItems: "center" }}>
-              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 7, height: 7, borderRadius: 999, background: parsed.is_verified ? "var(--success-text)" : "var(--muted)", flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 900, color: parsed.is_verified ? "var(--success-text)" : "var(--muted)" }}>
-                  {t(parsed.is_verified ? "verified" : "unverified")}
-                </span>
-              </div>
+              <Status tone={parsed.is_verified ? "ok" : "muted"}>
+                {t(parsed.is_verified ? "verified" : "unverified")}
+              </Status>
 
-              <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
-                <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{documentData.section}</span>
-              </div>
+              <Status tone="muted">{documentData.section}</Status>
 
-              {!isNote && !isDischargeSummary && abnormalLabs.length > 0 && (
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--danger-text)", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--danger-text)" }}>{abnormalLabs.length} {t("abnormalCountLabel")}</span>
-                </div>
-              )}
+              {!isNote && !isDischargeSummary && abnormalLabs.length > 0 ? (
+                <Status tone="danger">
+                  {abnormalLabs.length} {t("abnormalCountLabel")}
+                </Status>
+              ) : null}
 
-              {isNote && (
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{t("clinicalNote")}</span>
-                </div>
-              )}
+              {isNote ? <Status tone="muted">{t("clinicalNote")}</Status> : null}
 
-              {isDischargeSummary && (
-                <div style={{ display: "flex", alignItems: "center", gap: 5 }}>
-                  <span style={{ width: 7, height: 7, borderRadius: 999, background: "var(--muted)", flexShrink: 0 }} />
-                  <span style={{ fontSize: 12, fontWeight: 900, color: "var(--muted)" }}>{t("dischargeSummaryLabel")}</span>
-                </div>
-              )}
+              {isDischargeSummary ? (
+                <Status tone="muted">{t("dischargeSummaryLabel")}</Status>
+              ) : null}
             </div>
 
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.6 }}>
@@ -1134,13 +1120,21 @@ export default function DocumentStructuredPage() {
             )}
 
             {!isNote && !isDischargeSummary && canEditStructured && (
-              <button className={editMode ? "secondary-btn" : "primary-btn"} onClick={() => setEditMode((prev) => !prev)}>
+              <button
+                className="b-btn b-btn-secondary"
+                onClick={() => setEditMode((prev) => !prev)}
+                aria-pressed={editMode}
+              >
                 {editMode ? t("cancelEdit") : t("editStructuredData")}
               </button>
             )}
 
             {isNote && canEditNote && (
-              <button className={noteEditMode ? "secondary-btn" : "primary-btn"} onClick={() => setNoteEditMode((prev) => !prev)}>
+              <button
+                className="b-btn b-btn-secondary"
+                onClick={() => setNoteEditMode((prev) => !prev)}
+                aria-pressed={noteEditMode}
+              >
                 {noteEditMode ? t("cancelEdit") : t("editNote")}
               </button>
             )}
@@ -1152,9 +1146,9 @@ export default function DocumentStructuredPage() {
                   border: "1px solid var(--danger-border)",
                   background: "var(--danger-bg)",
                   color: "var(--danger-text)",
-                  borderRadius: 14,
+                  borderRadius: "var(--r-md)",
                   padding: "11px 15px",
-                  fontWeight: 950,
+                  fontWeight: 600,
                   cursor: "pointer",
                 }}
               >
@@ -1224,7 +1218,7 @@ export default function DocumentStructuredPage() {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("name")} value={parsed.patient_name} />
                 <MetaField label={t("dateOfBirth")} value={parsed.date_of_birth} />
@@ -1236,7 +1230,7 @@ export default function DocumentStructuredPage() {
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("reportName")} value={parsed.report_name} />
                 <MetaField label={t("reportType")} value={parsed.report_type} />
@@ -1247,7 +1241,7 @@ export default function DocumentStructuredPage() {
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("collectedOn")} value={parsed.collected_on} />
                 <MetaField label={t("reportedOn")} value={parsed.reported_on} />
@@ -1272,7 +1266,7 @@ export default function DocumentStructuredPage() {
                     style={{
                       padding: 18,
                       background: "var(--panel-2)",
-                      borderRadius: 22,
+                      borderRadius: "var(--r-lg)",
                     }}
                   >
                     <div
@@ -1286,12 +1280,12 @@ export default function DocumentStructuredPage() {
                       }}
                     >
                       <div>
-                        <div style={{ fontWeight: 950, fontSize: 17, letterSpacing: "-0.03em" }}>
+                        <div style={{ fontWeight: 600, fontSize: 17, letterSpacing: "-0.03em" }}>
                           {section.title || t("clinicalSection")}
                         </div>
 
                         {section.original_titles?.length ? (
-                          <div className="muted-text" style={{ marginTop: 5, fontSize: 12, fontWeight: 800 }}>
+                          <div className="muted-text" style={{ marginTop: 5, fontSize: 12, fontWeight: 600 }}>
                             {t("originalHeadingLabel")} {section.original_titles.join(" · ")}
                           </div>
                         ) : null}
@@ -1306,7 +1300,7 @@ export default function DocumentStructuredPage() {
                       style={{
                         whiteSpace: "pre-wrap",
                         lineHeight: 1.65,
-                        color: "var(--foreground)",
+                        color: "var(--text)",
                         fontWeight: 650,
                       }}
                     >
@@ -1317,7 +1311,7 @@ export default function DocumentStructuredPage() {
               </div>
             ) : (
               <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 900 }}>{t("noStructuredDischargeSections")}</div>
+                <div style={{ fontWeight: 600 }}>{t("noStructuredDischargeSections")}</div>
                 <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
                   {t("noStructuredDischargeSectionsDesc")}
                 </div>
@@ -1332,7 +1326,7 @@ export default function DocumentStructuredPage() {
               {(parsed.audit_logs || []).map((log, index) => (
                 <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 950 }}>{log.action}</div>
+                    <div style={{ fontWeight: 600 }}>{log.action}</div>
                     <div className="muted-text" style={{ fontSize: 12 }}>
                       {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                     </div>
@@ -1524,7 +1518,7 @@ export default function DocumentStructuredPage() {
             }}
           >
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("patient")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("name")} value={parsed.patient_name} />
                 <MetaField label={t("dateOfBirth")} value={parsed.date_of_birth} />
@@ -1536,7 +1530,7 @@ export default function DocumentStructuredPage() {
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("documentDetails")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("reportName")} value={parsed.report_name} />
                 <MetaField label={t("reportType")} value={parsed.report_type} />
@@ -1548,7 +1542,7 @@ export default function DocumentStructuredPage() {
             </div>
 
             <div className="soft-card" style={{ padding: 24 }}>
-              <div style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
+              <div style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.08em", color: "var(--muted)", marginBottom: 18 }}>{t("dates")}</div>
               <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))", gap: "18px 20px" }}>
                 <MetaField label={t("testDate")} value={parsed.test_date} />
                 <MetaField label={t("collectedOn")} value={parsed.collected_on} />
@@ -1596,7 +1590,7 @@ export default function DocumentStructuredPage() {
                         }}
                       >
                         <div>
-                          <div style={{ fontWeight: 900 }}>{cp.care_partner_name}</div>
+                          <div style={{ fontWeight: 600 }}>{cp.care_partner_name}</div>
                           <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
                             {cp.care_partner_email}
                           </div>
@@ -1628,22 +1622,13 @@ export default function DocumentStructuredPage() {
               <div style={{ display: "grid", gap: 22 }}>
                 {orderedGroupedLabs.map(({ displayTitle, category, rows }) => (
                   <div key={displayTitle}>
-                    <div
-                      style={{
-                        fontWeight: 950,
-                        letterSpacing: "-0.03em",
-                        marginBottom: 10,
-                        textTransform: "uppercase",
-                        fontSize: 13,
-                        color: "var(--muted)",
-                      }}
-                    >
+                    <div className="b-label" style={{ marginBottom: "var(--s2)" }}>
                       {displayTitle}
-                      {displayTitle !== category && (
-                        <span style={{ fontWeight: 700, marginLeft: 8, opacity: 0.55, fontSize: 11, textTransform: "none", letterSpacing: 0 }}>
+                      {displayTitle !== category ? (
+                        <span style={{ marginLeft: 6, opacity: 0.7, textTransform: "none", letterSpacing: 0 }}>
                           {category}
                         </span>
-                      )}
+                      ) : null}
                     </div>
 
                     <div
@@ -1656,11 +1641,10 @@ export default function DocumentStructuredPage() {
                       <table className="document-lab-table">
                         <thead>
                           <tr>
-                            <th style={{ width: "38%" }}>{t("test")}</th>
-                            <th>{t("value")}</th>
-                            <th>{t("unit")}</th>
-                            <th>{t("reference")}</th>
-                            <th>{t("flag")}</th>
+                            <th style={{ width: "44%" }}>{t("test")}</th>
+                            <th className="num">{t("value")}</th>
+                            <th className="num">{t("reference")}</th>
+                            <th style={{ width: 130 }}>{t("flag")}</th>
                           </tr>
                         </thead>
 
@@ -1668,7 +1652,6 @@ export default function DocumentStructuredPage() {
                           {rows.map((lab) => {
                             const nil = isNilValue(lab.value);
                             const abnormal = !nil && (lab.is_abnormal || isAbnormalFlag(lab.flag));
-                            const flagStyle = getFlagStyle(lab.flag, lab.value);
 
                             return (
                               <tr
@@ -1676,81 +1659,43 @@ export default function DocumentStructuredPage() {
                                 className={`${abnormal ? "abnormal-row" : ""} ${nil ? "nil-row" : ""}`}
                               >
                                 <td data-label={t("test")}>
-                                  <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-                                    {abnormal && (
-                                      <span
-                                        style={{
-                                          width: 9,
-                                          height: 9,
-                                          borderRadius: 999,
-                                          background: "var(--danger-text)",
-                                          flex: "0 0 auto",
-                                        }}
-                                      />
-                                    )}
-                                    {nil && (
-                                      <span
-                                        style={{
-                                          width: 9,
-                                          height: 9,
-                                          borderRadius: 999,
-                                          background: "var(--muted)",
-                                          flex: "0 0 auto",
-                                        }}
-                                      />
-                                    )}
-
-                                    <div style={{ fontWeight: 950 }}>{bestDisplayName(lab)}</div>
-                                  </div>
-                                </td>
-
-                                <td data-label={t("value")}>
-                                  <span style={{ fontWeight: 950 }}>{displayLabValue(lab.value)}</span>
-                                </td>
-
-                                <td data-label={t("unit")}>
-                                  <span className="muted-text" style={{ fontWeight: 850 }}>
-                                    {valueOrDash(lab.unit)}
+                                  <span className="b-cell-title" style={{ whiteSpace: "normal" }}>
+                                    {bestDisplayName(lab)}
                                   </span>
                                 </td>
 
-                                <td data-label={t("reference")}>
-                                  <span className="muted-text" style={{ fontWeight: 850 }}>
-                                    {valueOrDash(lab.reference_range)}
-                                  </span>
+                                {/* The value carries the weight and the arrow
+                                    carries the direction. Previously every row
+                                    also got a red dot, a pink fill and a filled
+                                    "High"/"Low" pill - with twenty of twenty
+                                    rows abnormal, none of it read as a signal. */}
+                                <td data-label={t("value")} className="num">
+                                  {nil ? (
+                                    <span className="b-range">nil</span>
+                                  ) : (
+                                    <LabValue
+                                      value={displayLabValue(lab.value)}
+                                      unit={lab.unit}
+                                      flag={lab.flag}
+                                    />
+                                  )}
+                                </td>
+
+                                <td data-label={t("reference")} className="num">
+                                  <span className="b-range">{valueOrDash(lab.reference_range)}</span>
                                 </td>
 
                                 <td data-label={t("flag")}>
                                   {nil ? (
-                                    <span
-                                      style={{
-                                        display: "inline-flex",
-                                        padding: "6px 10px",
-                                        borderRadius: 999,
-                                        border: "1px solid var(--border)",
-                                        background: "var(--panel-2)",
-                                        color: "var(--muted)",
-                                        fontSize: 12,
-                                        fontWeight: 950,
-                                      }}
-                                    >
-                                      nil
-                                    </span>
+                                    <Status tone="muted">nil</Status>
+                                  ) : isEffectivelyNormalFlag(lab.flag) ? (
+                                    <Status tone="ok">{lab.flag}</Status>
+                                  ) : abnormal ? (
+                                    <Status tone="danger">
+                                      {hasDisplayableFlag(lab.flag) ? lab.flag : "Abnormal"}
+                                    </Status>
                                   ) : (
-                                    <span
-                                      style={{
-                                        display: "inline-flex",
-                                        padding: "6px 10px",
-                                        borderRadius: 999,
-                                        border: `1px solid ${flagStyle.borderColor}`,
-                                        background: flagStyle.background,
-                                        color: flagStyle.color,
-                                        fontSize: 12,
-                                        fontWeight: 950,
-                                      }}
-                                    >
-                                      {hasDisplayableFlag(lab.flag) ? lab.flag : "—"}
-                                    </span>
+                                    <span className="b-range">—</span>
                                   )}
                                 </td>
                               </tr>
@@ -1764,7 +1709,7 @@ export default function DocumentStructuredPage() {
               </div>
             ) : (
               <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                <div style={{ fontWeight: 900 }}>{t("noStructuredLabs")}</div>
+                <div style={{ fontWeight: 600 }}>{t("noStructuredLabs")}</div>
                 <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
                   {t("noStructuredLabsHint")}
                 </div>
@@ -1779,7 +1724,7 @@ export default function DocumentStructuredPage() {
               {(parsed.audit_logs || []).map((log, index) => (
                 <div key={`${log.action}-${log.timestamp}-${index}`} className="soft-card-tight" style={{ padding: 16 }}>
                   <div style={{ display: "flex", gap: 10, alignItems: "center", flexWrap: "wrap" }}>
-                    <div style={{ fontWeight: 950 }}>{log.action}</div>
+                    <div style={{ fontWeight: 600 }}>{log.action}</div>
                     <div className="muted-text" style={{ fontSize: 12 }}>
                       {valueOrDash(log.actor)} · {formatDate(log.timestamp)}
                     </div>

@@ -229,7 +229,7 @@ export default function AssignDoctorPage() {
               checked={replaceExisting}
               onChange={(e) => setReplaceExisting(e.target.checked)}
             />
-            <span style={{ fontWeight: 800 }}>{t("replaceCurrentDoctor")}</span>
+            <span style={{ fontWeight: 600 }}>{t("replaceCurrentDoctor")}</span>
           </label>
         </form>
 
@@ -248,7 +248,7 @@ export default function AssignDoctorPage() {
                   }}
                 >
                   <div>
-                    <div style={{ fontWeight: 900, fontSize: 18 }}>{doctor.full_name}</div>
+                    <div style={{ fontWeight: 600, fontSize: 18 }}>{doctor.full_name}</div>
                     <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.7 }}>
                       {doctor.email}
                     </div>
@@ -277,7 +277,7 @@ export default function AssignDoctorPage() {
 
           {!doctors.length && (
             <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{t("noScopedDoctorsFound")}</div>
+              <div style={{ fontWeight: 600 }}>{t("noScopedDoctorsFound")}</div>
               <div className="muted-text" style={{ marginTop: 8 }}>
                 {t("noScopedDoctorsFoundDesc")}
               </div>

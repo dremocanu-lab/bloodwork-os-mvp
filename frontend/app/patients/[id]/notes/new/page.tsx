@@ -220,7 +220,7 @@ export default function NewClinicalNotePage() {
         style={{
           padding: 24,
           marginBottom: 24,
-          background: "linear-gradient(135deg, color-mix(in srgb, var(--primary) 10%, var(--panel)), var(--panel))",
+          background: "var(--surface)",
         }}
       >
         <div className="section-title">{labels.cardTitle}</div>

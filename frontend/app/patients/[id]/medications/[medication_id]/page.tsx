@@ -121,7 +121,7 @@ export default function DoctorMedicationViewPage() {
   function Field({ label, value }: { label: string; value?: string | null }) {
     return (
       <div>
-        <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
+        <div className="muted-text" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 4 }}>
           {label}
         </div>
         <div style={{ fontWeight: 700, fontSize: 15 }}>{valueOrDash(value)}</div>
@@ -151,7 +151,7 @@ export default function DoctorMedicationViewPage() {
         className="soft-card-tight"
         style={{ marginBottom: 20, padding: 14, background: "var(--panel-2)", borderColor: "var(--border)" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 800, marginBottom: 3 }}>{t("medDoctorViewOnlySingleTitle")}</div>
+        <div style={{ fontSize: 12, fontWeight: 600, marginBottom: 3 }}>{t("medDoctorViewOnlySingleTitle")}</div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
           {t("medDoctorViewOnlySingleDesc")}
         </div>
@@ -160,11 +160,11 @@ export default function DoctorMedicationViewPage() {
       {/* Main info */}
       <div className="soft-card" style={{ padding: 24, marginBottom: 20 }}>
         <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
-          <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 800, background: statusStyle.bg, color: statusStyle.text }}>
+          <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
             {STATUS_LABELS[med.status] || med.status}
           </span>
           {med.is_uncertain && (
-            <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 800, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
+            <span style={{ padding: "4px 12px", borderRadius: 999, fontSize: 12, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
               {t("medDoseNotVerified")}
             </span>
           )}
@@ -183,7 +183,7 @@ export default function DoctorMedicationViewPage() {
 
         {med.extra_info && (
           <div style={{ marginTop: 18, paddingTop: 16, borderTop: "1px solid var(--border)" }}>
-            <div className="muted-text" style={{ fontSize: 11, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
+            <div className="muted-text" style={{ fontSize: 11, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.06em", marginBottom: 6 }}>
               {t("medAdditionalNotes")}
             </div>
             <div style={{ fontSize: 14, lineHeight: 1.7 }}>{med.extra_info}</div>
@@ -243,7 +243,7 @@ export default function DoctorMedicationViewPage() {
           <div>
             <div style={{ display: "flex", gap: 8, flexWrap: "wrap", alignItems: "center", marginBottom: 14 }}>
               <span style={{
-                padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 800,
+                padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
                 background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
               }}>
                 {t("medMatchMatched")}
@@ -286,7 +286,7 @@ export default function DoctorMedicationViewPage() {
               <div style={{ display: "grid", gap: 14 }}>
                 {Object.entries(sections).map(([title, content]) => (
                   <div key={title} className="soft-card-tight" style={{ padding: 16 }}>
-                    <div style={{ fontWeight: 800, fontSize: 14, marginBottom: 8 }}>{title}</div>
+                    <div style={{ fontWeight: 600, fontSize: 14, marginBottom: 8 }}>{title}</div>
                     <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.75, whiteSpace: "pre-wrap" }}>
                       {content}
                     </div>

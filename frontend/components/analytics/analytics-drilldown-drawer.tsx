@@ -123,7 +123,7 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
         {/* Header */}
         <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12 }}>
           <div style={{ minWidth: 0 }}>
-            <div style={{ fontWeight: 800, fontSize: 17, letterSpacing: "-0.02em" }}>{lab.marker_name}</div>
+            <div style={{ fontWeight: 600, fontSize: 17, letterSpacing: "-0.02em" }}>{lab.marker_name}</div>
             <div className="muted-text" style={{ fontSize: 13, marginTop: 3 }}>
               {lab.category_display}
               {lab.subgroup ? ` · ${lab.subgroup}` : ""}
@@ -147,7 +147,7 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
               padding: "3px 10px",
               borderRadius: 999,
               fontSize: 11,
-              fontWeight: 800,
+              fontWeight: 600,
               background: statusStyle.bg,
               color: statusStyle.text,
             }}
@@ -160,7 +160,7 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
                 padding: "3px 10px",
                 borderRadius: 999,
                 fontSize: 11,
-                fontWeight: 800,
+                fontWeight: 600,
                 background: "var(--panel-2)",
                 color: "var(--muted)",
               }}
@@ -184,7 +184,7 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
             <div key={label} className="soft-card-tight" style={{ padding: "12px 14px", minWidth: 0 }}>
               <div
                 className="muted-text"
-                style={{ fontSize: 10, fontWeight: 900, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}
+                style={{ fontSize: 10, fontWeight: 600, textTransform: "uppercase", letterSpacing: "0.05em", marginBottom: 5 }}
               >
                 {label}
               </div>
@@ -244,7 +244,7 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
                       style={{
                         fontWeight: 700,
                         fontSize: 13,
-                        color: abnormal ? "var(--danger-text)" : "var(--foreground)",
+                        color: abnormal ? "var(--danger-text)" : "var(--text)",
                       }}
                     >
                       {p.value_display || "—"} {lab.unit || ""}

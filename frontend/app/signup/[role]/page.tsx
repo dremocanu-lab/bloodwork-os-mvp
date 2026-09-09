@@ -274,7 +274,7 @@ export default function RoleSignupPage() {
                         alignItems: "flex-start",
                         gap: 12,
                         padding: "12px 14px",
-                        borderRadius: 12,
+                        borderRadius: "var(--r-md)",
                         border: `2px solid ${doctorType === "specialist" ? "var(--primary)" : "var(--border)"}`,
                         background: doctorType === "specialist" ? "color-mix(in srgb, var(--primary) 6%, var(--panel))" : "var(--panel)",
                         cursor: "pointer",
@@ -290,7 +290,7 @@ export default function RoleSignupPage() {
                         style={{ marginTop: 2, accentColor: "var(--primary)" }}
                       />
                       <div>
-                        <div style={{ fontWeight: 800, fontSize: 14 }}>{t("pcpSpecialistDoctor")}</div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{t("pcpSpecialistDoctor")}</div>
                         <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
                           Cardiology, Oncology, Endocrinology, etc.
                         </div>
@@ -302,7 +302,7 @@ export default function RoleSignupPage() {
                         alignItems: "flex-start",
                         gap: 12,
                         padding: "12px 14px",
-                        borderRadius: 12,
+                        borderRadius: "var(--r-md)",
                         border: `2px solid ${doctorType === "pcp" ? "var(--primary)" : "var(--border)"}`,
                         background: doctorType === "pcp" ? "color-mix(in srgb, var(--primary) 6%, var(--panel))" : "var(--panel)",
                         cursor: "pointer",
@@ -318,7 +318,7 @@ export default function RoleSignupPage() {
                         style={{ marginTop: 2, accentColor: "var(--primary)" }}
                       />
                       <div>
-                        <div style={{ fontWeight: 800, fontSize: 14 }}>{t("pcpFamilyDoctor")}</div>
+                        <div style={{ fontWeight: 600, fontSize: 14 }}>{t("pcpFamilyDoctor")}</div>
                         <div className="muted-text" style={{ fontSize: 12, marginTop: 2 }}>
                           Family medicine, General practice, Doctor de familie
                         </div>

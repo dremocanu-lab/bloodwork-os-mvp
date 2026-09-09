@@ -1,25 +1,31 @@
-﻿export default function StatCard({
+/**
+ * Legacy StatCard shim.
+ *
+ * Was a 22px-padded rounded card with a gradient tint, a coloured top border
+ * and a 34px/800 figure - four of them filled a whole phone screen before any
+ * real content. It is now a hairline metric tile with a 21px figure and no
+ * decoration. Prefer <Metrics>/<Metric> from components/ui for new work; this
+ * exists so existing callers keep working with the new visual language.
+ */
+
+export default function StatCard({
   label,
   value,
-  accent = "violet",
+  accent,
 }: {
   label: string;
   value: string | number;
+  /** Retained for call-site compatibility; colour no longer varies by accent. */
   accent?: "violet" | "green" | "orange" | "blue";
 }) {
-  const pillClass =
-    accent === "green"
-      ? "stat-pill stat-pill-green"
-      : accent === "orange"
-      ? "stat-pill stat-pill-orange"
-      : accent === "blue"
-      ? "stat-pill stat-pill-blue"
-      : "stat-pill stat-pill-violet";
+  void accent;
 
+  // `.stat-card` is a self-contained hairline tile, so this still works when
+  // dropped into a plain grid rather than a <Metrics> row.
   return (
-    <div className="soft-card" style={{ padding: 22 }}>
-      <div className={pillClass}>{label}</div>
-      <div style={{ marginTop: 16, fontSize: 34, fontWeight: 800 }}>{value}</div>
+    <div className="stat-card">
+      <div className="stat-card-label">{label}</div>
+      <div className="stat-card-value">{value}</div>
     </div>
   );
 }

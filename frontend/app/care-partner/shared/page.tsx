@@ -111,7 +111,7 @@ export default function SharedWithMePage() {
 
       {sharedPages.length === 0 ? (
         <div className="soft-card" style={{ padding: 32, textAlign: "center" }}>
-          <div style={{ fontWeight: 900, fontSize: 18, marginBottom: 8 }}>{t("nothingSharedYet")}</div>
+          <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 8 }}>{t("nothingSharedYet")}</div>
           <div className="muted-text">{t("nothingSharedYetDesc")}</div>
         </div>
       ) : (
@@ -138,7 +138,7 @@ export default function SharedWithMePage() {
                     }}
                   >
                     <div>
-                      <div style={{ fontWeight: 900 }}>
+                      <div style={{ fontWeight: 600 }}>
                         {page.report_name || page.filename || t("document")}
                       </div>
                       <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>

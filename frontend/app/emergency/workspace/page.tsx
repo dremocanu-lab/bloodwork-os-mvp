@@ -4,8 +4,16 @@ import { Suspense, useCallback, useEffect, useRef, useState } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
-import LanguageToggle from "@/components/language-toggle";
-import ThemeToggle from "@/components/theme-toggle";
+import {
+  IconAlert,
+  IconCheck,
+  IconChevronDown,
+  IconChevronRight,
+  IconClose,
+  IconLogout,
+  IconShield,
+} from "@/components/ui/icon";
+import { EmptyState as SharedEmptyState, LabValue, Status } from "@/components/ui";
 import { useLanguage } from "@/lib/i18n";
 import {
   emergencyApi,
@@ -174,42 +182,37 @@ function timerColor(secs: number): "green" | "amber" | "red" {
 }
 
 const COLOR_MAP = {
-  green: { dot: "#16a34a", text: "#16a34a", bg: "rgba(22,163,74,0.08)", border: "rgba(22,163,74,0.20)" },
-  amber: { dot: "#d97706", text: "#d97706", bg: "rgba(217,119,6,0.08)", border: "rgba(217,119,6,0.22)" },
-  red: { dot: "#dc2626", text: "#dc2626", bg: "rgba(220,38,38,0.09)", border: "rgba(220,38,38,0.22)" },
+  green: { dot: "var(--ok)", text: "var(--ok)", bg: "var(--ok-bg)", border: "var(--ok-border)" },
+  amber: { dot: "var(--warn)", text: "var(--warn)", bg: "var(--warn-bg)", border: "var(--warn-border)" },
+  red: { dot: "var(--danger)", text: "var(--danger)", bg: "var(--danger-bg)", border: "var(--danger-border)" },
 };
 
 // ── Small shared pieces ───────────────────────────────────────────────────────
 
+/**
+ * Emergency workspace primitives, re-pointed at the Bragi design system so
+ * the emergency portal reads as the same product as the clinical one.
+ */
+
 function SectionLabel({ children }: { children: React.ReactNode }) {
-  return (
-    <div
-      style={{
-        fontSize: 10,
-        fontWeight: 900,
-        textTransform: "uppercase",
-        letterSpacing: "0.08em",
-        color: "var(--muted)",
-        marginBottom: 10,
-      }}
-    >
-      {children}
-    </div>
-  );
+  return <div className="b-label" style={{ marginBottom: "var(--s2)" }}>{children}</div>;
 }
 
 function Card({ children, style }: { children: React.ReactNode; style?: React.CSSProperties }) {
   return (
-    <div className="soft-card" style={{ padding: "18px 20px", ...style }}>
+    <section
+      className="b-surface"
+      style={{ padding: "var(--s3) var(--s4) var(--s4)", minWidth: 0, ...style }}
+    >
       {children}
-    </div>
+    </section>
   );
 }
 
 function EmptyState({ icon, text }: { icon?: string; text: string }) {
+  void icon;
   return (
-    <p className="muted-text" style={{ fontSize: 13, lineHeight: 1.6, fontStyle: "italic", margin: 0 }}>
-      {icon && <span style={{ marginRight: 6 }}>{icon}</span>}
+    <p className="b-meta" style={{ margin: 0 }}>
       {text}
     </p>
   );
@@ -217,6 +220,14 @@ function EmptyState({ icon, text }: { icon?: string; text: string }) {
 
 // ── Workspace top bar ─────────────────────────────────────────────────────────
 
+/**
+ * Workspace header.
+ *
+ * The inline theme switch carried an "Appearance / Light mode enabled" label
+ * which, next to the language toggle and the sign-out button, squeezed the
+ * worker's name into a three-line wrap. Preferences moved into a menu; the
+ * name and sign-out now fit on one 48px line.
+ */
 function WorkspaceTopBar({
   user,
   onLogout,
@@ -224,64 +235,149 @@ function WorkspaceTopBar({
   user: ReturnType<typeof getEmergencyUser>;
   onLogout: () => void;
 }) {
-  const { t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
+  const [menuOpen, setMenuOpen] = useState(false);
+  const wrapRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!menuOpen) return;
+    function onPointerDown(event: MouseEvent) {
+      if (!wrapRef.current?.contains(event.target as Node)) setMenuOpen(false);
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    return () => document.removeEventListener("mousedown", onPointerDown);
+  }, [menuOpen]);
+
   return (
     <div
       style={{
         display: "flex",
         alignItems: "center",
-        gap: 14,
-        padding: "9px 20px",
+        gap: "var(--s3)",
+        minHeight: 48,
+        padding: "0 var(--s4)",
         borderBottom: "1px solid var(--border)",
       }}
     >
       <Link
         href="/emergency"
-        style={{ display: "flex", alignItems: "center", gap: 9, textDecoration: "none", color: "inherit" }}
+        style={{ display: "flex", alignItems: "center", gap: "var(--s2)", minWidth: 0 }}
       >
-        <BragiLogo height={28} showText={false} />
-        <div style={{ lineHeight: 1.25 }}>
-          <div style={{ fontSize: 13, fontWeight: 800, letterSpacing: "-0.01em" }}>{t("emergencyWorkspace")}</div>
-          <div className="muted-text" style={{ fontSize: 10 }}>Bragi Health</div>
-        </div>
+        <BragiLogo height={22} showText={false} />
+        <span style={{ minWidth: 0 }}>
+          <span
+            style={{
+              display: "block",
+              fontSize: "var(--fs-sm)",
+              fontWeight: 600,
+              letterSpacing: "-0.012em",
+              lineHeight: 1.2,
+            }}
+          >
+            {t("emergencyWorkspace")}
+          </span>
+          <span style={{ display: "block", fontSize: "var(--fs-micro)", color: "var(--muted)" }}>
+            Bragi Health
+          </span>
+        </span>
       </Link>
+
       <div style={{ flex: 1 }} />
-      <div style={{ display: "flex", alignItems: "center", gap: 10 }}>
-        <ThemeToggle compact />
-        <LanguageToggle />
-        {user && (
-          <>
-            <span className="muted-text ew-topbar-username" style={{ fontSize: 12 }}>{user.full_name}</span>
-            <button type="button" className="secondary-btn" style={{ fontSize: 12, padding: "4px 10px" }} onClick={onLogout}>
-              {t("emergencySignOut")}
-            </button>
-          </>
-        )}
-      </div>
+
+      {user ? (
+        <div ref={wrapRef} style={{ position: "relative", flexShrink: 0 }}>
+          <button
+            type="button"
+            className="b-btn b-btn-ghost b-btn-sm"
+            onClick={() => setMenuOpen((value) => !value)}
+            aria-expanded={menuOpen}
+            aria-haspopup="menu"
+            style={{ maxWidth: 210 }}
+          >
+            <span style={{ overflow: "hidden", textOverflow: "ellipsis", whiteSpace: "nowrap" }}>
+              {user.full_name}
+            </span>
+            <IconChevronDown size={12} />
+          </button>
+
+          {menuOpen ? (
+            <div className="b-menu" role="menu" style={{ top: "calc(100% + 4px)", right: 0 }}>
+              <div className="b-menu-label">{t("language")}</div>
+              {(["en", "ro"] as const).map((code) => (
+                <button
+                  key={code}
+                  type="button"
+                  className="b-menu-item"
+                  onClick={() => setLanguage(code)}
+                >
+                  {code === "en" ? "English" : "Română"}
+                  {language === code ? (
+                    <span className="b-menu-trail" style={{ color: "var(--primary)" }}>
+                      <IconCheck size={13} />
+                    </span>
+                  ) : null}
+                </button>
+              ))}
+              <div className="b-menu-sep" />
+              <button type="button" className="b-menu-item b-menu-item-danger" onClick={onLogout}>
+                <IconLogout size={14} />
+                {t("emergencySignOut")}
+              </button>
+            </div>
+          ) : null}
+        </div>
+      ) : null}
     </div>
   );
 }
 
 function WorkspaceStatusBar() {
   const { t } = useLanguage();
+
   return (
     <div
+      role="status"
       style={{
-        background: "rgba(220,38,38,0.05)",
-        borderBottom: "1px solid rgba(220,38,38,0.13)",
-        padding: "5px 20px",
         display: "flex",
         alignItems: "center",
-        gap: 8,
+        gap: "var(--s2)",
         flexWrap: "wrap",
+        padding: "5px var(--s4)",
+        background: "var(--danger-bg)",
+        borderBottom: "1px solid var(--danger-border)",
+        fontSize: "var(--fs-xs)",
+        color: "var(--danger)",
       }}
     >
-      <span style={{ width: 5, height: 5, borderRadius: 999, background: "#dc2626", display: "inline-block", flexShrink: 0 }} />
-      <span style={{ fontSize: 9, fontWeight: 900, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.07em" }}>
+      <span
+        aria-hidden="true"
+        style={{
+          width: 6,
+          height: 6,
+          borderRadius: "var(--r-full)",
+          background: "currentColor",
+          flexShrink: 0,
+        }}
+      />
+      <strong
+        style={{
+          fontWeight: 600,
+          textTransform: "uppercase",
+          letterSpacing: "0.05em",
+          fontSize: "var(--fs-micro)",
+        }}
+      >
         {t("emergencyAuditedAccess")}
-      </span>
-      {[t("emergencyReadOnly"), t("emergencyTimeLimitedAccess"), t("emergencyUseOnlyForEmergency")].map((s) => (
-        <span key={s} className="muted-text" style={{ fontSize: 10 }}>· {s}</span>
+      </strong>
+      {[
+        t("emergencyReadOnly"),
+        t("emergencyTimeLimitedAccess"),
+        t("emergencyUseOnlyForEmergency"),
+      ].map((label) => (
+        <span key={label} style={{ display: "inline-flex", gap: "var(--s2)" }}>
+          <span style={{ opacity: 0.7 }}>·</span>
+          {label}
+        </span>
       ))}
     </div>
   );
@@ -338,8 +434,8 @@ function TabItem({
           alignItems: "center",
           justifyContent: "center",
           fontSize: 10,
-          fontWeight: 800,
-          color: expired ? "#dc2626" : "var(--primary)",
+          fontWeight: 600,
+          color: expired ? "var(--danger)" : "var(--primary)",
           flexShrink: 0,
         }}
       >
@@ -354,7 +450,7 @@ function TabItem({
             whiteSpace: "nowrap",
             overflow: "hidden",
             textOverflow: "ellipsis",
-            color: expired ? "var(--muted)" : "var(--foreground)",
+            color: expired ? "var(--muted)" : "var(--text)",
           }}
         >
           {session.patientName.split(" ")[0]}
@@ -362,9 +458,9 @@ function TabItem({
         <div style={{ display: "flex", alignItems: "center", gap: 4, marginTop: 2 }}>
           <span style={{ width: 5, height: 5, borderRadius: 999, background: c.dot, flexShrink: 0, display: "inline-block" }} />
           {expired ? (
-            <span style={{ fontSize: 10, fontWeight: 700, color: "#dc2626" }}>{t("emergencyTabExpired")}</span>
+            <span style={{ fontSize: "var(--fs-micro)", fontWeight: 600, color: "var(--danger)" }}>{t("emergencyTabExpired")}</span>
           ) : (
-            <span style={{ fontFamily: "monospace", fontSize: 10, fontWeight: 700, color: c.text }}>{formatTime(secs)}</span>
+            <span style={{ fontFamily: "monospace", fontSize: "var(--fs-micro)", fontWeight: 600, color: c.text }}>{formatTime(secs)}</span>
           )}
         </div>
       </div>
@@ -579,12 +675,12 @@ function AddPatientModal({
     >
       <div className="soft-card ew-modal-card" style={{ maxWidth: 520, width: "100%", padding: "26px 28px" }}>
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
-          <h2 style={{ fontSize: 18, fontWeight: 800, margin: 0 }}>{t("emergencyAddPatient")}</h2>
+          <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{t("emergencyAddPatient")}</h2>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", fontSize: 20, lineHeight: 1 }}>×</button>
         </div>
 
         {maxReached ? (
-          <div style={{ padding: "16px", background: "rgba(220,38,38,0.07)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 8, fontSize: 13, color: "#dc2626" }}>
+          <div style={{ padding: "16px", background: "var(--danger-bg)", border: "1px solid var(--danger-border)", borderRadius: "var(--r)", fontSize: 13, color: "var(--danger)" }}>
             {t("emergencyMaxPatients")}
           </div>
         ) : confirm ? (
@@ -708,7 +804,7 @@ function IdentitySection({ data, session }: { data: PatientData; session: TabSes
       <SectionLabel>{t("emergencyIdentity")}</SectionLabel>
       <div style={{ display: "flex", alignItems: "flex-start", gap: 16, flexWrap: "wrap" }}>
         <div style={{ flex: 1, minWidth: 220 }}>
-          <div style={{ fontSize: 26, fontWeight: 900, letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.full_name}</div>
+          <div style={{ fontSize: 19, fontWeight: 600, letterSpacing: "-0.02em", lineHeight: 1.1 }}>{p.full_name}</div>
           <div className="muted-text" style={{ fontSize: 13, marginTop: 6, display: "flex", gap: 14, flexWrap: "wrap" }}>
             {p.date_of_birth && <span>DOB: {formatDate(p.date_of_birth)}</span>}
             {p.age && <span>Age: {p.age}</span>}
@@ -728,10 +824,10 @@ function IdentitySection({ data, session }: { data: PatientData; session: TabSes
               {p.bragi_code}
             </div>
           )}
-          <div style={{ padding: "3px 9px", background: "rgba(220,38,38,0.08)", border: "1px solid rgba(220,38,38,0.18)", borderRadius: 5, fontSize: 9, fontWeight: 800, color: "#dc2626", textTransform: "uppercase", letterSpacing: "0.06em" }}>
+          <div style={{ padding: "3px 9px", background: "var(--danger-bg)", border: "1px solid var(--danger-border)", borderRadius: "var(--r-sm)", fontSize: "var(--fs-micro)", fontWeight: 600, color: "var(--danger)", textTransform: "uppercase", letterSpacing: "0.06em" }}>
             {t("emergencyReadOnly")}
           </div>
-          <div style={{ padding: "3px 9px", background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 5, fontSize: 9, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
+          <div style={{ padding: "3px 9px", background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 5, fontSize: "var(--fs-micro)", fontWeight: 600, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.05em" }}>
             {t("emergencySourceLinkedRecords")}
           </div>
         </div>
@@ -774,7 +870,7 @@ function ContactsSection({ contacts }: { contacts: EmergencyContactEntry[] }) {
               border: "1px solid var(--border)",
             }}
           >
-            <div style={{ fontWeight: 800, fontSize: 13, marginBottom: 2 }}>{c.name}</div>
+            <div style={{ fontWeight: 600, fontSize: 13, marginBottom: 2 }}>{c.name}</div>
             {(c.relationship || c.phone || c.notes) && (
               <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.55 }}>
                 {[c.relationship, c.phone, c.notes].filter(Boolean).join(" · ")}
@@ -808,7 +904,7 @@ function MedicationsSection({ medications }: { medications: Medication[] }) {
                     {[m.dose_strength, m.frequency, m.route_form].filter(Boolean).join(" · ") || "—"}
                   </div>
                   {m.is_uncertain && (
-                    <div style={{ marginTop: 4, fontSize: 10, fontWeight: 700, color: "#d97706", textTransform: "uppercase" }}>
+                    <div style={{ marginTop: 4, fontSize: "var(--fs-micro)", fontWeight: 600, color: "#d97706", textTransform: "uppercase" }}>
                       {t("emergencySourceRequiresVerification")}
                     </div>
                   )}
@@ -840,8 +936,18 @@ function MedicationsSection({ medications }: { medications: Medication[] }) {
   );
 }
 
+/**
+ * Latest bloodwork.
+ *
+ * Was twenty tinted mini-cards, most of them pink, which is exactly the badge
+ * overload the brief warns about - when everything is red nothing reads as
+ * urgent. Now a hairline grid where the figure carries the weight and only the
+ * out-of-range arrow is coloured. Out-of-range values sort first, because
+ * under time pressure those are what matters.
+ */
 function LatestLabsSection({ bloodwork }: { bloodwork: PatientData["latest_bloodwork"] }) {
   const { t } = useLanguage();
+
   if (!bloodwork) {
     return (
       <Card>
@@ -850,36 +956,74 @@ function LatestLabsSection({ bloodwork }: { bloodwork: PatientData["latest_blood
       </Card>
     );
   }
+
+  const ordered = [...bloodwork.labs].sort((a, b) => {
+    const abnormalA = isAbnormal(a.flag) ? 0 : 1;
+    const abnormalB = isAbnormal(b.flag) ? 0 : 1;
+    return abnormalA - abnormalB;
+  });
+  const abnormalCount = bloodwork.labs.filter((lab) => isAbnormal(lab.flag)).length;
+
   return (
     <Card>
-      <SectionLabel>{t("emergencyLatestBloodwork")}</SectionLabel>
-      <div className="muted-text" style={{ fontSize: 12, marginBottom: 10 }}>
-        {bloodwork.lab_name && <span>{bloodwork.lab_name} · </span>}
-        {bloodwork.test_date ? formatDate(bloodwork.test_date) : "Date unknown"}
+      <div
+        style={{
+          display: "flex",
+          alignItems: "baseline",
+          justifyContent: "space-between",
+          gap: "var(--s3)",
+          flexWrap: "wrap",
+        }}
+      >
+        <SectionLabel>{t("emergencyLatestBloodwork")}</SectionLabel>
+        {abnormalCount > 0 ? (
+          <span className="b-status b-status-danger" style={{ fontSize: "var(--fs-xs)" }}>
+            {abnormalCount} out of range
+          </span>
+        ) : null}
       </div>
-      {bloodwork.labs.length === 0 ? (
+
+      <p className="b-meta" style={{ marginBottom: "var(--s2)" }}>
+        {bloodwork.lab_name ? `${bloodwork.lab_name} · ` : ""}
+        {bloodwork.test_date ? formatDate(bloodwork.test_date) : "Date unknown"}
+      </p>
+
+      {ordered.length === 0 ? (
         <EmptyState text="No lab values extracted from this document." />
       ) : (
-        <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fill, minmax(150px, 1fr))", gap: "6px 10px", maxHeight: 340, overflowY: "auto" }}>
-          {bloodwork.labs.map((lab, i) => {
-            const abnormal = isAbnormal(lab.flag);
-            return (
-              <div key={i} style={{ padding: "6px 8px", borderRadius: 6, background: abnormal ? "rgba(220,38,38,0.07)" : "var(--panel-2)", border: `1px solid ${abnormal ? "rgba(220,38,38,0.18)" : "var(--border)"}` }}>
-                <div className="muted-text" style={{ fontSize: 9, fontWeight: 700, textTransform: "uppercase", marginBottom: 2, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {lab.name || "—"}
-                </div>
-                <div style={{ fontSize: 13, fontWeight: 700, color: abnormal ? "var(--danger-text)" : "var(--foreground)" }}>
-                  {lab.value || "—"}{lab.unit ? ` ${lab.unit}` : ""}
-                </div>
-                {lab.reference_range && (
-                  <div className="muted-text" style={{ fontSize: 9, marginTop: 1 }}>ref: {lab.reference_range}</div>
-                )}
+        <div
+          tabIndex={0}
+          role="group"
+          aria-label={t("emergencyLatestBloodwork")}
+          style={{
+            display: "grid",
+            gridTemplateColumns: "repeat(auto-fill, minmax(140px, 1fr))",
+            gap: 1,
+            background: "var(--border)",
+            border: "1px solid var(--border)",
+            borderRadius: "var(--r-md)",
+            overflow: "hidden",
+            maxHeight: 320,
+            overflowY: "auto",
+          }}
+        >
+          {ordered.map((lab, index) => (
+            <div key={index} style={{ background: "var(--surface)", padding: "6px 9px" }}>
+              <div className="b-cell-sub" title={lab.name || undefined}>
+                {lab.name || "—"}
               </div>
-            );
-          })}
+              <div style={{ fontSize: "var(--fs-body)", marginTop: 1 }}>
+                <LabValue value={lab.value || "—"} unit={lab.unit} flag={lab.flag} />
+              </div>
+              {lab.reference_range ? (
+                <div className="b-range">ref {lab.reference_range}</div>
+              ) : null}
+            </div>
+          ))}
         </div>
       )}
-      <p className="muted-text" style={{ fontSize: 10, marginTop: 8 }}>
+
+      <p className="b-meta" style={{ marginTop: "var(--s2)" }}>
         {t("emergencyOutOfRange")} · {t("emergencyRefRange")} · {t("emergencyNotADiagnosis")}
       </p>
     </Card>
@@ -916,7 +1060,7 @@ function DocListSection({
           </div>
           <div style={{ display: "flex", gap: 6, flexShrink: 0, alignItems: "center" }}>
             {doc.is_verified ? (
-              <span style={{ fontSize: 9, fontWeight: 700, color: "var(--success-text, #16a34a)", background: "rgba(22,163,74,0.08)", padding: "2px 7px", borderRadius: 4, textTransform: "uppercase" }}>
+              <span style={{ fontSize: "var(--fs-micro)", fontWeight: 600, color: "var(--ok)", background: "var(--ok-bg)", padding: "2px 7px", borderRadius: 4, textTransform: "uppercase" }}>
                 {t("emergencyVerified")}
               </span>
             ) : (
@@ -940,7 +1084,7 @@ function DocListSection({
         <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, padding: "10px 0", display: "flex", alignItems: "center", gap: 8, userSelect: "none" }}>
           {title}
           {docs.length > 0 && (
-            <span style={{ fontSize: 10, fontWeight: 700, background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 999, padding: "1px 7px", color: "var(--muted)" }}>
+            <span style={{ fontSize: "var(--fs-micro)", fontWeight: 600, background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 999, padding: "1px 7px", color: "var(--muted)" }}>
               {docs.length}
             </span>
           )}
@@ -961,28 +1105,41 @@ function DocListSection({
 function RecentDocsSection({ documents, sessionId }: { documents: EDoc[]; sessionId: number }) {
   const { t } = useLanguage();
   const recent = documents.slice(0, 8);
+
   return (
-    <Card>
+    <Card style={{ paddingBottom: 0 }}>
       <SectionLabel>{t("emergencyRecentDocuments")}</SectionLabel>
+
       {recent.length === 0 ? (
         <EmptyState text={t("emergencyNoDocuments")} />
       ) : (
-        <div style={{ display: "flex", flexDirection: "column", gap: 6 }}>
+        <div
+          className="b-list"
+          style={{
+            marginLeft: "calc(var(--s4) * -1)",
+            marginRight: "calc(var(--s4) * -1)",
+            borderTop: "1px solid var(--border)",
+          }}
+        >
           {recent.map((doc) => (
-            <div key={doc.id} style={{ padding: "9px 12px", background: "var(--panel-2)", borderRadius: 8, border: "1px solid var(--border)", display: "flex", alignItems: "center", gap: 10 }}>
-              <div style={{ flex: 1, minWidth: 0 }}>
-                <div style={{ fontWeight: 600, fontSize: 13, whiteSpace: "nowrap", overflow: "hidden", textOverflow: "ellipsis" }}>
-                  {doc.report_name || doc.filename}
-                </div>
-                <div className="muted-text" style={{ fontSize: 11, marginTop: 2 }}>
-                  {sectionLabel(doc.section)}{doc.lab_name ? ` · ${doc.lab_name}` : ""} · {doc.test_date ? formatDate(doc.test_date) : formatDate(doc.created_at)}
-                </div>
-              </div>
-              <Link href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
-                style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none", padding: "3px 8px", border: "1px solid var(--primary)", borderRadius: 5, whiteSpace: "nowrap", flexShrink: 0 }}>
-                {t("emergencyOpenStructured")}
-              </Link>
-            </div>
+            <Link
+              key={doc.id}
+              href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
+              className="b-list-row"
+              style={{ textDecoration: "none" }}
+            >
+              <span className="b-list-main">
+                <span className="b-list-title">{doc.report_name || doc.filename}</span>
+                <span className="b-list-sub">
+                  {sectionLabel(doc.section)}
+                  {doc.lab_name ? ` · ${doc.lab_name}` : ""} ·{" "}
+                  {doc.test_date ? formatDate(doc.test_date) : formatDate(doc.created_at)}
+                </span>
+              </span>
+              <span className="b-list-trail">
+                <IconChevronRight size={13} className="b-list-chevron" />
+              </span>
+            </Link>
           ))}
         </div>
       )}
@@ -1024,7 +1181,7 @@ function DocumentLibrarySection({ documents, sessionId }: { documents: EDoc[]; s
     <details>
       <summary style={{ cursor: "pointer", fontSize: 13, fontWeight: 700, padding: "10px 0", userSelect: "none", display: "flex", alignItems: "center", gap: 8 }}>
         {t("emergencyDocumentLibrary")}
-        <span style={{ fontSize: 10, fontWeight: 700, background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 999, padding: "1px 7px", color: "var(--muted)" }}>
+        <span style={{ fontSize: "var(--fs-micro)", fontWeight: 600, background: "var(--panel-2)", border: "1px solid var(--border)", borderRadius: 999, padding: "1px 7px", color: "var(--muted)" }}>
           {documents.length}
         </span>
       </summary>
@@ -1060,7 +1217,7 @@ function DocumentLibrarySection({ documents, sessionId }: { documents: EDoc[]; s
                 </div>
                 <div style={{ display: "flex", gap: 5, flexShrink: 0, alignItems: "center" }}>
                   {doc.is_verified
-                    ? <span style={{ fontSize: 9, fontWeight: 700, color: "var(--success-text, #16a34a)", background: "rgba(22,163,74,0.08)", padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{t("emergencyVerified")}</span>
+                    ? <span style={{ fontSize: "var(--fs-micro)", fontWeight: 600, color: "var(--ok)", background: "var(--ok-bg)", padding: "1px 6px", borderRadius: 4, textTransform: "uppercase" }}>{t("emergencyVerified")}</span>
                     : <span className="muted-text" style={{ fontSize: 9 }}>{t("emergencyUnverified")}</span>}
                   <Link href={`/emergency/documents/${doc.id}?session_id=${sessionId}`}
                     style={{ fontSize: 11, color: "var(--primary)", fontWeight: 600, textDecoration: "none", padding: "3px 8px", border: "1px solid var(--primary)", borderRadius: 5, whiteSpace: "nowrap" }}>
@@ -1121,17 +1278,20 @@ function EmergencyPatientProfile({ session, data, sessionId }: { session: TabSes
 
 function EmptyWorkspaceState({ onAdd }: { onAdd: () => void }) {
   const { t } = useLanguage();
+
   return (
-    <div style={{ textAlign: "center", padding: "80px 24px" }}>
-      <div style={{ fontSize: 48, marginBottom: 20 }}>🔒</div>
-      <h2 style={{ fontSize: 22, fontWeight: 900, margin: "0 0 10px" }}>{t("emergencyNoActiveSessions")}</h2>
-      <p className="muted-text" style={{ fontSize: 14, lineHeight: 1.6, maxWidth: 360, margin: "0 auto 28px" }}>
-        {t("emergencyStartFirstSession")}
-      </p>
-      <button type="button" className="primary-btn" style={{ fontSize: 15, padding: "13px 36px" }} onClick={onAdd}>
-        {t("emergencyAddPatient")}
-      </button>
-    </div>
+    <section className="b-surface" style={{ marginTop: "var(--s5)" }}>
+      <SharedEmptyState
+        icon={<IconShield size={17} />}
+        title={t("emergencyNoActiveSessions")}
+        description={t("emergencyStartFirstSession")}
+        actions={
+          <button type="button" className="b-btn b-btn-primary b-btn-lg" onClick={onAdd}>
+            {t("emergencyAddPatient")}
+          </button>
+        }
+      />
+    </section>
   );
 }
 
@@ -1149,8 +1309,7 @@ function ExpiredTabState({
   const { t } = useLanguage();
   return (
     <div style={{ textAlign: "center", padding: "60px 24px" }}>
-      <div style={{ fontSize: 40, marginBottom: 16 }}>🔒</div>
-      <h2 style={{ fontSize: 22, fontWeight: 900, margin: "0 0 10px" }}>{t("emergencyExpired")}</h2>
+      <h2 style={{ fontSize: 22, fontWeight: 600, margin: "0 0 10px" }}>{t("emergencyExpired")}</h2>
       <p className="muted-text" style={{ fontSize: 14, lineHeight: 1.6, marginBottom: 10 }}>
         {t("emergencyExpiredBody")}
       </p>
@@ -1340,7 +1499,7 @@ function WorkspacePage() {
           <p className="muted-text" style={{ fontSize: 14 }}>Loading patient data…</p>
         ) : activeData == null ? (
           <div className="soft-card" style={{ padding: "28px 24px", textAlign: "center" }}>
-            <div style={{ fontSize: 18, fontWeight: 900, marginBottom: 10 }}>Access unavailable</div>
+            <div style={{ fontSize: 18, fontWeight: 600, marginBottom: 10 }}>Access unavailable</div>
             <p className="muted-text" style={{ fontSize: 14, lineHeight: 1.65, maxWidth: 380, margin: "0 auto 20px" }}>
               This patient&apos;s data could not be loaded. The session may have expired, or the patient may have disabled emergency discoverability.
             </p>

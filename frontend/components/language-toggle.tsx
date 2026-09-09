@@ -1,24 +1,27 @@
-﻿"use client";
+"use client";
+
+/**
+ * Language toggle.
+ *
+ * Was a 42px full-radius pill at weight 950. Now a standard small secondary
+ * button, matching the compact theme toggle it always sits next to.
+ */
 
 import { useLanguage } from "@/lib/i18n";
 
 export default function LanguageToggle() {
-  const { language, setLanguage } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
 
   const nextLanguage = language === "en" ? "ro" : "en";
 
   return (
     <button
       type="button"
-      className="secondary-btn"
+      className="b-btn b-btn-secondary"
       onClick={() => setLanguage(nextLanguage)}
-      style={{
-        height: 42,
-        minWidth: 58,
-        padding: "0 14px",
-        borderRadius: 999,
-        fontWeight: 950,
-      }}
+      aria-label={t("language")}
+      title={t("language")}
+      style={{ minWidth: 44 }}
     >
       {language === "en" ? "RO" : "EN"}
     </button>

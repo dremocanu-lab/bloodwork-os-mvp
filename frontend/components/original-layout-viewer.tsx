@@ -65,7 +65,7 @@ export default function OriginalLayoutViewer({ layout, mode = "lines" }: Origina
         overflow: "auto",
         padding: 12,
         background: "var(--panel-2)",
-        borderRadius: 24,
+        borderRadius: "var(--r-lg)",
         border: "1px solid var(--border)",
       }}
     >
@@ -99,7 +99,7 @@ export default function OriginalLayoutViewer({ layout, mode = "lines" }: Origina
                 top: 8,
                 right: 10,
                 fontSize: 10,
-                fontWeight: 800,
+                fontWeight: 600,
                 color: "#6b7280",
               }}
             >

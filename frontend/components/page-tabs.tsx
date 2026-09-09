@@ -1,8 +1,21 @@
-﻿"use client";
+"use client";
+
+/**
+ * Legacy PageTabs shim.
+ *
+ * The original painted the active tab with `var(--accent)` - a variable that
+ * was never declared, so the active tab rendered with no background - and
+ * hard-coded `background: white` / `color: #374151`, which broke in dark
+ * mode. It now delegates to the shared underline Tabs so every tab row in
+ * Bragi looks and behaves the same. The prop signature is unchanged.
+ */
+
+import { Tabs } from "@/components/ui";
 
 type Tab = {
   key: string;
   label: string;
+  count?: number;
 };
 
 export default function PageTabs({
@@ -15,29 +28,8 @@ export default function PageTabs({
   onChange: (tab: string) => void;
 }) {
   return (
-    <div style={{ display: "flex", gap: 10, flexWrap: "wrap", marginBottom: 24 }}>
-      {tabs.map((tab) => {
-        const active = tab.key === activeTab;
-
-        return (
-          <button
-            key={tab.key}
-            onClick={() => onChange(tab.key)}
-            style={{
-              border: active ? "none" : "1px solid var(--border)",
-              background: active ? "var(--accent)" : "white",
-              color: active ? "white" : "#374151",
-              borderRadius: 16,
-              padding: "10px 16px",
-              fontWeight: 700,
-              fontSize: 14,
-              cursor: "pointer",
-            }}
-          >
-            {tab.label}
-          </button>
-        );
-      })}
+    <div style={{ marginBottom: "var(--s4)" }}>
+      <Tabs tabs={tabs} activeTab={activeTab} onChange={onChange} />
     </div>
   );
 }

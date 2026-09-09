@@ -1,5 +1,18 @@
 "use client";
 
+/**
+ * Doctor home - the care list.
+ *
+ * Redesigned from a stack of 68px rows with right-aligned red badge clusters
+ * (which collided with the patient's name on any phone) into a real clinical
+ * table: sortable columns, aligned figures, a status dot for care context and
+ * a quiet abnormal-lab preview. Below 900px the same rows become list items
+ * so nothing overflows and nothing is lost.
+ *
+ * Pattern reference: Deel / Attio person tables - avatar, name over a
+ * secondary line, dot status, right-aligned counts, hover row actions.
+ */
+
 import { useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
@@ -8,15 +21,26 @@ import { getHomeByRole } from "@/lib/routing";
 import type { AppLanguage } from "@/lib/i18n";
 import { useLanguage } from "@/lib/i18n";
 import { formatPatientAge } from "@/lib/patient-age";
-
-type CurrentUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin" | "care_partner";
-  department?: string | null;
-  hospital_name?: string | null;
-};
+import {
+  CellPrimary,
+  Column,
+  DataTable,
+  EmptyState,
+  ErrorNote,
+  FilterChip,
+  LabValue,
+  Metric,
+  Metrics,
+  Status,
+  TableSkeleton,
+  Toolbar,
+} from "@/components/ui";
+import {
+  IconChevronRight,
+  IconSearch,
+  IconUsers,
+} from "@/components/ui/icon";
+import type { NavUser } from "@/lib/navigation";
 
 type LabInsight = {
   id?: number;
@@ -55,27 +79,6 @@ type PatientCard = {
 
 type FilterMode = "all" | "active" | "new" | "abnormal" | "inactive";
 
-function Spinner({ size = 18 }: { size?: number }) {
-  return (
-    <>
-      <style jsx>{`
-        @keyframes bloodworkSpin {
-          to { transform: rotate(360deg); }
-        }
-        .bloodwork-spinner {
-          width: ${size}px;
-          height: ${size}px;
-          border-radius: 999px;
-          border: 2px solid var(--border);
-          border-top-color: var(--primary);
-          animation: bloodworkSpin 0.8s linear infinite;
-        }
-      `}</style>
-      <span className="bloodwork-spinner" />
-    </>
-  );
-}
-
 function getInitials(name: string) {
   const parts = name.trim().split(/\s+/).filter(Boolean).slice(0, 2);
   if (!parts.length) return "P";
@@ -89,235 +92,23 @@ function getCareLabel(item: PatientCard) {
   return "Outpatient";
 }
 
-function rowAccent(item: PatientCard): string {
-  if ((item.abnormal_count ?? 0) > 0) return "var(--danger-text)";
-  if (item.care_context === "active_admission") return "var(--success-text)";
-  return "var(--primary)";
-}
-
-function avatarColors(item: PatientCard): { bg: string; color: string } {
-  if ((item.abnormal_count ?? 0) > 0)
-    return { bg: "var(--danger-bg)", color: "var(--danger-text)" };
-  if (item.care_context === "active_admission")
-    return { bg: "var(--success-bg)", color: "var(--success-text)" };
-  return { bg: "var(--primary-soft)", color: "var(--primary)" };
-}
-
-type PatientRowProps = {
-  item: PatientCard;
-  labels: ReturnType<typeof buildLabels>;
-  language: AppLanguage;
-  onClick: () => void;
-};
-
-function PatientRow({ item, labels, language, onClick }: PatientRowProps) {
-  const abnormalCount = item.abnormal_count ?? 0;
-  const newCount = item.new_records_count ?? 0;
-  const labs = item.latest_abnormal_labs ?? [];
-  const accent = rowAccent(item);
-  const av = avatarColors(item);
-  const careLabel = getCareLabel(item);
-  const isActive = item.care_context === "active_admission";
-
-  return (
-    <button
-      type="button"
-      onClick={onClick}
-      style={{
-        display: "grid",
-        gridTemplateColumns: "4px 52px 1fr auto auto",
-        alignItems: "center",
-        gap: "0 14px",
-        width: "100%",
-        minHeight: 68,
-        padding: "10px 16px 10px 0",
-        background: "none",
-        border: "none",
-        borderBottom: "1px solid var(--border)",
-        cursor: "pointer",
-        textAlign: "left",
-      }}
-    >
-      {/* Left accent bar */}
-      <span
-        style={{
-          alignSelf: "stretch",
-          width: 4,
-          borderRadius: "0 2px 2px 0",
-          background: accent,
-          flexShrink: 0,
-        }}
-      />
-
-      {/* Avatar */}
-      <span
-        style={{
-          width: 40,
-          height: 40,
-          borderRadius: 12,
-          display: "grid",
-          placeItems: "center",
-          background: av.bg,
-          color: av.color,
-          fontWeight: 800,
-          fontSize: 14,
-          letterSpacing: "-0.03em",
-          flexShrink: 0,
-          border: `1px solid color-mix(in srgb, ${av.color} 22%, transparent)`,
-        }}
-      >
-        {getInitials(item.patient.full_name)}
-      </span>
-
-      {/* Name + meta */}
-      <span style={{ display: "flex", flexDirection: "column", gap: 3, minWidth: 0 }}>
-        <span
-          style={{
-            fontWeight: 700,
-            fontSize: 14,
-            color: "var(--text)",
-            whiteSpace: "nowrap",
-            overflow: "hidden",
-            textOverflow: "ellipsis",
-          }}
-        >
-          {item.patient.full_name}
-        </span>
-        <span
-          style={{
-            fontSize: 12,
-            color: "var(--muted)",
-            display: "flex",
-            gap: 6,
-            flexWrap: "wrap",
-            alignItems: "center",
-          }}
-        >
-          <span>{formatPatientAge(item.patient.date_of_birth, language)}</span>
-          {item.patient.sex && (
-            <>
-              <span style={{ opacity: 0.4 }}>·</span>
-              <span>{item.patient.sex}</span>
-            </>
-          )}
-          <span style={{ opacity: 0.4 }}>·</span>
-          <span
-            style={{
-              padding: "1px 7px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 600,
-              background: isActive ? "var(--success-bg)" : "var(--panel-2)",
-              color: isActive ? "var(--success-text)" : "var(--muted)",
-              border: `1px solid ${isActive ? "color-mix(in srgb, var(--success-text) 24%, transparent)" : "var(--border)"}`,
-            }}
-          >
-            {careLabel}
-          </span>
-          {item.active_event && (
-            <span style={{ opacity: 0.72, fontStyle: "italic" }}>{item.active_event.title}</span>
-          )}
-        </span>
-      </span>
-
-      {/* Badges: new records + abnormal labs */}
-      <span
-        style={{
-          display: "flex",
-          flexDirection: "column",
-          gap: 4,
-          alignItems: "flex-end",
-          flexShrink: 0,
-        }}
-      >
-        {newCount > 0 && (
-          <span
-            style={{
-              padding: "2px 8px",
-              borderRadius: 4,
-              fontSize: 11,
-              fontWeight: 700,
-              background: "var(--primary-soft)",
-              color: "var(--primary)",
-              border: "1px solid color-mix(in srgb, var(--primary) 28%, transparent)",
-              whiteSpace: "nowrap",
-            }}
-          >
-            {newCount} {newCount === 1 ? labels.newRecord : labels.newRecords}
-          </span>
-        )}
-        {abnormalCount > 0 && (
-          <span
-            style={{
-              display: "flex",
-              gap: 4,
-              alignItems: "center",
-              flexWrap: "nowrap",
-            }}
-          >
-            {labs.slice(0, 2).map((lab, i) => (
-              <span
-                key={`${lab.display_name}-${i}`}
-                style={{
-                  padding: "2px 7px",
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 600,
-                  background: "var(--danger-bg)",
-                  color: "var(--danger-text)",
-                  border: "1px solid var(--danger-border)",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                {lab.display_name ?? "?"}{lab.value ? ` ${lab.value}` : ""}
-                {lab.unit ? ` ${lab.unit}` : ""}
-              </span>
-            ))}
-            {abnormalCount > 2 && (
-              <span
-                style={{
-                  padding: "2px 7px",
-                  borderRadius: 4,
-                  fontSize: 11,
-                  fontWeight: 700,
-                  background: "var(--danger-bg)",
-                  color: "var(--danger-text)",
-                  border: "1px solid var(--danger-border)",
-                  whiteSpace: "nowrap",
-                }}
-              >
-                +{abnormalCount - 2}
-              </span>
-            )}
-          </span>
-        )}
-      </span>
-
-      {/* Chevron */}
-      <svg
-        width="16"
-        height="16"
-        viewBox="0 0 16 16"
-        fill="none"
-        style={{ flexShrink: 0, color: "var(--muted)", opacity: 0.5 }}
-      >
-        <path d="M6 3l5 5-5 5" stroke="currentColor" strokeWidth="1.5" strokeLinecap="round" strokeLinejoin="round" />
-      </svg>
-    </button>
-  );
+/**
+ * Care context drives the status dot, so the state reads without colour
+ * fills. Only an active admission earns colour - routine outpatient care is
+ * the common case and should stay neutral, or every row shouts.
+ */
+function careTone(item: PatientCard) {
+  if (item.care_context === "active_admission") return "ok" as const;
+  return "muted" as const;
 }
 
 function buildLabels(language: AppLanguage) {
   if (language === "ro") {
     return {
-      newRecords: "Documente noi",
-      newRecord: "Document nou",
-      noNewRecords: "Fără documente noi",
-      activeAdmission: "Internare activă",
-      abnormalUnreviewed: "Rezultate anormale nerevizuite",
-      searchPlaceholder: "Caută după nume, CNP sau ID pacient...",
+      newRecords: "documente noi",
+      searchPlaceholder: "Caută după nume, CNP sau ID…",
       searchAllPatients: "Caută toți pacienții",
-      totalUnderCare: "Pacienți în grijă",
+      totalUnderCare: "În grijă",
       patientsWithNewRecords: "Cu documente noi",
       activeAdmissions: "Internări active",
       abnormalAttention: "Cu rezultate anormale",
@@ -325,20 +116,22 @@ function buildLabels(language: AppLanguage) {
       active: "Internați",
       new: "Noi",
       abnormal: "Anormale",
-      inactive: "Fără internare activă",
+      inactive: "Fără internare",
+      colPatient: "Pacient",
+      colContext: "Context",
+      colNew: "Noi",
+      colAbnormal: "Rezultate anormale",
+      colAdmission: "Episod",
+      patients: "pacienți",
       helper:
-        "Documentele noi sunt specifice medicului. În internare se afișează doar documentele noi din episodul curent; în ambulatoriu se afișează documentele nerevizuite ale pacienților alocați.",
+        "Documentele noi sunt specifice medicului: în internare doar din episodul curent, în ambulatoriu documentele nerevizuite ale pacienților alocați.",
     };
   }
   return {
-    newRecords: "new records",
-    newRecord: "new record",
-    noNewRecords: "No new records",
-    activeAdmission: "Active admission",
-    abnormalUnreviewed: "Unreviewed abnormal results",
-    searchPlaceholder: "Search by name, CNP, or patient ID...",
+    newRecords: "new",
+    searchPlaceholder: "Search by name, CNP, or patient ID…",
     searchAllPatients: "Search all patients",
-    totalUnderCare: "Patients under care",
+    totalUnderCare: "Under care",
     patientsWithNewRecords: "With new records",
     activeAdmissions: "Active admissions",
     abnormalAttention: "With abnormal results",
@@ -347,8 +140,14 @@ function buildLabels(language: AppLanguage) {
     new: "New",
     abnormal: "Abnormal",
     inactive: "No active stay",
+    colPatient: "Patient",
+    colContext: "Context",
+    colNew: "New",
+    colAbnormal: "Abnormal results",
+    colAdmission: "Episode",
+    patients: "patients",
     helper:
-      "New records are doctor-specific. Active admission doctors only see new records from the current stay; outpatient doctors see unreviewed records for their assigned patients.",
+      "New records are doctor-specific: during an admission only the current stay, in outpatient care the unreviewed records of assigned patients.",
   };
 }
 
@@ -356,7 +155,7 @@ export default function MyPatientsPage() {
   const router = useRouter();
   const { t, language } = useLanguage();
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<NavUser | null>(null);
   const [patients, setPatients] = useState<PatientCard[]>([]);
   const [query, setQuery] = useState("");
   const [filterMode, setFilterMode] = useState<FilterMode>("all");
@@ -365,26 +164,22 @@ export default function MyPatientsPage() {
 
   const labels = useMemo(() => buildLabels(language), [language]);
 
-  async function fetchData() {
-    const [meResponse, patientsResponse] = await Promise.all([
-      api.get<CurrentUser>("/auth/me"),
-      api.get<PatientCard[]>("/my-patients"),
-    ]);
-
-    if (meResponse.data.role !== "doctor") {
-      router.push(getHomeByRole(meResponse.data.role));
-      return;
-    }
-
-    setCurrentUser(meResponse.data);
-    setPatients(patientsResponse.data);
-  }
-
   useEffect(() => {
     async function init() {
       try {
         setError("");
-        await fetchData();
+        const [meResponse, patientsResponse] = await Promise.all([
+          api.get<NavUser>("/auth/me"),
+          api.get<PatientCard[]>("/my-patients"),
+        ]);
+
+        if (meResponse.data.role !== "doctor") {
+          router.push(getHomeByRole(meResponse.data.role));
+          return;
+        }
+
+        setCurrentUser(meResponse.data);
+        setPatients(patientsResponse.data);
       } catch {
         localStorage.removeItem("access_token");
         router.push("/login");
@@ -393,7 +188,7 @@ export default function MyPatientsPage() {
       }
     }
     init();
-  }, []);
+  }, [router]);
 
   const stats = useMemo(() => {
     const active = patients.filter((item) => item.active_event).length;
@@ -401,6 +196,17 @@ export default function MyPatientsPage() {
     const abnormalPatients = patients.filter((item) => (item.abnormal_count ?? 0) > 0).length;
     return { total: patients.length, active, withNewRecords, abnormalPatients };
   }, [patients]);
+
+  const counts = useMemo(
+    () => ({
+      all: patients.length,
+      active: patients.filter((p) => p.active_event).length,
+      new: patients.filter((p) => (p.new_records_count ?? 0) > 0).length,
+      abnormal: patients.filter((p) => (p.abnormal_count ?? 0) > 0).length,
+      inactive: patients.filter((p) => !p.active_event).length,
+    }),
+    [patients]
+  );
 
   const filteredPatients = useMemo(() => {
     const term = query.trim().toLowerCase();
@@ -413,6 +219,7 @@ export default function MyPatientsPage() {
         if (filterMode === "new" && newCount <= 0) return false;
         if (filterMode === "abnormal" && abnormalCount <= 0) return false;
         if (!term) return true;
+
         const haystack = [
           item.patient.full_name,
           item.patient.date_of_birth,
@@ -430,6 +237,7 @@ export default function MyPatientsPage() {
         return haystack.includes(term);
       })
       .sort((a, b) => {
+        // Clinical urgency first: active stays, then abnormal, then new.
         const aAbnormal = a.abnormal_count ?? 0;
         const bAbnormal = b.abnormal_count ?? 0;
         const aNew = a.new_records_count ?? 0;
@@ -444,15 +252,125 @@ export default function MyPatientsPage() {
       });
   }, [patients, query, filterMode]);
 
+  const columns: Column<PatientCard>[] = useMemo(
+    () => [
+      {
+        key: "patient",
+        header: labels.colPatient,
+        sortable: true,
+        sortValue: (row) => row.patient.full_name,
+        render: (row) => (
+          <CellPrimary
+            avatar={getInitials(row.patient.full_name)}
+            title={row.patient.full_name}
+            sub={
+              <>
+                {formatPatientAge(row.patient.date_of_birth, language)}
+                {row.patient.sex ? ` · ${row.patient.sex}` : ""}
+                {row.patient.cnp ? ` · ${row.patient.cnp}` : ""}
+              </>
+            }
+          />
+        ),
+      },
+      {
+        key: "context",
+        header: labels.colContext,
+        width: 150,
+        sortable: true,
+        sortValue: (row) => getCareLabel(row),
+        hideBelow: 900,
+        render: (row) => <Status tone={careTone(row)}>{getCareLabel(row)}</Status>,
+      },
+      {
+        key: "episode",
+        header: labels.colAdmission,
+        hideBelow: 1100,
+        render: (row) =>
+          row.active_event?.title ? (
+            <span className="b-cell-sub" style={{ color: "var(--text-2)" }}>
+              {row.active_event.title}
+            </span>
+          ) : (
+            <span className="b-range">—</span>
+          ),
+      },
+      {
+        key: "new",
+        header: labels.colNew,
+        numeric: true,
+        width: 64,
+        sortable: true,
+        sortValue: (row) => row.new_records_count ?? 0,
+        render: (row) => {
+          const count = row.new_records_count ?? 0;
+          return count > 0 ? (
+            <span style={{ color: "var(--primary)", fontWeight: 600 }}>{count}</span>
+          ) : (
+            <span className="b-range">—</span>
+          );
+        },
+      },
+      {
+        key: "abnormal",
+        header: labels.colAbnormal,
+        width: 300,
+        sortable: true,
+        sortValue: (row) => row.abnormal_count ?? 0,
+        hideBelow: 900,
+        render: (row) => {
+          const total = row.abnormal_count ?? 0;
+          const labs = row.latest_abnormal_labs ?? [];
+          if (!total) return <span className="b-range">—</span>;
+
+          return (
+            <div className="b-strip" style={{ alignItems: "center", gap: "var(--s3)" }}>
+              {labs.slice(0, 2).map((lab, index) => (
+                <span
+                  key={`${lab.display_name}-${index}`}
+                  style={{ display: "inline-flex", alignItems: "baseline", gap: 4, minWidth: 0 }}
+                >
+                  <span className="b-cell-sub" style={{ maxWidth: 110 }}>
+                    {lab.display_name ?? "—"}
+                  </span>
+                  <LabValue value={lab.value ?? "—"} unit={lab.unit} flag={lab.flag} />
+                </span>
+              ))}
+              {total > 2 ? <span className="b-range">+{total - 2}</span> : null}
+            </div>
+          );
+        },
+      },
+      {
+        key: "go",
+        header: <span className="sr-only">Open</span>,
+        width: 32,
+        center: true,
+        render: () => <IconChevronRight size={14} className="b-list-chevron" />,
+      },
+    ],
+    [labels, language]
+  );
+
+  const filters = (
+    <>
+      {(["all", "active", "new", "abnormal", "inactive"] as FilterMode[]).map((mode) => (
+        <FilterChip
+          key={mode}
+          label={labels[mode]}
+          count={counts[mode]}
+          active={filterMode === mode}
+          onClick={() => setFilterMode(mode)}
+        />
+      ))}
+    </>
+  );
+
   if (loading || !currentUser) {
     return (
-      <main
-        className="app-page-bg"
-        style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}
-      >
-        <div className="soft-card-tight" style={{ padding: 22, display: "flex", alignItems: "center", gap: 12 }}>
-          <Spinner size={20} />
-          <span className="muted-text">{t("loadingPatients")}</span>
+      <main className="app-page-bg" style={{ padding: "var(--s6)" }}>
+        <div className="b-surface">
+          <TableSkeleton rows={6} columns={4} />
         </div>
       </main>
     );
@@ -464,133 +382,152 @@ export default function MyPatientsPage() {
       title={t("myCurrentPatients")}
       subtitle={t("myCurrentPatientsSubtitle")}
       rightContent={
-        <button className="secondary-btn" onClick={() => router.push("/patients/search")}>
+        <button
+          type="button"
+          className="b-btn b-btn-secondary"
+          onClick={() => router.push("/patients/search")}
+        >
+          <IconSearch size={14} />
           {labels.searchAllPatients}
         </button>
       }
     >
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
+      <div className="b-stack">
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      {/* Stat strip */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "repeat(auto-fit, minmax(210px, 1fr))",
-          gap: 16,
-          marginBottom: 24,
-        }}
-      >
-        <div className="stat-card stat-card-accent-violet">
-          <div className="stat-card-label">{labels.totalUnderCare}</div>
-          <div className="stat-card-value">{stats.total}</div>
-        </div>
-        <div className="stat-card stat-card-accent-blue">
-          <div className="stat-card-label">{labels.patientsWithNewRecords}</div>
-          <div className="stat-card-value">{stats.withNewRecords}</div>
-        </div>
-        <div className="stat-card stat-card-accent-green">
-          <div className="stat-card-label">{labels.activeAdmissions}</div>
-          <div className="stat-card-value">{stats.active}</div>
-        </div>
-        <div className="stat-card stat-card-accent-orange">
-          <div className="stat-card-label">{labels.abnormalAttention}</div>
-          <div className="stat-card-value">{stats.abnormalPatients}</div>
-        </div>
-      </div>
+        <Metrics>
+          <Metric label={labels.totalUnderCare} value={stats.total} />
+          <Metric label={labels.patientsWithNewRecords} value={stats.withNewRecords} />
+          <Metric label={labels.activeAdmissions} value={stats.active} />
+          <Metric
+            label={labels.abnormalAttention}
+            value={stats.abnormalPatients}
+            tone={stats.abnormalPatients > 0 ? "alert" : undefined}
+          />
+        </Metrics>
 
-      {/* Patient list */}
-      <div className="soft-card" style={{ padding: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "flex-start",
-            marginBottom: 18,
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div className="section-title">{t("patientList")}</div>
-            <div className="muted-text" style={{ marginTop: 6, maxWidth: 680, lineHeight: 1.6 }}>
-              {labels.helper}
-            </div>
+        <section className="b-surface">
+          <Toolbar
+            search={query}
+            onSearch={setQuery}
+            searchPlaceholder={labels.searchPlaceholder}
+            filters={filters}
+            count={filteredPatients.length}
+            countLabel={labels.patients}
+          />
+
+          {/* Desktop: the clinical table. */}
+          <div className="only-desktop">
+            <DataTable
+              rows={filteredPatients}
+              columns={columns}
+              rowKey={(row) => row.patient.id}
+              onRowClick={(row) => router.push(`/patients/${row.patient.id}`)}
+              caption={t("patientList")}
+              rowClassName={(row) =>
+                (row.abnormal_count ?? 0) > 0
+                  ? "row-alert"
+                  : row.care_context === "active_admission"
+                  ? "row-warn"
+                  : (row.new_records_count ?? 0) > 0
+                  ? "row-new"
+                  : undefined
+              }
+              emptyState={
+                <EmptyState
+                  icon={<IconUsers size={17} />}
+                  title={t("noPatientsMatch")}
+                  description={t("noPatientsMatchDesc")}
+                  actions={
+                    <button
+                      type="button"
+                      className="b-btn b-btn-secondary"
+                      onClick={() => router.push("/patients/search")}
+                    >
+                      {labels.searchAllPatients}
+                    </button>
+                  }
+                />
+              }
+            />
           </div>
 
-          <div style={{ display: "flex", gap: 8, flexWrap: "wrap" }}>
-            {(["all", "active", "new", "abnormal", "inactive"] as FilterMode[]).map((mode) => {
-              const label =
-                mode === "all" ? labels.all :
-                mode === "active" ? labels.active :
-                mode === "new" ? labels.new :
-                mode === "abnormal" ? labels.abnormal :
-                labels.inactive;
+          {/* Phones: stacked rows. The abnormal preview becomes a scrollable
+              strip under the name so it can never push the name out of view. */}
+          <div className="only-mobile b-list">
+            {filteredPatients.map((row) => {
+              const abnormal = row.abnormal_count ?? 0;
+              const fresh = row.new_records_count ?? 0;
+
               return (
                 <button
-                  key={mode}
+                  key={row.patient.id}
                   type="button"
-                  className={filterMode === mode ? "primary-btn" : "secondary-btn"}
-                  onClick={() => setFilterMode(mode)}
+                  className="b-list-row"
+                  onClick={() => router.push(`/patients/${row.patient.id}`)}
                 >
-                  {label}
+                  <span className="b-avatar" aria-hidden="true">
+                    {getInitials(row.patient.full_name)}
+                  </span>
+
+                  <span className="b-list-main">
+                    <span className="b-list-title">{row.patient.full_name}</span>
+                    <span className="b-list-sub">
+                      {formatPatientAge(row.patient.date_of_birth, language)}
+                      {row.patient.sex ? ` · ${row.patient.sex}` : ""}
+                    </span>
+                    <span className="b-list-sub">
+                      <Status tone={careTone(row)}>{getCareLabel(row)}</Status>
+                    </span>
+                    {abnormal > 0 ? (
+                      <span className="b-strip" style={{ marginTop: 2 }}>
+                        {(row.latest_abnormal_labs ?? []).slice(0, 3).map((lab, index) => (
+                          <span
+                            key={`${lab.display_name}-${index}`}
+                            className="b-chip b-chip-danger"
+                          >
+                            {lab.display_name} {lab.value}
+                          </span>
+                        ))}
+                        {abnormal > 3 ? <span className="b-chip">+{abnormal - 3}</span> : null}
+                      </span>
+                    ) : null}
+                  </span>
+
+                  <span className="b-list-trail">
+                    {fresh > 0 ? (
+                      <span className="b-chip b-chip-brand">
+                        {fresh} {labels.newRecords}
+                      </span>
+                    ) : null}
+                    <IconChevronRight size={14} className="b-list-chevron" />
+                  </span>
                 </button>
               );
             })}
+
+            {!filteredPatients.length ? (
+              <EmptyState
+                icon={<IconUsers size={17} />}
+                title={t("noPatientsMatch")}
+                description={t("noPatientsMatchDesc")}
+                actions={
+                  <button
+                    type="button"
+                    className="b-btn b-btn-secondary"
+                    onClick={() => router.push("/patients/search")}
+                  >
+                    {labels.searchAllPatients}
+                  </button>
+                }
+              />
+            ) : null}
           </div>
-        </div>
+        </section>
 
-        <div style={{ marginBottom: 16 }}>
-          <input
-            className="text-input"
-            value={query}
-            onChange={(e) => setQuery(e.target.value)}
-            placeholder={labels.searchPlaceholder}
-          />
-        </div>
-
-        {/* Dense row list */}
-        <div style={{ borderTop: "1px solid var(--border)" }}>
-          {filteredPatients.map((item) => (
-            <PatientRow
-              key={item.patient.id}
-              item={item}
-              labels={labels}
-              language={language}
-              onClick={() => router.push(`/patients/${item.patient.id}`)}
-            />
-          ))}
-
-          {!filteredPatients.length && (
-            <div style={{ padding: "32px 0", textAlign: "center" }}>
-              <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
-                {t("noPatientsMatch")}
-              </div>
-              <div className="muted-text" style={{ marginBottom: 16 }}>
-                {t("noPatientsMatchDesc")}
-              </div>
-              <button
-                type="button"
-                className="primary-btn"
-                onClick={() => router.push("/patients/search")}
-              >
-                {labels.searchAllPatients}
-              </button>
-            </div>
-          )}
-        </div>
+        <p className="b-meta" style={{ maxWidth: "78ch" }}>
+          {labels.helper}
+        </p>
       </div>
     </AppShell>
   );

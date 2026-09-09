@@ -3,6 +3,8 @@
 import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import { EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
+import { IconClose, IconUpload } from "@/components/ui/icon";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
@@ -81,7 +83,7 @@ function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
           background: "var(--success-bg)",
           color: "var(--success-text)",
           border: "1px solid var(--success-border)",
-          fontWeight: 950,
+          fontWeight: 600,
           flex: "0 0 auto",
         }}
       >
@@ -102,7 +104,7 @@ function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
           background: "var(--danger-bg)",
           color: "var(--danger-text)",
           border: "1px solid var(--danger-border)",
-          fontWeight: 950,
+          fontWeight: 600,
           flex: "0 0 auto",
         }}
       >
@@ -410,82 +412,59 @@ export default function DoctorPatientUploadPage() {
       subtitle={`${profile.patient.full_name} · CNP ${valueOrDash(
         profile.patient.cnp
       )} · ID ${valueOrDash(profile.patient.patient_identifier)}`}
+      breadcrumbs={[
+        { label: profile.patient.full_name, href: `/patients/${patientId}` },
+        { label: labels.title },
+      ]}
       rightContent={
-        <button className="secondary-btn" onClick={() => router.push(`/patients/${patientId}`)}>
+        <button
+          type="button"
+          className="b-btn b-btn-secondary"
+          onClick={() => router.push(`/patients/${patientId}`)}
+        >
           {labels.back}
         </button>
       }
     >
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
+      <div className="b-stack" style={{ maxWidth: 900 }}>
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      <div className="soft-card" style={{ padding: 24, marginBottom: 24 }}>
-        <div
-          style={{
-            display: "flex",
-            justifyContent: "space-between",
-            gap: 16,
-            alignItems: "center",
-            flexWrap: "wrap",
-          }}
-        >
-          <div>
-            <div className="section-title">{labels.documentType}</div>
-            <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.55 }}>
-              {labels.documentTypeDesc}
-            </div>
-          </div>
-
-          <select
-            className="text-input"
-            value={uploadSection}
-            onChange={(event) => setUploadSection(event.target.value)}
-            style={{ width: 260 }}
-          >
-            {sections.map((section) => (
-              <option key={section.value} value={section.value}>
-                {section.label}
-              </option>
-            ))}
-          </select>
-        </div>
-      </div>
-
-      <div className="soft-card" style={{ padding: 0, overflow: "hidden", marginBottom: 24 }}>
-        <div
-          style={{
-            display: "grid",
-            gridTemplateColumns: "minmax(320px, 1fr) minmax(320px, 0.9fr)",
-            minHeight: 520,
-          }}
-        >
+        {/* Step 1: where the files belong. Kept above the dropzone because the
+            answer changes how the record is organised, and it is easy to
+            forget once files are already queued. */}
+        <section className="b-surface">
           <div
-            onDragOver={handleDragOver}
-            onDragLeave={handleDragLeave}
-            onDrop={handleDrop}
-            style={{
-              display: "grid",
-              placeItems: "center",
-              padding: 34,
-              borderRight: "1px solid var(--border)",
-              background: dragActive
-                ? "linear-gradient(135deg, color-mix(in srgb, var(--primary) 14%, var(--panel)), var(--panel))"
-                : "var(--panel)",
-              transition: "background 160ms ease",
-            }}
+            className="b-toolbar"
+            style={{ borderBottom: 0, alignItems: "center", minHeight: 52 }}
           >
+            <div style={{ minWidth: 0, flex: 1 }}>
+              <div className="b-section-title">{labels.documentType}</div>
+              <p className="b-meta" style={{ marginTop: 2 }}>
+                {labels.documentTypeDesc}
+              </p>
+            </div>
+
+            <select
+              className="b-input"
+              value={uploadSection}
+              onChange={(event) => setUploadSection(event.target.value)}
+              aria-label={labels.documentType}
+              style={{ width: "auto", minWidth: 200, flexShrink: 0 }}
+            >
+              {sections.map((section) => (
+                <option key={section.value} value={section.value}>
+                  {section.label}
+                </option>
+              ))}
+            </select>
+          </div>
+        </section>
+
+        {/* Step 2: the dropzone. Was a 520px half-page panel with a 32px/950
+            heading and a pill button; now a normal dashed dropzone that
+            leaves the queue room to be the main event. */}
+        <section className="b-surface">
+          <div style={{ padding: "var(--s4)" }}>
             <input
               ref={hiddenFileInputRef}
               type="file"
@@ -494,231 +473,186 @@ export default function DoctorPatientUploadPage() {
               onChange={(event) => appendFiles(event.target.files || [])}
             />
 
-            <div style={{ textAlign: "center", maxWidth: 420 }}>
-              <div
-                style={{
-                  width: 92,
-                  height: 92,
-                  borderRadius: 30,
-                  border: "1px solid var(--border)",
-                  background: "var(--panel-2)",
-                  display: "grid",
-                  placeItems: "center",
-                  margin: "0 auto 22px",
-                }}
-              >
-                <div style={{ fontSize: 38, lineHeight: 1, color: "var(--primary)", fontWeight: 900 }}>↑</div>
-              </div>
-
-              <div style={{ fontWeight: 950, fontSize: 32, letterSpacing: "-0.06em" }}>
-                {labels.dragAndDropFiles}
-              </div>
-
-              <div className="muted-text" style={{ marginTop: 10, fontSize: 16 }}>
-                {labels.or}
-              </div>
-
+            <div
+              className={`b-drop ${dragActive ? "is-over" : ""}`}
+              onDragOver={handleDragOver}
+              onDragLeave={handleDragLeave}
+              onDrop={handleDrop}
+            >
+              <span className="b-empty-icon">
+                <IconUpload size={17} />
+              </span>
+              <div className="b-drop-title">{labels.dragAndDropFiles}</div>
               <button
                 type="button"
-                className="primary-btn"
-                style={{
-                  marginTop: 16,
-                  minWidth: 210,
-                  padding: "15px 22px",
-                  borderRadius: 16,
-                  fontSize: 16,
-                  fontWeight: 950,
-                }}
+                className="b-btn b-btn-secondary"
                 onClick={() => hiddenFileInputRef.current?.click()}
               >
                 {labels.browse}
               </button>
-
-              <div className="muted-text" style={{ marginTop: 18, lineHeight: 1.6 }}>
+              <p className="b-drop-hint" style={{ maxWidth: "56ch" }}>
                 {labels.uploadSupportText}
-              </div>
+              </p>
             </div>
           </div>
+        </section>
 
-          <div
-            style={{
-              padding: 28,
-              background: "var(--panel)",
-              display: "grid",
-              gridTemplateRows: "auto minmax(0, 1fr) auto",
-              gap: 18,
-              minWidth: 0,
-              maxHeight: 520,
-            }}
-          >
+        {/* Step 3: the queue. Each row states which file, how big, and where
+            it is in the pipeline - the state vocabulary that later phases
+            (extraction, identity check, duplicate check, quarantine) can
+            extend without another redesign. */}
+        <section className="b-surface">
+          <SectionHead
+            title={labels.selectedFiles}
+            count={uploadRows.length || undefined}
+            description={selectedSummary}
+            actions={
+              items.length ? (
+                <button type="button" className="b-btn b-btn-ghost b-btn-sm" onClick={clearFiles}>
+                  {labels.clear}
+                </button>
+              ) : null
+            }
+          />
+
+          {uploadRows.length ? (
             <div>
-              <div style={{ fontWeight: 950, fontSize: 22, letterSpacing: "-0.04em" }}>
-                {labels.selectedFiles}
-              </div>
-              <div className="muted-text" style={{ marginTop: 6 }}>
-                {selectedSummary}
-              </div>
-            </div>
-
-            <div style={{ display: "grid", gap: 12, alignContent: "start", overflowY: "auto", paddingRight: 6 }}>
               {uploadRows.map((row) => (
-                <div
-                  key={row.id}
-                  className="soft-card-tight"
-                  style={{
-                    padding: 14,
-                    display: "grid",
-                    gridTemplateColumns: "54px minmax(0, 1fr) auto",
-                    gap: 12,
-                    alignItems: "center",
-                    borderColor:
-                      row.status === "error"
-                        ? "var(--danger-border)"
-                        : row.status === "done"
-                        ? "var(--success-border)"
-                        : "var(--border)",
-                  }}
-                >
-                  <div
+                <div className="b-queue-row" key={row.id}>
+                  <span
+                    className="b-chip"
                     style={{
-                      width: 48,
-                      height: 48,
-                      borderRadius: 999,
-                      border: "1px solid var(--border)",
-                      background: "var(--panel-2)",
-                      display: "grid",
-                      placeItems: "center",
-                      fontWeight: 950,
-                      fontSize: 12,
-                      color: "var(--muted)",
+                      justifyContent: "center",
+                      width: 34,
+                      fontSize: "var(--fs-micro)",
+                      flexShrink: 0,
                     }}
                   >
                     {getFileBadge(row.filename)}
-                  </div>
+                  </span>
 
-                  <div style={{ minWidth: 0 }}>
-                    <div
-                      style={{
-                        fontWeight: 850,
-                        whiteSpace: "nowrap",
-                        overflow: "hidden",
-                        textOverflow: "ellipsis",
-                      }}
-                    >
+                  <span style={{ minWidth: 0 }}>
+                    <span className="b-cell-title" style={{ display: "block" }}>
                       {row.filename}
-                    </div>
-
-                    <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
+                    </span>
+                    <span className="b-cell-sub" style={{ display: "block" }}>
                       {row.size ? `${formatFileSize(row.size)} · ` : ""}
                       {row.message}
-                    </div>
+                    </span>
 
-                    {row.status !== "selected" && (
-                      <div
-                        style={{
-                          marginTop: 10,
-                          height: 7,
-                          borderRadius: 999,
-                          background: "var(--panel-2)",
-                          overflow: "hidden",
-                          border: "1px solid var(--border)",
-                        }}
-                      >
-                        <div
+                    {row.status !== "selected" ? (
+                      <span className="b-progress" style={{ display: "block", marginTop: 5 }}>
+                        <span
+                          className="b-progress-bar"
                           style={{
-                            height: "100%",
+                            display: "block",
                             width: `${Math.max(row.progress || 5, 5)}%`,
-                            borderRadius: 999,
                             background:
                               row.status === "error"
-                                ? "var(--danger-text)"
+                                ? "var(--danger)"
                                 : row.status === "done"
-                                ? "var(--success-text)"
+                                ? "var(--ok)"
                                 : "var(--primary)",
-                            transition: "width 180ms ease",
                           }}
                         />
-                      </div>
-                    )}
+                      </span>
+                    ) : null}
 
-                    {row.error && (
-                      <div
+                    {row.error ? (
+                      <span
                         style={{
-                          marginTop: 8,
-                          color: "var(--danger-text)",
-                          fontSize: 12,
-                          lineHeight: 1.45,
-                          maxHeight: 70,
+                          display: "block",
+                          marginTop: 4,
+                          color: "var(--danger)",
+                          fontSize: "var(--fs-xs)",
+                          lineHeight: "var(--lh)",
+                          maxHeight: 64,
                           overflow: "auto",
                         }}
                       >
                         {row.error}
-                      </div>
-                    )}
-                  </div>
+                      </span>
+                    ) : null}
+                  </span>
 
-                  {row.local ? (
-                    <button
-                      type="button"
-                      className="secondary-btn"
-                      onClick={() => removeFile(row.id)}
-                      style={{ padding: "8px 10px" }}
-                    >
-                      ×
-                    </button>
-                  ) : (
-                    <UploadRowStatus status={row.status} />
-                  )}
+                  <span
+                    style={{
+                      display: "flex",
+                      alignItems: "center",
+                      gap: "var(--s2)",
+                      flexShrink: 0,
+                    }}
+                  >
+                    {row.status === "done" ? (
+                      <Status tone="ok">Ready</Status>
+                    ) : row.status === "error" ? (
+                      <Status tone="danger">Failed</Status>
+                    ) : row.status === "processing" ? (
+                      <Status tone="processing">Processing</Status>
+                    ) : row.status === "uploading" ? (
+                      <Status tone="processing">Uploading</Status>
+                    ) : row.status === "queued" ? (
+                      <Status tone="info">Queued</Status>
+                    ) : (
+                      <Status tone="muted">Selected</Status>
+                    )}
+
+                    {row.local ? (
+                      <button
+                        type="button"
+                        className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+                        onClick={() => removeFile(row.id)}
+                        aria-label={`Remove ${row.filename}`}
+                      >
+                        <IconClose size={13} />
+                      </button>
+                    ) : null}
+                  </span>
                 </div>
               ))}
-
-              {!uploadRows.length && (
-                <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-                  <div style={{ fontWeight: 850 }}>{labels.emptyTitle}</div>
-                  <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
-                    {labels.emptyDesc}
-                  </div>
-                </div>
-              )}
             </div>
+          ) : (
+            <EmptyState
+              icon={<IconUpload size={17} />}
+              title={labels.emptyTitle}
+              description={labels.emptyDesc}
+            />
+          )}
 
-            <div
-              style={{
-                display: "flex",
-                justifyContent: "space-between",
-                gap: 12,
-                flexWrap: "wrap",
-                borderTop: "1px solid var(--border)",
-                paddingTop: 18,
-              }}
+          <div
+            style={{
+              display: "flex",
+              alignItems: "center",
+              justifyContent: "flex-end",
+              gap: "var(--s2)",
+              padding: "var(--s3) var(--s4)",
+              borderTop: "1px solid var(--border)",
+            }}
+          >
+            <button
+              type="button"
+              className="b-btn b-btn-secondary"
+              onClick={() => router.push(`/patients/${patientId}`)}
             >
-              <button type="button" className="secondary-btn" onClick={clearFiles} disabled={!items.length}>
-                {labels.clear}
-              </button>
-
-              <div style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-                <button
-                  type="button"
-                  className="primary-btn"
-                  onClick={uploadDocuments}
-                  disabled={!canUpload}
-                  style={{ padding: "13px 18px", borderRadius: 16, fontWeight: 950 }}
-                >
-                  {labels.upload}
-                </button>
-
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={() => router.push(`/patients/${patientId}`)}
-                  style={{ padding: "13px 18px", borderRadius: 16, fontWeight: 950 }}
-                >
-                  {labels.continue}
-                </button>
-              </div>
-            </div>
+              {labels.continue}
+            </button>
+            <button
+              type="button"
+              className="b-btn b-btn-primary"
+              onClick={uploadDocuments}
+              disabled={!canUpload}
+            >
+              <IconUpload size={14} />
+              {labels.upload}
+              {items.length ? ` (${items.length})` : ""}
+            </button>
           </div>
-        </div>
+
+          <p className="b-meta" style={{ padding: "0 var(--s4) var(--s3)" }}>
+            Uploading continues in the background — you can leave this page and the
+            documents will appear in your record when processing finishes.
+          </p>
+        </section>
       </div>
     </AppShell>
   );

@@ -103,7 +103,7 @@ export default function NewMedicationPage() {
         className="soft-card-tight"
         style={{ marginBottom: 24, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
       >
-        <div style={{ fontSize: 12, fontWeight: 800, color: "var(--primary)", marginBottom: 4 }}>
+        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>
           {t("medSafetyTitleSingle")}
         </div>
         <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
@@ -116,14 +116,14 @@ export default function NewMedicationPage() {
           <div className="section-title" style={{ marginBottom: 18 }}>{t("medDetails")}</div>
 
           {error && (
-            <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: 12, background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontSize: 14 }}>
+            <div style={{ marginBottom: 16, padding: "12px 16px", borderRadius: "var(--r-md)", background: "var(--danger-bg)", color: "var(--danger-text)", border: "1px solid var(--danger-border)", fontSize: 14 }}>
               {error}
             </div>
           )}
 
           {/* Name */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>
               {t("medName")} <span style={{ color: "var(--danger-text)" }}>*</span>
             </span>
             <input
@@ -139,7 +139,7 @@ export default function NewMedicationPage() {
 
           {/* Status */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("status")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{t("status")}</span>
             <select
               className="text-input"
               value={status}
@@ -155,7 +155,7 @@ export default function NewMedicationPage() {
           {/* Dose and frequency row */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseStrength")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medDoseStrength")}</span>
               <input
                 className="text-input"
                 type="text"
@@ -165,7 +165,7 @@ export default function NewMedicationPage() {
               />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medFrequency")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medFrequency")}</span>
               <input
                 className="text-input"
                 type="text"
@@ -178,7 +178,7 @@ export default function NewMedicationPage() {
 
           {/* Route */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRouteForm")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medRouteForm")}</span>
             <input
               className="text-input"
               type="text"
@@ -197,14 +197,14 @@ export default function NewMedicationPage() {
               style={{ marginTop: 2, width: 16, height: 16, flexShrink: 0 }}
             />
             <div>
-              <div style={{ fontSize: 13, fontWeight: 800 }}>{t("medDoseNotVerified")}</div>
+              <div style={{ fontSize: 13, fontWeight: 600 }}>{t("medDoseNotVerified")}</div>
               <div className="muted-text" style={{ fontSize: 12 }}>{t("medDoseNotVerifiedHint")}</div>
             </div>
           </label>
 
           {/* Reason */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medRecordedReason")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medRecordedReason")}</span>
             <textarea
               className="text-input"
               rows={2}
@@ -225,7 +225,7 @@ export default function NewMedicationPage() {
           {/* Dates row */}
           <div style={{ display: "grid", gridTemplateColumns: "1fr 1fr", gap: 14, marginBottom: 16 }}>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("startDate")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("startDate")}</span>
               <input
                 className="text-input"
                 type="date"
@@ -234,7 +234,7 @@ export default function NewMedicationPage() {
               />
             </label>
             <label style={{ display: "grid", gap: 6 }}>
-              <span style={{ fontSize: 13, fontWeight: 800 }}>{t("stopDate")}</span>
+              <span style={{ fontSize: 13, fontWeight: 600 }}>{t("stopDate")}</span>
               <input
                 className="text-input"
                 type="date"
@@ -246,7 +246,7 @@ export default function NewMedicationPage() {
 
           {/* Prescriber */}
           <label style={{ display: "grid", gap: 6, marginBottom: 16 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medPrescribedBy")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medPrescribedBy")}</span>
             <input
               className="text-input"
               type="text"
@@ -258,7 +258,7 @@ export default function NewMedicationPage() {
 
           {/* Extra info */}
           <label style={{ display: "grid", gap: 6 }}>
-            <span style={{ fontSize: 13, fontWeight: 800 }}>{t("medAdditionalNotes")}</span>
+            <span style={{ fontSize: 13, fontWeight: 600 }}>{t("medAdditionalNotes")}</span>
             <textarea
               className="text-input"
               rows={3}

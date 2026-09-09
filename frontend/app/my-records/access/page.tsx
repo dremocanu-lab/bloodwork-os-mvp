@@ -5,6 +5,15 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import {
+  ConfirmDialog,
+  EmptyState,
+  ErrorNote,
+  SectionHead,
+  Skeleton,
+  Status,
+} from "@/components/ui";
+import { IconCheck, IconHeart, IconShield } from "@/components/ui/icon";
 
 type CurrentUser = {
   id: number;
@@ -80,6 +89,7 @@ export default function MyAccessPage() {
   const [respondingId, setRespondingId] = useState<number | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
+  const [regenerateOpen, setRegenerateOpen] = useState(false);
 
   async function load() {
     const meResponse = await api.get<CurrentUser>("/auth/me");
@@ -184,345 +194,235 @@ export default function MyAccessPage() {
       user={currentUser}
       title={t("myAccess")}
       subtitle={t("myAccessDesc")}
+      density="comfortable"
     >
-      {revokeTarget && (
-        <div
-          style={{
-            position: "fixed",
-            inset: 0,
-            zIndex: 1000,
-            background: "rgba(15, 23, 42, 0.42)",
-            display: "grid",
-            placeItems: "center",
-            padding: 20,
-            backdropFilter: "blur(10px)",
-          }}
-        >
-          <div
-            className="soft-card"
-            style={{ width: "min(480px, 100%)", padding: 24, boxShadow: "0 30px 90px rgba(15,23,42,0.32)" }}
-          >
-            <div style={{ fontSize: 22, fontWeight: 950, letterSpacing: "-0.05em" }}>
-              {t("revokeAccessConfirmTitle")}
-            </div>
+      <div className="b-stack">
+        {error ? <ErrorNote onRetry={() => void load()}>{error}</ErrorNote> : null}
 
-            <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>
-              {t("revokeAccessConfirmDesc")}
-            </div>
-
-            <div className="soft-card-tight" style={{ marginTop: 16, padding: 14, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>{revokeTarget.doctor_name}</div>
-              <div className="muted-text" style={{ marginTop: 4 }}>{revokeTarget.doctor_email}</div>
-              <div className="muted-text" style={{ marginTop: 6 }}>
-                {valueOrDash(revokeTarget.department)} · {valueOrDash(revokeTarget.hospital_name)}
-              </div>
-            </div>
-
-            <div style={{ display: "flex", justifyContent: "flex-end", gap: 10, marginTop: 22 }}>
-              <button
-                className="secondary-btn"
-                onClick={() => setRevokeTarget(null)}
-                disabled={revoking}
-              >
-                {t("cancel")}
-              </button>
-              <button
-                onClick={confirmRevoke}
-                disabled={revoking}
-                style={{
-                  border: "1px solid var(--danger-border)",
-                  background: "var(--danger-bg)",
-                  color: "var(--danger-text)",
-                  borderRadius: 14,
-                  padding: "11px 15px",
-                  fontWeight: 950,
-                  cursor: revoking ? "not-allowed" : "pointer",
-                }}
-              >
-                {revoking ? t("revoking") : t("confirmRevoke")}
-              </button>
-            </div>
-          </div>
-        </div>
-      )}
-
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
-
-      <div style={{ display: "grid", gap: 24 }}>
-        {/* Care Partner Code */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="section-title">{t("carePartnerCode")}</div>
-            <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-              {t("carePartnerCodeDesc")}
-            </div>
-          </div>
-
-          {carePartnerCode ? (
-            <div style={{ display: "grid", gap: 16 }}>
-              <div
-                className="soft-card-tight"
-                style={{
-                  padding: "18px 20px",
-                  background: "var(--panel-2)",
-                  display: "flex",
-                  alignItems: "center",
-                  justifyContent: "space-between",
-                  gap: 16,
-                  flexWrap: "wrap",
-                }}
-              >
-                <div
-                  style={{
-                    fontFamily: "monospace",
-                    fontSize: 28,
-                    fontWeight: 900,
-                    letterSpacing: "0.1em",
-                    color: "var(--primary)",
-                  }}
-                >
-                  {carePartnerCode.code}
-                </div>
-
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={copyCode}
-                  style={{ whiteSpace: "nowrap" }}
-                >
-                  {codeCopied ? t("copied") : t("copyCode")}
-                </button>
-              </div>
-
-              <div className="muted-text" style={{ fontSize: 12 }}>
-                {t("codeGeneratedAt")} {formatDate(carePartnerCode.created_at)}
-              </div>
-
-              <div>
-                <button
-                  type="button"
-                  className="secondary-btn"
-                  onClick={regenerateCode}
-                  disabled={regenerating}
-                >
-                  {regenerating ? t("working") : t("regenerateCode")}
-                </button>
-                <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
-                  {t("regenerateCodeWarning")}
-                </div>
-              </div>
-            </div>
-          ) : (
-            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("loadingCode")}</div>
-            </div>
-          )}
-        </div>
-
-        {/* Active Care Partners */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="section-title">{t("myCarePartners")}</div>
-            <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-              {t("myCarePartnersDesc")}
-            </div>
-          </div>
-
-          {carePartners.length === 0 ? (
-            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("noCarePartnersDesc")}</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              {carePartners.map((cp) => (
-                <div
-                  key={cp.care_partner_user_id}
-                  className="soft-card-tight"
-                  style={{ padding: 18 }}
-                >
-                  <div style={{ fontWeight: 900, fontSize: 16 }}>{cp.care_partner_name}</div>
-                  <div className="muted-text" style={{ marginTop: 4 }}>{cp.care_partner_email}</div>
-                  <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
-                    {t("linkedAt")} {formatDate(cp.linked_at)}
-                  </div>
+        {/* Pending requests come first: they are the only thing here that
+            needs a decision, and burying them under the care-partner code
+            (as the old order did) made them easy to miss. */}
+        {pendingRequests.length > 0 ? (
+          <section className="b-surface">
+            <SectionHead
+              title={t("pendingRequests")}
+              count={pendingRequests.length}
+              description={t("doctorAccessRequests")}
+            />
+            <div className="b-list">
+              {pendingRequests.map((request) => (
+                <div key={request.id} className="b-list-row" style={{ cursor: "default" }}>
+                  <span className="b-avatar" aria-hidden="true">
+                    {(request.doctor_name || "?").charAt(0).toUpperCase()}
+                  </span>
+                  <span className="b-list-main">
+                    <span className="b-list-title">{valueOrDash(request.doctor_name)}</span>
+                    <span className="b-list-sub">
+                      {[request.doctor_email, request.doctor_department, request.doctor_hospital_name]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    <span className="b-list-sub">
+                      {t("requestedAt")} {formatDate(request.requested_at)}
+                    </span>
+                  </span>
+                  <span className="b-list-trail" style={{ flexDirection: "row", gap: "var(--s2)" }}>
+                    <button
+                      type="button"
+                      className="b-btn b-btn-secondary b-btn-sm"
+                      onClick={() => respondToRequest(request.id, "denied")}
+                      disabled={respondingId === request.id}
+                    >
+                      {t("deny")}
+                    </button>
+                    <button
+                      type="button"
+                      className="b-btn b-btn-primary b-btn-sm"
+                      onClick={() => respondToRequest(request.id, "approved")}
+                      disabled={respondingId === request.id}
+                    >
+                      {respondingId === request.id ? <span className="b-spinner" /> : null}
+                      {t("approve")}
+                    </button>
+                  </span>
                 </div>
               ))}
             </div>
-          )}
-        </div>
+          </section>
+        ) : null}
 
-        {/* Pending Doctor Requests */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div
-            style={{
-              display: "flex",
-              justifyContent: "space-between",
-              alignItems: "center",
-              gap: 16,
-              marginBottom: 18,
-              flexWrap: "wrap",
-            }}
-          >
-            <div>
-              <div className="section-title">{t("pendingRequests")}</div>
-              <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-                {t("doctorAccessRequests")}
-              </div>
-            </div>
+        {/* Who can see the record right now. */}
+        <section className="b-surface">
+          <SectionHead
+            title={t("activeAccess")}
+            count={doctorAccess.length}
+            description={t("myDoctors")}
+          />
+          <div className="b-list">
+            {doctorAccess.length ? (
+              doctorAccess.map((doctor) => (
+                <div key={doctor.doctor_user_id} className="b-list-row" style={{ cursor: "default" }}>
+                  <span className="b-avatar" aria-hidden="true">
+                    {doctor.doctor_name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="b-list-main">
+                    <span className="b-list-title">{doctor.doctor_name}</span>
+                    <span className="b-list-sub">
+                      {[doctor.doctor_email, doctor.department, doctor.hospital_name]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                    <span className="b-list-sub">
+                      {t("grantedAt")} {formatDate(doctor.granted_at)}
+                    </span>
+                  </span>
+                  <span className="b-list-trail" style={{ flexDirection: "row", gap: "var(--s2)" }}>
+                    <Status tone="ok">{t("activeAccess")}</Status>
+                    <button
+                      type="button"
+                      className="b-btn b-btn-danger-quiet b-btn-sm"
+                      onClick={() => setRevokeTarget(doctor)}
+                    >
+                      {t("revokeAccess")}
+                    </button>
+                  </span>
+                </div>
+              ))
+            ) : (
+              <EmptyState
+                icon={<IconShield size={17} />}
+                title={t("noActiveAccessDesc")}
+                description="Only you can see this record right now."
+              />
+            )}
+          </div>
+        </section>
 
-            {pendingRequests.length > 0 && (
-              <span
-                style={{
-                  display: "inline-flex",
-                  padding: "6px 12px",
-                  borderRadius: 999,
-                  background: "var(--warn-bg)",
-                  color: "var(--warn-text)",
-                  fontWeight: 950,
-                  fontSize: 13,
-                }}
-              >
-                {pendingRequests.length}
-              </span>
+        {/* Care partners: who they are, then the code that creates more. */}
+        <section className="b-surface">
+          <SectionHead
+            title={t("myCarePartners")}
+            count={carePartners.length}
+            description={t("myCarePartnersDesc")}
+          />
+          <div className="b-list">
+            {carePartners.length ? (
+              carePartners.map((partner) => (
+                <div
+                  key={partner.care_partner_user_id}
+                  className="b-list-row"
+                  style={{ cursor: "default" }}
+                >
+                  <span className="b-avatar" aria-hidden="true">
+                    {partner.care_partner_name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="b-list-main">
+                    <span className="b-list-title">{partner.care_partner_name}</span>
+                    <span className="b-list-sub">{partner.care_partner_email}</span>
+                  </span>
+                  <span className="b-list-trail" style={{ flexDirection: "row", gap: "var(--s2)" }}>
+                    <Status tone="ok">{t("activeAccess")}</Status>
+                    <span className="b-range">
+                      {t("linkedAt")} {formatDate(partner.linked_at)}
+                    </span>
+                  </span>
+                </div>
+              ))
+            ) : (
+              <EmptyState icon={<IconHeart size={17} />} title={t("noCarePartnersDesc")} />
             )}
           </div>
 
-          {pendingRequests.length === 0 ? (
-            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("noPendingRequestsDesc")}</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              {pendingRequests.map((request) => (
-                <div
-                  key={request.id}
-                  className="soft-card-tight"
+          <div style={{ padding: "var(--s3) var(--s4)", borderTop: "1px solid var(--border)" }}>
+            <div className="b-label">{t("carePartnerCode")}</div>
+            <p className="b-meta" style={{ margin: "3px 0 var(--s2)", maxWidth: "70ch" }}>
+              {t("carePartnerCodeDesc")}
+            </p>
+
+            {carePartnerCode ? (
+              <div
+                style={{
+                  display: "flex",
+                  alignItems: "center",
+                  gap: "var(--s2)",
+                  flexWrap: "wrap",
+                }}
+              >
+                <code
                   style={{
-                    padding: 18,
-                    background:
-                      "linear-gradient(135deg, color-mix(in srgb, var(--warn-bg) 40%, var(--panel)), var(--panel))",
-                    borderColor: "var(--warn-border)",
+                    fontFamily: "ui-monospace, monospace",
+                    fontSize: 15,
+                    letterSpacing: "0.05em",
+                    padding: "7px 11px",
+                    background: "var(--surface-2)",
+                    border: "1px solid var(--border)",
+                    borderRadius: "var(--r)",
+                    color: "var(--text)",
                   }}
                 >
-                  <div
-                    style={{
-                      display: "grid",
-                      gridTemplateColumns: "minmax(0,1fr) auto",
-                      gap: 16,
-                      alignItems: "center",
-                    }}
-                  >
-                    <div>
-                      <div style={{ fontWeight: 900, fontSize: 16 }}>
-                        {valueOrDash(request.doctor_name)}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 4 }}>
-                        {valueOrDash(request.doctor_email)}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 6 }}>
-                        {valueOrDash(request.doctor_department)} · {valueOrDash(request.doctor_hospital_name)}
-                      </div>
-                      <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
-                        {t("requestedAt")} {formatDate(request.requested_at)}
-                      </div>
-                    </div>
+                  {carePartnerCode.code}
+                </code>
 
-                    <div style={{ display: "flex", gap: 8, flexWrap: "wrap", justifyContent: "flex-end" }}>
-                      <button
-                        className="primary-btn"
-                        onClick={() => respondToRequest(request.id, "approved")}
-                        disabled={respondingId === request.id}
-                      >
-                        {respondingId === request.id ? t("working") : t("approve")}
-                      </button>
-                      <button
-                        className="secondary-btn"
-                        onClick={() => respondToRequest(request.id, "denied")}
-                        disabled={respondingId === request.id}
-                      >
-                        {t("deny")}
-                      </button>
-                    </div>
-                  </div>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+                <button type="button" className="b-btn b-btn-secondary b-btn-sm" onClick={copyCode}>
+                  {codeCopied ? <IconCheck size={12} /> : null}
+                  {codeCopied ? t("copied") : t("copyCode")}
+                </button>
 
-        {/* Active Doctor Access */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="section-title">{t("activeAccess")}</div>
-            <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-              {t("myDoctors")}
-            </div>
+                <button
+                  type="button"
+                  className="b-btn b-btn-ghost b-btn-sm"
+                  onClick={() => setRegenerateOpen(true)}
+                  disabled={regenerating}
+                >
+                  {regenerating ? <span className="b-spinner" /> : null}
+                  {t("regenerateCode")}
+                </button>
+
+                <span className="b-range">
+                  {t("codeGeneratedAt")} {formatDate(carePartnerCode.created_at)}
+                </span>
+              </div>
+            ) : (
+              <Skeleton width={220} height={30} />
+            )}
           </div>
-
-          {doctorAccess.length === 0 ? (
-            <div className="soft-card-tight" style={{ padding: 16, background: "var(--panel-2)" }}>
-              <div className="muted-text">{t("noActiveAccessDesc")}</div>
-            </div>
-          ) : (
-            <div style={{ display: "grid", gap: 12 }}>
-              {doctorAccess.map((doctor) => (
-                <div
-                  key={doctor.doctor_user_id}
-                  className="soft-card-tight"
-                  style={{
-                    padding: 18,
-                    display: "grid",
-                    gridTemplateColumns: "minmax(0,1fr) auto",
-                    gap: 16,
-                    alignItems: "center",
-                  }}
-                >
-                  <div>
-                    <div style={{ fontWeight: 900, fontSize: 16 }}>{doctor.doctor_name}</div>
-                    <div className="muted-text" style={{ marginTop: 4 }}>{doctor.doctor_email}</div>
-                    <div className="muted-text" style={{ marginTop: 6 }}>
-                      {valueOrDash(doctor.department)} · {valueOrDash(doctor.hospital_name)}
-                    </div>
-                    <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
-                      {t("grantedAt")} {formatDate(doctor.granted_at)}
-                    </div>
-                  </div>
-
-                  <button
-                    onClick={() => setRevokeTarget(doctor)}
-                    style={{
-                      border: "1px solid var(--danger-border)",
-                      background: "var(--danger-bg)",
-                      color: "var(--danger-text)",
-                      borderRadius: 14,
-                      padding: "10px 14px",
-                      fontWeight: 950,
-                      fontSize: 13,
-                      cursor: "pointer",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {t("revokeAccess")}
-                  </button>
-                </div>
-              ))}
-            </div>
-          )}
-        </div>
+        </section>
       </div>
+
+      {/* Revoking clinician access is sensitive, so the dialog names the
+          doctor and states exactly what they lose. */}
+      <ConfirmDialog
+        open={revokeTarget !== null}
+        onClose={() => setRevokeTarget(null)}
+        onConfirm={confirmRevoke}
+        busy={revoking}
+        title={t("revokeAccessConfirmTitle")}
+        confirmLabel={revoking ? t("revoking") : t("confirmRevoke")}
+        consequence={
+          revokeTarget ? (
+            <>
+              <strong style={{ fontWeight: 600 }}>{revokeTarget.doctor_name}</strong> (
+              {revokeTarget.doctor_email}) will immediately lose access to your record.{" "}
+              {t("revokeAccessConfirmDesc")}
+            </>
+          ) : null
+        }
+      />
+
+      {/* Regenerating the code invalidates the old one, which was previously
+          one click of an unstyled button away - so it is confirmed too. */}
+      <ConfirmDialog
+        open={regenerateOpen}
+        onClose={() => setRegenerateOpen(false)}
+        onConfirm={async () => {
+          await regenerateCode();
+          setRegenerateOpen(false);
+        }}
+        busy={regenerating}
+        title={t("regenerateCode")}
+        confirmLabel={t("regenerateCode")}
+        consequence={t("regenerateCodeWarning")}
+      />
     </AppShell>
   );
 }

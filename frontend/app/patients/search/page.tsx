@@ -97,10 +97,10 @@ function getInitials(name: string) {
 function PatientIdentityBlock({ patient, labels }: { patient: SearchPatient; labels: Record<string, string> }) {
   return (
     <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.65 }}>
-      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.patientCode}</span>{" "}
+      <span style={{ fontWeight: 600, color: "var(--text)" }}>{labels.patientCode}</span>{" "}
       {valueOrDash(patient.care_partner_code)}
       <br />
-      <span style={{ fontWeight: 850, color: "var(--foreground)" }}>{labels.cnp}</span>{" "}
+      <span style={{ fontWeight: 600, color: "var(--text)" }}>{labels.cnp}</span>{" "}
       {maskCnp(patient.cnp)}
     </div>
   );
@@ -440,7 +440,7 @@ export default function SearchPatientsPage() {
 
         {!searchedQuery && (
           <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 900 }}>{labels.startWithSearch}</div>
+            <div style={{ fontWeight: 600 }}>{labels.startWithSearch}</div>
             <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
               {labels.noPatientsShownUntilSearch}
             </div>
@@ -449,7 +449,7 @@ export default function SearchPatientsPage() {
 
         {searchedQuery && patients.length === 0 && (
           <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-            <div style={{ fontWeight: 900 }}>{labels.noMatchingPatients}</div>
+            <div style={{ fontWeight: 600 }}>{labels.noMatchingPatients}</div>
             <div className="muted-text" style={{ marginTop: 6, lineHeight: 1.6 }}>
               {labels.tryAnotherPatientSearch}
             </div>
@@ -460,7 +460,7 @@ export default function SearchPatientsPage() {
           <div
             style={{
               border: "1px solid var(--border)",
-              borderRadius: 24,
+              borderRadius: "var(--r-lg)",
               overflow: "hidden",
               background: "var(--panel)",
             }}
@@ -478,7 +478,7 @@ export default function SearchPatientsPage() {
                 borderBottom: "1px solid var(--border)",
                 background: "var(--panel-2)",
                 fontSize: 12,
-                fontWeight: 950,
+                fontWeight: 600,
                 textTransform: "uppercase",
                 letterSpacing: "0.04em",
               }}
@@ -517,13 +517,13 @@ export default function SearchPatientsPage() {
                         style={{
                           width: 46,
                           height: 46,
-                          borderRadius: 16,
+                          borderRadius: "var(--r-lg)",
                           display: "grid",
                           placeItems: "center",
                           background: "color-mix(in srgb, var(--primary) 18%, var(--panel-2))",
                           color: "var(--primary)",
                           border: "1px solid color-mix(in srgb, var(--primary) 34%, var(--border))",
-                          fontWeight: 950,
+                          fontWeight: 600,
                           letterSpacing: "-0.06em",
                           flex: "0 0 auto",
                         }}
@@ -534,7 +534,7 @@ export default function SearchPatientsPage() {
                       <div style={{ minWidth: 0 }}>
                         <div
                           style={{
-                            fontWeight: 950,
+                            fontWeight: 600,
                             fontSize: 16,
                             whiteSpace: "nowrap",
                             overflow: "hidden",
@@ -573,7 +573,7 @@ export default function SearchPatientsPage() {
                                   background: "var(--success-bg)",
                                   color: "var(--success-text)",
                                   border: "1px solid var(--success-border)",
-                                  fontWeight: 850,
+                                  fontWeight: 600,
                                   fontSize: 12,
                                 }}
                               >
@@ -590,7 +590,7 @@ export default function SearchPatientsPage() {
                                 background: "var(--warn-bg)",
                                 color: "var(--warn-text)",
                                 border: "1px solid var(--warn-border)",
-                                fontWeight: 850,
+                                fontWeight: 600,
                                 fontSize: 12,
                               }}
                             >
@@ -608,7 +608,7 @@ export default function SearchPatientsPage() {
                                 background: "var(--success-bg)",
                                 color: "var(--success-text)",
                                 border: "1px solid var(--success-border)",
-                                fontWeight: 850,
+                                fontWeight: 600,
                                 fontSize: 12,
                               }}
                             >
@@ -637,7 +637,7 @@ export default function SearchPatientsPage() {
                               : patient.pending_request
                               ? "1px solid var(--warn-border)"
                               : "1px solid var(--border)",
-                            fontWeight: 850,
+                            fontWeight: 600,
                             fontSize: 12,
                           }}
                         >

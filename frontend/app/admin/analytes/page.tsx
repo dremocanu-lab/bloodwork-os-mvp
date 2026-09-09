@@ -1,19 +1,37 @@
 "use client";
 
-import { useEffect, useMemo, useState } from "react";
+/**
+ * Admin - analyte gaps (data-quality queue).
+ *
+ * A genuine operational queue: extracted lab names the catalog does not
+ * recognise, which an administrator works through by adding synonyms. The old
+ * page split them into two hand-rolled grids under coloured headings, with a
+ * four-tile summary of 28px figures on top.
+ *
+ * Now one table with a severity filter, a sortable occurrence count (so the
+ * highest-impact gaps come first), and the copy-to-clipboard action kept
+ * exactly where it was useful.
+ */
+
+import { useCallback, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { findAnalyteEntry } from "@/lib/analytes/match";
-
-type CurrentUser = {
-  id: number;
-  email: string;
-  full_name: string;
-  role: "patient" | "doctor" | "admin";
-  department?: string | null;
-  hospital_name?: string | null;
-};
+import {
+  Column,
+  DataTable,
+  EmptyState,
+  ErrorNote,
+  FilterChip,
+  Metric,
+  Metrics,
+  Status,
+  TableSkeleton,
+  Toolbar,
+} from "@/components/ui";
+import { IconCheck, IconLab } from "@/components/ui/icon";
+import type { NavUser } from "@/lib/navigation";
 
 type AnalyteGap = {
   canonical_name: string;
@@ -22,24 +40,11 @@ type AnalyteGap = {
   last_document_id: number | null;
 };
 
-function Spinner({ size = 18 }: { size?: number }) {
-  return (
-    <>
-      <style jsx>{`
-        @keyframes bloodworkSpin { to { transform: rotate(360deg); } }
-        .bloodwork-spinner {
-          width: ${size}px; height: ${size}px;
-          border-radius: 999px;
-          border: 2px solid var(--border);
-          border-top-color: var(--primary);
-          animation: bloodworkSpin 0.8s linear infinite;
-        }
-      `}</style>
-      <span className="bloodwork-spinner" />
-    </>
-  );
-}
+type GapRow = AnalyteGap & { tsMatch: boolean };
 
+type GapFilter = "all" | "missing" | "drift";
+
+/** Copy the exact canonical name for pasting into a catalog file. */
 function CopyButton({ text }: { text: string }) {
   const [copied, setCopied] = useState(false);
 
@@ -49,17 +54,21 @@ function CopyButton({ text }: { text: string }) {
       setCopied(true);
       setTimeout(() => setCopied(false), 1800);
     } catch {
-      // clipboard not available
+      // Clipboard unavailable (insecure context) - leave the label unchanged.
     }
   }
 
   return (
     <button
       type="button"
-      className="secondary-btn"
-      onClick={handleCopy}
-      style={{ fontSize: 12, padding: "4px 10px", minWidth: 60 }}
+      className="b-btn b-btn-secondary b-btn-sm"
+      onClick={(event) => {
+        event.stopPropagation();
+        handleCopy();
+      }}
+      style={{ minWidth: 62 }}
     >
+      {copied ? <IconCheck size={12} /> : null}
       {copied ? "Copied" : "Copy"}
     </button>
   );
@@ -68,66 +77,169 @@ function CopyButton({ text }: { text: string }) {
 export default function AnalyteGapsPage() {
   const router = useRouter();
 
-  const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
+  const [currentUser, setCurrentUser] = useState<NavUser | null>(null);
   const [gaps, setGaps] = useState<AnalyteGap[]>([]);
   const [query, setQuery] = useState("");
+  const [filter, setFilter] = useState<GapFilter>("all");
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
 
-  useEffect(() => {
-    async function init() {
-      try {
-        setError("");
-        const [meRes, gapsRes] = await Promise.all([
-          api.get<CurrentUser>("/auth/me"),
-          api.get<AnalyteGap[]>("/admin/analyte-gaps"),
-        ]);
+  const load = useCallback(async () => {
+    try {
+      setError("");
+      setLoading(true);
+      const [meResponse, gapsResponse] = await Promise.all([
+        api.get<NavUser>("/auth/me"),
+        api.get<AnalyteGap[]>("/admin/analyte-gaps"),
+      ]);
 
-        if (meRes.data.role !== "admin") {
-          router.replace("/assignments");
-          return;
-        }
-
-        setCurrentUser(meRes.data);
-        setGaps(gapsRes.data);
-      } catch (err) {
-        setError(getErrorMessage(err, "Could not load analyte gaps."));
-      } finally {
-        setLoading(false);
+      if (meResponse.data.role !== "admin") {
+        router.replace("/assignments");
+        return;
       }
+
+      setCurrentUser(meResponse.data);
+      setGaps(gapsResponse.data);
+    } catch (err) {
+      setError(getErrorMessage(err, "Could not load analyte gaps."));
+    } finally {
+      setLoading(false);
     }
-    init();
+  }, [router]);
+
+  useEffect(() => {
+    load();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
-  // Cross-check: also flag gaps that DO match the Python catalog but miss the TS catalog
-  const enrichedGaps = useMemo(() => {
-    return gaps.map((gap) => ({
-      ...gap,
-      tsMatch: findAnalyteEntry(gap.canonical_name) !== null,
-    }));
-  }, [gaps]);
+  /**
+   * A gap the TS catalog also misses is worse than one it knows about: the
+   * former is genuinely unrecognised everywhere, the latter is catalog drift
+   * between the TS and Python catalogs.
+   */
+  const enrichedGaps = useMemo<GapRow[]>(
+    () =>
+      gaps.map((gap) => ({
+        ...gap,
+        tsMatch: findAnalyteEntry(gap.canonical_name) !== null,
+      })),
+    [gaps]
+  );
+
+  const counts = useMemo(
+    () => ({
+      all: enrichedGaps.length,
+      missing: enrichedGaps.filter((gap) => !gap.tsMatch).length,
+      drift: enrichedGaps.filter((gap) => gap.tsMatch).length,
+    }),
+    [enrichedGaps]
+  );
 
   const filtered = useMemo(() => {
     const term = query.trim().toLowerCase();
-    if (!term) return enrichedGaps;
-    return enrichedGaps.filter(
-      (g) =>
-        g.canonical_name.toLowerCase().includes(term) ||
-        g.raw_names.some((r) => r.toLowerCase().includes(term)),
-    );
-  }, [enrichedGaps, query]);
+    return enrichedGaps.filter((gap) => {
+      if (filter === "missing" && gap.tsMatch) return false;
+      if (filter === "drift" && !gap.tsMatch) return false;
+      if (!term) return true;
+      return (
+        gap.canonical_name.toLowerCase().includes(term) ||
+        gap.raw_names.some((raw) => raw.toLowerCase().includes(term))
+      );
+    });
+  }, [enrichedGaps, query, filter]);
 
-  // Items the Python catalog missed (backend confirmed no match)
-  const pythonMissed = filtered.filter((g) => !g.tsMatch);
-  // Items Python missed but TS catalog has (catalog drift)
-  const tsDriftOnly = filtered.filter((g) => g.tsMatch);
+  const totalOccurrences = useMemo(
+    () => enrichedGaps.reduce((sum, gap) => sum + gap.count, 0),
+    [enrichedGaps]
+  );
+
+  const columns: Column<GapRow>[] = useMemo(
+    () => [
+      {
+        key: "name",
+        header: "Canonical name",
+        sortable: true,
+        sortValue: (row) => row.canonical_name,
+        render: (row) => (
+          <span className="b-cell-title" style={{ fontFamily: "ui-monospace, monospace" }}>
+            {row.canonical_name}
+          </span>
+        ),
+      },
+      {
+        key: "severity",
+        header: "Status",
+        width: 190,
+        sortable: true,
+        sortValue: (row) => (row.tsMatch ? 1 : 0),
+        hideBelow: 640,
+        render: (row) =>
+          row.tsMatch ? (
+            <Status tone="warn">Python needs synonym</Status>
+          ) : (
+            <Status tone="danger">Missing from both</Status>
+          ),
+      },
+      {
+        key: "raw",
+        header: "Seen as",
+        hideBelow: 900,
+        render: (row) =>
+          row.raw_names.length ? (
+            <span className="b-strip">
+              {row.raw_names.slice(0, 3).map((raw) => (
+                <span key={raw} className="b-chip">
+                  {raw}
+                </span>
+              ))}
+              {row.raw_names.length > 3 ? (
+                <span className="b-range">+{row.raw_names.length - 3}</span>
+              ) : null}
+            </span>
+          ) : (
+            <span className="b-range">—</span>
+          ),
+      },
+      {
+        key: "count",
+        header: "Rows",
+        numeric: true,
+        width: 72,
+        sortable: true,
+        sortValue: (row) => row.count,
+        render: (row) => <span style={{ fontWeight: 600 }}>{row.count}</span>,
+      },
+      {
+        key: "actions",
+        header: <span className="sr-only">Actions</span>,
+        width: 160,
+        render: (row) => (
+          <div className="b-row-actions">
+            {row.last_document_id ? (
+              <button
+                type="button"
+                className="b-btn b-btn-ghost b-btn-sm"
+                onClick={(event) => {
+                  event.stopPropagation();
+                  router.push(`/documents/${row.last_document_id}`);
+                }}
+              >
+                Doc #{row.last_document_id}
+              </button>
+            ) : null}
+            <CopyButton text={row.canonical_name} />
+          </div>
+        ),
+      },
+    ],
+    [router]
+  );
 
   if (loading || !currentUser) {
     return (
-      <main className="app-page-bg" style={{ minHeight: "100vh", padding: 24, display: "grid", placeItems: "center" }}>
-        <div className="soft-card-tight" style={{ padding: 22, display: "flex", gap: 12, alignItems: "center" }}>
-          <Spinner size={20} />
-          <span className="muted-text">Loading analyte gaps…</span>
+      <main className="app-page-bg" style={{ padding: "var(--s6)" }}>
+        <div className="b-surface">
+          <TableSkeleton rows={8} columns={4} />
         </div>
       </main>
     );
@@ -137,203 +249,106 @@ export default function AnalyteGapsPage() {
     <AppShell
       user={currentUser}
       title="Analyte gaps"
-      subtitle="Lab analyte names extracted from documents that are not in the catalog"
-      rightContent={
-        <button className="secondary-btn" onClick={() => router.push("/assignments")}>
-          Back
-        </button>
-      }
+      subtitle="Lab analyte names extracted from documents that the catalog does not recognise"
     >
-      {error && (
-        <div className="soft-card-tight" style={{ marginBottom: 20, padding: 16, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)" }}>
-          {error}
-        </div>
-      )}
+      <div className="b-stack">
+        {error ? <ErrorNote onRetry={load}>{error}</ErrorNote> : null}
 
-      {/* Summary strip */}
-      <div style={{ display: "grid", gridTemplateColumns: "repeat(auto-fit, minmax(180px, 1fr))", gap: 14, marginBottom: 24 }}>
-        <div className="soft-card-tight" style={{ padding: 18 }}>
-          <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>Total gaps</div>
-          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6 }}>{gaps.length}</div>
-          <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>Distinct unrecognized names</div>
-        </div>
-        <div className="soft-card-tight" style={{ padding: 18 }}>
-          <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>Python catalog only</div>
-          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6, color: "var(--danger-text)" }}>
-            {gaps.filter((g) => findAnalyteEntry(g.canonical_name) === null).length}
-          </div>
-          <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>Missing from both catalogs</div>
-        </div>
-        <div className="soft-card-tight" style={{ padding: 18 }}>
-          <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>Catalog drift</div>
-          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6, color: "var(--warn-text)" }}>
-            {gaps.filter((g) => findAnalyteEntry(g.canonical_name) !== null).length}
-          </div>
-          <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>In TS catalog but not Python</div>
-        </div>
-        <div className="soft-card-tight" style={{ padding: 18 }}>
-          <div className="muted-text" style={{ fontSize: 12, fontWeight: 700 }}>Total occurrences</div>
-          <div style={{ fontSize: 28, fontWeight: 800, letterSpacing: "-0.05em", marginTop: 6 }}>
-            {gaps.reduce((sum, g) => sum + g.count, 0)}
-          </div>
-          <div className="muted-text" style={{ fontSize: 12, marginTop: 4 }}>Lab rows across all documents</div>
-        </div>
-      </div>
+        <Metrics>
+          <Metric label="Distinct gaps" value={counts.all} sub="Unrecognised names" />
+          <Metric
+            label="Missing from both"
+            value={counts.missing}
+            tone={counts.missing > 0 ? "alert" : undefined}
+            sub="Not in either catalog"
+          />
+          <Metric
+            label="Catalog drift"
+            value={counts.drift}
+            tone={counts.drift > 0 ? "warn" : undefined}
+            sub="In TS, not in Python"
+          />
+          <Metric label="Affected rows" value={totalOccurrences} sub="Across all documents" />
+        </Metrics>
 
-      <div className="soft-card" style={{ padding: 24 }}>
-        <div style={{ marginBottom: 16 }}>
-          <div className="section-title" style={{ marginBottom: 8 }}>Unknown analytes</div>
-          <div className="muted-text" style={{ lineHeight: 1.6 }}>
-            These canonical names appear in extracted lab results but were not matched by the Python catalog.
-            Use the copy button to grab the exact name for adding to{" "}
-            <code style={{ fontSize: 12, background: "var(--panel-2)", padding: "1px 5px", borderRadius: 4 }}>
-              lab_catalog.py
-            </code>{" "}
-            or{" "}
-            <code style={{ fontSize: 12, background: "var(--panel-2)", padding: "1px 5px", borderRadius: 4 }}>
-              catalog.ts
-            </code>.
-          </div>
-        </div>
+        <section className="b-surface">
+          <Toolbar
+            search={query}
+            onSearch={setQuery}
+            searchPlaceholder="Filter by canonical or raw name…"
+            filters={
+              <>
+                <FilterChip
+                  label="All"
+                  count={counts.all}
+                  active={filter === "all"}
+                  onClick={() => setFilter("all")}
+                />
+                <FilterChip
+                  label="Missing from both"
+                  count={counts.missing}
+                  active={filter === "missing"}
+                  onClick={() => setFilter("missing")}
+                />
+                <FilterChip
+                  label="Catalog drift"
+                  count={counts.drift}
+                  active={filter === "drift"}
+                  onClick={() => setFilter("drift")}
+                />
+              </>
+            }
+            count={filtered.length}
+            countLabel="gaps"
+          />
 
-        <input
-          className="text-input"
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-          placeholder="Filter by canonical name or raw name…"
-          style={{ marginBottom: 16 }}
-        />
+          <DataTable
+            rows={filtered}
+            columns={columns}
+            rowKey={(row) => row.canonical_name}
+            caption="Unknown analytes"
+            initialSort={{ key: "count", dir: "desc" }}
+            rowClassName={(row) => (row.tsMatch ? "row-warn" : "row-alert")}
+            emptyState={
+              <EmptyState
+                icon={<IconLab size={17} />}
+                title={query || filter !== "all" ? "No gaps match this filter" : "No analyte gaps"}
+                description={
+                  query || filter !== "all"
+                    ? "Try a different search term or filter."
+                    : "Every extracted analyte name is recognised by the catalog."
+                }
+              />
+            }
+          />
+        </section>
 
-        {pythonMissed.length > 0 && (
-          <div style={{ marginBottom: 28 }}>
-            <div style={{ fontWeight: 700, fontSize: 13, color: "var(--danger-text)", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--danger-text)", display: "inline-block" }} />
-              Missing from both catalogs ({pythonMissed.length})
-            </div>
-            <GapTable rows={pythonMissed} router={router} />
-          </div>
-        )}
-
-        {tsDriftOnly.length > 0 && (
-          <div>
-            <div style={{ fontWeight: 700, fontSize: 13, color: "var(--warn-text)", marginBottom: 10, display: "flex", alignItems: "center", gap: 8 }}>
-              <span style={{ width: 8, height: 8, borderRadius: 999, background: "var(--warn-text)", display: "inline-block" }} />
-              In TS catalog only — Python needs synonym ({tsDriftOnly.length})
-            </div>
-            <GapTable rows={tsDriftOnly} router={router} />
-          </div>
-        )}
-
-        {filtered.length === 0 && (
-          <div style={{ padding: "32px 0", textAlign: "center" }}>
-            <div style={{ fontWeight: 700, color: "var(--text)", marginBottom: 8 }}>
-              {query ? "No gaps match this filter." : "No analyte gaps found."}
-            </div>
-            <div className="muted-text">
-              {query ? "Try a different search term." : "All extracted analyte names are recognized by the catalog."}
-            </div>
-          </div>
-        )}
+        <p className="b-meta" style={{ maxWidth: "80ch" }}>
+          Copy a canonical name to add it as a synonym in{" "}
+          <code
+            style={{
+              fontSize: "var(--fs-xs)",
+              background: "var(--surface-3)",
+              padding: "1px 5px",
+              borderRadius: "var(--r-sm)",
+            }}
+          >
+            lab_catalog.py
+          </code>{" "}
+          or{" "}
+          <code
+            style={{
+              fontSize: "var(--fs-xs)",
+              background: "var(--surface-3)",
+              padding: "1px 5px",
+              borderRadius: "var(--r-sm)",
+            }}
+          >
+            catalog.ts
+          </code>
+          . Sorting by affected rows puts the highest-impact gaps first.
+        </p>
       </div>
     </AppShell>
-  );
-}
-
-type GapRow = AnalyteGap & { tsMatch: boolean };
-
-function GapTable({ rows, router }: { rows: GapRow[]; router: ReturnType<typeof useRouter> }) {
-  return (
-    <div style={{ borderTop: "1px solid var(--border)" }}>
-      {/* Header */}
-      <div
-        style={{
-          display: "grid",
-          gridTemplateColumns: "1fr 2fr 64px 80px 80px",
-          gap: "0 16px",
-          padding: "8px 0",
-          borderBottom: "1px solid var(--border)",
-        }}
-      >
-        {["Canonical name", "Seen as (raw names)", "Count", "Document", ""].map((h) => (
-          <span key={h} style={{ fontSize: 11, fontWeight: 700, color: "var(--muted)", textTransform: "uppercase", letterSpacing: "0.04em" }}>
-            {h}
-          </span>
-        ))}
-      </div>
-
-      {rows.map((gap) => (
-        <div
-          key={gap.canonical_name}
-          style={{
-            display: "grid",
-            gridTemplateColumns: "1fr 2fr 64px 80px 80px",
-            gap: "0 16px",
-            padding: "11px 0",
-            borderBottom: "1px solid var(--border)",
-            alignItems: "center",
-          }}
-        >
-          {/* Canonical name + copy */}
-          <div style={{ display: "flex", alignItems: "center", gap: 8, minWidth: 0 }}>
-            <span
-              style={{
-                fontWeight: 600,
-                fontSize: 13,
-                color: "var(--text)",
-                whiteSpace: "nowrap",
-                overflow: "hidden",
-                textOverflow: "ellipsis",
-              }}
-            >
-              {gap.canonical_name}
-            </span>
-          </div>
-
-          {/* Raw names */}
-          <div style={{ display: "flex", gap: 4, flexWrap: "wrap" }}>
-            {gap.raw_names.length > 0
-              ? gap.raw_names.map((r) => (
-                  <span
-                    key={r}
-                    style={{
-                      padding: "1px 7px",
-                      borderRadius: 4,
-                      fontSize: 11,
-                      background: "var(--panel-2)",
-                      color: "var(--muted)",
-                      border: "1px solid var(--border)",
-                      whiteSpace: "nowrap",
-                    }}
-                  >
-                    {r}
-                  </span>
-                ))
-              : <span className="muted-text" style={{ fontSize: 12 }}>—</span>}
-          </div>
-
-          {/* Count */}
-          <span style={{ fontSize: 13, fontWeight: 700, color: "var(--text)" }}>{gap.count}</span>
-
-          {/* Last document link */}
-          <span>
-            {gap.last_document_id ? (
-              <button
-                type="button"
-                className="secondary-btn"
-                style={{ fontSize: 12, padding: "4px 10px" }}
-                onClick={() => router.push(`/documents/${gap.last_document_id}`)}
-              >
-                #{gap.last_document_id}
-              </button>
-            ) : (
-              <span className="muted-text" style={{ fontSize: 12 }}>—</span>
-            )}
-          </span>
-
-          {/* Copy */}
-          <CopyButton text={gap.canonical_name} />
-        </div>
-      ))}
-    </div>
   );
 }

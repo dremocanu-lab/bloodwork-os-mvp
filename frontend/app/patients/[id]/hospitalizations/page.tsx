@@ -344,7 +344,7 @@ export default function PatientHospitalizationsPage() {
                 >
                   <div>
                     <div style={{ display: "flex", alignItems: "center", gap: 10, flexWrap: "wrap" }}>
-                      <div style={{ fontWeight: 900, fontSize: 20 }}>{event.title}</div>
+                      <div style={{ fontWeight: 600, fontSize: 20 }}>{event.title}</div>
 
                       <span
                         style={{
@@ -353,7 +353,7 @@ export default function PatientHospitalizationsPage() {
                           borderRadius: 999,
                           background: isActive ? "var(--success-bg)" : "var(--panel-2)",
                           color: isActive ? "var(--success-text)" : "var(--muted)",
-                          fontWeight: 900,
+                          fontWeight: 600,
                           fontSize: 12,
                         }}
                       >
@@ -394,7 +394,7 @@ export default function PatientHospitalizationsPage() {
 
           {!filteredEvents.length && (
             <div className="soft-card-tight" style={{ padding: 18, background: "var(--panel-2)" }}>
-              <div style={{ fontWeight: 900 }}>
+              <div style={{ fontWeight: 600 }}>
                 {filterMode === "active"
                   ? t("noActiveHospitalizations")
                   : filterMode === "past"

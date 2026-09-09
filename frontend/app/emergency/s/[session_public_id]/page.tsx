@@ -45,8 +45,8 @@ export default function EmergencySessionPublicIdPage() {
         }}
       >
         <div style={{ textAlign: "center", maxWidth: 400 }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
-          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>{error}</div>
+          <div style={{ fontSize: 19, marginBottom: 16 }}>🔒</div>
+          <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 8 }}>{error}</div>
           <p className="muted-text" style={{ fontSize: 14, marginBottom: 20 }}>
             Emergency sessions expire automatically. Start a new session from the emergency portal.
           </p>

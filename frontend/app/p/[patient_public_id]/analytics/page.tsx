@@ -42,8 +42,8 @@ export default function PatientAnalyticsPublicIdPage() {
         }}
       >
         <div style={{ textAlign: "center", maxWidth: 400 }}>
-          <div style={{ fontSize: 32, marginBottom: 16 }}>🔒</div>
-          <div style={{ fontWeight: 800, fontSize: 18, marginBottom: 8 }}>{error}</div>
+          <div style={{ fontSize: 19, marginBottom: 16 }}>🔒</div>
+          <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 8 }}>{error}</div>
           <button
             type="button"
             className="primary-btn"
