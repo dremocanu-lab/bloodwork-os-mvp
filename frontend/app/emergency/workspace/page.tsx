@@ -5,15 +5,13 @@ import { useRouter, useSearchParams } from "next/navigation";
 import Link from "next/link";
 import BragiLogo from "@/components/bragi-logo";
 import {
-  IconAlert,
   IconCheck,
   IconChevronDown,
   IconChevronRight,
-  IconClose,
   IconLogout,
   IconShield,
 } from "@/components/ui/icon";
-import { EmptyState as SharedEmptyState, LabValue, Status } from "@/components/ui";
+import { EmptyState as SharedEmptyState, LabValue } from "@/components/ui";
 import { useLanguage } from "@/lib/i18n";
 import {
   emergencyApi,

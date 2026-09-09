@@ -3,6 +3,7 @@
 import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import { EmptyState } from "@/components/ui";
 import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
@@ -84,9 +85,24 @@ export default function MedicationsListPage() {
     init();
   }, [router]);
 
-  const filtered = statusFilter
-    ? medications.filter((m) => m.status === statusFilter)
-    : medications;
+  // Clinical ordering: what the patient is currently taking comes first.
+  // The API returns newest-created first, which put a stopped drug above a
+  // current one - misleading in a medication list.
+  const STATUS_RANK: Record<string, number> = {
+    active: 0,
+    as_needed: 1,
+    paused: 2,
+    stopped: 3,
+  };
+
+  const filtered = (
+    statusFilter ? medications.filter((m) => m.status === statusFilter) : medications
+  )
+    .slice()
+    .sort((a, b) => {
+      const rank = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+      return rank !== 0 ? rank : a.name.localeCompare(b.name);
+    });
 
   const active = medications.filter((m) => m.status === "active").length;
   const asNeeded = medications.filter((m) => m.status === "as_needed").length;
@@ -123,16 +139,12 @@ export default function MedicationsListPage() {
       )}
 
       {/* Safety notice */}
-      <div
-        className="soft-card-tight"
-        style={{ marginBottom: 20, padding: 14, background: "color-mix(in srgb, var(--primary) 8%, var(--panel))", borderColor: "color-mix(in srgb, var(--primary) 22%, transparent)" }}
-      >
-        <div style={{ fontSize: 12, fontWeight: 600, color: "var(--primary)", marginBottom: 4 }}>
-          {t("medSafetyTitle")}
-        </div>
-        <div className="muted-text" style={{ fontSize: 12, lineHeight: 1.65 }}>
-          {t("medSafetyDesc")}
-        </div>
+      {/* These records are unverified, which is genuinely important, so the
+          notice stays prominent - but as the product's notice pattern rather
+          than a bespoke violet panel. */}
+      <div className="b-notice b-notice-warn" style={{ marginBottom: "var(--s4)", display: "block" }}>
+        <div style={{ fontWeight: 600, marginBottom: 2 }}>{t("medSafetyTitle")}</div>
+        <div>{t("medSafetyDesc")}</div>
       </div>
 
       {/* Summary row */}
@@ -158,13 +170,13 @@ export default function MedicationsListPage() {
 
       {/* Filter row */}
       {medications.length > 0 && (
-        <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 16 }}>
+        <div className="b-filters" style={{ marginBottom: "var(--s4)" }}>
           {["", "active", "as_needed", "paused", "stopped"].map((s) => (
             <button
               key={s}
               type="button"
-              className={statusFilter === s ? "primary-btn" : "secondary-btn"}
-              style={{ borderRadius: 999, padding: "7px 14px", fontSize: 13 }}
+              className="b-filter"
+              aria-pressed={statusFilter === s}
               onClick={() => setStatusFilter(s)}
             >
               {s === "" ? t("all") : STATUS_LABELS[s]}
@@ -173,76 +185,62 @@ export default function MedicationsListPage() {
         </div>
       )}
 
-      {/* Medication cards */}
-      <div style={{ display: "grid", gap: 12 }}>
-        {filtered.map((med) => {
-          const statusStyle = STATUS_COLORS[med.status] || STATUS_COLORS.stopped;
-          return (
+      {/* Medication list.
+          Was one 155px card per medication with three full-radius status
+          pills stacked above the drug name - the name, which is what a
+          reader scans for, came third. Now the name leads, dose/route/
+          frequency is the secondary line, and state is a status dot on the
+          right. */}
+      <section className="b-surface">
+        <div className="b-list">
+          {filtered.map((med) => (
             <button
               key={med.id}
               type="button"
+              className="b-list-row"
               onClick={() => router.push(`/my-records/medications/${med.id}`)}
-              className="soft-card-tight"
-              style={{
-                padding: 18,
-                textAlign: "left",
-                display: "block",
-                width: "100%",
-                cursor: "pointer",
-                transition: "border-color 140ms ease",
-              }}
             >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0 }}>
-                  <div style={{ display: "flex", gap: 8, flexWrap: "wrap", marginBottom: 8 }}>
-                    <span style={{
-                      padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
-                      background: statusStyle.bg, color: statusStyle.text,
-                    }}>
-                      {STATUS_LABELS[med.status] || med.status}
-                    </span>
-                    {med.is_uncertain && (
-                      <span style={{
-                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
-                        background: "var(--warn-bg)", color: "var(--warn-text)",
-                      }}>
-                        {t("medDoseNotVerified")}
-                      </span>
-                    )}
-                    {med.official_match_status === "matched" && (
-                      <span style={{
-                        padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600,
-                        background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)",
-                      }}>
-                        {t("medOfficialInfoAvailable")}
-                      </span>
-                    )}
-                  </div>
-                  <div style={{ fontSize: 18, fontWeight: 600, letterSpacing: "-0.02em" }}>{med.name}</div>
-                  <div className="muted-text" style={{ marginTop: 5, fontSize: 13, lineHeight: 1.6 }}>
-                    {[med.dose_strength, med.route_form, med.frequency].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
-                  </div>
-                  {med.reason && (
-                    <div className="muted-text" style={{ marginTop: 4, fontSize: 13 }}>
-                      {t("medRecordedReasonLabel")} {med.reason}
-                    </div>
-                  )}
-                </div>
+              <span className="b-list-main">
+                <span className="b-list-title">{med.name}</span>
+                <span className="b-list-sub">
+                  {[med.dose_strength, med.route_form, med.frequency]
+                    .filter(Boolean)
+                    .join(" · ") || t("medNoDoseFrequency")}
+                  {med.reason ? ` · ${med.reason}` : ""}
+                </span>
+                <span className="b-strip" style={{ marginTop: 2 }}>
+                  {med.is_uncertain ? (
+                    <span className="b-chip b-chip-warn">{t("medDoseNotVerified")}</span>
+                  ) : null}
+                  {med.official_match_status === "matched" ? (
+                    <span className="b-chip">{t("medOfficialInfoAvailable")}</span>
+                  ) : null}
+                </span>
+              </span>
 
-                <div style={{ flexShrink: 0, textAlign: "right" }}>
-                  <div className="muted-text" style={{ fontSize: 11 }}>
-                    {MATCH_LABELS[med.official_match_status || ""] || t("medMatchUnknown")}
-                  </div>
-                  {med.start_date && (
-                    <div className="muted-text" style={{ fontSize: 11, marginTop: 4 }}>
-                      {t("medSince")} {med.start_date}
-                    </div>
-                  )}
-                </div>
-              </div>
+              <span className="b-list-trail">
+                <span
+                  className={`b-status ${
+                    med.status === "active"
+                      ? "b-status-ok"
+                      : med.status === "as_needed"
+                      ? "b-status-info"
+                      : med.status === "paused"
+                      ? "b-status-warn"
+                      : "b-status-muted"
+                  }`}
+                >
+                  {STATUS_LABELS[med.status] || med.status}
+                </span>
+                {med.start_date ? (
+                  <span className="b-range">
+                    {t("medSince")} {med.start_date}
+                  </span>
+                ) : null}
+              </span>
             </button>
-          );
-        })}
+          ))}
+        </div>
 
         {filtered.length === 0 && medications.length === 0 && (
           <div className="soft-card" style={{ padding: 32, textAlign: "center" }}>
@@ -250,22 +248,17 @@ export default function MedicationsListPage() {
             <div className="muted-text" style={{ marginBottom: 20, lineHeight: 1.65 }}>
               {t("noMedicationsYetDesc")}
             </div>
-            <button type="button" className="primary-btn" onClick={() => router.push("/my-records/medications/new")}>
+            <button type="button" className="b-btn b-btn-secondary" onClick={() => router.push("/my-records/medications/new")}>
               {t("addFirstMedication")}
             </button>
           </div>
         )}
 
-        {filtered.length === 0 && medications.length > 0 && (
-          <div className="muted-text">{t("noMedicationsFilter")}</div>
-        )}
-      </div>
+        {filtered.length === 0 && medications.length > 0 ? (
+          <EmptyState title={t("noMedicationsFilter")} />
+        ) : null}
+      </section>
 
-      <div style={{ marginTop: 20 }}>
-        <button type="button" className="secondary-btn" onClick={() => router.push("/my-records")}>
-          {t("backToMyRecords")}
-        </button>
-      </div>
     </AppShell>
   );
 }

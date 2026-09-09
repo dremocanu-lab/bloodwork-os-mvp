@@ -3,6 +3,7 @@
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import { EmptyState as SharedEmptyState } from "@/components/ui";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
@@ -27,47 +28,6 @@ type PatientMedication = {
   is_uncertain: boolean;
   official_match_status?: string | null;
 };
-
-const STATUS_COLORS: Record<string, { bg: string; text: string }> = {
-  active: { bg: "var(--success-bg)", text: "var(--success-text)" },
-  as_needed: { bg: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", text: "var(--primary)" },
-  paused: { bg: "var(--warn-bg)", text: "var(--warn-text)" },
-  stopped: { bg: "var(--panel-2)", text: "var(--muted)" },
-};
-
-function OfficialBadge({ status }: { status?: string | null }) {
-  if (!status || status === "pending") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
-      Looking up…
-    </span>
-  );
-  if (status === "matched") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))", color: "var(--primary)" }}>
-      Official info matched
-    </span>
-  );
-  if (status === "not_matched") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
-      No official match
-    </span>
-  );
-  if (status === "vague") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-      Name too vague
-    </span>
-  );
-  if (status === "multiple") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-      Multiple matches
-    </span>
-  );
-  if (status === "error") return (
-    <span style={{ padding: "1px 7px", borderRadius: 999, fontSize: 10, fontWeight: 600, background: "var(--panel-2)", color: "var(--muted)" }}>
-      Lookup error
-    </span>
-  );
-  return null;
-}
 
 export default function DoctorMedicationsListPage() {
   const params = useParams();
@@ -119,6 +79,15 @@ export default function DoctorMedicationsListPage() {
     return { total: medications.length, active, asNeeded, pausedStopped, uncertain, matched, needsVerification };
   }, [medications]);
 
+  // Active first, then as-needed, paused, stopped. The API's creation order
+  // could surface a stopped drug above a current one.
+  const STATUS_RANK: Record<string, number> = {
+    active: 0,
+    as_needed: 1,
+    paused: 2,
+    stopped: 3,
+  };
+
   const filtered = useMemo(() => {
     let result = medications;
     if (statusFilter === "uncertain") {
@@ -144,7 +113,11 @@ export default function DoctorMedicationsListPage() {
           .filter(Boolean).join(" ").toLowerCase().includes(term)
       );
     }
-    return result;
+    return result.slice().sort((a, b) => {
+      const rank = (STATUS_RANK[a.status] ?? 9) - (STATUS_RANK[b.status] ?? 9);
+      return rank !== 0 ? rank : a.name.localeCompare(b.name);
+    });
+    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [medications, statusFilter, officialFilter, searchQuery]);
 
   if (loading) {
@@ -225,8 +198,8 @@ export default function DoctorMedicationsListPage() {
             <button
               key={f.key}
               type="button"
-              className={statusFilter === f.key ? "primary-btn" : "secondary-btn"}
-              style={{ borderRadius: 999, padding: "7px 14px", fontSize: 12 }}
+              className="b-filter"
+              aria-pressed={statusFilter === f.key}
               onClick={() => setStatusFilter(f.key)}
             >
               {f.label}
@@ -235,65 +208,112 @@ export default function DoctorMedicationsListPage() {
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 10 }}>
-        {filtered.map((med) => {
-          const statusStyle = STATUS_COLORS[med.status] || STATUS_COLORS.stopped;
-          return (
-            <button
-              key={med.id}
-              type="button"
-              onClick={() => router.push(`/patients/${patientId}/medications/${med.id}`)}
-              className="soft-card-tight"
-              style={{ padding: 18, textAlign: "left", display: "block", width: "100%", cursor: "pointer" }}
-            >
-              <div style={{ display: "flex", justifyContent: "space-between", alignItems: "flex-start", gap: 12, flexWrap: "wrap" }}>
-                <div style={{ minWidth: 0, flex: 1 }}>
-                  <div style={{ display: "flex", gap: 6, alignItems: "center", flexWrap: "wrap", marginBottom: 7 }}>
-                    <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: statusStyle.bg, color: statusStyle.text }}>
-                      {STATUS_LABELS[med.status] || med.status}
+      {/* Medication table.
+          This is a clinical review surface, so it is a table: name, dose,
+          frequency, route, prescriber, dates and state in aligned columns.
+          Previously each medication was a 150px card whose first line was a
+          row of status pills, with the drug name third - a doctor scanning
+          eight medications had to read past 24 pills to find them. */}
+      <section className="b-surface">
+        <div className="b-table-wrap" tabIndex={0} role="region" aria-label={t("medications")}>
+          <table className="b-table b-table-hover b-table-clickable">
+            <thead>
+              <tr>
+                <th scope="col">{t("medications")}</th>
+                <th scope="col">{t("dose")}</th>
+                <th scope="col" className="hide-below-900">{t("frequency")}</th>
+                <th scope="col" className="hide-below-1100">{t("medPrescribedBy")}</th>
+                <th scope="col" className="num hide-below-640">{t("medSince")}</th>
+                <th scope="col" style={{ width: 150 }}>Status</th>
+              </tr>
+            </thead>
+
+            <tbody>
+              {filtered.map((med) => (
+                <tr
+                  key={med.id}
+                  tabIndex={0}
+                  className={med.is_uncertain ? "row-warn" : undefined}
+                  onClick={() => router.push(`/patients/${patientId}/medications/${med.id}`)}
+                  onKeyDown={(event) => {
+                    if (event.key === "Enter" || event.key === " ") {
+                      event.preventDefault();
+                      router.push(`/patients/${patientId}/medications/${med.id}`);
+                    }
+                  }}
+                >
+                  <td>
+                    <span className="b-cell-stack">
+                      <span className="b-cell-title">{med.name}</span>
+                      {med.reason ? (
+                        <span className="b-cell-sub">{med.reason}</span>
+                      ) : null}
                     </span>
-                    {med.is_uncertain && (
-                      <span style={{ padding: "3px 10px", borderRadius: 999, fontSize: 11, fontWeight: 600, background: "var(--warn-bg)", color: "var(--warn-text)" }}>
-                        {t("medDoseNotVerified")}
+                  </td>
+
+                  <td>
+                    <span className="tnum">{med.dose_strength || "—"}</span>
+                    {med.route_form ? <span className="b-unit">{med.route_form}</span> : null}
+                  </td>
+
+                  <td className="hide-below-900">
+                    <span style={{ color: "var(--text-2)" }}>{med.frequency || "—"}</span>
+                  </td>
+
+                  <td className="hide-below-1100">
+                    <span className="b-cell-sub">{med.prescriber || "—"}</span>
+                  </td>
+
+                  <td className="num hide-below-640">
+                    <span className="b-range">{med.start_date || "—"}</span>
+                  </td>
+
+                  <td>
+                    <span
+                      style={{
+                        display: "inline-flex",
+                        alignItems: "center",
+                        gap: "var(--s2)",
+                        flexWrap: "wrap",
+                      }}
+                    >
+                      <span
+                        className={`b-status ${
+                          med.status === "active"
+                            ? "b-status-ok"
+                            : med.status === "as_needed"
+                            ? "b-status-info"
+                            : med.status === "paused"
+                            ? "b-status-warn"
+                            : "b-status-muted"
+                        }`}
+                      >
+                        {STATUS_LABELS[med.status] || med.status}
                       </span>
-                    )}
-                    <OfficialBadge status={med.official_match_status} />
-                  </div>
-                  <div style={{ fontSize: 17, fontWeight: 600, letterSpacing: "-0.02em", marginBottom: 5 }}>{med.name}</div>
-                  <div className="muted-text" style={{ fontSize: 13 }}>
-                    {[med.dose_strength, med.frequency, med.route_form].filter(Boolean).join(" · ") || t("medNoDoseFrequency")}
-                  </div>
-                  {med.reason && (
-                    <div className="muted-text" style={{ marginTop: 3, fontSize: 13 }}>
-                      {t("medRecordedReasonLabel")} {med.reason}
-                    </div>
-                  )}
-                  {med.prescriber && (
-                    <div className="muted-text" style={{ marginTop: 2, fontSize: 12 }}>
-                      {t("medPrescribedBy")}: {med.prescriber}
-                    </div>
-                  )}
-                </div>
+                      {med.is_uncertain ? (
+                        <span className="b-chip b-chip-warn">{t("medDoseNotVerified")}</span>
+                      ) : null}
+                    </span>
+                  </td>
+                </tr>
+              ))}
+            </tbody>
+          </table>
+        </div>
 
-                <div style={{ flexShrink: 0, textAlign: "right" }}>
-                  {med.start_date && <div className="muted-text" style={{ fontSize: 11 }}>{t("medSince")} {med.start_date}</div>}
-                  {med.stop_date && <div className="muted-text" style={{ fontSize: 11 }}>{t("medStatusStopped")} {med.stop_date}</div>}
-                </div>
-              </div>
-            </button>
-          );
-        })}
+        {filtered.length === 0 ? (
+          <SharedEmptyState
+            title={
+              medications.length === 0
+                ? t("medPatientNone")
+                : searchQuery
+                ? "No medications match this search"
+                : t("noMedicationsFilter")
+            }
+          />
+        ) : null}
+      </section>
 
-        {filtered.length === 0 && (
-          <div className="muted-text" style={{ padding: "24px 0", textAlign: "center" }}>
-            {medications.length === 0
-              ? t("medPatientNone")
-              : searchQuery
-              ? "No medications match this search."
-              : t("noMedicationsFilter")}
-          </div>
-        )}
-      </div>
     </AppShell>
   );
 }

@@ -5,6 +5,8 @@ import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import { EmptyState, ErrorNote, Notice, SectionHead, Status } from "@/components/ui";
+import { IconHeart } from "@/components/ui/icon";
 
 type CurrentUser = {
   id: number;
@@ -93,104 +95,104 @@ export default function MyDependantsPage() {
   }
 
   return (
-    <AppShell user={currentUser} title={t("myDependants")} subtitle={t("myDependantsDesc")}>
-      {error && (
-        <div
-          className="soft-card-tight"
-          style={{
-            marginBottom: 20,
-            padding: 16,
-            borderColor: "var(--danger-border)",
-            background: "var(--danger-bg)",
-            color: "var(--danger-text)",
-          }}
-        >
-          {error}
-        </div>
-      )}
+    <AppShell
+      user={currentUser}
+      title={t("myDependants")}
+      subtitle={t("myDependantsDesc")}
+      density="comfortable"
+    >
+      <div className="b-stack" style={{ maxWidth: 760 }}>
+        {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-      <div className="soft-card" style={{ padding: 24 }}>
-        <div style={{ marginBottom: 18 }}>
-          <div className="section-title">{t("linkedPatients")}</div>
-          <div className="muted-text" style={{ marginTop: 5, lineHeight: 1.5 }}>
-            {t("linkedPatientsDesc")}
-          </div>
-        </div>
+        {/* Linked patients. Was one bordered card per patient inside another
+            card, with the details as a labelled list ("Date of Birth: …",
+            "Sex: …"). Now list rows: the person's name leads and their
+            details are one secondary line. */}
+        <section className="b-surface">
+          <SectionHead
+            title={t("linkedPatients")}
+            count={dependants.length}
+            description={t("linkedPatientsDesc")}
+          />
 
-        {dependants.length === 0 ? (
-          <div className="soft-card-tight" style={{ padding: 20, background: "var(--panel-2)" }}>
-            <div className="muted-text">{t("noDependantsDesc")}</div>
-          </div>
-        ) : (
-          <div style={{ display: "grid", gap: 12 }}>
-            {dependants.map((dep) => (
-              <div
-                key={dep.patient_id}
-                className="soft-card-tight"
-                style={{ padding: 18 }}
-              >
-                <div style={{ fontWeight: 600, fontSize: 16 }}>{dep.full_name}</div>
-                {dep.date_of_birth && (
-                  <div className="muted-text" style={{ marginTop: 4 }}>
-                    {t("dateOfBirth")}: {dep.date_of_birth}
-                  </div>
-                )}
-                {dep.sex && (
-                  <div className="muted-text" style={{ marginTop: 2 }}>
-                    {t("sex")}: {dep.sex}
-                  </div>
-                )}
-                <div className="muted-text" style={{ marginTop: 6, fontSize: 12 }}>
-                  {t("linkedAt")} {formatDate(dep.linked_at)}
-                </div>
-              </div>
-            ))}
-          </div>
-        )}
-
-        <div className="soft-card-tight" style={{ marginTop: 20, padding: 20 }}>
-          <div style={{ marginBottom: 14 }}>
-            <div style={{ fontWeight: 600, fontSize: 14, letterSpacing: "-0.02em" }}>
-              {t("addAnotherDependant")}
-            </div>
-            <div className="muted-text" style={{ marginTop: 4, fontSize: 13, lineHeight: 1.5 }}>
-              {t("addAnotherDependantDesc")}
-            </div>
-          </div>
-
-          {linkError && (
-            <div
-              className="soft-card-tight"
-              style={{ marginBottom: 12, padding: 12, borderColor: "var(--danger-border)", background: "var(--danger-bg)", color: "var(--danger-text)", fontSize: 13 }}
-            >
-              {linkError}
-            </div>
-          )}
-
-          {linkSuccess && (
-            <div
-              className="soft-card-tight"
-              style={{ marginBottom: 12, padding: 12, borderColor: "var(--success-border)", background: "var(--success-bg)", color: "var(--success-text)", fontSize: 13 }}
-            >
-              {linkSuccess}
-            </div>
-          )}
-
-          <form onSubmit={handleLinkPatient} style={{ display: "flex", gap: 10, flexWrap: "wrap" }}>
-            <input
-              type="text"
-              className="form-input"
-              value={linkCode}
-              onChange={(e) => setLinkCode(e.target.value)}
-              placeholder="BW-XXXX-XXXX"
-              style={{ fontFamily: "monospace", flex: "1 1 180px", minWidth: 0 }}
-              disabled={linking}
+          {dependants.length === 0 ? (
+            <EmptyState
+              icon={<IconHeart size={17} />}
+              title={t("noDependantsDesc")}
+              description="Enter a patient's care partner code below to link them."
             />
-            <button type="submit" className="primary-btn" disabled={linking || !linkCode.trim()}>
-              {linking ? t("linking") : t("linkPatient")}
-            </button>
-          </form>
-        </div>
+          ) : (
+            <div className="b-list">
+              {dependants.map((dep) => (
+                <div key={dep.patient_id} className="b-list-row" style={{ cursor: "default" }}>
+                  <span className="b-avatar" aria-hidden="true">
+                    {dep.full_name.charAt(0).toUpperCase()}
+                  </span>
+                  <span className="b-list-main">
+                    <span className="b-list-title">{dep.full_name}</span>
+                    <span className="b-list-sub">
+                      {[
+                        dep.sex,
+                        dep.date_of_birth ? `${t("dateOfBirth")} ${dep.date_of_birth}` : null,
+                      ]
+                        .filter(Boolean)
+                        .join(" · ")}
+                    </span>
+                  </span>
+                  <span className="b-list-trail">
+                    <Status tone="ok">Linked</Status>
+                    <span className="b-range">{formatDate(dep.linked_at)}</span>
+                  </span>
+                </div>
+              ))}
+            </div>
+          )}
+        </section>
+
+        {/* Link another patient. */}
+        <section className="b-surface">
+          <SectionHead
+            title={t("addAnotherDependant")}
+            description={t("addAnotherDependantDesc")}
+          />
+
+          <div className="b-section-body">
+            <div className="b-stack-tight">
+              {linkError ? <ErrorNote>{linkError}</ErrorNote> : null}
+              {linkSuccess ? <Notice tone="ok">{linkSuccess}</Notice> : null}
+
+              <form
+                onSubmit={handleLinkPatient}
+                style={{ display: "flex", gap: "var(--s2)", flexWrap: "wrap" }}
+              >
+                <input
+                  type="text"
+                  className="b-input"
+                  value={linkCode}
+                  onChange={(e) => setLinkCode(e.target.value)}
+                  placeholder="BW-XXXX-XXXX"
+                  aria-label={t("linkPatient")}
+                  style={{
+                    fontFamily: "ui-monospace, monospace",
+                    letterSpacing: "0.05em",
+                    flex: "1 1 200px",
+                    minWidth: 0,
+                    maxWidth: 280,
+                  }}
+                  disabled={linking}
+                />
+                <button
+                  type="submit"
+                  className="b-btn b-btn-primary b-btn-lg"
+                  disabled={linking || !linkCode.trim()}
+                >
+                  {linking ? <span className="b-spinner" /> : null}
+                  {linking ? t("linking") : t("linkPatient")}
+                </button>
+              </form>
+            </div>
+          </div>
+        </section>
       </div>
     </AppShell>
   );

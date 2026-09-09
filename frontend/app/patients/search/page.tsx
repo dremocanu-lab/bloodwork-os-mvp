@@ -3,6 +3,7 @@
 import { FormEvent, useEffect, useMemo, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
+import { Status } from "@/components/ui";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 
@@ -506,43 +507,19 @@ export default function SearchPatientsPage() {
                         currentUser.role === "admin"
                           ? "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(240px, 1fr) auto"
                           : "minmax(220px, 1.2fr) minmax(190px, 0.9fr) minmax(170px, 0.8fr) minmax(160px, 0.7fr) auto",
-                      gap: 14,
+                      gap: "var(--s3)",
                       alignItems: "center",
-                      padding: 16,
+                      padding: "10px var(--s4)",
                       borderBottom: index === patients.length - 1 ? "none" : "1px solid var(--border)",
                     }}
                   >
                     <div style={{ display: "flex", gap: 12, alignItems: "center", minWidth: 0 }}>
-                      <div
-                        style={{
-                          width: 46,
-                          height: 46,
-                          borderRadius: "var(--r-lg)",
-                          display: "grid",
-                          placeItems: "center",
-                          background: "color-mix(in srgb, var(--primary) 18%, var(--panel-2))",
-                          color: "var(--primary)",
-                          border: "1px solid color-mix(in srgb, var(--primary) 34%, var(--border))",
-                          fontWeight: 600,
-                          letterSpacing: "-0.06em",
-                          flex: "0 0 auto",
-                        }}
-                      >
+                      <span className="b-avatar b-avatar-lg" aria-hidden="true">
                         {getInitials(patient.full_name)}
-                      </div>
+                      </span>
 
                       <div style={{ minWidth: 0 }}>
-                        <div
-                          style={{
-                            fontWeight: 600,
-                            fontSize: 16,
-                            whiteSpace: "nowrap",
-                            overflow: "hidden",
-                            textOverflow: "ellipsis",
-                          }}
-                        >
-                          {patient.full_name}
-                        </div>
+                        <div className="b-list-title">{patient.full_name}</div>
 
                         <div className="muted-text" style={{ marginTop: 4, fontSize: 12 }}>
                           {labels.patientId} {valueOrDash(patient.patient_identifier)}
@@ -563,90 +540,36 @@ export default function SearchPatientsPage() {
                         <>
                           {hasScopedAssignment ? (
                             assignedDoctors.slice(0, 2).map((doctor) => (
-                              <span
-                                key={doctor.id}
-                                style={{
-                                  display: "inline-flex",
-                                  width: "fit-content",
-                                  padding: "6px 10px",
-                                  borderRadius: 999,
-                                  background: "var(--success-bg)",
-                                  color: "var(--success-text)",
-                                  border: "1px solid var(--success-border)",
-                                  fontWeight: 600,
-                                  fontSize: 12,
-                                }}
-                              >
+                              <Status key={doctor.id} tone="ok">
                                 {labels.assignedTo} {doctor.full_name}
-                              </span>
+                              </Status>
                             ))
                           ) : (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                width: "fit-content",
-                                padding: "6px 10px",
-                                borderRadius: 999,
-                                background: "var(--warn-bg)",
-                                color: "var(--warn-text)",
-                                border: "1px solid var(--warn-border)",
-                                fontWeight: 600,
-                                fontSize: 12,
-                              }}
-                            >
-                              {labels.noDoctorAssignedDepartment}
-                            </span>
+                            <Status tone="warn">{labels.noDoctorAssignedDepartment}</Status>
                           )}
 
                           {activeEvent && (
-                            <span
-                              style={{
-                                display: "inline-flex",
-                                width: "fit-content",
-                                padding: "6px 10px",
-                                borderRadius: 999,
-                                background: "var(--success-bg)",
-                                color: "var(--success-text)",
-                                border: "1px solid var(--success-border)",
-                                fontWeight: 600,
-                                fontSize: 12,
-                              }}
-                            >
+                            <Status tone="ok">
                               {labels.activeAdmissionColon} {activeEvent.title}
-                            </span>
+                            </Status>
                           )}
                         </>
                       ) : (
-                        <span
-                          style={{
-                            display: "inline-flex",
-                            padding: "6px 10px",
-                            borderRadius: 999,
-                            background: patient.has_access
-                              ? "var(--success-bg)"
+                        <Status
+                          tone={
+                            patient.has_access
+                              ? "ok"
                               : patient.pending_request
-                              ? "var(--warn-bg)"
-                              : "var(--panel-2)",
-                            color: patient.has_access
-                              ? "var(--success-text)"
-                              : patient.pending_request
-                              ? "var(--warn-text)"
-                              : "var(--muted)",
-                            border: patient.has_access
-                              ? "1px solid var(--success-border)"
-                              : patient.pending_request
-                              ? "1px solid var(--warn-border)"
-                              : "1px solid var(--border)",
-                            fontWeight: 600,
-                            fontSize: 12,
-                          }}
+                              ? "warn"
+                              : "muted"
+                          }
                         >
                           {patient.has_access
                             ? labels.accessApproved
                             : patient.pending_request
                             ? labels.requestPending
                             : labels.noAccessYet}
-                        </span>
+                        </Status>
                       )}
                     </div>
 
@@ -654,7 +577,7 @@ export default function SearchPatientsPage() {
                       {currentUser.role === "admin" && (
                         <button
                           type="button"
-                          className="primary-btn"
+                          className="b-btn b-btn-secondary b-btn-sm"
                           onClick={() => router.push(`/patients/${patient.id}/assign`)}
                         >
                           {hasScopedAssignment ? labels.reassign : labels.assign}
@@ -664,7 +587,7 @@ export default function SearchPatientsPage() {
                       {currentUser.role === "doctor" && patient.has_access && (
                         <button
                           type="button"
-                          className="primary-btn"
+                          className="b-btn b-btn-secondary b-btn-sm"
                           onClick={() => router.push(`/patients/${patient.id}`)}
                         >
                           {labels.openChart}
@@ -674,22 +597,17 @@ export default function SearchPatientsPage() {
                       {currentUser.role === "doctor" && !patient.has_access && !patient.pending_request && (
                         <button
                           type="button"
-                          className="secondary-btn"
+                          className="b-btn b-btn-primary b-btn-sm"
                           onClick={() => requestAccess(patient.id)}
                           disabled={requestingId === patient.id}
-                          style={{
-                            display: "inline-flex",
-                            alignItems: "center",
-                            gap: 8,
-                          }}
                         >
-                          {requestingId === patient.id && <Spinner size={14} />}
+                          {requestingId === patient.id ? <span className="b-spinner" /> : null}
                           {requestingId === patient.id ? labels.requesting : labels.requestAccess}
                         </button>
                       )}
 
                       {currentUser.role === "doctor" && !patient.has_access && patient.pending_request && (
-                        <button type="button" className="secondary-btn" disabled>
+                        <button type="button" className="b-btn b-btn-secondary b-btn-sm" disabled>
                           {labels.pending}
                         </button>
                       )}

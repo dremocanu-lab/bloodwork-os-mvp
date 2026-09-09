@@ -4,7 +4,11 @@ import { useEffect, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
+import Link from "next/link";
 import { useLanguage } from "@/lib/i18n";
+import ThemeToggle from "@/components/theme-toggle";
+import { SectionHead } from "@/components/ui";
+import { IconChevronRight } from "@/components/ui/icon";
 
 type CurrentUser = {
   id: number;
@@ -43,36 +47,20 @@ function formatDate(value?: string | null) {
   return parsed.toLocaleDateString(undefined, { year: "numeric", month: "long", day: "numeric" });
 }
 
-function Badge({ children, tone = "neutral" }: { children: React.ReactNode; tone?: "neutral" | "primary" }) {
-  return (
-    <span
-      style={{
-        display: "inline-flex",
-        alignItems: "center",
-        padding: "3px 9px",
-        borderRadius: 999,
-        fontSize: 11,
-        fontWeight: 600,
-        letterSpacing: "0.01em",
-        background: tone === "primary" ? "color-mix(in srgb, var(--primary) 12%, var(--panel-2))" : "var(--panel-2)",
-        color: tone === "primary" ? "var(--primary)" : "var(--muted)",
-        border: `1px solid ${tone === "primary" ? "color-mix(in srgb, var(--primary) 30%, transparent)" : "var(--border)"}`,
-      }}
-    >
-      {children}
-    </span>
-  );
+/**
+ * Was a full-radius filled pill; now the shared chip, so the three emergency
+ * qualifiers read as bounded labels rather than three coloured lozenges.
+ */
+function Badge({
+  children,
+  tone = "neutral",
+}: {
+  children: React.ReactNode;
+  tone?: "neutral" | "primary";
+}) {
+  return <span className={`b-chip ${tone === "primary" ? "b-chip-brand" : ""}`}>{children}</span>;
 }
 
-/**
- * Settings toggle.
- *
- * Was a <div role="switch"> with no accessible name, no keyboard handling and
- * a <label> wrapping it (which would have double-fired the click had the div
- * been focusable at all). Now a real button with role="switch", an accessible
- * name and the shared switch styling, so it is operable by keyboard and
- * announced correctly.
- */
 function Toggle({
   checked,
   onChange,
@@ -112,7 +100,7 @@ function Toggle({
 
 export default function PatientSettingsPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { language, setLanguage, t } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [carePartnerCode, setCarePartnerCode] = useState<CarePartnerCodeResponse | null>(null);
@@ -331,73 +319,34 @@ export default function PatientSettingsPage() {
         </div>
       )}
 
-      <div style={{ display: "grid", gap: 16, maxWidth: 680 }}>
+      <div style={{ display: "grid", gap: "var(--s4)", maxWidth: 720, margin: "0 auto" }}>
 
-        {/* Patient Access Code */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div style={{ marginBottom: 18 }}>
-            <div className="section-title" style={{ marginBottom: 6 }}>{t("carePartnerCode")}</div>
-            <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              {t("carePartnerCodeDesc")}
-            </div>
-          </div>
-
-          {carePartnerCode ? (
-            <>
-              <div
-                style={{
-                  display: "flex",
-                  alignItems: "center",
-                  gap: 12,
-                  padding: "14px 18px",
-                  borderRadius: "var(--r-lg)",
-                  background: "var(--panel-2)",
-                  border: "1px solid var(--border)",
-                  marginBottom: 14,
-                }}
-              >
-                <span
-                  style={{
-                    fontFamily: "monospace",
-                    fontSize: 22,
-                    fontWeight: 600,
-                    letterSpacing: "0.08em",
-                    flex: 1,
-                    color: "var(--primary)",
-                  }}
-                >
-                  {carePartnerCode.code}
-                </span>
-                <button type="button" className="secondary-btn" onClick={copyCode} style={{ flexShrink: 0 }}>
-                  {codeCopied ? t("copied") : t("copyCode")}
-                </button>
-              </div>
-              <div className="muted-text" style={{ fontSize: 12, marginBottom: 16 }}>
-                {t("codeGeneratedAt")} {formatDate(carePartnerCode.created_at)}
-              </div>
-              <button
-                type="button"
-                className="secondary-btn"
-                onClick={() => setShowRegenerateModal(true)}
-              >
-                {t("regenerateCode")}
-              </button>
-            </>
-          ) : (
-            <div className="muted-text">{t("loadingCode")}</div>
-          )}
-        </div>
+        {/* Care partner access lives on My Access, alongside the list of
+            people who actually hold access - this page used to carry a second
+            copy of the same code, copy button and regenerate flow. */}
+        <section className="b-surface">
+          <SectionHead
+            title={t("carePartnerCode")}
+            description={t("carePartnerCodeDesc")}
+            actions={
+              <Link href="/my-records/access" className="b-btn b-btn-secondary b-btn-sm">
+                {t("myAccess")}
+                <IconChevronRight size={12} />
+              </Link>
+            }
+          />
+        </section>
 
         {/* Emergency Access */}
         <div
-          className="soft-card"
+          className="b-surface"
           style={{
             padding: 24,
             borderColor: emergencyEnabled
-              ? "color-mix(in srgb, var(--primary) 30%, transparent)"
+              ? "var(--primary-soft-border)"
               : undefined,
             background: emergencyEnabled
-              ? "color-mix(in srgb, var(--primary) 5%, var(--panel))"
+              ? "var(--surface)"
               : undefined,
           }}
         >
@@ -405,19 +354,7 @@ export default function PatientSettingsPage() {
             <div style={{ display: "flex", alignItems: "center", gap: 10, marginBottom: 6 }}>
               <div className="section-title">{t("settingsEmergencyAccess")}</div>
               {emergencyEnabled && (
-                <span
-                  style={{
-                    fontSize: 10,
-                    fontWeight: 600,
-                    textTransform: "uppercase",
-                    letterSpacing: "0.07em",
-                    color: "var(--primary)",
-                    background: "color-mix(in srgb, var(--primary) 12%, var(--panel-2))",
-                    border: "1px solid color-mix(in srgb, var(--primary) 28%, transparent)",
-                    borderRadius: 999,
-                    padding: "2px 9px",
-                  }}
-                >
+                <span className="b-chip b-chip-brand">
                   {t("settingsEmergencyDiscoverability")}
                 </span>
               )}
@@ -454,22 +391,19 @@ export default function PatientSettingsPage() {
 
           {/* Status text */}
           <div
+            className={emergencyEnabled ? "b-notice" : "b-surface-2"}
             style={{
-              padding: "12px 16px",
-              borderRadius: "var(--r-md)",
-              background: emergencyEnabled
-                ? "color-mix(in srgb, var(--primary) 8%, var(--panel-2))"
-                : "var(--panel-2)",
-              border: `1px solid ${emergencyEnabled ? "color-mix(in srgb, var(--primary) 22%, transparent)" : "var(--border)"}`,
+              padding: "10px 12px",
               marginBottom: emergencyError ? 10 : 0,
+              display: "block",
             }}
           >
             <div
               style={{
-                fontSize: 13,
-                fontWeight: 700,
-                color: emergencyEnabled ? "var(--primary)" : "var(--muted)",
-                marginBottom: 4,
+                fontSize: "var(--fs-sm)",
+                fontWeight: 600,
+                color: emergencyEnabled ? "inherit" : "var(--muted)",
+                marginBottom: 3,
               }}
             >
               {emergencyEnabled ? t("settingsEmergencyEnabledStatus") : t("settingsEmergencyDisabledStatus")}
@@ -638,52 +572,67 @@ export default function PatientSettingsPage() {
           </div>
           <button
             type="button"
-            className="primary-btn"
+            className="b-btn b-btn-secondary"
             onClick={() => router.push("/my-records/access")}
           >
             {t("openSharingDashboard")}
+            <IconChevronRight size={12} />
           </button>
         </div>
 
-        {/* Display Preferences */}
-        <div className="soft-card" style={{ padding: 24 }}>
-          <div style={{ marginBottom: 16 }}>
-            <div className="section-title" style={{ marginBottom: 6 }}>{t("displayPreferences")}</div>
-            <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              {t("language")} · {t("theme")}
+        {/* Display preferences. This card used to say "language and theme
+            preferences are available in the sidebar" - a settings page whose
+            settings were somewhere else. The actual controls are here now
+            (they are also in the account menu, which is fine: one is the
+            quick switch, this is the settings home). */}
+        <section className="b-surface">
+          <SectionHead title={t("displayPreferences")} />
+          <div className="b-section-body">
+            <div className="b-kv">
+              <div className="b-kv-key">{t("language")}</div>
+              <div className="b-kv-value">
+                <div className="b-segmented" role="group" aria-label={t("language")}>
+                  {(["en", "ro"] as const).map((code) => (
+                    <button
+                      key={code}
+                      type="button"
+                      aria-pressed={language === code}
+                      onClick={() => setLanguage(code)}
+                    >
+                      {code === "en" ? "English" : "Română"}
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="b-kv-key">{t("theme")}</div>
+              <div className="b-kv-value">
+                <ThemeToggle compact />
+              </div>
             </div>
           </div>
-          <div className="muted-text" style={{ fontSize: 13 }}>
-            Language and theme preferences are available in the sidebar.
-          </div>
-        </div>
+        </section>
 
         {/* Account & Privacy */}
-        <div
-          className="soft-card"
-          style={{
-            padding: 24,
-            borderColor: "var(--danger-border)",
-            background: "color-mix(in srgb, var(--danger-bg) 18%, var(--panel))",
-          }}
-        >
-          <div style={{ marginBottom: 16 }}>
-            <div className="section-title" style={{ marginBottom: 6, color: "var(--danger-text)" }}>
-              {t("accountAndPrivacy")}
-            </div>
-            <div className="muted-text" style={{ fontSize: 13, lineHeight: 1.6 }}>
-              {t("deleteAccountDesc")}
-            </div>
-          </div>
-          <button
-            type="button"
-            className="secondary-btn"
-            style={{ borderColor: "var(--danger-border)", color: "var(--danger-text)" }}
-            onClick={() => { setDeleteConfirmText(""); setDeleteError(""); setShowDeleteModal(true); }}
-          >
-            {t("deleteAccount")}
-          </button>
-        </div>
+        <section className="b-surface" style={{ borderColor: "var(--danger-border)" }}>
+          <SectionHead
+            title={t("accountAndPrivacy")}
+            description={t("deleteAccountDesc")}
+            actions={
+              <button
+                type="button"
+                className="b-btn b-btn-danger-quiet"
+                onClick={() => {
+                  setDeleteConfirmText("");
+                  setDeleteError("");
+                  setShowDeleteModal(true);
+                }}
+              >
+                {t("deleteAccount")}
+              </button>
+            }
+          />
+        </section>
       </div>
 
       {/* Regenerate Code Modal */}

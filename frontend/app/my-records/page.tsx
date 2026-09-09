@@ -27,7 +27,6 @@ import { useLanguage } from "@/lib/i18n";
 import { hasReferenceBand, Sparkline, TrendChart } from "@/components/ui/trend";
 import {
   CellPrimary,
-  Chip,
   Column,
   DataTable,
   Dialog,

@@ -4,7 +4,7 @@ import { useCallback, useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import Link from "next/link";
 import AppShell from "@/components/app-shell";
-import { api, getErrorMessage } from "@/lib/api";
+import { api } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import {
   EmptyState as SharedEmptyState,
