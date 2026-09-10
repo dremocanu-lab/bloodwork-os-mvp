@@ -2372,6 +2372,12 @@ tr:focus-within .b-row-actions {
   min-width: 280px;
   min-height: 360px;
   background: var(--surface);
+  /* Belt-and-suspenders page isolation: this wrapper always corresponds to
+     exactly one rendered page, so nothing positioned inside it (the bbox
+     highlight included) can ever visually bleed past that page's own
+     bounds, even under a rounding edge case the frontend/backend
+     validation didn't catch. */
+  overflow: hidden;
 }
 
 .b-source-viewer-canvas-wrap canvas {
@@ -2450,7 +2456,14 @@ tr:focus-within .b-row-actions {
   font-size: var(--fs-sm);
 }
 
-/* Root layout desktop split: main content + source viewer side by side. */
+/* Root layout desktop split: main content + source viewer side by side.
+   The two wrapper divs these classes apply to (see
+   app-shell-with-source-viewer.tsx) ALWAYS exist in the DOM, whether or
+   not the split is active — only their class (this vs. .b-app-split-
+   passthrough) changes. That's deliberate: it's what keeps the structured
+   page mounted continuously instead of being torn down and rebuilt every
+   time the source viewer opens/closes, which is what used to reset its
+   scroll position to the top. */
 .b-app-split {
   display: flex;
   height: 100dvh;
@@ -2462,6 +2475,16 @@ tr:focus-within .b-row-actions {
   min-width: 0;
   overflow-y: auto;
   height: 100dvh;
+}
+
+/* Inactive state for both wrapper divs above: `display: contents` removes
+   the element from the box model entirely — its children render exactly
+   as if this div weren't there at all — while keeping the element itself
+   in the DOM, which is the whole point (a stable parent for React to
+   reconcile against). This is pixel-identical to there being no wrapper
+   at all, i.e. today's normal (source viewer closed) page layout. */
+.b-app-split-passthrough {
+  display: contents;
 }
 
 .b-app-split-viewer {

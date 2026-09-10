@@ -39,6 +39,15 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
   const [pageRendering, setPageRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
   const [renderRetryKey, setRenderRetryKey] = useState(0);
+  // Monotonic guard against async render race conditions: a page fetch
+  // (pdfDoc.getPage) and a render task are both async, so a slow one from
+  // an earlier request can resolve AFTER a newer request already started.
+  // Every renderPage() call captures the id current when it starts; before
+  // each DOM-mutating step it re-checks that id against the ref — a stale
+  // call that lost the race never touches the canvas/wrapper/highlight,
+  // on top of (not instead of) the existing cleanup-flag + PDF.js
+  // render-task cancellation below.
+  const renderRequestIdRef = useRef(0);
 
   const scale = zoomOverride ?? fitWidthScale;
   const numPages = pdfDoc?.numPages ?? 0;
@@ -61,6 +70,8 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
             openError: "Documentul original nu a putut fi deschis.",
             retry: "Încearcă din nou",
             sourceText: "Text sursă",
+            returnToSource: "Revino la sursă",
+            awayFromSource: (p: number) => `Sursa selectată este pe pagina ${p}.`,
           }
         : {
             close: "Close",
@@ -77,9 +88,40 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
             openError: "The original document couldn't be opened.",
             retry: "Try again",
             sourceText: "Source text",
+            returnToSource: "Return to source",
+            awayFromSource: (p: number) => `The selected source is on page ${p}.`,
           },
     [language]
   );
+
+  // Center the highlight in the visible area, scoped ONLY to the PDF's own
+  // scroll container (.b-source-viewer-body, via containerRef) — never a
+  // bare element.scrollIntoView(), which walks up every scrollable
+  // ancestor and would risk nudging the split view's other scroll
+  // containers (or the window) as a side effect. Computed from
+  // getBoundingClientRect() rather than offsetTop/offsetParent chains,
+  // which would need to account for every non-positioned wrapper in
+  // between (.b-source-viewer-canvas-scroll isn't itself positioned).
+  function scrollHighlightIntoView() {
+    const container = containerRef.current;
+    const highlightEl = highlightRef.current;
+    if (!container || !highlightEl) return;
+
+    const containerRect = container.getBoundingClientRect();
+    const highlightRect = highlightEl.getBoundingClientRect();
+
+    const highlightTopInContent = highlightRect.top - containerRect.top + container.scrollTop;
+    const targetScrollTop = highlightTopInContent - (container.clientHeight - highlightRect.height) / 2;
+
+    const highlightLeftInContent = highlightRect.left - containerRect.left + container.scrollLeft;
+    const targetScrollLeft = highlightLeftInContent - (container.clientWidth - highlightRect.width) / 2;
+
+    container.scrollTo({
+      top: Math.max(0, targetScrollTop),
+      left: Math.max(0, targetScrollLeft),
+      behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
+    });
+  }
 
   // Keep "fit width" scale current as the container resizes (split ratio
   // change, browser resize, orientation change) — bbox alignment survives
@@ -125,10 +167,14 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
   }, [currentPage, pdfDoc]);
 
   // Render the current page at the current scale, then position/scroll to
-  // the bbox highlight once rendering completes.
+  // the bbox highlight once rendering completes — but only when that
+  // highlight actually belongs to the page just rendered (see
+  // `evidenceMatchesCurrentPage` below); a stale evidence.page pointing at
+  // a different page must never get scrolled-to on this one.
   useEffect(() => {
     if (!pdfDoc || !canvasRef.current) return;
     let cancelled = false;
+    const requestId = ++renderRequestIdRef.current;
     setRenderError("");
 
     async function renderPage() {
@@ -137,13 +183,19 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       try {
         page = await pdfDoc!.getPage(currentPage);
       } catch {
-        if (!cancelled) {
+        if (!cancelled && requestId === renderRequestIdRef.current) {
           setRenderError("Could not load this page.");
           setPageRendering(false);
         }
         return;
       }
-      if (cancelled) return;
+      // A newer render (different page/scale/document, or a retry) already
+      // superseded this one while the page fetch above was in flight — a
+      // slow, now-stale response must never paint over what's currently on
+      // screen (this is the async race the cross-page-bleed bug could also
+      // come from: a page-1 fetch resolving late, after the user already
+      // navigated to page 2, and drawing page-1 content/geometry there).
+      if (cancelled || requestId !== renderRequestIdRef.current) return;
 
       const viewport = page.getViewport({ scale });
       const canvas = canvasRef.current;
@@ -182,19 +234,22 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
         await task.promise;
       } catch (err) {
         if (err instanceof Error && err.name === "RenderingCancelledException") return;
-        if (!cancelled) setRenderError("Could not render this page.");
+        if (!cancelled && requestId === renderRequestIdRef.current) {
+          setRenderError("Could not render this page.");
+        }
       } finally {
-        if (!cancelled) setPageRendering(false);
+        if (!cancelled && requestId === renderRequestIdRef.current) setPageRendering(false);
       }
 
-      if (!cancelled && highlightRef.current && data?.precision === "exact_bbox") {
-        // Center the highlighted evidence in the visible area — the core
-        // "user should not have to find it manually" requirement.
-        highlightRef.current.scrollIntoView({
-          behavior: window.matchMedia("(prefers-reduced-motion: reduce)").matches ? "auto" : "smooth",
-          block: "center",
-          inline: "center",
-        });
+      if (
+        !cancelled &&
+        requestId === renderRequestIdRef.current &&
+        highlightRef.current &&
+        containerRef.current &&
+        data?.precision === "exact_bbox" &&
+        data.page_number === currentPage
+      ) {
+        scrollHighlightIntoView();
       }
     }
 
@@ -204,10 +259,36 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       cancelled = true;
       renderTaskRef.current?.cancel();
     };
-  }, [pdfDoc, currentPage, scale, data?.precision, renderRetryKey]);
+    // data?.source_evidence_id is included (not just page_number) so
+    // switching to a different evidence that happens to land on the SAME
+    // page (e.g. WBC then RBC, both page 1 — page_number alone wouldn't
+    // change) still re-centers the view on the new row's own geometry,
+    // instead of leaving the scroll position wherever the previous row
+    // left it. A plain re-run of the same page's render is cheap since
+    // PDF.js caches the parsed page internally.
+  }, [pdfDoc, currentPage, scale, data?.precision, data?.page_number, data?.source_evidence_id, renderRetryKey]);
 
   const canZoomIn = scale < MAX_SCALE;
   const canZoomOut = scale > MIN_SCALE;
+
+  // Reject geometry that isn't a real, sane normalized rectangle rather
+  // than rendering nonsense — a defensive last line, on top of (not
+  // instead of) the backend's own clamping in _union_row_bbox for
+  // row_bbox_* and Reducto's own bbox_* being real citation data.
+  function isValidUnitBox(x: number, y: number, width: number, height: number) {
+    return (
+      Number.isFinite(x) &&
+      Number.isFinite(y) &&
+      Number.isFinite(width) &&
+      Number.isFinite(height) &&
+      x >= 0 &&
+      y >= 0 &&
+      width > 0 &&
+      height > 0 &&
+      x + width <= 1.0001 &&
+      y + height <= 1.0001
+    );
+  }
 
   // Prefer the derived "whole row" presentation region for lab evidence —
   // it's the same real geometry unioned + padded server-side (see
@@ -219,7 +300,15 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
     data?.row_bbox_x != null &&
     data?.row_bbox_y != null &&
     data?.row_bbox_width != null &&
-    data?.row_bbox_height != null;
+    data?.row_bbox_height != null &&
+    isValidUnitBox(data.row_bbox_x, data.row_bbox_y, data.row_bbox_width, data.row_bbox_height);
+
+  const hasFieldBbox =
+    data?.bbox_x != null &&
+    data?.bbox_y != null &&
+    data?.bbox_width != null &&
+    data?.bbox_height != null &&
+    isValidUnitBox(data.bbox_x, data.bbox_y, data.bbox_width, data.bbox_height);
 
   const highlightBox = hasRowBbox
     ? {
@@ -228,11 +317,23 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
         width: data!.row_bbox_width as number,
         height: data!.row_bbox_height as number,
       }
-    : data?.bbox_x != null && data?.bbox_y != null && data?.bbox_width != null && data?.bbox_height != null
-    ? { x: data.bbox_x, y: data.bbox_y, width: data.bbox_width, height: data.bbox_height }
+    : hasFieldBbox
+    ? { x: data!.bbox_x as number, y: data!.bbox_y as number, width: data!.bbox_width as number, height: data!.bbox_height as number }
     : null;
 
-  const showBbox = data?.precision === "exact_bbox" && highlightBox != null;
+  // CRITICAL: a highlight must only ever render on the page its own
+  // evidence actually belongs to. Without this check, manually navigating
+  // pages (or any other moment where currentPage and data.page_number
+  // briefly disagree) would keep painting the previous page's highlight —
+  // positioned via that page's normalized coordinates — onto whatever page
+  // is now on screen, landing anywhere from a wrong table row to empty
+  // page space. Page numbers are 1-based end to end (Reducto's own
+  // citation pages, SourceEvidence.page_number, and PDF.js's
+  // getPage(pageNumber) all agree — verified directly against real
+  // Reducto responses, see BRAGI_REDUCTO_PLAN.md), so this is a plain
+  // equality check, no off-by-one conversion needed.
+  const evidenceMatchesCurrentPage = data?.page_number === currentPage;
+  const showBbox = data?.precision === "exact_bbox" && highlightBox != null && evidenceMatchesCurrentPage;
 
   return (
     <div
@@ -319,6 +420,21 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
         <div className="b-source-viewer-notice">{labels.pageOnly}</div>
       ) : data?.precision === "text_only" || data?.precision === "document_only" ? (
         <div className="b-source-viewer-notice">{labels.noExactLocation}</div>
+      ) : data?.precision === "exact_bbox" && !evidenceMatchesCurrentPage ? (
+        // The user manually browsed away from the selected row's own page —
+        // its highlight correctly doesn't follow them here (see
+        // evidenceMatchesCurrentPage), but leaving no way back would be a
+        // dead end.
+        <div className="b-source-viewer-notice" style={{ display: "flex", alignItems: "center", justifyContent: "space-between", gap: "var(--s2)" }}>
+          <span>{labels.awayFromSource(data!.page_number as number)}</span>
+          <button
+            type="button"
+            className="b-btn b-btn-ghost b-btn-sm"
+            onClick={() => setCurrentPage(data!.page_number as number)}
+          >
+            {labels.returnToSource}
+          </button>
+        </div>
       ) : null}
 
       <div className="b-source-viewer-body" ref={containerRef}>

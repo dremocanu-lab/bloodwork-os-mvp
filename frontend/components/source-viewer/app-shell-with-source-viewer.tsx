@@ -9,7 +9,7 @@
  * way — never two PDF renders at once.
  */
 
-import { useEffect, useState } from "react";
+import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { SourceViewerProvider, useSourceViewer } from "./source-viewer-context";
 import { SourceViewerPanel } from "./source-viewer-panel";
 
@@ -18,6 +18,13 @@ const DESKTOP_BREAKPOINT = "(min-width: 1025px)";
 function Shell({ children }: { children: React.ReactNode }) {
   const { isOpen } = useSourceViewer();
   const [isDesktop, setIsDesktop] = useState(false);
+  const mainRef = useRef<HTMLDivElement>(null);
+  // Tracks whether the split layout was active on the PREVIOUS render, so
+  // the layout effect below can tell "just turned on" / "just turned off"
+  // apart from "no change" without re-deriving it from isOpen/isDesktop
+  // (which can each change independently, e.g. a window resize while the
+  // viewer is already open).
+  const wasSplitRef = useRef(false);
 
   useEffect(() => {
     const mql = window.matchMedia(DESKTOP_BREAKPOINT);
@@ -31,23 +38,85 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  if (!isOpen) return <>{children}</>;
+  const showSplit = isOpen && isDesktop;
+  const showSheet = isOpen && !isDesktop;
 
-  if (isDesktop) {
-    return (
-      <div className="b-app-split">
-        <div className="b-app-split-main">{children}</div>
-        <div className="b-app-split-viewer">
-          <SourceViewerPanel variant="split" />
-        </div>
-      </div>
-    );
-  }
+  // Continuously mirrors mainRef's scrollTop while it's the active scroll
+  // container. This exists because by the time the closing branch of the
+  // layout effect below runs, React has ALREADY committed the DOM change
+  // that flips this div to `display: contents` — which has no box, and
+  // therefore no scrollTop, of its own — so reading mainRef.current.
+  // scrollTop fresh at that point would read a meaningless value. This ref
+  // holds the last real value from just before that happened instead.
+  const lastMainScrollTopRef = useRef(0);
+
+  useEffect(() => {
+    if (!showSplit) return;
+    const el = mainRef.current;
+    if (!el) return;
+    function onScroll() {
+      lastMainScrollTopRef.current = el!.scrollTop;
+    }
+    el.addEventListener("scroll", onScroll, { passive: true });
+    return () => el.removeEventListener("scroll", onScroll);
+  }, [showSplit]);
+
+  // `children` (the structured Bragi page) must stay mounted under the
+  // SAME DOM ancestor at all times — see the two wrapper divs below, which
+  // always exist and only ever change className, never disappear/reappear
+  // — otherwise React tears down and remounts the entire subtree the
+  // instant the split turns on, discarding React's own scroll-restoration
+  // along with it (this was the actual cause of the structured pane
+  // "jumping": before this fix, the split branch returned a completely
+  // different top-level element (a real div tree instead of a bare
+  // Fragment), so React unmounted `children` from the closed layout and
+  // remounted it fresh inside the open one — landing at scrollTop 0 in
+  // whatever scroll container it woke up in, which reads as "jumped to
+  // the top"). `display: contents` when inactive makes the wrapper
+  // invisible to layout, so closed behavior is pixel-identical to before
+  // this round ever existed.
+  //
+  // That alone stops the remount, but a second, independent effect still
+  // needs handling: before the split is active, `children` scrolls via
+  // the ambient page scroll (window/html); `.b-app-split-main` becomes
+  // ITS OWN scrollable box once active (a real, separate scroll position,
+  // starting at 0) — so the numeric scroll offset itself still needs to
+  // transfer explicitly, in both directions, or the very same jump happens
+  // one layer up even with the DOM now stable. Done with useLayoutEffect so
+  // it applies before the browser paints the new layout — no visible
+  // jump-then-snap-back flicker.
+  useLayoutEffect(() => {
+    if (showSplit && !wasSplitRef.current) {
+      // Opening: window is still the live scroll container at this point
+      // (nothing has reset it yet), so reading window.scrollY here is
+      // accurate — unlike the closing branch below, this doesn't need the
+      // tracked-ref workaround.
+      const y = window.scrollY;
+      lastMainScrollTopRef.current = y;
+      if (mainRef.current) mainRef.current.scrollTop = y;
+      window.scrollTo(0, 0);
+    } else if (!showSplit && wasSplitRef.current) {
+      // Closing: mainRef's own box (and scrollTop) is already gone by now
+      // — use the last value the scroll listener recorded instead of
+      // reading a stale/zeroed one directly off the element.
+      window.scrollTo(0, lastMainScrollTopRef.current);
+    }
+    wasSplitRef.current = showSplit;
+  }, [showSplit]);
 
   return (
     <>
-      {children}
-      <SourceViewerPanel variant="sheet" />
+      <div className={showSplit ? "b-app-split" : "b-app-split-passthrough"}>
+        <div ref={mainRef} className={showSplit ? "b-app-split-main" : "b-app-split-passthrough"}>
+          {children}
+        </div>
+        {showSplit ? (
+          <div className="b-app-split-viewer">
+            <SourceViewerPanel variant="split" />
+          </div>
+        ) : null}
+      </div>
+      {showSheet ? <SourceViewerPanel variant="sheet" /> : null}
     </>
   );
 }
