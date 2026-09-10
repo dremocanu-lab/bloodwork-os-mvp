@@ -120,7 +120,9 @@ equivalent commands work locally — and it's a real example of this
 round's own CI catching a genuine (if low-severity, already-triaged)
 issue before it could regress silently.
 
-`nightly-security.yml` has not yet run (it fires on a schedule/manual
-dispatch, not on push) — it can be triggered manually via `gh workflow
-run nightly-security.yml` or the Actions UI to verify before relying on
-its first scheduled firing.
+`nightly-security.yml` was manually triggered this round
+(`gh workflow run nightly-security.yml`) to verify it before its first
+scheduled firing:
+https://github.com/dremocanu-lab/bloodwork-os-mvp/actions/runs/34527768486
+— both jobs (`Semgrep`, `Dependency vulnerability scan`) passed real
+runs on GitHub's infrastructure (41s and 22s respectively).
