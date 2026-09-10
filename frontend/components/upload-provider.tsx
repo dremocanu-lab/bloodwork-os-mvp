@@ -12,7 +12,7 @@ import {
 } from "react";
 import { api, getErrorMessage } from "@/lib/api";
 
-export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "error";
+export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "error" | "needs_confirmation";
 
 export type UploadTask = {
   id: string;
@@ -29,6 +29,9 @@ export type UploadTask = {
   finishedAt?: string;
   error?: string;
   documentId?: number | null;
+  documentType?: string | null;
+  classificationStatus?: string | null;
+  classificationConfidence?: number | null;
 };
 
 type UploadDestination = {
@@ -37,10 +40,15 @@ type UploadDestination = {
   patientName?: string | null;
 };
 
+type AutoClassifyDestination = {
+  patientId?: string | number | null;
+  patientName?: string | null;
+};
+
 type BackendUploadJob = {
   id: number;
   patient_id: number;
-  section: string;
+  section: string | null;
   filename: string;
   content_type?: string | null;
   status: string;
@@ -48,6 +56,9 @@ type BackendUploadJob = {
   message?: string | null;
   error?: string | null;
   document_id?: number | null;
+  document_type?: string | null;
+  classification_status?: string | null;
+  classification_confidence?: number | null;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
@@ -58,6 +69,8 @@ type UploadManagerContextValue = {
   visibleTasks: UploadTask[];
   activeCount: number;
   enqueueUploads: (files: File[], destination: UploadDestination) => void;
+  enqueueAutoClassifyUploads: (files: File[], destination: AutoClassifyDestination) => void;
+  confirmDocumentType: (jobId: number, documentType: string) => Promise<void>;
   clearFinishedUploads: () => void;
   refreshUploadJobs: () => Promise<void>;
 };
@@ -84,13 +97,19 @@ function makeLocalTask(file: File, destination: UploadDestination): UploadTask {
 function statusFromBackend(status: string): UploadStatus {
   if (status === "done") return "done";
   if (status === "error") return "error";
+  if (status === "needs_confirmation") return "needs_confirmation";
   if (status === "processing") return "processing";
   if (status === "uploading") return "uploading";
   return "queued";
 }
 
 function isActive(status: UploadStatus) {
-  return status === "queued" || status === "uploading" || status === "processing";
+  return (
+    status === "queued" ||
+    status === "uploading" ||
+    status === "processing" ||
+    status === "needs_confirmation"
+  );
 }
 
 function shouldShowFinished(task: UploadTask) {
@@ -142,7 +161,7 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
             jobId: job.id,
             filename: job.filename,
             size: existingIndex >= 0 ? next[existingIndex].size : 0,
-            section: job.section,
+            section: job.section || (existingIndex >= 0 ? next[existingIndex].section : ""),
             patientId: job.patient_id,
             patientName: existingIndex >= 0 ? next[existingIndex].patientName : null,
             status,
@@ -152,6 +171,9 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
             finishedAt,
             error: job.error || undefined,
             documentId: job.document_id || null,
+            documentType: job.document_type ?? null,
+            classificationStatus: job.classification_status ?? null,
+            classificationConfidence: job.classification_confidence ?? null,
           };
 
           const oldStatus = existingIndex >= 0 ? next[existingIndex].status : undefined;
@@ -262,6 +284,105 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
     [refreshUploadJobs, updateTask]
   );
 
+  const enqueueAutoClassifyUploads = useCallback(
+    (files: File[], destination: AutoClassifyDestination) => {
+      if (!files.length) return;
+
+      // One combined request ("upload once"), but each file gets its own
+      // local task immediately so per-file progress/status never blocks
+      // on the others — the backend processes each independently too.
+      const localTasks = files.map((file) =>
+        makeLocalTask(file, { section: "", patientId: destination.patientId, patientName: destination.patientName })
+      );
+      setTasks((current) => [...localTasks, ...current]);
+
+      window.setTimeout(async () => {
+        try {
+          const formData = new FormData();
+          files.forEach((file) => formData.append("files", file));
+
+          if (destination.patientId) {
+            formData.append("patient_id", String(destination.patientId));
+          }
+
+          const response = await api.post<
+            Array<BackendUploadJob | { filename: string; status: string; error?: string }>
+          >("/upload/batch", formData, {
+            headers: { "Content-Type": "multipart/form-data" },
+          });
+
+          response.data.forEach((result, index) => {
+            const localTask = localTasks[index];
+            if (!localTask) return;
+
+            if ("id" in result) {
+              updateTask(localTask.id, {
+                jobId: result.id,
+                status: statusFromBackend(result.status),
+                progress: result.progress || 5,
+                message: result.message || "Queued for processing.",
+                createdAt: result.created_at,
+                documentId: result.document_id || null,
+                documentType: result.document_type ?? null,
+                classificationStatus: result.classification_status ?? null,
+                classificationConfidence: result.classification_confidence ?? null,
+              });
+            } else {
+              updateTask(localTask.id, {
+                status: "error",
+                progress: 100,
+                message: `${localTask.filename} failed to start.`,
+                finishedAt: new Date().toISOString(),
+                error: result.error || "Upload failed.",
+              });
+            }
+          });
+
+          await refreshUploadJobs();
+        } catch (err) {
+          const message = getErrorMessage(err, "Upload failed.");
+          localTasks.forEach((localTask) => {
+            updateTask(localTask.id, {
+              status: "error",
+              progress: 100,
+              message: `${localTask.filename} failed to start.`,
+              finishedAt: new Date().toISOString(),
+              error: message,
+            });
+          });
+        }
+      }, 50);
+    },
+    [refreshUploadJobs, updateTask]
+  );
+
+  const confirmDocumentType = useCallback(
+    async (jobId: number, documentType: string) => {
+      const response = await api.post<BackendUploadJob>(`/upload-jobs/${jobId}/confirm-type`, {
+        document_type: documentType,
+      });
+
+      setTasks((current) =>
+        current.map((task) =>
+          task.jobId === jobId
+            ? {
+                ...task,
+                status: statusFromBackend(response.data.status),
+                progress: response.data.progress || task.progress,
+                message: response.data.message || task.message,
+                section: response.data.section || task.section,
+                documentType: response.data.document_type ?? task.documentType,
+                classificationStatus: response.data.classification_status ?? task.classificationStatus,
+              }
+            : task
+        )
+      );
+
+      await refreshUploadJobs();
+    },
+    [refreshUploadJobs]
+  );
+
   useEffect(() => {
     void refreshUploadJobs();
 
@@ -292,10 +413,21 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
       visibleTasks,
       activeCount,
       enqueueUploads,
+      enqueueAutoClassifyUploads,
+      confirmDocumentType,
       clearFinishedUploads,
       refreshUploadJobs,
     }),
-    [tasks, visibleTasks, activeCount, enqueueUploads, clearFinishedUploads, refreshUploadJobs]
+    [
+      tasks,
+      visibleTasks,
+      activeCount,
+      enqueueUploads,
+      enqueueAutoClassifyUploads,
+      confirmDocumentType,
+      clearFinishedUploads,
+      refreshUploadJobs,
+    ]
   );
 
   return <UploadManagerContext.Provider value={value}>{children}</UploadManagerContext.Provider>;

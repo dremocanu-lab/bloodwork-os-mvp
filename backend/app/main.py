@@ -26,6 +26,14 @@ from app.services.document_pipeline import process_uploaded_document
 from app.services.lab_catalog import find_lab_definition
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 from app.services.medication_lookup import lookup_medication
+from app.services.document_taxonomy import (
+    AUTO_CLASSIFY_SECTION,
+    document_type_choices,
+    is_valid_document_type,
+    legacy_section_for,
+)
+from app.services.extraction_provider import get_extraction_provider
+from app.services.ocr_service import extract_text as ocr_extract_text
 
 app = FastAPI()
 
@@ -145,6 +153,18 @@ def run_migrations():
                 LOWER(department) LIKE '%medicin%familie%'
             )
         """))
+        # Bragi document taxonomy / classification metadata (Phase 1 —
+        # see BRAGI_REDUCTO_PLAN.md). Additive to `section`.
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS document_type VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_status VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_confidence FLOAT"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS classification_source VARCHAR"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_document_type ON documents(document_type)"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS document_type VARCHAR"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS classification_status VARCHAR"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS classification_confidence FLOAT"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS classification_source VARCHAR"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_upload_jobs_document_type ON upload_jobs(document_type)"))
         # Public ID columns for pretty URLs
         conn.execute(text("ALTER TABLE patients ADD COLUMN IF NOT EXISTS public_id VARCHAR"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS public_id VARCHAR"))
@@ -715,7 +735,7 @@ def serialize_upload_job(job) -> dict:
         "id": job.id,
         "user_id": job.user_id,
         "patient_id": job.patient_id,
-        "section": job.section,
+        "section": job.section if job.section != AUTO_CLASSIFY_SECTION else None,
         "filename": job.filename,
         "content_type": job.content_type,
         "status": job.status,
@@ -723,6 +743,9 @@ def serialize_upload_job(job) -> dict:
         "message": job.message,
         "error": job.error,
         "document_id": job.document_id,
+        "document_type": job.document_type,
+        "classification_status": job.classification_status,
+        "classification_confidence": job.classification_confidence,
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
@@ -766,6 +789,48 @@ def process_upload_job(job_id: int):
             job.finished_at = now_iso()
             db.commit()
             return
+
+        if job.section == AUTO_CLASSIFY_SECTION:
+            job.progress = 25
+            job.message = "Identifying document type..."
+            db.commit()
+
+            # Classification input is a plain-text OCR pass, independent of
+            # any type-specific pipeline. This is intentionally cheap and
+            # reused only for routing — process_uploaded_document /
+            # process_uploaded_discharge_summary still run their own
+            # extraction below. Known duplication; see BRAGI_REDUCTO_PLAN.md
+            # Phase 1 "known issues" for the follow-up (share one parsed
+            # representation once Reducto Parse persistence lands).
+            try:
+                classification_ocr = ocr_extract_text(
+                    file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR
+                )
+                classification_text = classification_ocr.get("text") or ""
+            except Exception:
+                print(f"UPLOAD JOB {job_id}: classification OCR pass failed:")
+                print(traceback.format_exc())
+                classification_text = ""
+
+            provider, used_fallback, fallback_reason = get_extraction_provider()
+            classification, processing_meta = provider.classify(classification_text)
+
+            job.document_type = classification.document_type.value
+            job.classification_status = classification.status
+            job.classification_confidence = classification.confidence
+            job.classification_source = (
+                f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
+            )
+
+            if classification.status == "needs_confirmation":
+                job.status = "needs_confirmation"
+                job.progress = 30
+                job.message = "We're not sure what type of document this is. Please confirm."
+                db.commit()
+                return
+
+            job.section = legacy_section_for(classification.document_type)
+            db.commit()
 
         if job.section == "discharge_summary":
             pipeline_result = process_uploaded_discharge_summary(
@@ -873,6 +938,11 @@ def process_upload_job(job_id: int):
 
             note_body=note_body,
 
+            document_type=job.document_type,
+            classification_status=job.classification_status,
+            classification_confidence=job.classification_confidence,
+            classification_source=job.classification_source,
+
             is_verified=0,
             verified_by=None,
             verified_at=None,
@@ -907,6 +977,18 @@ def process_upload_job(job_id: int):
             actor=user.full_name,
             details=f"Uploaded {job.filename} to {job.section}",
         )
+
+        if job.document_type:
+            add_audit_log(
+                db=db,
+                document_id=document.id,
+                action="classification_completed",
+                actor=job.classification_source or "system",
+                details=(
+                    f"Classified as {job.document_type} "
+                    f"(status={job.classification_status}, confidence={job.classification_confidence})"
+                ),
+            )
 
         warnings = (
             pipeline_result.get("warnings")
@@ -2191,6 +2273,147 @@ async def upload_compatibility_route(
         db=db,
         current_user=current_user,
     )
+
+
+async def _save_incoming_file(file: UploadFile) -> tuple[str, str]:
+    """Save an uploaded file to UPLOAD_DIR under a randomized name.
+
+    Returns (original_filename, saved_path). Shared by the batch upload
+    endpoint; the single-file endpoints above intentionally keep their
+    own inline copy of this logic unchanged.
+    """
+    original_filename = file.filename or "uploaded_document"
+    _suffix = Path(original_filename).suffix.lower()
+    _safe_ext = _suffix if re.match(r"^\.[a-z0-9]{1,10}$", _suffix) else ""
+    saved_filename = f"{uuid.uuid4().hex}{_safe_ext}"
+    saved_path = UPLOAD_DIR / saved_filename
+
+    try:
+        with saved_path.open("wb") as buffer:
+            shutil.copyfileobj(file.file, buffer)
+    except Exception as save_error:
+        raise HTTPException(status_code=500, detail=f"Could not save uploaded file: {str(save_error)}")
+    finally:
+        try:
+            await file.close()
+        except Exception:
+            pass
+
+    return original_filename, str(saved_path)
+
+
+@app.get("/document-types")
+def get_document_types(current_user=Depends(get_current_user)):
+    return document_type_choices()
+
+
+@app.post("/upload/batch")
+async def create_batch_upload(
+    background_tasks: BackgroundTasks,
+    files: list[UploadFile] = File(...),
+    patient_id: int | None = Form(default=None),
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Independent multi-file ingestion.
+
+    Each file becomes its own UploadJob and is classified + processed
+    independently (see process_upload_job) — one bad or ambiguous file
+    never blocks the others. No `section` is accepted here: document type
+    is always determined from content.
+    """
+    if not files:
+        raise HTTPException(status_code=400, detail="No files were provided.")
+
+    patient = resolve_upload_patient(db, current_user, patient_id)
+
+    created_jobs = []
+
+    for file in files:
+        try:
+            original_filename, saved_path = await _save_incoming_file(file)
+        except HTTPException as save_error:
+            created_jobs.append(
+                {
+                    "filename": file.filename or "uploaded_document",
+                    "status": "error",
+                    "error": save_error.detail,
+                }
+            )
+            continue
+
+        job = models.UploadJob(
+            user_id=current_user.id,
+            patient_id=patient.id,
+            section=AUTO_CLASSIFY_SECTION,
+            filename=original_filename,
+            content_type=file.content_type,
+            saved_to=saved_path,
+            status="queued",
+            progress=0,
+            message="Queued for processing.",
+            error=None,
+            document_id=None,
+            created_at=now_iso(),
+            started_at=None,
+            finished_at=None,
+        )
+
+        db.add(job)
+        db.commit()
+        db.refresh(job)
+
+        background_tasks.add_task(process_upload_job, job.id)
+        created_jobs.append(serialize_upload_job(job))
+
+    return created_jobs
+
+
+class ConfirmDocumentTypeRequest(BaseModel):
+    document_type: str
+
+
+@app.post("/upload-jobs/{job_id}/confirm-type")
+def confirm_upload_job_document_type(
+    job_id: int,
+    payload: ConfirmDocumentTypeRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Resolve a needs_confirmation upload job with a user-chosen type.
+
+    This is the only path that resumes a job stuck in needs_confirmation —
+    see the classification block in process_upload_job.
+    """
+    job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    if job.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if job.status != "needs_confirmation":
+        raise HTTPException(status_code=400, detail="This upload is not awaiting confirmation.")
+
+    if not is_valid_document_type(payload.document_type):
+        raise HTTPException(status_code=400, detail="Unknown document type.")
+
+    job.document_type = payload.document_type
+    job.section = legacy_section_for(payload.document_type)
+    job.classification_status = "classified"
+    job.classification_source = "user_confirmed"
+    job.status = "queued"
+    job.progress = 0
+    job.message = "Confirmed. Processing..."
+    job.error = None
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(process_upload_job, job.id)
+
+    return serialize_upload_job(job)
 
 
 @app.get("/upload-jobs")

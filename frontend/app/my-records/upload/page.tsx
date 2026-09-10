@@ -1,11 +1,11 @@
-﻿"use client";
+"use client";
 
 import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
+import { Dialog, EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
 import { IconClose, IconUpload } from "@/components/ui/icon";
-import { api } from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
@@ -24,8 +24,15 @@ type UploadItem = {
   file: File;
 };
 
+type DocumentTypeChoice = {
+  value: string;
+  label_en: string;
+  label_ro: string;
+};
+
 type UploadRow = {
   id: string;
+  jobId?: number;
   filename: string;
   size: number;
   status: UploadStatus | "selected";
@@ -33,6 +40,8 @@ type UploadRow = {
   message: string;
   error?: string;
   local: boolean;
+  documentType?: string | null;
+  classificationStatus?: string | null;
 };
 
 function Spinner({ size = 18 }: { size?: number }) {
@@ -57,54 +66,6 @@ function Spinner({ size = 18 }: { size?: number }) {
       <span className="bloodwork-spinner" />
     </>
   );
-}
-
-function UploadRowStatus({ status }: { status: UploadRow["status"] }) {
-  if (status === "done") {
-    return (
-      <span
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 999,
-          display: "grid",
-          placeItems: "center",
-          background: "var(--success-bg)",
-          color: "var(--success-text)",
-          border: "1px solid var(--success-border)",
-          fontWeight: 600,
-          flex: "0 0 auto",
-        }}
-      >
-        ✓
-      </span>
-    );
-  }
-
-  if (status === "error") {
-    return (
-      <span
-        style={{
-          width: 28,
-          height: 28,
-          borderRadius: 999,
-          display: "grid",
-          placeItems: "center",
-          background: "var(--danger-bg)",
-          color: "var(--danger-text)",
-          border: "1px solid var(--danger-border)",
-          fontWeight: 600,
-          flex: "0 0 auto",
-        }}
-      >
-        !
-      </span>
-    );
-  }
-
-  if (status === "selected") return null;
-
-  return <Spinner size={18} />;
 }
 
 function formatFileSize(bytes: number) {
@@ -137,11 +98,11 @@ function getUploadHint(file: File) {
     name.endsWith(".tif") ||
     name.endsWith(".tiff")
   ) {
-    return "Image · OCR may take longer";
+    return "Image · will be identified automatically";
   }
 
   if (name.endsWith(".pdf")) {
-    return "PDF · will be structured automatically";
+    return "PDF · will be identified automatically";
   }
 
   return "File · will be saved to your records";
@@ -150,28 +111,19 @@ function getUploadHint(file: File) {
 export default function MyRecordsUploadPage() {
   const router = useRouter();
   const { language } = useLanguage();
-  const { enqueueUploads, visibleTasks, refreshUploadJobs } = useUploadManager();
+  const { enqueueAutoClassifyUploads, confirmDocumentType, visibleTasks, refreshUploadJobs } = useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const labels = useMemo(() => {
     if (language === "ro") {
       return {
-        title: "Încarcă documente",
-        subtitle: "Adaugă analize, scanări, liste de medicamente sau alte documente medicale.",
+        title: "Adaugă documente medicale",
+        subtitle: "Selectează una sau mai multe analize, scrisori medicale, scanări sau rețete. Bragi le organizează automat.",
         back: "Înapoi la documentele mele",
-        documentType: "Tip document",
-        documentTypeDesc: "Alege secțiunea unde vor fi organizate fișierele.",
-        bloodwork: "Analize",
-        dischargeSummary: "Fișă de externare",
-        medications: "Medicație",
-        scans: "Scanări",
-        hospitalizations: "Spitalizări",
-        other: "Altele",
         dragTitle: "Trage fișierele aici",
-        or: "sau",
         browse: "Alege fișiere",
         supportText:
-          "PDF-uri, imagini și documente scanate. După ce apeși Upload, procesarea continuă în fundal.",
+          "PDF-uri, imagini și documente scanate. Bragi identifică automat tipul fiecărui document — nu trebuie să alegi o categorie.",
         selectedFiles: "Fișiere selectate",
         noFiles: "Niciun fișier selectat încă",
         selected: "selectate",
@@ -182,26 +134,24 @@ export default function MyRecordsUploadPage() {
         emptyDesc: "Alege sau trage fișiere aici pentru a începe.",
         chooseAtLeastOneFile: "Alege cel puțin un fișier.",
         loadingUploadPage: "Se încarcă pagina de upload...",
+        detecting: "Se identifică tipul documentului...",
+        confirmType: "Confirmă tipul",
+        confirmModalTitle: "Nu suntem complet siguri ce tip de document este",
+        confirmModalDesc: "Cea mai bună estimare Bragi este mai jos. Alege tipul corect dacă e nevoie.",
+        bestGuess: "Estimare Bragi",
+        cancel: "Anulează",
+        confirmAction: "Confirmă tipul",
       };
     }
 
     return {
-      title: "Upload documents",
-      subtitle: "Add bloodwork, scans, medication lists, hospital documents, or other records.",
+      title: "Add medical records",
+      subtitle: "Select one or more lab results, medical letters, scans, or prescriptions. Bragi organizes them automatically.",
       back: "Back to my records",
-      documentType: "Document type",
-      documentTypeDesc: "Choose where these files should be organized in your record.",
-      bloodwork: "Bloodwork",
-      dischargeSummary: "Discharge summary",
-      medications: "Medications",
-      scans: "Scans",
-      hospitalizations: "Hospitalizations",
-      other: "Other",
       dragTitle: "Drag and drop files",
-      or: "or",
       browse: "Browse files",
       supportText:
-        "PDFs, images, and scanned reports. After pressing Upload, processing continues in the background.",
+        "PDFs, images, and scanned reports. Bragi automatically identifies each document's type — no need to pick a category.",
       selectedFiles: "Selected files",
       noFiles: "No files selected yet",
       selected: "selected",
@@ -212,29 +162,38 @@ export default function MyRecordsUploadPage() {
       emptyDesc: "Choose or drag files here to begin.",
       chooseAtLeastOneFile: "Choose at least one file.",
       loadingUploadPage: "Loading upload page...",
+      detecting: "Identifying document type...",
+      confirmType: "Confirm type",
+      confirmModalTitle: "We're not completely sure what this document is",
+      confirmModalDesc: "Bragi's best guess is below. Choose the correct type if it isn't right.",
+      bestGuess: "Bragi's best guess",
+      cancel: "Cancel",
+      confirmAction: "Confirm type",
     };
   }, [language]);
 
-  const sections = useMemo(
-    () => [
-      { value: "bloodwork", label: labels.bloodwork },
-      { value: "discharge_summary", label: labels.dischargeSummary },
-      { value: "medications", label: labels.medications },
-      { value: "scans", label: labels.scans },
-      { value: "hospitalizations", label: labels.hospitalizations },
-      { value: "other", label: labels.other },
-    ],
-    [labels]
-  );
-
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
-  const [uploadSection, setUploadSection] = useState("bloodwork");
   const [items, setItems] = useState<UploadItem[]>([]);
   const [dragActive, setDragActive] = useState(false);
   const [error, setError] = useState("");
   const [loading, setLoading] = useState(true);
+  const [documentTypes, setDocumentTypes] = useState<DocumentTypeChoice[]>([]);
+  const [confirmTarget, setConfirmTarget] = useState<UploadRow | null>(null);
+  const [confirmChoice, setConfirmChoice] = useState("");
+  const [confirmBusy, setConfirmBusy] = useState(false);
+  const [confirmError, setConfirmError] = useState("");
 
   const canUpload = items.length > 0;
+
+  const documentTypeLabel = useMemo(() => {
+    const map = new Map(documentTypes.map((choice) => [choice.value, choice]));
+    return (value?: string | null) => {
+      if (!value) return null;
+      const choice = map.get(value);
+      if (!choice) return value;
+      return language === "ro" ? choice.label_ro : choice.label_en;
+    };
+  }, [documentTypes, language]);
 
   const uploadRows = useMemo<UploadRow[]>(() => {
     const localRows = items.map((item) => ({
@@ -250,17 +209,23 @@ export default function MyRecordsUploadPage() {
 
     const taskRows = visibleTasks.map((task) => ({
       id: task.id,
+      jobId: task.jobId,
       filename: task.filename,
       size: task.size,
       status: task.status,
       progress: task.progress,
-      message: task.message,
+      message:
+        task.status === "processing" && !task.documentType
+          ? labels.detecting
+          : task.message,
       error: task.error || "",
       local: false,
+      documentType: task.documentType,
+      classificationStatus: task.classificationStatus,
     }));
 
     return [...localRows, ...taskRows];
-  }, [items, visibleTasks]);
+  }, [items, visibleTasks, labels.detecting]);
 
   const selectedSummary = useMemo(() => {
     if (!uploadRows.length) return labels.noFiles;
@@ -279,6 +244,13 @@ export default function MyRecordsUploadPage() {
 
         setCurrentUser(response.data);
         await refreshUploadJobs();
+
+        try {
+          const typesResponse = await api.get<DocumentTypeChoice[]>("/document-types");
+          setDocumentTypes(typesResponse.data);
+        } catch {
+          // Non-fatal: the confirm dialog falls back to raw values.
+        }
       } catch {
         localStorage.removeItem("access_token");
         router.push("/login");
@@ -350,15 +322,38 @@ export default function MyRecordsUploadPage() {
       return;
     }
 
-    enqueueUploads(
-      items.map((item) => item.file),
-      {
-        section: uploadSection,
-      }
-    );
+    enqueueAutoClassifyUploads(items.map((item) => item.file), {});
 
     setItems([]);
     setError("");
+  }
+
+  function openConfirm(row: UploadRow) {
+    setConfirmTarget(row);
+    setConfirmChoice(row.documentType || "");
+    setConfirmError("");
+  }
+
+  function closeConfirm() {
+    if (confirmBusy) return;
+    setConfirmTarget(null);
+    setConfirmError("");
+  }
+
+  async function submitConfirm() {
+    if (!confirmTarget?.jobId || !confirmChoice) return;
+
+    setConfirmBusy(true);
+    setConfirmError("");
+
+    try {
+      await confirmDocumentType(confirmTarget.jobId, confirmChoice);
+      setConfirmTarget(null);
+    } catch (err) {
+      setConfirmError(getErrorMessage(err, "Could not confirm document type."));
+    } finally {
+      setConfirmBusy(false);
+    }
   }
 
   if (loading || !currentUser) {
@@ -399,40 +394,10 @@ export default function MyRecordsUploadPage() {
       <div className="b-stack" style={{ maxWidth: 900 }}>
         {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-        {/* Step 1: where the files belong. Kept above the dropzone because the
-            answer changes how the record is organised, and it is easy to
-            forget once files are already queued. */}
-        <section className="b-surface">
-          <div
-            className="b-toolbar"
-            style={{ borderBottom: 0, alignItems: "center", minHeight: 52 }}
-          >
-            <div style={{ minWidth: 0, flex: 1 }}>
-              <div className="b-section-title">{labels.documentType}</div>
-              <p className="b-meta" style={{ marginTop: 2 }}>
-                {labels.documentTypeDesc}
-              </p>
-            </div>
-
-            <select
-              className="b-input"
-              value={uploadSection}
-              onChange={(event) => setUploadSection(event.target.value)}
-              aria-label={labels.documentType}
-              style={{ width: "auto", minWidth: 200, flexShrink: 0 }}
-            >
-              {sections.map((section) => (
-                <option key={section.value} value={section.value}>
-                  {section.label}
-                </option>
-              ))}
-            </select>
-          </div>
-        </section>
-
-        {/* Step 2: the dropzone. Was a 520px half-page panel with a 32px/950
-            heading and a pill button; now a normal dashed dropzone that
-            leaves the queue room to be the main event. */}
+        {/* The dropzone is the whole first step now — there is no document-type
+            selector to fill in first. Bragi classifies each file from its
+            content once it's uploaded (see the queue below), and only asks
+            when it's genuinely unsure about one file. */}
         <section className="b-surface">
           <div style={{ padding: "var(--s4)" }}>
             <input
@@ -467,10 +432,10 @@ export default function MyRecordsUploadPage() {
           </div>
         </section>
 
-        {/* Step 3: the queue. Each row states which file, how big, and where
-            it is in the pipeline - the state vocabulary that later phases
-            (extraction, identity check, duplicate check, quarantine) can
-            extend without another redesign. */}
+        {/* The queue. Each row states which file, how big, and where it is
+            in the pipeline — including the type Bragi detected once it's
+            known. A row with a "?" badge is the only one that needs input;
+            everything else keeps moving on its own. */}
         <section className="b-surface">
           <SectionHead
             title={labels.selectedFiles}
@@ -487,99 +452,113 @@ export default function MyRecordsUploadPage() {
 
           {uploadRows.length ? (
             <div>
-              {uploadRows.map((row) => (
-                <div className="b-queue-row" key={row.id}>
-                  <span
-                    className="b-chip"
-                    style={{
-                      justifyContent: "center",
-                      width: 34,
-                      fontSize: "var(--fs-micro)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {getFileBadge(row.filename)}
-                  </span>
+              {uploadRows.map((row) => {
+                const typeLabel = documentTypeLabel(row.documentType);
 
-                  <span style={{ minWidth: 0 }}>
-                    <span className="b-cell-title" style={{ display: "block" }}>
-                      {row.filename}
-                    </span>
-                    <span className="b-cell-sub" style={{ display: "block" }}>
-                      {row.size ? `${formatFileSize(row.size)} · ` : ""}
-                      {row.message}
+                return (
+                  <div className="b-queue-row" key={row.id}>
+                    <span
+                      className="b-chip"
+                      style={{
+                        justifyContent: "center",
+                        width: 34,
+                        fontSize: "var(--fs-micro)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {getFileBadge(row.filename)}
                     </span>
 
-                    {row.status !== "selected" ? (
-                      <span className="b-progress" style={{ display: "block", marginTop: 5 }}>
+                    <span style={{ minWidth: 0 }}>
+                      <span className="b-cell-title" style={{ display: "block" }}>
+                        {row.filename}
+                      </span>
+                      <span className="b-cell-sub" style={{ display: "block" }}>
+                        {row.size ? `${formatFileSize(row.size)} · ` : ""}
+                        {row.status === "done" && typeLabel ? typeLabel : row.message}
+                      </span>
+
+                      {row.status !== "selected" ? (
+                        <span className="b-progress" style={{ display: "block", marginTop: 5 }}>
+                          <span
+                            className="b-progress-bar"
+                            style={{
+                              display: "block",
+                              width: `${Math.max(row.progress || 5, 5)}%`,
+                              background:
+                                row.status === "error"
+                                  ? "var(--danger)"
+                                  : row.status === "done"
+                                  ? "var(--ok)"
+                                  : row.status === "needs_confirmation"
+                                  ? "var(--warning, var(--danger))"
+                                  : "var(--primary)",
+                            }}
+                          />
+                        </span>
+                      ) : null}
+
+                      {row.error ? (
                         <span
-                          className="b-progress-bar"
                           style={{
                             display: "block",
-                            width: `${Math.max(row.progress || 5, 5)}%`,
-                            background:
-                              row.status === "error"
-                                ? "var(--danger)"
-                                : row.status === "done"
-                                ? "var(--ok)"
-                                : "var(--primary)",
+                            marginTop: 4,
+                            color: "var(--danger)",
+                            fontSize: "var(--fs-xs)",
+                            lineHeight: "var(--lh)",
+                            maxHeight: 64,
+                            overflow: "auto",
                           }}
-                        />
-                      </span>
-                    ) : null}
+                        >
+                          {row.error}
+                        </span>
+                      ) : null}
+                    </span>
 
-                    {row.error ? (
-                      <span
-                        style={{
-                          display: "block",
-                          marginTop: 4,
-                          color: "var(--danger)",
-                          fontSize: "var(--fs-xs)",
-                          lineHeight: "var(--lh)",
-                          maxHeight: 64,
-                          overflow: "auto",
-                        }}
-                      >
-                        {row.error}
-                      </span>
-                    ) : null}
-                  </span>
+                    <span
+                      style={{
+                        display: "flex",
+                        alignItems: "center",
+                        gap: "var(--s2)",
+                        flexShrink: 0,
+                      }}
+                    >
+                      {row.status === "needs_confirmation" ? (
+                        <button
+                          type="button"
+                          className="b-btn b-btn-secondary b-btn-sm"
+                          onClick={() => openConfirm(row)}
+                        >
+                          {labels.confirmType}
+                        </button>
+                      ) : row.status === "done" ? (
+                        <Status tone="ok">Ready</Status>
+                      ) : row.status === "error" ? (
+                        <Status tone="danger">Failed</Status>
+                      ) : row.status === "processing" ? (
+                        <Status tone="processing">Processing</Status>
+                      ) : row.status === "uploading" ? (
+                        <Status tone="processing">Uploading</Status>
+                      ) : row.status === "queued" ? (
+                        <Status tone="info">Queued</Status>
+                      ) : (
+                        <Status tone="muted">Selected</Status>
+                      )}
 
-                  <span
-                    style={{
-                      display: "flex",
-                      alignItems: "center",
-                      gap: "var(--s2)",
-                      flexShrink: 0,
-                    }}
-                  >
-                    {row.status === "done" ? (
-                      <Status tone="ok">Ready</Status>
-                    ) : row.status === "error" ? (
-                      <Status tone="danger">Failed</Status>
-                    ) : row.status === "processing" ? (
-                      <Status tone="processing">Processing</Status>
-                    ) : row.status === "uploading" ? (
-                      <Status tone="processing">Uploading</Status>
-                    ) : row.status === "queued" ? (
-                      <Status tone="info">Queued</Status>
-                    ) : (
-                      <Status tone="muted">Selected</Status>
-                    )}
-
-                    {row.local ? (
-                      <button
-                        type="button"
-                        className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
-                        onClick={() => removeFile(row.id)}
-                        aria-label={`Remove ${row.filename}`}
-                      >
-                        <IconClose size={13} />
-                      </button>
-                    ) : null}
-                  </span>
-                </div>
-              ))}
+                      {row.local ? (
+                        <button
+                          type="button"
+                          className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+                          onClick={() => removeFile(row.id)}
+                          aria-label={`Remove ${row.filename}`}
+                        >
+                          <IconClose size={13} />
+                        </button>
+                      ) : null}
+                    </span>
+                  </div>
+                );
+              })}
             </div>
           ) : (
             <EmptyState
@@ -624,6 +603,50 @@ export default function MyRecordsUploadPage() {
           </p>
         </section>
       </div>
+
+      <Dialog
+        open={Boolean(confirmTarget)}
+        onClose={closeConfirm}
+        title={labels.confirmModalTitle}
+        description={confirmTarget ? `${confirmTarget.filename} — ${labels.confirmModalDesc}` : undefined}
+        footer={
+          <>
+            <button type="button" className="b-btn b-btn-secondary" onClick={closeConfirm} disabled={confirmBusy}>
+              {labels.cancel}
+            </button>
+            <button
+              type="button"
+              className="b-btn b-btn-primary"
+              onClick={submitConfirm}
+              disabled={confirmBusy || !confirmChoice}
+            >
+              {confirmBusy ? <Spinner size={14} /> : null}
+              {labels.confirmAction}
+            </button>
+          </>
+        }
+      >
+        <div className="b-stack" style={{ gap: "var(--s3)" }}>
+          {confirmError ? <ErrorNote>{confirmError}</ErrorNote> : null}
+
+          <label style={{ display: "block" }}>
+            <span className="b-meta" style={{ display: "block", marginBottom: 6 }}>
+              {labels.bestGuess}
+            </span>
+            <select
+              className="b-input"
+              value={confirmChoice}
+              onChange={(event) => setConfirmChoice(event.target.value)}
+            >
+              {documentTypes.map((choice) => (
+                <option key={choice.value} value={choice.value}>
+                  {language === "ro" ? choice.label_ro : choice.label_en}
+                </option>
+              ))}
+            </select>
+          </label>
+        </div>
+      </Dialog>
     </AppShell>
   );
 }

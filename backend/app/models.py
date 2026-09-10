@@ -1,4 +1,4 @@
-from sqlalchemy import Column, ForeignKey, Integer, String, Text
+from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -137,6 +137,14 @@ class Document(Base):
 
     note_body = Column(Text, nullable=True)
 
+    # Bragi document taxonomy (see app.services.document_taxonomy). Additive
+    # to `section`, which keeps driving existing routing/grouping — see
+    # BRAGI_REDUCTO_PLAN.md Phase 1.
+    document_type = Column(String, nullable=True, index=True)
+    classification_status = Column(String, nullable=True)
+    classification_confidence = Column(Float, nullable=True)
+    classification_source = Column(String, nullable=True)
+
     is_verified = Column(Integer, nullable=False, default=0)
     verified_by = Column(String, nullable=True)
     verified_at = Column(String, nullable=True)
@@ -201,6 +209,12 @@ class UploadJob(Base):
     error = Column(Text, nullable=True)
 
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=True, index=True)
+
+    # Set once classification runs (see process_upload_job / document_classifier).
+    document_type = Column(String, nullable=True, index=True)
+    classification_status = Column(String, nullable=True)
+    classification_confidence = Column(Float, nullable=True)
+    classification_source = Column(String, nullable=True)
 
     created_at = Column(String, nullable=False)
     started_at = Column(String, nullable=True)
