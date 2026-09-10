@@ -182,7 +182,7 @@ class Document(Base):
     # source, never a separate copy — so "View original" always opens the
     # real original upload. page_range_start/end are 1-indexed, inclusive,
     # and refer to the ORIGINAL document's page numbers (not renumbered).
-    parent_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True, index=True)
+    parent_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
     page_range_start = Column(Integer, nullable=True)
     page_range_end = Column(Integer, nullable=True)
 
@@ -311,7 +311,7 @@ class LabResult(Base):
     # Set when Level-3 duplicate-observation detection links this row to an
     # earlier one describing the same measurement instead of inserting a
     # second row for it (see process_upload_job).
-    duplicate_of_lab_result_id = Column(Integer, ForeignKey("lab_results.id"), nullable=True)
+    duplicate_of_lab_result_id = Column(Integer, ForeignKey("lab_results.id", ondelete="SET NULL"), nullable=True)
 
     document = relationship("Document", back_populates="lab_results")
     source_evidence = relationship("SourceEvidence", back_populates="lab_result", cascade="all, delete-orphan")

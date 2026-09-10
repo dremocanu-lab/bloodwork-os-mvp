@@ -876,6 +876,29 @@ script referenced in the commit for the full scenario list:
   UI, and Level-3 dedup for split children** — still not implemented,
   as named in §8.
 
+### Found and fixed while cleaning up test data (bonus, real)
+
+Cleaning up the test patients created during this round's verification
+surfaced a second real bug, unrelated to Reducto's classification logic
+but directly caused by exercising this integration's new self-referential
+`Document.parent_document_id` for the first time: `DELETE /my/account`
+returned a real `500` (`ForeignKeyViolation`) for any patient who had a
+split (parent/child) document, because nothing cleared child →
+parent references before deleting rows. While fixing it, the exact same
+class of bug was found in a **pre-existing, unrelated Phase 2 FK**
+(`LabResult.duplicate_of_lab_result_id`, the Level-3 duplicate-observation
+link) — meaning `DELETE /my/account` (and, latently, the single-document
+`DELETE /documents/{id}` endpoint) could already 500 for any patient with
+a linked duplicate lab result, Reducto or not.
+
+Fixed at the schema level rather than patching each endpoint: both FKs
+are now `ON DELETE SET NULL` (migrated idempotently, guarded so it only
+actually runs once), so every current and future deletion path is safe
+automatically. Verified live: a patient with a split document AND a
+quarantined document 500'd before the fix and returned `200 {"deleted":
+true}` after, with the account confirmed actually gone (`/auth/me` →
+401).
+
 ### Is `REDUCTO_ENABLED=true` safe now?
 
 For the scope this integration actually covers (`POST /upload/batch`,

@@ -228,6 +228,40 @@ def run_migrations():
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_range_start INTEGER"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_range_end INTEGER"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_parent_document_id ON documents(parent_document_id)"))
+        # Self-referential FKs must not block deleting either side, in
+        # whichever order a caller happens to delete rows — found via a
+        # real 500 on DELETE /my/account for a patient with a split
+        # document (parent_document_id) or a linked duplicate lab row
+        # (duplicate_of_lab_result_id, a pre-existing Phase 2 FK with the
+        # same gap). ON DELETE SET NULL fixes this for every current and
+        # future deletion path, not just one endpoint. Guarded so the
+        # ALTER only actually runs once, not on every app start.
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'documents_parent_document_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE documents DROP CONSTRAINT IF EXISTS documents_parent_document_id_fkey;
+                    ALTER TABLE documents ADD CONSTRAINT documents_parent_document_id_fkey
+                        FOREIGN KEY (parent_document_id) REFERENCES documents(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'lab_results_duplicate_of_lab_result_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE lab_results DROP CONSTRAINT IF EXISTS lab_results_duplicate_of_lab_result_id_fkey;
+                    ALTER TABLE lab_results ADD CONSTRAINT lab_results_duplicate_of_lab_result_id_fkey
+                        FOREIGN KEY (duplicate_of_lab_result_id) REFERENCES lab_results(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_sha256 ON documents(file_sha256)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_review_status ON documents(review_status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_intended_patient_id ON documents(intended_patient_id)"))
@@ -2713,7 +2747,19 @@ def delete_my_account(
     patient = get_patient_for_user(db, current_user.id)
 
     if patient:
-        docs = db.query(models.Document).filter(models.Document.patient_id == patient.id).all()
+        # Includes documents quarantined FOR this patient (identity
+        # mismatch — patient_id is NULL, intended_patient_id points here;
+        # see process_upload_job) as well as this patient's own documents
+        # — both hold a real FK to patients.id and must be cleared before
+        # the patient row itself can be deleted.
+        docs = (
+            db.query(models.Document)
+            .filter(
+                (models.Document.patient_id == patient.id)
+                | (models.Document.intended_patient_id == patient.id)
+            )
+            .all()
+        )
         doc_ids = [d.id for d in docs]
 
         if doc_ids:
@@ -2726,6 +2772,12 @@ def delete_my_account(
             db.query(models.UploadJob).filter(
                 models.UploadJob.document_id.in_(doc_ids)
             ).delete(synchronize_session=False)
+            # Document.parent_document_id (Reducto Split) and LabResult.
+            # duplicate_of_lab_result_id (Phase 2 Level-3 dedup linking)
+            # are both self-references that would otherwise block
+            # deleting either side depending on order — both are now
+            # ON DELETE SET NULL at the DB level (see run_migrations()),
+            # so no manual clearing is needed here.
 
         db.query(models.UploadJob).filter(
             models.UploadJob.patient_id == patient.id,
