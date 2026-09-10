@@ -2,9 +2,11 @@ import os
 import re
 import json
 import secrets
+import tempfile
 import time
 import traceback
 import uuid
+import zipfile
 from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
@@ -3229,6 +3231,321 @@ def get_my_profile(
 ):
     patient = ensure_patient_for_user(db, current_user)
     return build_patient_profile_response(db, patient, current_user)
+
+
+# Cap on how many original document files a single export embeds — this
+# is a per-patient, self-service export, so the input is bounded by their
+# own real usage, but a hard ceiling protects the server from an
+# unbounded temp-file/disk-space blowup regardless. Documents beyond the
+# cap are still fully described in documents_manifest.json; only the raw
+# file bytes are left out, with a note explaining why.
+DSAR_EXPORT_MAX_FILE_BYTES = 500 * 1024 * 1024  # 500 MB total original-file payload
+
+
+@app.post("/my/export")
+def export_my_data(
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient")),
+    _rl=Depends(RateLimiter(limit=3, window_seconds=86400, key_prefix="dsar_export")),
+):
+    """DSAR data export (GDPR Article 15/20) for the patient making the
+    request — see docs/privacy/DSAR_RUNBOOK.md. Uses the same
+    authorization as every other patient-scoped endpoint
+    (require_role("patient") + get_patient_for_user, which only ever
+    resolves to the requester's own linked Patient row) — there is no
+    separate "which patient" parameter for this to get wrong, unlike a
+    lookup-by-id endpoint.
+
+    Returns a zip: profile.json, lab_results.json, medications.json,
+    events.json, access_relationships.json, emergency_contacts.json,
+    documents_manifest.json, ai_conversations.json (present but empty —
+    no AI chat feature exists yet), README.txt, and documents/ (the
+    patient's own original uploaded files, up to
+    DSAR_EXPORT_MAX_FILE_BYTES total).
+
+    Deliberately excludes: any other patient's data (every query below is
+    scoped to `patient.id`, never a caller-supplied id); quarantined
+    documents uploaded under this identity but not yet confirmed as this
+    patient's own record (`Document.patient_id` must match exactly —
+    `intended_patient_id`-only rows are unconfirmed, not included);
+    internal security metadata (password hashes, JWT internals, other
+    users' emergency-access audit trail).
+    """
+    patient = get_patient_for_user(db, current_user.id)
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient profile not found.")
+
+    documents = (
+        db.query(models.Document)
+        .filter(models.Document.patient_id == patient.id)
+        .order_by(models.Document.id.asc())
+        .all()
+    )
+    doc_ids = [d.id for d in documents]
+
+    lab_results = (
+        db.query(models.LabResult).filter(models.LabResult.document_id.in_(doc_ids)).all()
+        if doc_ids
+        else []
+    )
+    medications = (
+        db.query(models.PatientMedication)
+        .filter(models.PatientMedication.patient_id == patient.id)
+        .all()
+    )
+    events = (
+        db.query(models.PatientEvent)
+        .filter(models.PatientEvent.patient_id == patient.id)
+        .order_by(models.PatientEvent.admitted_at.desc())
+        .all()
+    )
+    doctor_access = (
+        db.query(models.DoctorPatientAccess)
+        .filter(models.DoctorPatientAccess.patient_id == patient.id)
+        .all()
+    )
+    access_requests = (
+        db.query(models.DoctorPatientAccessRequest)
+        .filter(models.DoctorPatientAccessRequest.patient_id == patient.id)
+        .all()
+    )
+    care_partner_links = (
+        db.query(models.CarePartnerPatientLink)
+        .filter(models.CarePartnerPatientLink.patient_id == patient.id)
+        .all()
+    )
+    emergency_contacts = (
+        db.query(models.EmergencyContact)
+        .filter(models.EmergencyContact.patient_id == patient.id)
+        .all()
+    )
+    code_record = (
+        db.query(models.PatientCarePartnerCode)
+        .filter(models.PatientCarePartnerCode.patient_id == patient.id)
+        .first()
+    )
+
+    def _doctor_label(doctor_user_id: int | None) -> dict | None:
+        if not doctor_user_id:
+            return None
+        doctor = db.query(models.User).filter(models.User.id == doctor_user_id).first()
+        if not doctor:
+            return None
+        # A recipient's identity is itself something a DSAR is entitled to
+        # disclose (GDPR Art. 15(1)(c), "recipients ... to whom the
+        # personal data have been disclosed") — name/role only, never
+        # their password hash or other account internals.
+        return {"full_name": doctor.full_name, "role": doctor.role}
+
+    profile_payload = {
+        "id": patient.id,
+        "public_id": patient.public_id,
+        "full_name": patient.full_name,
+        "date_of_birth": patient.date_of_birth,
+        "age": patient.age,
+        "sex": patient.sex,
+        "cnp": patient.cnp,
+        "patient_identifier": patient.patient_identifier,
+        "emergency_search_enabled": bool(patient.emergency_search_enabled),
+        "account_email": current_user.email,
+        "care_partner_code": code_record.code if code_record else None,
+    }
+
+    lab_results_payload = [
+        {
+            "document_id": lr.document_id,
+            "raw_test_name": lr.raw_test_name,
+            "canonical_name": lr.canonical_name,
+            "display_name": lr.display_name,
+            "category": lr.category,
+            "value": lr.value,
+            "flag": lr.flag,
+            "reference_range": lr.reference_range,
+            "unit": lr.unit,
+            "observation_datetime": lr.observation_datetime,
+            "institution": lr.institution,
+            "specimen": lr.specimen,
+            "verification_state": lr.verification_state,
+        }
+        for lr in lab_results
+    ]
+
+    medications_payload = [
+        {
+            "name": m.name,
+            "dose_strength": m.dose_strength,
+            "frequency": m.frequency,
+            "reason": m.reason,
+            "status": m.status,
+            "route_form": m.route_form,
+            "start_date": m.start_date,
+            "stop_date": m.stop_date,
+            "prescriber": m.prescriber,
+            "extra_info": m.extra_info,
+            "is_uncertain": bool(m.is_uncertain),
+            "created_at": m.created_at,
+            "updated_at": m.updated_at,
+            "official_source_name": m.official_source_name,
+            "official_source_url": m.official_source_url,
+        }
+        for m in medications
+    ]
+
+    events_payload = [
+        {
+            "event_type": e.event_type,
+            "status": e.status,
+            "title": e.title,
+            "description": e.description,
+            "hospital_name": e.hospital_name,
+            "department": e.department,
+            "admitted_at": e.admitted_at,
+            "discharged_at": e.discharged_at,
+            "attending_doctor": _doctor_label(e.doctor_user_id),
+        }
+        for e in events
+    ]
+
+    access_payload = {
+        "doctor_access_grants": [
+            {
+                "doctor": _doctor_label(a.doctor_user_id),
+                "granted_at": a.granted_at,
+                "is_active": bool(a.is_active),
+                "ended_at": a.ended_at,
+            }
+            for a in doctor_access
+        ],
+        "doctor_access_requests": [
+            {
+                "doctor": _doctor_label(r.doctor_user_id),
+                "status": r.status,
+                "requested_at": r.requested_at,
+                "responded_at": r.responded_at,
+            }
+            for r in access_requests
+        ],
+        "care_partner_links": [
+            {
+                "care_partner": _doctor_label(link.care_partner_user_id),
+                "linked_at": link.linked_at,
+            }
+            for link in care_partner_links
+        ],
+    }
+
+    emergency_contacts_payload = [
+        {
+            "name": c.name,
+            "relationship": c.contact_relationship,
+            "phone": c.phone,
+            "notes": c.notes,
+        }
+        for c in emergency_contacts
+    ]
+
+    documents_manifest: list[dict] = []
+    embedded_bytes = 0
+    tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".zip", prefix="bragi-dsar-export-")
+    os.close(tmp_fd)
+    tmp_path = Path(tmp_path_str)
+
+    try:
+        with zipfile.ZipFile(tmp_path, mode="w", compression=zipfile.ZIP_DEFLATED) as zf:
+            for document in documents:
+                entry = {
+                    "document_id": document.id,
+                    "public_id": document.public_id,
+                    "filename": document.filename,
+                    "section": document.section,
+                    "document_type": document.document_type,
+                    "report_name": document.report_name,
+                    "test_date": document.test_date,
+                    "created_at": document.created_at,
+                    "uploaded_by": _doctor_label(document.uploaded_by_user_id),
+                    "included_in_documents_folder": False,
+                }
+                if document.saved_to:
+                    file_path = Path(document.saved_to)
+                    if file_path.exists():
+                        size = file_path.stat().st_size
+                        if embedded_bytes + size <= DSAR_EXPORT_MAX_FILE_BYTES:
+                            arcname = f"documents/{document.id}_{document.filename}"
+                            zf.write(file_path, arcname=arcname)
+                            embedded_bytes += size
+                            entry["included_in_documents_folder"] = True
+                        else:
+                            entry["note"] = "Original file omitted — export size cap reached (see README.txt)."
+                documents_manifest.append(entry)
+                add_audit_log(
+                    db=db,
+                    document_id=document.id,
+                    action="dsar_export",
+                    actor=f"patient_self:{current_user.id}",
+                    details="Included in a self-service data export (GDPR DSAR).",
+                )
+
+            readme = f"""Bragi data export
+Generated: {now_iso()}
+Patient: {patient.full_name} (internal id {patient.id})
+
+This archive contains the personal data Bragi holds about you, generated
+in response to a data export request (GDPR Article 15/20). See
+docs/privacy/DSAR_RUNBOOK.md in the Bragi source repository for the
+policy this implements.
+
+Contents:
+- profile.json — your account/profile data
+- lab_results.json — structured lab results extracted from your documents
+- medications.json — your medication list
+- events.json — your care timeline (admissions, discharges)
+- access_relationships.json — clinicians/care partners who have or had
+  access to your record, and any pending access requests
+- emergency_contacts.json — emergency contacts you added
+- documents_manifest.json — metadata for every uploaded document
+- documents/ — the original uploaded files themselves, where the export
+  size cap allowed inclusion (see documents_manifest.json's
+  "included_in_documents_folder"/"note" fields for any that were left out)
+- ai_conversations.json — present for completeness; empty, because Bragi
+  does not have an AI chat feature yet
+
+Not included: any other patient's data; documents uploaded under your
+identity but not yet confirmed as belonging to your record (an identity
+mismatch/review queue, not your official record); internal account
+security metadata (password hash, auth tokens).
+"""
+            zf.writestr("README.txt", readme)
+            zf.writestr("profile.json", json.dumps(profile_payload, indent=2))
+            zf.writestr("lab_results.json", json.dumps(lab_results_payload, indent=2))
+            zf.writestr("medications.json", json.dumps(medications_payload, indent=2))
+            zf.writestr("events.json", json.dumps(events_payload, indent=2))
+            zf.writestr("access_relationships.json", json.dumps(access_payload, indent=2))
+            zf.writestr("emergency_contacts.json", json.dumps(emergency_contacts_payload, indent=2))
+            zf.writestr("documents_manifest.json", json.dumps(documents_manifest, indent=2))
+            zf.writestr("ai_conversations.json", json.dumps([], indent=2))
+
+        db.commit()
+    except Exception:
+        tmp_path.unlink(missing_ok=True)
+        raise
+
+    # PHI-free summary log only (counts, never content) — this export's
+    # per-document AuditLog rows above are the durable, queryable audit
+    # trail; this line is just an operational breadcrumb.
+    print(
+        f"DSAR EXPORT: patient_id={patient.id} user_id={current_user.id} "
+        f"documents={len(documents)} embedded_bytes={embedded_bytes}"
+    )
+
+    background_tasks.add_task(lambda: tmp_path.unlink(missing_ok=True))
+    export_filename = f"bragi-export-{patient.public_id or patient.id}.zip"
+    return FileResponse(
+        path=str(tmp_path),
+        filename=export_filename,
+        media_type="application/zip",
+        background=background_tasks,
+    )
 
 
 @app.get("/patients/{patient_id}/documents")

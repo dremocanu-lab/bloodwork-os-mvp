@@ -5,27 +5,48 @@ programmatically with manual fallback steps for what it doesn't.
 
 ## Right of access (Art.15) / data portability (Art.20)
 
-**No dedicated self-service export feature was confirmed to exist**
-in this codebase (checked this round: no `/export` or equivalent route
-found in `backend/app/main.py`'s route surface for producing a
-structured data export). A patient can view all of their own data
-through the normal app UI (profile, documents, labs, medications,
-timeline), which satisfies *access* in substance, but not in the
-portable/machine-readable form Art.20 contemplates.
+**Implemented this round**: `POST /my/export` (patient role only) —
+`[PASS]`, evidence: `backend/tests/test_dsar_export.py` (8 tests,
+real DB, real synthetic accounts) covering auth requirement, role
+restriction (non-patients get 403), expected file presence, own-data
+correctness, cross-patient isolation, and real original-file embedding.
 
-**Manual fallback today**: an engineer with legitimate authorization
-can query the patient's own rows across the tables listed in
-`docs/privacy/BRAGI_DATA_MAP.md` (keyed by `patient_id`) and produce an
-export. This must follow the same rule as all other work under this
-plan — never copy this into a ticket/fixture/log casually; treat it as
-live PHI handling with the same care as any production access.
+Returns a zip containing: `profile.json`, `lab_results.json`,
+`medications.json`, `events.json`, `access_relationships.json`
+(doctor/care-partner access grants, requests, and links — a recipient's
+identity is itself disclosable under Art.15(1)(c)), `emergency_contacts.
+json`, `documents_manifest.json` (metadata for every uploaded document),
+`documents/` (the original files themselves, up to a 500MB per-export
+cap — see `DSAR_EXPORT_MAX_FILE_BYTES` in `backend/app/main.py`; beyond
+the cap, a document is still fully described in the manifest with a note
+that its raw file was omitted), `ai_conversations.json` (present but
+empty — no AI chat feature exists yet), and `README.txt` explaining the
+contents. Authorization reuses the existing pattern exactly (`require_
+role("patient")` + `get_patient_for_user`, which only ever resolves to
+the caller's own linked `Patient` row — there is no separate "which
+patient" parameter for a caller to manipulate, unlike a lookup-by-id
+route). Rate-limited (3/day per IP, see `docs/security/RATE_LIMITING.md`)
+since it's a real disk/DB-cost operation. Every included document gets
+its own `AuditLog` row (`action="dsar_export"`) — a durable, queryable
+record of what was exported and when, in addition to a PHI-free summary
+line in the server log.
 
-**Recommended fix (not implemented this round)**: a `GET
-/my/data-export` route producing a structured JSON (or PDF) bundle of
-the patient's own data, reusing the same `patient_id`-scoped queries
-`can_access_patient()`-gated routes already use — a genuinely
-achievable, safe, additive feature, not a large one. Flagged as a
-near-term follow-up given its direct DSAR relevance.
+**Deliberately excluded** (verified, not just assumed): any other
+patient's data (every query is scoped to `patient.id`, confirmed via the
+cross-patient isolation test); quarantined documents uploaded under this
+identity but not yet confirmed as belonging to this patient's record
+(`Document.patient_id` must match exactly; an `intended_patient_id`-only
+row is unconfirmed, not exported); internal account security metadata
+(password hash, JWT internals).
+
+**Not implemented this round** (documented, not silently dropped):
+export for non-patient roles (doctor/admin/care_partner/
+emergency_worker) — their personal-data footprint is much smaller
+(account fields, assignment history) and was judged lower-priority than
+the patient export, which carries the bulk of this system's actual PHI;
+a PDF rendering (JSON + original files was judged sufficient "machine-
+readable" portability for Art.20 without adding a PDF-generation
+dependency this round).
 
 ## Right to erasure (Art.17)
 
@@ -80,7 +101,7 @@ contact channel (`docs/security/PRODUCTION_ACCESS_POLICY.md`).
 
 | Right | Status |
 |---|---|
-| Access | `[PASS]` in substance (full UI visibility), `[FAIL]` for portable export |
+| Access | `[PASS]` — full UI visibility plus `POST /my/export` for portable export (patient role) |
 | Erasure (patient) | `[PASS]` post this round's fixes |
 | Erasure (other roles) | `[FAIL]` — no endpoint |
 | Rectification | `[PASS]` in substance, `[FAIL]` for change-history |
