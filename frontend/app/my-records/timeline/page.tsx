@@ -39,6 +39,7 @@ type DocumentCard = {
   generated_on?: string | null;
   created_at?: string | null;
   section: string;
+  document_type?: string | null;
   is_verified: boolean;
   uploaded_by?: UploadedBy | null;
 };
@@ -85,6 +86,7 @@ type TimelineItem = {
   documentId?: number;
   eventId?: number;
   section?: string;
+  documentType?: string | null;
   children?: TimelineItem[];
 };
 
@@ -261,6 +263,7 @@ function buildTimelineItems(
       }`,
       documentId: doc.id,
       section: doc.section,
+      documentType: doc.document_type,
       children: [],
       admissionStart: doc.collected_on,
       admissionEnd: doc.reported_on,
@@ -297,6 +300,7 @@ function buildTimelineItems(
     }`,
     documentId: doc.id,
     section: doc.section,
+    documentType: doc.document_type,
   });
   for (const parent of admissionParents) {
     const children = sortedDocuments

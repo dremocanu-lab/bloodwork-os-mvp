@@ -24,6 +24,7 @@ import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
+import { documentTypeOrSectionLabel } from "@/lib/document-taxonomy-labels";
 import { hasReferenceBand, Sparkline, TrendChart } from "@/components/ui/trend";
 import {
   CellPrimary,
@@ -84,6 +85,7 @@ type DocumentCard = {
   generated_on?: string | null;
   created_at?: string | null;
   section: string;
+  document_type?: string | null;
   is_verified: boolean;
   uploaded_by?: UploadedBy | null;
 };
@@ -165,6 +167,7 @@ type TimelineItem = {
   documentId?: number;
   eventId?: number;
   section?: string;
+  documentType?: string | null;
   children?: TimelineItem[];
 };
 
@@ -361,7 +364,7 @@ function recentPoints(points: TrendPoint[], limit = TREND_POINTS) {
 
 export default function MyRecordsPage() {
   const router = useRouter();
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
   const { activeCount, refreshUploadJobs } = useUploadManager();
 
   const sectionLabels: Record<string, string> = {
@@ -596,6 +599,7 @@ export default function MyRecordsPage() {
         }${doc.reported_on ? ` · Discharged ${doc.reported_on}` : ""} · ${uploaderSubtitle(doc)}`,
         documentId: doc.id,
         section: doc.section,
+        documentType: doc.document_type,
         children: [],
         admissionStart: doc.collected_on,
         admissionEnd: doc.reported_on,
@@ -636,6 +640,7 @@ export default function MyRecordsPage() {
       subtitle: `${getDocumentDateLabel(doc)} · ${uploaderSubtitle(doc)}`,
       documentId: doc.id,
       section: doc.section,
+      documentType: doc.document_type,
     });
 
     for (const parent of admissionParents) {
@@ -792,7 +797,7 @@ export default function MyRecordsPage() {
             title={valueOrDash(row.report_name || row.filename)}
             sub={
               <>
-                {sectionLabels[row.section] || row.section}
+                {documentTypeOrSectionLabel(row.document_type, sectionLabels[row.section] || row.section, language)}
                 {row.lab_name ? ` · ${row.lab_name}` : ""}
                 {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
               </>

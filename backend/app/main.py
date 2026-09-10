@@ -617,6 +617,7 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
         "generated_on": document.generated_on,
         "created_at": document.created_at,
         "section": document.section,
+        "document_type": document.document_type,
         "is_verified": bool(document.is_verified),
         "has_abnormal": has_abnormal,
         "has_abnormal_labs": has_abnormal,
@@ -2112,31 +2113,49 @@ def pcp_get_patient_summary(
         "pathology": "pathology_report",
     }
 
-    def _doc_summary(doc) -> str:
-        et = _SECTION_EVENT_TYPE.get(doc.section, "source_document")
-        if et == "lab_panel":
-            return "Lab panel with structured values extracted."
-        if et == "clinical_note":
-            return "Clinical note recorded in patient file."
-        if et == "discharge_summary":
-            return "Discharge summary recorded."
-        if et == "imaging_report":
-            return "Imaging report recorded in patient file."
-        if et == "medication_record":
-            return "Medication document recorded."
-        return "Source document recorded in patient file."
+    _DOC_SUMMARY_BY_EVENT_TYPE = {
+        "lab_panel": "Lab panel with structured values extracted.",
+        "clinical_note": "Clinical note recorded in patient file.",
+        "discharge_summary": "Discharge summary recorded.",
+        "imaging_report": "Imaging report recorded in patient file.",
+        "medication_record": "Medication document recorded.",
+        "operative_report": "Operative report recorded in patient file.",
+        "pathology_report": "Pathology report recorded in patient file.",
+        "prescription": "Prescription recorded in patient file.",
+        "specialist_consultation": "Specialist consultation recorded in patient file.",
+        "emergency_department_note": "Emergency department note recorded.",
+        "hospital_admission_note": "Hospital admission note recorded.",
+        "procedure_report": "Procedure report recorded in patient file.",
+        "referral": "Referral recorded in patient file.",
+    }
+
+    def _event_type_for(doc) -> str:
+        # Phase 5 — prefer Bragi's finer-grained document_type (Phase 1+
+        # uploads) over the coarse legacy section, so e.g. an imaging vs.
+        # operative vs. pathology document reads as a distinct, meaningful
+        # timeline event instead of all three collapsing into whatever the
+        # legacy "scans"/"hospitalizations" bucket implied. Falls back to
+        # the section-based mapping for documents uploaded before automatic
+        # classification existed (document_type is null there).
+        if doc.document_type and doc.document_type != "other":
+            return doc.document_type
+        return _SECTION_EVENT_TYPE.get(doc.section, "source_document")
+
+    def _doc_summary(doc, event_type: str) -> str:
+        return _DOC_SUMMARY_BY_EVENT_TYPE.get(event_type, "Source document recorded in patient file.")
 
     pcp_timeline = []
 
     for doc in all_docs_for_timeline:
+        event_type = _event_type_for(doc)
         pcp_timeline.append({
             "id": f"doc_{doc.id}",
-            "event_type": _SECTION_EVENT_TYPE.get(doc.section, "source_document"),
+            "event_type": event_type,
             "title": doc.report_name or doc.lab_name or doc.filename,
             "date": doc.test_date or doc.collected_on or doc.created_at or "",
             "source_id": doc.id,
             "source_type": "document",
-            "summary": _doc_summary(doc),
+            "summary": _doc_summary(doc, event_type),
             "route": f"/documents/{doc.id}",
             "is_source_linked": True,
         })

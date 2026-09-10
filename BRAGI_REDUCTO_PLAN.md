@@ -84,7 +84,9 @@ Upload (per file)
   flow, `/upload/batch`, confirmation UI. Done.
 - **Phase 2 — Identity / duplicates / canonical data / provenance.** Done.
 - **Phase 3 — Analize + source verification.** Done.
-- **Phase 4 — Clinical readers.** Done — see §2c.
+- **Phase 4 — Clinical readers.** Done.
+- **Phase 5 — Longitudinal / Timeline / document organization.** Done —
+  see §2d.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -279,6 +281,61 @@ no structure at all.
   instead, given the shared card-based layout was already sufficient and
   6 near-duplicate page files would have been pure risk for no display
   difference at this stage.
+
+## 2d. Phase 5 — what was actually built
+
+Inspection found more pre-existing groundwork here than the original
+spec assumed: the "PCP timeline", "My Records timeline", and doctor
+patient-timeline pages already group documents under hospital-admission
+"parent" events by date range (an admission's CT/labs/discharge already
+nest under it) — a real, working answer to "episodes of care" grouping,
+just not named that. Phase 5 therefore focused on the actual gap:
+**every document/timeline event was labeled only by the coarse legacy
+`section` (6 buckets), never by Bragi's Phase-1+ `document_type`** (16
+types) — so an imaging report and an operative report both just read
+"Scan"/"Hospitalization".
+
+- **`serialize_document_card`** (used by every document-list endpoint)
+  and **`get_document_payload`** (Phase 3 already added it there) now
+  both include `document_type`.
+- **`frontend/components/clinical-timeline.tsx`** (the one shared
+  timeline-row component used by 4 pages) gained an optional
+  `documentType` field on `TimelineItem`; its category label now prefers
+  `document_type` over the section-based fallback when present — a
+  single change that improved every page using it at once.
+- **`frontend/lib/document-taxonomy-labels.ts`** (new): EN/RO labels for
+  all 16 taxonomy values, mirroring the backend's
+  `DOCUMENT_TYPE_LABELS`. Used by the timeline component and by the "My
+  Records" documents table's row subtitle.
+- **Backend PCP-workspace timeline** (`_event_type_for` /
+  `_DOC_SUMMARY_BY_EVENT_TYPE` in `main.py`): `event_type` now prefers
+  `document.document_type` over the old `_SECTION_EVENT_TYPE` section
+  map, with per-type summaries extended to cover the new taxonomy values
+  (operative, pathology, prescription, consultation, etc.) that
+  previously all fell through to a generic "source document" line.
+- Every change here is **additive and backward-compatible**: documents
+  uploaded before Phase 1 (no `document_type`) fall back to exactly the
+  previous section-based label/behavior. No existing page's navigation,
+  tabs, or grouping structure changed.
+
+### Deferred from the original Phase 5 spec
+- **Restructuring the top-level document organization** (grouping by
+  the full 16-type taxonomy instead of the 6 legacy `section` buckets in
+  tab/filter navigation, e.g. on "My Records"): not done. These are
+  mature, heavily-used, 1700-line pages; re-plumbing their primary
+  grouping/navigation model was judged higher-risk than the value it
+  would add on top of the label-level fix already shipped, given the
+  remaining phases still ahead. The finer-grained label is visible
+  everywhere a document is shown or timelined — the deferred part is
+  only the top-level tab/filter structure itself.
+- **New cross-admission episode-of-care inference** (e.g. linking a
+  discharge to a preceding ED visit that isn't part of the same
+  admission record): not built, and the spec explicitly cautions against
+  overbuilding this. The existing admission-parent grouping already
+  covers the common case conservatively.
+- Prescription/medication_list → `PatientMedication` linkage (noted in
+  Phase 4) is still outstanding — the natural place for it, but not
+  reached this phase either.
 
 ## 3. Reducto integration status (important)
 

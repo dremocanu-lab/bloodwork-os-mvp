@@ -105,6 +105,7 @@ type DocumentCard = {
   generated_on?: string | null;
   created_at?: string | null;
   section: string;
+  document_type?: string | null;
   is_verified: boolean;
   has_abnormal?: boolean;
   has_abnormal_labs?: boolean;
@@ -161,6 +162,7 @@ type TimelineItem = {
   documentId?: number;
   eventId?: number;
   section?: string;
+  documentType?: string | null;
   children?: TimelineItem[];
 };
 
@@ -617,6 +619,7 @@ export default function PatientChartPage() {
         )} · ${getUploaderText(doc)} · ${doc.is_verified ? "Verified" : "Unverified"}`,
         documentId: doc.id,
         section: doc.section,
+        documentType: doc.document_type,
         children: [],
         admissionStart: doc.collected_on,
         admissionEnd: doc.reported_on,
@@ -658,6 +661,7 @@ export default function PatientChartPage() {
       subtitle: `${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
       documentId: doc.id,
       section: doc.section,
+      documentType: doc.document_type,
     });
 
     for (const parent of admissionParents) {

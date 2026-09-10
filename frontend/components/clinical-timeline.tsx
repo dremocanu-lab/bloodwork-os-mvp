@@ -25,6 +25,7 @@ import { useMemo, useState } from "react";
 import { useLanguage } from "@/lib/i18n";
 import { IconChevronDown, IconChevronRight } from "@/components/ui/icon";
 import { EmptyState } from "@/components/ui";
+import { documentTypeOrSectionLabel } from "@/lib/document-taxonomy-labels";
 
 type TimelineItem = {
   id: string;
@@ -35,6 +36,11 @@ type TimelineItem = {
   documentId?: number;
   eventId?: number;
   section?: string;
+  /** Bragi's finer-grained document type (Phase 1+ uploads only — see
+   * BRAGI_REDUCTO_PLAN.md Phase 5). Optional so every existing caller that
+   * doesn't pass it keeps behaving exactly as before, falling back to
+   * `section`. */
+  documentType?: string | null;
   children?: TimelineItem[];
 };
 
@@ -90,15 +96,23 @@ function periodKey(value?: string | null) {
   return `${date.getFullYear()}-${String(date.getMonth() + 1).padStart(2, "0")}`;
 }
 
-function getTypeLabel(item: TimelineItem, t: (key: string) => string) {
-  if (item.section === "bloodwork") return t("bloodwork");
-  if (item.section === "discharge_summary") return t("dischargeSummaryLabel");
-  if (item.section === "scans") return t("scan");
-  if (item.section === "medications") return t("medication");
-  if (item.section === "hospitalizations") return t("hospitalEvent");
-  if (item.section === "notes") return t("note");
-  if (item.type === "event") return t("careEvent");
-  return t("record");
+function getTypeLabel(item: TimelineItem, t: (key: string) => string, language: string) {
+  const fallback = (() => {
+    if (item.section === "bloodwork") return t("bloodwork");
+    if (item.section === "discharge_summary") return t("dischargeSummaryLabel");
+    if (item.section === "scans") return t("scan");
+    if (item.section === "medications") return t("medication");
+    if (item.section === "hospitalizations") return t("hospitalEvent");
+    if (item.section === "notes") return t("note");
+    if (item.type === "event") return t("careEvent");
+    return t("record");
+  })();
+
+  // Prefer the finer-grained document_type (e.g. "Imaging Report" instead
+  // of just "Scan") when it's known — falls back to the section-based
+  // label above for documents uploaded before automatic classification
+  // existed, or when documentType isn't passed at all.
+  return documentTypeOrSectionLabel(item.documentType, fallback, language);
 }
 
 /**
@@ -132,7 +146,7 @@ function TimelineRow({
   childCount?: number;
   indented?: boolean;
 }) {
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   return (
     <button
@@ -153,7 +167,7 @@ function TimelineRow({
       <span className="b-tl-main" data-date={formatDayLabel(item.date)}>
         <span className="b-tl-title">{item.title}</span>
         <span className="b-tl-sub">
-          <span style={{ color: "var(--text-2)" }}>{getTypeLabel(item, t)}</span>
+          <span style={{ color: "var(--text-2)" }}>{getTypeLabel(item, t, language)}</span>
           {item.subtitle ? ` · ${item.subtitle}` : ""}
         </span>
       </span>
