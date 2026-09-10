@@ -8,7 +8,7 @@ import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { LabValue, Status } from "@/components/ui";
 import { IconExternal } from "@/components/ui/icon";
-import { useSourceViewer } from "@/components/source-viewer/source-viewer-context";
+import { captureVisualAnchor, useSourceViewer } from "@/components/source-viewer/source-viewer-context";
 import {
   ReaderDocumentType,
   isReaderDocumentType,
@@ -297,13 +297,22 @@ function LabSourceAction({
 
   async function handleOpen() {
     if (loading) return;
+
+    // Captured BEFORE setLoading(true) below on purpose: that call
+    // disables this very button, which blurs it (the browser moves focus
+    // away from a newly-disabled element, usually to document.body) — by
+    // the time the network round-trip finishes, document.activeElement
+    // would no longer be this row, and the split-view layout swap
+    // wouldn't have a real anchor to keep this row at its on-screen
+    // position. See source-viewer-context.tsx's captureVisualAnchor.
+    const anchor = captureVisualAnchor();
     setLoading(true);
 
     try {
       const response = await api.get<{ evidence: LabSourceEvidence[] }>(`/lab-results/${labId}/source`);
       const firstEvidence = (response.data.evidence || [])[0];
       if (firstEvidence) {
-        openSourceEvidence(firstEvidence.id);
+        openSourceEvidence(firstEvidence.id, anchor);
       } else {
         setNoEvidence(true);
       }

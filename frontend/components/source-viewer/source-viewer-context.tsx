@@ -10,6 +10,14 @@
  * the backend resolves and authorizes everything else. No PDF URL,
  * patient ID, page, or bbox is ever passed around by callers.
  *
+ * If your trigger's own click handler disables/changes the trigger
+ * element before an async gap (e.g. `setLoading(true)` on the button
+ * while fetching which evidence id to open — see LabSourceAction), call
+ * `captureVisualAnchor()` as the very first thing in that handler and
+ * pass the result as `openSourceEvidence`'s second argument. Otherwise
+ * the split-view layout swap can't reliably keep the clicked row at its
+ * on-screen position — see captureVisualAnchor's own doc comment.
+ *
  * Mounted once at the root layout (see app/layout.tsx), which also lays
  * out the desktop split view: main content + this panel side by side
  * when open, so "Analize + Original coexist" works for ANY page that
@@ -53,6 +61,11 @@ export type SourceEvidenceView = {
   precision: SourcePrecision;
 };
 
+/** A real DOM node the split-view layout swap must not visibly move,
+ * plus the on-screen Y it was at the moment this was captured. See
+ * `captureVisualAnchor` for how it's populated. */
+export type VisualAnchor = { el: HTMLElement; top: number };
+
 type SourceViewerContextValue = {
   isOpen: boolean;
   loading: boolean;
@@ -61,10 +74,39 @@ type SourceViewerContextValue = {
   pdfDoc: PDFDocumentProxy | null;
   currentPage: number;
   setCurrentPage: (page: number) => void;
-  openSourceEvidence: (sourceEvidenceId: number) => void;
+  openSourceEvidence: (sourceEvidenceId: number, preCapturedAnchor?: VisualAnchor | null) => void;
   close: () => void;
   retry: () => void;
+  /** Read-only for consumers outside this file — app-shell-with-source-
+   * viewer.tsx is the one place that reads/refreshes it, right at the two
+   * moments a layout swap is about to happen (open, close). Exposed as a
+   * ref (not state) so reading it never itself triggers a render. */
+  visualAnchorRef: { current: VisualAnchor | null };
 };
+
+/** Captures whatever real DOM element the user just interacted with — a
+ * click focuses its target in every evergreen browser, so document.
+ * activeElement right at the moment of the call IS the "View in original"
+ * button (or, generalized, whatever triggered this) — plus its current
+ * on-screen Y. This is what lets the split-view layout swap keep that
+ * element (and therefore the row/content around it) at the same visual
+ * position even though the surrounding content reflows to a narrower
+ * width and the numeric scroll offset alone can't account for that (a
+ * row can end up on a different line count, changing how much content
+ * sits above it, independent of scrollTop).
+ *
+ * Returns null when nothing meaningful was actually focused (activeElement
+ * is body/html, e.g. a programmatic open with no real click behind it) —
+ * callers fall back to plain numeric scroll-offset transfer in that case,
+ * which is still correct, just not pixel-exact.
+ */
+export function captureVisualAnchor(): VisualAnchor | null {
+  if (typeof document === "undefined") return null;
+  const active = document.activeElement;
+  if (!(active instanceof HTMLElement)) return null;
+  if (active === document.body || active === document.documentElement) return null;
+  return { el: active, top: active.getBoundingClientRect().top };
+}
 
 const SourceViewerContext = createContext<SourceViewerContextValue | null>(null);
 
@@ -97,6 +139,14 @@ export function SourceViewerProvider({ children }: { children: ReactNode }) {
   const loadedDocumentIdRef = useRef<number | null>(null);
   const loadedPdfRef = useRef<PDFDocumentProxy | null>(null);
   const lastRequestedIdRef = useRef<number | null>(null);
+
+  // See captureVisualAnchor's own doc comment. Populated fresh on every
+  // open() (a new click = a new point of interest to anchor to) and kept
+  // around (not cleared on close) so app-shell-with-source-viewer.tsx can
+  // re-measure the SAME element right before close() also swaps the
+  // layout back — the element itself doesn't change between open and
+  // close, only which position it needs to be restored to.
+  const visualAnchorRef = useRef<VisualAnchor | null>(null);
 
   const loadEvidence = useCallback(async (sourceEvidenceId: number) => {
     lastRequestedIdRef.current = sourceEvidenceId;
@@ -142,7 +192,20 @@ export function SourceViewerProvider({ children }: { children: ReactNode }) {
   }, []);
 
   const openSourceEvidence = useCallback(
-    (sourceEvidenceId: number) => {
+    (sourceEvidenceId: number, preCapturedAnchor?: VisualAnchor | null) => {
+      // Anchor capture must happen while the pre-split layout (whatever
+      // the user is currently looking at) is still on screen — and,
+      // critically, before the trigger's own click handler does anything
+      // that could move focus (e.g. disabling its button while an
+      // "identify the evidence" network call is in flight — disabling a
+      // focused element blurs it, typically back to document.body, which
+      // captureVisualAnchor() correctly refuses to use as an anchor).
+      // Real callers (LabSourceAction) capture the anchor as the very
+      // first thing their click handler does and pass it in here for
+      // exactly that reason. Capturing fresh right here is still the
+      // correct fallback for a simpler caller that doesn't — just not
+      // race-proof against that specific pattern.
+      visualAnchorRef.current = preCapturedAnchor !== undefined ? preCapturedAnchor : captureVisualAnchor();
       void loadEvidence(sourceEvidenceId);
     },
     [loadEvidence]
@@ -153,6 +216,21 @@ export function SourceViewerProvider({ children }: { children: ReactNode }) {
   }, [loadEvidence]);
 
   const close = useCallback(() => {
+    // Refresh the anchor's position to wherever it is RIGHT NOW, still in
+    // the split layout, before that layout goes away — document.
+    // activeElement at this instant is whatever close control was
+    // clicked (in the PDF pane, not useful as a left-pane anchor), so
+    // this re-measures the SAME element openSourceEvidence anchored to
+    // rather than picking a new one. Covers the user having manually
+    // scrolled the left pane independently while the viewer was open —
+    // this reflects where things actually are now, not the stale
+    // open-time position.
+    if (visualAnchorRef.current?.el.isConnected) {
+      visualAnchorRef.current = {
+        el: visualAnchorRef.current.el,
+        top: visualAnchorRef.current.el.getBoundingClientRect().top,
+      };
+    }
     setIsOpen(false);
     lastRequestedIdRef.current = null;
     // Intentionally keep loadedPdfRef/loadedDocumentIdRef cached so
@@ -195,7 +273,13 @@ export function SourceViewerProvider({ children }: { children: ReactNode }) {
       openSourceEvidence,
       close,
       retry,
+      visualAnchorRef,
     }),
+    // visualAnchorRef is a ref (stable identity for the component's
+    // lifetime) — deliberately not in deps; including it would be
+    // pointless (it never changes) and mutating .current must not itself
+    // trigger a re-render/new context value. (The lint rule already
+    // recognizes ref objects as exempt, hence no disable comment needed.)
     [isOpen, loading, error, data, pdfDoc, currentPage, openSourceEvidence, close, retry]
   );
 

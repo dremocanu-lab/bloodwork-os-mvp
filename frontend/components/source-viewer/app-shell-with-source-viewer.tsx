@@ -16,7 +16,7 @@ import { SourceViewerPanel } from "./source-viewer-panel";
 const DESKTOP_BREAKPOINT = "(min-width: 1025px)";
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const { isOpen } = useSourceViewer();
+  const { isOpen, visualAnchorRef } = useSourceViewer();
   const [isDesktop, setIsDesktop] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   // Tracks whether the split layout was active on the PREVIOUS render, so
@@ -76,15 +76,29 @@ function Shell({ children }: { children: React.ReactNode }) {
   // invisible to layout, so closed behavior is pixel-identical to before
   // this round ever existed.
   //
-  // That alone stops the remount, but a second, independent effect still
-  // needs handling: before the split is active, `children` scrolls via
-  // the ambient page scroll (window/html); `.b-app-split-main` becomes
-  // ITS OWN scrollable box once active (a real, separate scroll position,
-  // starting at 0) — so the numeric scroll offset itself still needs to
-  // transfer explicitly, in both directions, or the very same jump happens
-  // one layer up even with the DOM now stable. Done with useLayoutEffect so
-  // it applies before the browser paints the new layout — no visible
-  // jump-then-snap-back flicker.
+  // That alone stops the remount, but TWO more independent things still
+  // need handling, or the jump still happens one layer up even with the
+  // DOM now stable:
+  //
+  // 1. Before the split is active, `children` scrolls via the ambient
+  //    page scroll (window/html); `.b-app-split-main` becomes ITS OWN
+  //    scrollable box once active (a real, separate scroll position,
+  //    starting at 0) — the numeric offset needs to transfer explicitly,
+  //    in both directions.
+  //
+  // 2. Numeric transfer ALONE is still not enough — real-browser testing
+  //    proved this (see BRAGI_REDUCTO_PLAN.md): the left pane gets
+  //    narrower once the split is active, so its content reflows (test
+  //    names wrap onto more lines, etc.), which changes how much content
+  //    sits above any given row independent of scrollTop. The clicked
+  //    row can end up several hundred pixels away from where it was even
+  //    with a numerically "correct" scroll transfer. Fixed with a real
+  //    visual anchor (see source-viewer-context.tsx's captureVisualAnchor):
+  //    re-measure the SAME element that was clicked, before and after the
+  //    reflow, and nudge the scroll position by exactly the difference.
+  //
+  // Both run inside useLayoutEffect so they apply before the browser
+  // paints the new layout — no visible jump-then-snap-back flicker.
   useLayoutEffect(() => {
     if (showSplit && !wasSplitRef.current) {
       // Opening: window is still the live scroll container at this point
@@ -95,14 +109,38 @@ function Shell({ children }: { children: React.ReactNode }) {
       lastMainScrollTopRef.current = y;
       if (mainRef.current) mainRef.current.scrollTop = y;
       window.scrollTo(0, 0);
+
+      const anchor = visualAnchorRef.current;
+      if (anchor?.el.isConnected && mainRef.current) {
+        const newTop = anchor.el.getBoundingClientRect().top;
+        const delta = newTop - anchor.top;
+        if (Math.abs(delta) > 0.5) {
+          mainRef.current.scrollTop += delta;
+          lastMainScrollTopRef.current = mainRef.current.scrollTop;
+        }
+      }
     } else if (!showSplit && wasSplitRef.current) {
       // Closing: mainRef's own box (and scrollTop) is already gone by now
       // — use the last value the scroll listener recorded instead of
       // reading a stale/zeroed one directly off the element.
       window.scrollTo(0, lastMainScrollTopRef.current);
+
+      // close() (source-viewer-context.tsx) re-measures anchor.top right
+      // before this fires, against the split layout that's just about to
+      // go away — so this is comparing that "last known split-layout
+      // position" against the same element's position in the new,
+      // full-width layout now committed.
+      const anchor = visualAnchorRef.current;
+      if (anchor?.el.isConnected) {
+        const newTop = anchor.el.getBoundingClientRect().top;
+        const delta = newTop - anchor.top;
+        if (Math.abs(delta) > 0.5) {
+          window.scrollTo(0, window.scrollY + delta);
+        }
+      }
     }
     wasSplitRef.current = showSplit;
-  }, [showSplit]);
+  }, [showSplit, visualAnchorRef]);
 
   return (
     <>
