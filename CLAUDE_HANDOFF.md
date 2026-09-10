@@ -7,13 +7,16 @@ final verification detail. This file is status only.
 None — all 7 phases from the original spec, a real Reducto integration
 (§8), a full DB-backed production-readiness round (§9), a real
 production-failure fix + classification-latency round (§10), a
-normalization/source-viewer/popup-rework round (§11), and a
-correction round (§12: fixed a fabricated PSW clinical claim from §11,
-completed the popup audit) are implemented and merged to `main`. See
-plan §2f, §8, §9, §10, §11, §12 for exactly what "done" means here and
-what's honestly still deferred. `REDUCTO_ENABLED` is `true` in
-production (confirmed via live traffic) — see §10 for the real
-production bug that was blocking every upload there and is now fixed.
+normalization/source-viewer/popup-rework round (§11), a correction
+round (§12: fixed a fabricated PSW clinical claim from §11, completed
+the popup audit), and a visual/interaction correction pass (§13: upload
+compaction, an Overview display bug, source-viewer route lifecycle,
+full-lab-row PDF framing, PDF render quality, a blank-viewer layout
+bug) are implemented and merged to `main`. See plan §2f, §8, §9, §10,
+§11, §12, §13 for exactly what "done" means here and what's honestly
+still deferred. `REDUCTO_ENABLED` is `true` in production (confirmed
+via live traffic) — see §10 for the real production bug that was
+blocking every upload there and is now fixed.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -53,6 +56,20 @@ production bug that was blocking every upload there and is now fixed.
     featured-analyte pickers) to an anchored popover, and documented the
     three that legitimately stay centered (emergency session-start,
     document deletion, account deletion). See plan §12.
+13. Fixed five real product bugs reported via screenshots: the upload
+    page's three stacked cards consolidated into one; a false "No
+    bloodwork data yet" on Overview despite real Records/Bloodwork/Labs
+    counts (a display-logic bug, not a caching one); the source viewer
+    now closes automatically on Back/route change/patient switch instead
+    of needing a separate close; the lab PDF highlight now frames the
+    whole table row (real unioned+padded geometry, new `row_bbox_*`
+    columns, additive to the existing per-field bbox) instead of just the
+    value cell, with an outline-based, non-text-obscuring treatment; a
+    layout-collapse bug that could leave the PDF viewer looking blank/
+    tiny is fixed with a CSS floor size. Also added: a purple "selected"
+    state on the lab row whose source is open, a restrained hover
+    gradient, HiDPI-aware canvas rendering, and a little more restrained
+    color (stat-card accents, nav active edge). See plan §13.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
 - **Production was actually broken for uploads before §10** — `documents.
@@ -93,6 +110,20 @@ production bug that was blocking every upload there and is now fixed.
   ECharts consistency pass on the analytics dashboard, top-level
   document-organization restructuring) whenever they become the
   priority.
+- §13's fixes were verified by direct source/build/test inspection, not
+  a live browser pass (same `BRAGI_TOKENS` blocker as every prior
+  round) — if you get real QA tokens, the highest-value things to
+  visually confirm are: the new full-lab-row PDF highlight against a
+  real rendered report (does the frame actually sit clear of the
+  glyphs at fit-width/zoomed/resized), and the previously-blank-PDF fix
+  across a few real sessions (the CSS floor-size fix addresses the root
+  cause found by inspection, but wasn't reproduced live before or after
+  the fix).
+- `care-partner/upload/page.tsx` is a third upload-page implementation
+  (separate from the patient/doctor ones fixed in §13a) that was not
+  touched this round — no screenshot named it, and it doesn't share the
+  same three-stacked-cards structure, but it's worth a look if a future
+  round revisits upload UX.
 
 ## Architecture decisions (cumulative — see plan for full detail per phase)
 - `document_type` rides alongside the existing `section` column
@@ -141,13 +172,14 @@ file that was never actually read.
 
 ## Tests / status (final)
 - Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
-  → **57 passed** (42 original + 15 `test_lab_resolver.py` cases, after
-  §12a's rewrite), unit-only (no DB fixtures convention exists yet).
+  → **62 passed** (42 original + 15 `test_lab_resolver.py` cases after
+  §12a's rewrite + 5 new `test_reducto_row_bbox.py` cases this round),
+  unit-only (no DB fixtures convention exists yet).
 - Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
   `eslint` on every file touched this round is clean (a few pre-existing
   `react-hooks` findings remain in files this round didn't otherwise
   touch — confirmed via `git stash` to predate this round — see plan
-  §2f/§12b, not fixed, out of scope).
+  §2f/§12b/§13i, not fixed, out of scope).
 - Live checks this session actually ran (not just described): a real
   SHA-256-duplicate functional test (Phase 2), a real `uvicorn` boot with
   an OpenAPI route check, `run_migrations()` applied cleanly against the
@@ -169,6 +201,16 @@ file that was never actually read.
   been able to generate yet), and any actual browser click-through of the
   new source viewer / popup positioning (verified via build/typecheck/
   lint + real backend E2E instead — see plan §11d).
+- This round (§13): confirmed by direct inspection of the actual
+  production build output that the PDF.js worker is correctly emitted
+  and referenced at its real static-asset path (ruling it out as a
+  contributor to the blank-PDF bug before attributing that bug to a CSS
+  layout-collapse root cause instead — see plan §13f). The row-bbox
+  union/padding geometry is covered by 5 new unit tests. Not run: a live
+  browser pass confirming the fixed layout, the new hover/selected-row
+  treatment, or the row-bbox highlight against a real rendered PDF —
+  same `BRAGI_TOKENS` blocker as always; see plan §13i for exactly what
+  that leaves unverified.
 
 ## Known issues
 See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;

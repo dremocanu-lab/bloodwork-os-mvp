@@ -1464,3 +1464,281 @@ unmodified files, same line numbers); the two new unused-variable
 warnings in `my-records/settings/page.tsx` are leftover dead state from
 before this round's comment-only edit there, not introduced by it.
 Backend: `pytest -q`, 57 passed.
+
+## 13. Visual/interaction correction pass (upload compaction, bloodwork-state bug, viewer lifecycle, lab-row source framing, PDF quality)
+
+Five screenshot-reported problems plus explicit design requirements (a
+little more restrained color, no popup regressions). Root-caused and
+fixed each; not a redesign of anything working.
+
+### 13a. Upload page: one coherent workspace, not three stacked cards
+
+**Root cause**: `my-records/upload/page.tsx` (and the doctor-side
+`patients/[id]/upload/page.tsx`) rendered the dropzone, the file queue,
+and the empty state as three separate `<section className="b-surface">`
+cards, each with its own full padding — plus a redundant bottom-bar
+"Continue" button that did nothing but `router.push("/my-records")`,
+silently discarding any locally-picked-but-not-yet-uploaded files with
+no confirmation. The queue's own `EmptyState` fallback duplicated what
+the dropzone was already saying.
+
+**Fix**: merged into one `<section>` — dropzone, queue, and the single
+upload action all live inside it. A new `.b-drop-compact` CSS variant
+(`app/globals.css`) collapses the dropzone to a single row once at
+least one file is queued (icon + hint text + inline "Browse files"),
+keeping it functional as a drop target without eating vertical space
+the queue now needs; the full-height dropzone still renders when
+nothing is queued yet, since there's nothing else to show. Removed the
+separate `EmptyState` card entirely — the dropzone already communicates
+"nothing selected." Removed "Continue": leaving via the header's
+existing "Back" button already covers cancelling, and the one remaining
+button ("Upload (N)") only appears once there's a local file to
+actually send, so there's exactly one primary action at a time instead
+of two competing ones. Applied identically to the doctor-side upload
+page, additionally folding its previously-separate "document type"
+section picker into the same card's header instead of its own white
+card above the dropzone.
+
+### 13b. Overview: false "No bloodwork data yet" despite real counts
+
+**Root cause, found in `my-records/page.tsx`**: the `featuredTrend`
+`useMemo` filtered `sortedTrends` down to only trends that are
+abnormal AND have a second reading to compute a percentage delta
+against, then returned `null` if nothing survived that filter — even
+when `sortedTrends` itself was non-empty. `featuredPanel` renders the
+empty state whenever `featuredTrend` is null, so a patient whose labs
+are all currently in range (nothing "abnormal"), or who only has a
+single reading per analyte so far, saw the real `Records: 3 / Bloodwork:
+3 / Labs: 29` metrics right next to a false "No bloodwork data yet" —
+exactly the contradiction in the screenshot. This was never a caching
+or stale-data bug — every data source involved (`/my/profile`,
+`/patients/{id}/bloodwork-trends`) was already being refreshed
+correctly (see the existing `refreshRecordsSilently` triggered by both
+the `bloodwork-upload-complete` window event and a 4s poll while an
+upload is active — both pre-existing and correct, not touched here);
+it was a display-logic bug in how "nothing to feature" was
+distinguished from "no data."
+
+**Fix**: when no trend qualifies as "abnormal and moved most," fall
+back to `sortedTrends[0]` (already abnormal-first sorted) instead of
+`null` — the same fallback pattern the manual `featuredOverride` picker
+already used. The real "no bloodwork data yet" empty state now only
+renders when `sortedTrends.length === 0`, i.e. when there genuinely
+are no lab observations at all (case A in the spec's own state
+breakdown). Added an honest single-reading state too: when the
+featured analyte has exactly one point, the chart (which already
+rendered a single dot safely — verified in `components/ui/trend.tsx`,
+guarded against divide-by-zero) now shows "Only one reading so far — a
+trend line needs at least two" instead of either a misleading empty
+message or an unexplained flat dot. The doctor-side equivalent
+(`patients/[id]/page.tsx`) already had the correct fallback
+(`pool = abnormals.length ? abnormals : sortedTrends`) — this bug was
+isolated to the patient-facing page.
+
+### 13c. Source viewer lifecycle: now route-aware, closes on Back/navigation/patient switch
+
+**Root cause**: `SourceViewerProvider` (`components/source-viewer/
+source-viewer-context.tsx`) had no concept of route/context at all —
+`isOpen` only ever changed via explicit `openSourceEvidence()`/`close()`
+calls. Since the provider is mounted once at the root layout (by
+design, so `openSourceEvidence` works from anywhere), the viewer
+stayed open across any navigation, including pressing Back out of the
+document page that opened it — the user had to close it as a separate
+step, exactly the screenshot's complaint.
+
+**Fix**: the provider now tracks `usePathname()` and closes the viewer
+(and drops the cached PDF document — `loadedDocumentIdRef`/
+`loadedPdfRef` — so the next `openSourceEvidence` on the new page can't
+silently reuse a document left over from wherever the user came from)
+whenever the pathname actually changes. Deliberately pathname-only, not
+full-URL: query-string-only navigation — the `?lab=` chart deep link,
+or clicking between two lab rows' "View in original" on the SAME
+document page — does not change pathname, so switching evidence within
+a page still works exactly as before (no unwanted close mid-comparison).
+Pressing Back, moving to another top-level route, and switching patient
+(`/patients/{id}/...` → `/patients/{otherId}/...`) all change pathname,
+so all three are covered by one mechanism rather than three special
+cases. The very first render is skipped (via a ref holding the initial
+pathname) so mounting the provider on a page that's about to open a
+viewer doesn't immediately close it.
+
+### 13d. Selected lab row (purple) + restrained hover gradient
+
+**New capability, real evidence-backed, not a visual-index toggle**:
+`/source-evidence/{id}/view` now also returns `lab_result_id` (already
+stored on `SourceEvidence`, previously just not exposed in this
+response — `backend/app/main.py`). The document detail page
+(`documents/[id]/page.tsx`, shared by both patient and doctor views)
+reads the currently-open viewer's `data?.lab_result_id` and compares it
+per-row to give the row a `source-open-row` class: a pale
+`--brand-50` background plus the same 2px inset left-edge marker
+language already used for abnormal rows, so it reads as "part of the
+same design system," not a one-off. Selection deliberately wins over
+hover (declared later in the stylesheet, more specific selector) and
+clears automatically when the viewer closes (state is derived, not
+separately tracked) or the evidence changes to a different row.
+`LabSourceAction`'s own button also gets a matching subtle active tint
+(`.b-source-action-active`) — not a bigger button, just enough to match
+the row's own signal.
+
+Hover: `.document-lab-table tbody tr:hover td` changed from a flat
+`--surface-hover` fill to a left-to-right gradient tinted a few percent
+toward `--brand-500`, gated behind `@media (hover: hover)` so a
+touchscreen's synthetic, non-dismissable "hover" after a tap never
+triggers it (per the spec's explicit "do not simulate hover on touch").
+
+### 13e. Lab PDF highlight: full row, framed not painted-over
+
+**Root cause of the too-small highlight**: `extract_lab_results()`
+(`backend/app/services/reducto_extraction.py`) always picked exactly
+one field's citation bbox per lab row (the value's, falling back to
+the test name's) as that row's entire `SourceEvidence` geometry — so
+the highlight was always a single cell, never the row.
+
+**Fix — real geometry, a second axis, not a guess**: added
+`row_bbox_x/y/width/height` columns to `SourceEvidence` (nullable,
+additive migration in `main.py`) as a presentation-only region,
+computed by a new pure function `_union_row_bbox()` in
+`reducto_extraction.py`: it unions whichever field-citation bboxes
+Extract actually returned for that row (test name, value, unit,
+reference range — real, independently-returned geometry, filtered to
+the row's majority page if Reducto ever split citations across a page
+break), then pads the union outward — proportionally, in the same
+normalized page-fraction coordinate space as the bboxes themselves, so
+the padding scales correctly at any zoom/resize rather than needing a
+fixed-pixel correction — before clamping to page bounds `[0, 1]`.
+Requires at least two real field bboxes to union; with fewer than that
+(nothing wider than the existing single-field bbox to compute) it
+returns `None` and the frontend falls back to the raw `bbox_*`, so
+non-lab evidence or a thin row is never given a fabricated region. The
+original per-field `bbox_x/y/width/height` is never touched — it stays
+exactly as before, the untouched provenance/debugging record; the row
+region is additive, derived, presentation-only, and lives in its own
+columns. Five new unit tests
+(`backend/tests/test_reducto_row_bbox.py`) prove: the union spans both
+input boxes with visible padding on every edge, padding clamps to page
+bounds instead of pushing outside `[0, 1]`, fewer than two real boxes
+correctly returns `None` rather than a guess, a stray citation on a
+different page is excluded rather than unioned across the break, and
+degenerate zero-size boxes don't produce a region. Full backend suite:
+62 passed (57 + 5).
+
+**Frontend — outline does the framing, fill stays out of the way**
+(`components/source-viewer/source-viewer-panel.tsx`,
+`app/globals.css`): the panel now prefers `row_bbox_*` when present,
+falling back to `bbox_*` otherwise — same `showBbox`/highlight code
+path either way, just a different source rectangle. `.b-source-highlight`
+changed from a solid 2px border + 18%-opacity fill (visibly sitting
+over the text) to a 1.5px border at the (already-padded, for lab rows)
+region edge, a CSS `outline` 3px further out for extra breathing room
+that doesn't touch the element's own painted background, and the fill
+dropped to 6% — enough to read as "this region" without competing with
+the printed characters underneath. `outline-offset` gives even
+non-lab, non-row-padded single-field bboxes some frame-not-cover
+behavior for free, without needing separate padding logic on the
+frontend. A soft box-shadow adds a little presence without becoming a
+heavy glow.
+
+### 13f. Blank/tiny PDF viewer
+
+**Root cause, found by tracing the actual CSS, not assumed**:
+`.b-source-viewer-canvas-wrap` had no size of its own in `globals.css`
+— its width/height came entirely from an inline style set by JS, and
+only inside the async page-render effect, after `await
+pdfDoc.getPage(currentPage)` resolved. Before that first successful
+render (or if a render never completes), the wrapper had no definite
+size, so it — and everything positioned against it in percentages,
+including the loading overlay and the bbox highlight — collapsed
+toward its content's intrinsic size, which for an unset `<canvas>` is
+the HTML-default 300×150px. That collapse is what "no pdf bragi.png"
+actually shows: a small box instead of a full-size page. A second,
+independent contributor: `computeFitWidth()` measured
+`containerRef.current.clientWidth` synchronously on mount, which can
+be near-zero for a frame or two right after the split pane first
+renders (before the flex layout has actually resolved) — committing
+that measurement drove `fitWidthScale` down to `MIN_SCALE`, compounding
+the collapse. Neither of these needed the PDF.js worker or the
+authenticated file fetch to be broken at all (both were independently
+confirmed intact — the production build correctly emits and references
+`/_next/static/media/pdf.worker...mjs`, and the arraybuffer fetch path
+through `lib/api.ts` has no interceptor that could corrupt binary
+data) — this was purely a layout-collapse bug in a viewer that was
+otherwise functioning.
+
+**Fix**: `.b-source-viewer-canvas-wrap` now has a CSS floor
+(`min-width: 280px; min-height: 360px`) so it never visually collapses
+regardless of JS timing, before or after any render attempt.
+`computeFitWidth()` now skips committing a measurement narrower than
+80px rather than accepting a degenerate scale — the `ResizeObserver` it
+already sets up fires again once the container has real layout, so this
+just means "wait for a real measurement" instead of "commit a wrong
+one." The page-render loading state (`pageRendering`) now shows an
+actual spinner + "Rendering page…" text (previously just a bare
+translucent tint with nothing in it) so an in-progress render is
+visually distinguishable from a failed/blank one, and a page-render
+failure (`renderError`) now gets its own visible retry button
+(`.b-source-viewer-page-error`, wired to a `renderRetryKey` counter
+that re-triggers the render effect) — previously only the document-load
+failure path (`error`) had a retry button; a page-level render failure
+just showed inert text with nothing the user could do about it.
+
+### 13g. PDF render quality (devicePixelRatio)
+
+`source-viewer-panel.tsx`'s render effect previously sized the canvas
+buffer (`canvas.width`/`canvas.height`) exactly to the CSS-pixel
+viewport, with no `devicePixelRatio` scaling — soft/blurry text on any
+HiDPI/Retina display. Now the canvas buffer is sized at
+`viewport.width/height * dpr` (dpr capped at 2 — real quality gain
+beyond that is imperceptible for document text and not worth the extra
+memory on a 3x+ device), while `canvas.style.width/height` and the
+wrapper's inline size stay at the un-scaled viewport size — so this
+only affects sharpness, never the percentage-based bbox highlight
+alignment, and zoom already re-renders the page at the new PDF.js scale
+(not a CSS stretch of the old bitmap) exactly as it did before this
+round — that part was already correct and needed no change.
+
+### 13h. A little more color (restrained)
+
+Two additions, both reusing existing tokens rather than introducing new
+ones: the four `stat-card-accent-*`/`stat-pill-*` classes
+(`app/globals.css`) were previously inert placeholders — all four
+shared identical neutral styling despite being separately named
+violet/blue/green/orange. Gave each a real 2px tinted top border plus a
+~4%-tinted background wash (`--brand-500`/`--info`/`--ok`/the existing
+chart-3 orange as `--warning` fallback) and matching pill text color —
+still just accenting existing surfaces, not new saturated cards. The
+active sidebar/nav item (`.b-nav-item[aria-current="page"]`) gained a
+2px inset left-edge marker in the same visual language as the abnormal-
+row and selected-lab-row markers, for a touch more presence without
+changing its existing background/text color treatment.
+
+### 13i. Verification
+
+- Backend: `pytest -q` → 62 passed (57 existing + 5 new
+  `test_reducto_row_bbox.py` cases).
+- Frontend: `tsc --noEmit` clean; `npm run build` (Turbopack) succeeds,
+  all 33 routes compile; `eslint` on every touched file — the only
+  pre-existing findings it surfaces (`react-hooks/set-state-in-effect`
+  in `my-records/page.tsx`, two pre-existing unused-variable warnings)
+  are confirmed via `git stash` to predate this round's changes,
+  present on unmodified files at the same lines; one new warning this
+  round introduced (an unnecessary `eslint-disable` comment left over
+  from an earlier draft of the route-aware close effect) was found and
+  removed.
+- Real production build inspection (not assumed): confirmed the actual
+  `.next` output correctly emits the PDF.js worker as a static asset
+  and the client bundle references it at the correct absolute
+  `/_next/static/media/...` path, ruling out worker-bundling as a
+  contributor to the blank-PDF bug before attributing it to the CSS
+  layout-collapse root cause above.
+- Not run this round: live browser/Playwright QA of the actual pixel
+  layout at each named breakpoint, or a live re-upload through the real
+  Reducto API to visually confirm the new row-bbox highlight against a
+  real rendered lab PDF — same longstanding blocker as every prior
+  round (no `BRAGI_TOKENS`). The row-bbox geometry math itself is
+  covered by the 5 new unit tests instead of a visual pass; the CSS/
+  layout fixes (compact upload, viewer collapse, hover/selected states,
+  color) were verified by direct source/build inspection and are
+  architecturally sound, but were not visually confirmed in a live
+  browser this round — an honest limitation, not a silently-assumed
+  pass.
