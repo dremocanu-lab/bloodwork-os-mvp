@@ -3,8 +3,10 @@ import re
 import json
 import secrets
 import shutil
+import time
 import traceback
 import uuid
+from concurrent.futures import ThreadPoolExecutor
 from datetime import UTC, datetime
 from pathlib import Path
 
@@ -24,6 +26,7 @@ from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, or_, text
+from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models
@@ -40,7 +43,7 @@ from app.services.document_taxonomy import (
     is_valid_document_type,
     legacy_section_for,
 )
-from app.services.extraction_provider import REDUCTO, get_extraction_provider
+from app.services.extraction_provider import REDUCTO, ProcessingMetadata, get_extraction_provider
 from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
@@ -62,6 +65,30 @@ models.Base.metadata.create_all(bind=engine)
 
 def run_migrations():
     with engine.connect() as conn:
+        # CRITICAL, found via a real production failure: documents.is_verified
+        # is declared Boolean in the model (models.py), but on at least one
+        # real deployment the live column is still INTEGER — every single
+        # Document insert (any provider, not Reducto-specific) fails with
+        # `psycopg.errors.DatatypeMismatch: column "is_verified" is of type
+        # integer but expression is of type boolean`. A prior phase's
+        # commit changed the Python declaration to Boolean after checking
+        # ITS OWN dev DB, but never added a migration to convert the column
+        # itself — meaning any environment whose column predates that
+        # change silently breaks every upload. Idempotent: only runs the
+        # actual ALTER when the column isn't boolean yet.
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF (
+                    SELECT data_type FROM information_schema.columns
+                    WHERE table_name = 'documents' AND column_name = 'is_verified'
+                ) IS DISTINCT FROM 'boolean' THEN
+                    ALTER TABLE documents ALTER COLUMN is_verified DROP DEFAULT;
+                    ALTER TABLE documents ALTER COLUMN is_verified TYPE BOOLEAN USING (is_verified::int <> 0);
+                    ALTER TABLE documents ALTER COLUMN is_verified SET DEFAULT false;
+                END IF;
+            END $$;
+        """))
         conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS is_active INTEGER NOT NULL DEFAULT 1"))
         conn.execute(text("ALTER TABLE doctor_patient_access ADD COLUMN IF NOT EXISTS ended_at VARCHAR"))
         conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS source_section VARCHAR"))
@@ -330,6 +357,18 @@ app.add_middleware(
 
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# Bounded concurrency for multi-file batch uploads (POST /upload/batch): a
+# batch's files are dispatched to this pool instead of FastAPI's
+# BackgroundTasks, which runs tasks strictly one-at-a-time in-process — a
+# fast file (e.g. a 1-page prescription) had to wait for every earlier file
+# in the batch to fully finish (each making several real Reducto HTTP
+# calls) before it even started. A small fixed pool gives real, bounded
+# parallelism — not unbounded concurrent Reducto requests — while
+# process_upload_job stays exactly as safe to call from a worker thread as
+# it already was from BackgroundTasks (it opens its own SessionLocal()
+# per call; no shared mutable state between jobs).
+UPLOAD_JOB_POOL = ThreadPoolExecutor(max_workers=int(os.getenv("UPLOAD_JOB_CONCURRENCY", "3")), thread_name_prefix="upload-job")
 
 ALLOWED_SECTIONS = {
     "notes",
@@ -1244,29 +1283,34 @@ def process_upload_job(job_id: int):
             provider, used_fallback, fallback_reason = get_extraction_provider()
 
             if provider.name == REDUCTO and provider.is_enabled():
-                # Real Reducto Classify — operates on the file directly (see
-                # reducto_extraction.py); no separate OCR pass needed for
-                # routing. Any Reducto failure (auth/timeout/malformed
-                # response/etc.) falls back to the legacy keyword classifier
-                # rather than failing the whole upload — a Reducto outage
-                # must never block classification.
+                # Real Reducto Classify + Split, run CONCURRENTLY against the
+                # same uploaded file (see reducto_extraction.
+                # classify_and_check_split) — they're independent calls, and
+                # benchmarking found Split costs ~7-10s even on a trivial
+                # single-page document that turns out non-mixed, on top of
+                # Classify's own ~3-4s. Running them in parallel bounds the
+                # "identifying document type" wait by the slower of the two
+                # instead of their sum. Any Reducto failure (auth/timeout/
+                # malformed response/etc.) falls back to the legacy keyword
+                # classifier rather than failing the whole upload — a
+                # Reducto outage must never block classification.
                 try:
-                    classification, processing_meta = provider.classify(
-                        "", file_path=str(file_path), filename=job.filename
+                    stage_started = time.monotonic()
+                    classification, split_result = reducto_extraction.classify_and_check_split(
+                        str(file_path), filename=job.filename
                     )
-                    reducto_file_id = processing_meta.reducto_file_id
-
-                    # Real Reducto Split check: does this single upload
-                    # actually contain multiple logically separate documents
-                    # (a mixed PDF)? A failure here just means we proceed as
-                    # a normal single document — never blocks the upload.
-                    try:
-                        split_result = reducto_extraction.split_file(reducto_file_id)
-                    except ReductoError as split_error:
-                        print(f"UPLOAD JOB {job_id}: Reducto split check failed (continuing as single document): {split_error}")
-                        split_result = None
+                    reducto_file_id = classification.file_id
+                    processing_meta = ProcessingMetadata(
+                        provider=REDUCTO,
+                        parser_version=reducto_extraction.PARSER_VERSION,
+                        processing_time_ms=int((time.monotonic() - stage_started) * 1000),
+                        confidence=classification.confidence,
+                        reducto_file_id=reducto_file_id,
+                    )
 
                     if split_result and split_result.is_mixed:
+                        job.message = "Separating records..."
+                        db.commit()
                         _finish_mixed_reducto_upload(db, job, user, patient, file_path, split_result)
                         return
                 except ReductoError as reducto_error:
@@ -1318,6 +1362,22 @@ def process_upload_job(job_id: int):
         # disabled; or a Reducto extract failure) — never a hard failure.
         pipeline_result = None
 
+        # Set BEFORE the (slow, ~15-30s) extraction call runs, not after —
+        # otherwise the frontend shows a stale "Identifying document
+        # type..."/prior message for the entire extraction phase, then
+        # jumps straight to "Saving structured record..." once it's already
+        # done. See BRAGI_REDUCTO_PLAN.md's classification-latency fix.
+        if reducto_file_id and job.document_type == "laboratory_results":
+            job.progress = 45
+            job.message = "Extracting results..."
+        elif reducto_file_id and job.document_type in READER_SECTION_KEYS:
+            job.progress = 45
+            job.message = "Reading document..."
+        else:
+            job.progress = 45
+            job.message = "Processing document..."
+        db.commit()
+
         if reducto_file_id and job.document_type == "laboratory_results":
             try:
                 pipeline_result = reducto_extraction.build_pipeline_result_labs(reducto_file_id)
@@ -1344,7 +1404,7 @@ def process_upload_job(job_id: int):
                 )
 
         job.progress = 70
-        job.message = "Saving structured record..."
+        job.message = "Checking patient..."
         db.commit()
 
         parsed_data = (
@@ -1543,6 +1603,10 @@ def process_upload_job(job_id: int):
         db.add(document)
         db.flush()
 
+        job.progress = 85
+        job.message = "Organizing..."
+        db.commit()
+
         observation_datetime = (
             document.collected_on
             or document.test_date
@@ -1733,7 +1797,27 @@ def process_upload_job(job_id: int):
     except Exception as error:
         db.rollback()
 
-        print(f"UPLOAD JOB {job_id} ERROR:")
+        # Categorize by exception type for a safe, non-generic job.error —
+        # never the raw exception text/traceback (could contain a file
+        # path or similar), but specific enough that "provider is broken",
+        # "our database had a problem", and "this document type needs
+        # configuration we're missing" are distinguishable rather than one
+        # indistinguishable "try again" for every failure mode. See
+        # BRAGI_REDUCTO_PLAN.md's classification-latency/failure fix.
+        category = "internal_error"
+        user_message = "An error occurred during document processing. Please try again."
+
+        if isinstance(error, ReductoError):
+            category = f"reducto_{type(error).__name__}"
+            user_message = "Document processing is temporarily unavailable. Please try again shortly."
+        elif isinstance(error, SQLAlchemyError):
+            category = "database_error"
+            user_message = "A database error occurred while saving this document. Please try again."
+        elif isinstance(error, RuntimeError) and "OPENAI_API_KEY" in str(error):
+            category = "missing_openai_config"
+            user_message = "This document type needs additional configuration that isn't available yet."
+
+        print(f"UPLOAD JOB {job_id} ERROR: category={category} exception_type={type(error).__name__}")
         print(traceback.format_exc())
 
         try:
@@ -1743,7 +1827,7 @@ def process_upload_job(job_id: int):
                 job.status = "error"
                 job.progress = 100
                 job.message = "Upload failed."
-                job.error = "An error occurred during document processing. Please try again."
+                job.error = user_message
                 job.finished_at = now_iso()
                 db.commit()
 
@@ -3062,7 +3146,6 @@ def get_document_types(current_user=Depends(get_current_user)):
 
 @app.post("/upload/batch")
 async def create_batch_upload(
-    background_tasks: BackgroundTasks,
     files: list[UploadFile] = File(...),
     patient_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
@@ -3116,7 +3199,11 @@ async def create_batch_upload(
         db.commit()
         db.refresh(job)
 
-        background_tasks.add_task(process_upload_job, job.id)
+        # Bounded worker pool, not BackgroundTasks — see UPLOAD_JOB_POOL's
+        # definition. Each file starts processing as soon as a worker slot
+        # frees up, instead of strictly after every earlier file in the
+        # batch has fully finished.
+        UPLOAD_JOB_POOL.submit(process_upload_job, job.id)
         created_jobs.append(serialize_upload_job(job))
 
     return created_jobs

@@ -223,8 +223,15 @@ export default function MyRecordsUploadPage() {
       size: task.size,
       status: task.status,
       progress: task.progress,
+      // Show the translated label only while the backend is literally on
+      // that exact stage — not "while we don't know the type yet", which
+      // never resolves for a mixed-PDF upload (split documents have no
+      // single document_type on the job) and left this stuck for the
+      // entire processing duration. Every later stage message (including
+      // "Separating records...") comes from the backend and displays as-is,
+      // same as the rest of the pipeline's untranslated status text.
       message:
-        task.status === "processing" && !task.documentType
+        task.status === "processing" && task.message === "Identifying document type..."
           ? labels.detecting
           : task.message,
       error: task.error || "",

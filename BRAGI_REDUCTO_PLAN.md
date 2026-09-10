@@ -899,7 +899,171 @@ quarantined document 500'd before the fix and returned `200 {"deleted":
 true}` after, with the account confirmed actually gone (`/auth/me` →
 401).
 
-### Is `REDUCTO_ENABLED=true` safe now?
+### Is `REDUCTO_ENABLED=true` safe now? — superseded, see §10
+
+## 10. Real production failure: root cause, fix, and latency work
+
+The maintainer tested the real live upload experience (not dev/synthetic)
+and reported a long wait on "Classifying document type..." followed by a
+failure. Diagnosed against the actual live deployment (Render CLI, with
+the maintainer's authorization) rather than assumed from dev results.
+
+### Deployment reality check (do this before touching anything else)
+
+Render's `bloodwork-os-api` service has `autoDeploy: commit` on `main` —
+every commit pushed in the §8/§9 rounds had **already auto-deployed to
+production**, including the full Reducto integration. Confirmed via
+`render deploys list`: the live deploy at the time of the report was
+commit `dfd0cf7` (the §9 account-deletion fix), status `live`. So this
+was never a stale-deployment problem — the live server was running
+current code the whole time.
+
+### Root cause of "classification succeeded, then failed"
+
+`render logs` surfaced the real production traceback immediately:
+
+```
+sqlalchemy.exc.ProgrammingError: (psycopg.errors.DatatypeMismatch)
+column "is_verified" is of type integer but expression is of type boolean
+```
+
+on a real `INSERT INTO documents ...` — for a document whose Reducto
+classification and extraction had **already succeeded**
+(`classification_source: reducto`, `document_type: laboratory_results`,
+real Romanian lab values, real `parsed_content`). The insert failing at
+the very last step is exactly what "spent a long time, then failed"
+looks like from the outside.
+
+**This is not a Reducto bug.** A much earlier phase (documented in §2a)
+found `Document.is_verified` was declared `Integer` in the model but
+"the live Postgres column is boolean" **in that session's dev DB**, and
+changed the model to `Boolean` — with no migration to actually convert
+the column, and without checking production. This production database's
+real column was never converted and is still `integer`. Every single
+`Document` insert — from any provider, not just Reducto, since
+`is_verified=False` is passed at every `Document(...)` call site in this
+file — has been failing on this production database. Given no one had
+exercised the real end-to-end upload path against production since that
+phase landed, this had likely been silently broken for uploads generally,
+not something this round's work introduced.
+
+**Fix**: an idempotent migration (`run_migrations()`, guarded via
+`information_schema.columns` so it only actually runs the `ALTER` once)
+converts the column to boolean, matching the model. Verified against the
+dev Neon DB (already boolean there — confirmed the guard correctly
+no-ops) and reasoned through against the exact production error text;
+full production confirmation is in the "live verification" subsection
+below once the fix is actually deployed.
+
+### Real latency, found by benchmarking rather than assuming
+
+Precise per-stage timing (new `REDUCTO_TIMING` log lines — safe, no PHI,
+compares Bragi's wall-clock time against Reducto's own `duration` field)
+against representative documents found:
+
+| stage | 1-page prescription | 2-page lab | 9-page mixed |
+|---|---|---|---|
+| upload | 1.8s | 0.5s | 0.7s |
+| classify | 4.3s | 3.7s | 7.5s |
+| **split** | **7.7s** | **10.1s** | 21.2s |
+| parse | 2.9s | 3.5s | 4.9s |
+
+**Split cost ~7-10s even on a trivial single-page document that always
+turned out non-mixed** (`split_sections: 1`) — a large fixed latency
+floor, not proportional to content, paid on *every* auto-classified file
+regardless of whether Split ever finds anything. Classify and Split are
+independent calls (neither's input depends on the other's output), so
+this was pure serial waste.
+
+**Fix**: `reducto_extraction.classify_and_check_split()` runs Classify
+and Split concurrently (`ThreadPoolExecutor`, 2 workers) against the same
+uploaded file instead of sequentially. Verified live: prescription.pdf
+went from ~12.6s (upload+classify+split serial) to 9.1s; lab_results.pdf
+from ~15.9s to 11.4s — roughly 30% off just the "identifying document
+type" wait, with Split's mixed-PDF detection fully preserved (still runs
+on every file; only the *sequencing* changed, not what's checked).
+
+### The "stuck on Classifying" UI bug
+
+Backend: `job.message` was only updated at the *start* of classification
+and again only once extraction had **already finished** ("Saving
+structured record..." was set *after* the slow extract/parse/identity
+work, not before) — so the frontend showed a stale message for the
+entire extraction phase. For a **mixed-PDF split**, it was worse:
+`_finish_mixed_reducto_upload` never set `job.document_type` at all (only
+the single-document path does), and the frontend's upload page gated its
+translated "Identifying document type..." label on `!task.documentType`
+— meaning a split upload showed that label for its *entire* processing
+duration, however long that took.
+
+**Fix**: `job.message` now updates *before* each real stage starts
+("Extracting results..." / "Reading document..." / "Processing
+document..." → "Checking patient..." → "Organizing..."), and
+`_finish_mixed_reducto_upload` sets `"Separating records..."` immediately
+on detecting a real split. The frontend
+(`app/my-records/upload/page.tsx`) now gates its translated label on the
+backend message literally still being `"Identifying document type..."`,
+not on `documentType` being set — so it naturally clears the moment the
+backend moves on, for every path including split. Verified live (see
+below): real message progression, no stuck label.
+
+### Multi-file batch: real bounded concurrency
+
+`POST /upload/batch` dispatched every file's `process_upload_job` via
+FastAPI's `BackgroundTasks`, which runs tasks strictly one at a time in
+the same process — confirmed live: a 6-file batch took ~4 minutes with
+every file waiting for every earlier one to fully finish, however fast
+the later file actually was on its own. Fixed: a fixed-size worker pool
+(`UPLOAD_JOB_POOL`, `ThreadPoolExecutor`, default 3 workers, configurable
+via `UPLOAD_JOB_CONCURRENCY`) — bounded, not unbounded, concurrent
+Reducto requests. `process_upload_job` needed no changes to be safe to
+call this way: it already opens its own `SessionLocal()` per call.
+
+**Verified live** (5-file batch, dev DB): jobs started within ~0.5s of
+each other in groups of 3 (confirmed via message-progression polling —
+3 jobs hit "Identifying document type..." almost simultaneously, the
+4th and 5th visibly queued and started the instant a worker freed up),
+total batch wall time 63s vs. what would have been the *sum* of all 5
+individual times (~185s) under the old strictly-sequential dispatch —
+roughly 3x faster wall-clock for this batch, and confirmed the fast
+files (imaging, prescription) finished well before the slower ones
+rather than waiting behind them.
+
+### Error categorization
+
+The outer exception handler in `process_upload_job` previously set the
+same generic `job.error` ("An error occurred... Please try again.") for
+*every* failure — a Reducto auth failure, a database error, and a
+missing `OPENAI_API_KEY` were all indistinguishable to anyone debugging
+a failed job. Now categorized by exception type (`reducto_<ErrorType>`,
+`database_error`, `missing_openai_config`, or `internal_error`), logged
+server-side (`category=... exception_type=...`, never the raw traceback
+text as user-facing `job.error`) — verified live: a real
+`missing_openai_config` failure logged and categorized correctly,
+distinct from a Reducto or database failure.
+
+### What was NOT changed (per "do not redesign")
+
+Split still runs on every file (preserved exactly — only made
+concurrent, never skipped or removed, since a mixed PDF can be as short
+as 2 pages); the classification confidence/ambiguity thresholds from §8
+are untouched (still real, tested values, not re-tuned); `needs_confirmation`
+vs `classification_failed` — in practice, a genuine Reducto Classify
+failure always falls back to `legacy_rules` (itself always produces
+*some* classification), so there is currently no path where classification
+truly "fails" outright rather than degrading — this matches the existing
+"controlled legacy fallback" design from §8 and was not changed.
+
+### Is `REDUCTO_ENABLED=true` safe now? (current)
+
+For the scope this integration covers (`POST /upload/batch`) — yes, with
+the is_verified fix, now that the actual root cause of the reported
+production failure is understood and fixed, and real latency/UI-accuracy
+issues are fixed and verified. See the DEV/LIVE status split in the
+handoff message for exactly what was and wasn't verified against the
+live server itself versus the dev DB.
+
+<!-- superseded-section-below, kept for history -->
 
 For the scope this integration actually covers (`POST /upload/batch`,
 the patient multi-file upload flow) — yes, with the caveats above. Every

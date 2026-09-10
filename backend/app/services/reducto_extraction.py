@@ -20,6 +20,7 @@ section).
 
 from __future__ import annotations
 
+from concurrent.futures import ThreadPoolExecutor
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -140,11 +141,7 @@ def _client() -> ReductoClient:
 # Classification
 # ---------------------------------------------------------------------------
 
-def classify_file(file_path: str, filename: str | None = None) -> ReductoClassification:
-    client = _client()
-    file_id = client.upload(file_path, filename=filename)
-    body = client.classify(file_id, CLASSIFICATION_SCHEMA)
-
+def _build_classification(file_id: str, body: dict[str, Any]) -> ReductoClassification:
     winner_raw = body["result"]["category"]
     categories = body.get("response_confidence", {}).get("categories", [])
     category_scores = {c["category"]: float(c.get("confidence") or 0.0) for c in categories}
@@ -164,6 +161,33 @@ def classify_file(file_path: str, filename: str | None = None) -> ReductoClassif
         file_id=file_id,
         job_id=body.get("job_id"),
     )
+
+
+def _build_split_result(file_id: str, body: dict[str, Any]) -> ReductoSplitResult:
+    result = body["result"]
+    total_pages = body.get("usage", {}).get("num_pages") or 0
+
+    sections: list[ReductoSplitSection] = []
+    for raw_section in result.get("splits", []):
+        name = raw_section.get("name")
+        doc_type = DocumentType(name) if is_valid_document_type(name) else None
+        sections.append(
+            ReductoSplitSection(
+                name=name,
+                document_type=doc_type,
+                pages=sorted(raw_section.get("pages") or []),
+                confidence=raw_section.get("conf") or "low",
+            )
+        )
+
+    return ReductoSplitResult(file_id=file_id, total_pages=total_pages, sections=sections)
+
+
+def classify_file(file_path: str, filename: str | None = None) -> ReductoClassification:
+    client = _client()
+    file_id = client.upload(file_path, filename=filename)
+    body = client.classify(file_id, CLASSIFICATION_SCHEMA)
+    return _build_classification(file_id, body)
 
 
 def _decide_status(category_scores: dict[str, float], winner: str) -> tuple[str, float]:
@@ -213,23 +237,46 @@ def _decide_status(category_scores: dict[str, float], winner: str) -> tuple[str,
 def split_file(file_id: str, total_pages_hint: int | None = None) -> ReductoSplitResult:
     client = _client()
     body = client.split(file_id, CLASSIFICATION_SCHEMA_AS_SPLIT_DESCRIPTION())
-    result = body["result"]
-    total_pages = body.get("usage", {}).get("num_pages") or total_pages_hint or 0
+    result = _build_split_result(file_id, body)
+    if not result.total_pages and total_pages_hint:
+        result.total_pages = total_pages_hint
+    return result
 
-    sections: list[ReductoSplitSection] = []
-    for raw_section in result.get("splits", []):
-        name = raw_section.get("name")
-        doc_type = DocumentType(name) if is_valid_document_type(name) else None
-        sections.append(
-            ReductoSplitSection(
-                name=name,
-                document_type=doc_type,
-                pages=sorted(raw_section.get("pages") or []),
-                confidence=raw_section.get("conf") or "low",
-            )
-        )
 
-    return ReductoSplitResult(file_id=file_id, total_pages=total_pages, sections=sections)
+def classify_and_check_split(
+    file_path: str, filename: str | None = None
+) -> tuple[ReductoClassification, ReductoSplitResult | None]:
+    """Classify AND check for a mixed-PDF split in parallel, against the
+    same uploaded file — they're independent Reducto calls (neither's
+    input depends on the other's output), and benchmarking found Split
+    costs ~7-10s even on a trivial single-page document that turns out
+    non-mixed (vs. ~3-4s for Classify): running them sequentially made
+    every single-file upload pay ~12-14s just to learn the document type,
+    for no benefit in the (common) non-mixed case. Run concurrently, the
+    wait is bounded by the slower call instead of their sum.
+
+    A Split failure here is non-fatal — the caller proceeds as a normal
+    single document, exactly as before this existed; only a genuine
+    Classify failure propagates.
+    """
+    client = _client()
+    file_id = client.upload(file_path, filename=filename)
+
+    with ThreadPoolExecutor(max_workers=2) as pool:
+        classify_future = pool.submit(client.classify, file_id, CLASSIFICATION_SCHEMA)
+        split_future = pool.submit(client.split, file_id, CLASSIFICATION_SCHEMA_AS_SPLIT_DESCRIPTION())
+
+        classify_body = classify_future.result()  # real Classify failures should propagate
+
+        try:
+            split_body = split_future.result()
+        except ReductoError:
+            split_body = None
+
+    classification = _build_classification(file_id, classify_body)
+    split_result = _build_split_result(file_id, split_body) if split_body is not None else None
+
+    return classification, split_result
 
 
 def CLASSIFICATION_SCHEMA_AS_SPLIT_DESCRIPTION() -> list[dict[str, Any]]:

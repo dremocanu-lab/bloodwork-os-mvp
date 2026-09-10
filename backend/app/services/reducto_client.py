@@ -51,6 +51,31 @@ JOB_POLL_INTERVAL_S = 2.0
 JOB_POLL_BUDGET_S = 300
 
 
+def _log_stage(stage: str, wall_s: float, *, reducto_duration_s: float | None = None, status: str = "ok", **safe_meta: Any) -> None:
+    """One structured, PHI-free log line per real Reducto HTTP call — never
+    document content, never patient identity, never the API key. Compares
+    Bragi's own wall-clock time against Reducto's self-reported `duration`
+    (when present) so a slow stage can be attributed to the network/Reducto
+    queue vs. Reducto's actual processing.
+
+    Plain `print()`, matching this codebase's existing convention (no
+    logging framework configured) — captured by Render/any stdout-based
+    log collector either way.
+    """
+    parts = [
+        f"stage={stage}",
+        f"status={status}",
+        f"env={os.getenv('ENVIRONMENT', 'production')}",
+        f"wall_ms={int(wall_s * 1000)}",
+    ]
+    if reducto_duration_s is not None:
+        parts.append(f"reducto_ms={int(reducto_duration_s * 1000)}")
+    for key, value in safe_meta.items():
+        if value is not None:
+            parts.append(f"{key}={value}")
+    print("REDUCTO_TIMING " + " ".join(parts))
+
+
 class ReductoError(RuntimeError):
     """Base class for all Reducto integration failures."""
 
@@ -129,6 +154,22 @@ class ReductoClient:
             headers["Content-Type"] = "application/json"
         return headers
 
+    def _call(self, stage: str, fn, **safe_meta: Any):
+        """Runs `fn()`, always logging one REDUCTO_TIMING line (success or
+        failure) with the real wall-clock cost of this stage — see
+        `_log_stage`. Never swallows the exception; callers still get their
+        typed ReductoError."""
+        started = time.monotonic()
+        try:
+            result = fn()
+        except ReductoError as error:
+            _log_stage(stage, time.monotonic() - started, status=type(error).__name__, **safe_meta)
+            raise
+        wall_s = time.monotonic() - started
+        reducto_duration = result.get("duration") if isinstance(result, dict) else None
+        _log_stage(stage, wall_s, reducto_duration_s=reducto_duration, **safe_meta)
+        return result
+
     def _post_json(self, path: str, payload: dict[str, Any], timeout_s: int | None = None) -> dict[str, Any]:
         try:
             response = self._session.post(
@@ -153,52 +194,62 @@ class ReductoClient:
 
     def upload(self, file_path: str, filename: str | None = None) -> str:
         """Uploads a local file, returns its `reducto://...` file_id."""
-        try:
-            with open(file_path, "rb") as fh:
-                files = {"file": (filename or os.path.basename(file_path), fh)}
-                response = self._session.post(
-                    f"{BASE_URL}/upload",
-                    headers=self._headers(json_request=False),
-                    files=files,
-                    timeout=self.timeout_s,
-                )
-        except requests.Timeout as exc:
-            raise ReductoTimeoutError("Reducto upload timed out.") from exc
-        except requests.RequestException as exc:
-            raise ReductoServerError(f"Reducto upload failed: {exc}") from exc
 
-        _raise_for_response(response)
+        def _do() -> dict[str, Any]:
+            try:
+                with open(file_path, "rb") as fh:
+                    files = {"file": (filename or os.path.basename(file_path), fh)}
+                    response = self._session.post(
+                        f"{BASE_URL}/upload",
+                        headers=self._headers(json_request=False),
+                        files=files,
+                        timeout=self.timeout_s,
+                    )
+            except requests.Timeout as exc:
+                raise ReductoTimeoutError("Reducto upload timed out.") from exc
+            except requests.RequestException as exc:
+                raise ReductoServerError(f"Reducto upload failed: {exc}") from exc
+
+            _raise_for_response(response)
+
+            try:
+                return response.json()
+            except ValueError as exc:
+                raise ReductoMalformedResponseError("Reducto /upload response had no file_id.") from exc
+
+        body = self._call("upload", _do)
 
         try:
-            file_id = response.json()["file_id"]
-        except (ValueError, KeyError) as exc:
+            return body["file_id"]
+        except KeyError as exc:
             raise ReductoMalformedResponseError("Reducto /upload response had no file_id.") from exc
-
-        return file_id
 
     # -- Classify (synchronous) ---------------------------------------------
 
     def classify(self, file_id: str, classification_schema: list[dict[str, Any]]) -> dict[str, Any]:
-        body = self._post_json("/classify", {"input": file_id, "classification_schema": classification_schema})
+        def _do():
+            body = self._post_json("/classify", {"input": file_id, "classification_schema": classification_schema})
+            if "result" not in body or "category" not in body.get("result", {}):
+                raise ReductoMalformedResponseError("Reducto /classify response missing result.category.")
+            return body
 
-        if "result" not in body or "category" not in body.get("result", {}):
-            raise ReductoMalformedResponseError("Reducto /classify response missing result.category.")
-
+        body = self._call("classify", _do)
         return body
 
     # -- Parse ---------------------------------------------------------------
 
     def parse(self, file_id: str, table_output_format: str = "md") -> dict[str, Any]:
-        body = self._post_json(
-            "/parse",
-            {"input": file_id, "formatting": {"table_output_format": table_output_format}},
-        )
-        body = self._maybe_await_job(body)
+        def _do():
+            body = self._post_json(
+                "/parse",
+                {"input": file_id, "formatting": {"table_output_format": table_output_format}},
+            )
+            body = self._maybe_await_job(body)
+            if "result" not in body or "chunks" not in body.get("result", {}):
+                raise ReductoMalformedResponseError("Reducto /parse response missing result.chunks.")
+            return body
 
-        if "result" not in body or "chunks" not in body.get("result", {}):
-            raise ReductoMalformedResponseError("Reducto /parse response missing result.chunks.")
-
-        return body
+        return self._call("parse", _do)
 
     # -- Extract ---------------------------------------------------------------
 
@@ -220,28 +271,30 @@ class ReductoClient:
         if citations:
             payload["settings"] = {"citations": {"enabled": True, "numerical_confidence": True}}
 
-        body = self._post_json("/extract", payload, timeout_s=max(self.timeout_s, 240))
-        body = self._maybe_await_job(body)
+        def _do():
+            body = self._post_json("/extract", payload, timeout_s=max(self.timeout_s, 240))
+            body = self._maybe_await_job(body)
+            if "result" not in body:
+                raise ReductoMalformedResponseError("Reducto /extract response missing result.")
+            return body
 
-        if "result" not in body:
-            raise ReductoMalformedResponseError("Reducto /extract response missing result.")
-
-        return body
+        return self._call("extract", _do)
 
     # -- Split -----------------------------------------------------------------
 
     def split(self, file_id: str, split_description: list[dict[str, Any]]) -> dict[str, Any]:
-        body = self._post_json(
-            "/split",
-            {"document_url": file_id, "split_description": split_description},
-            timeout_s=max(self.timeout_s, 240),
-        )
-        body = self._maybe_await_job(body)
+        def _do():
+            body = self._post_json(
+                "/split",
+                {"document_url": file_id, "split_description": split_description},
+                timeout_s=max(self.timeout_s, 240),
+            )
+            body = self._maybe_await_job(body)
+            if "result" not in body or "splits" not in body.get("result", {}):
+                raise ReductoMalformedResponseError("Reducto /split response missing result.splits.")
+            return body
 
-        if "result" not in body or "splits" not in body.get("result", {}):
-            raise ReductoMalformedResponseError("Reducto /split response missing result.splits.")
-
-        return body
+        return self._call("split", _do)
 
     # -- Async job polling -------------------------------------------------------
 
