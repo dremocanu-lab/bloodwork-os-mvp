@@ -385,28 +385,65 @@ none has been externally established.
 Render (`dep-daheeitckfvc73bq8bug`, commit `7142646`): `live`. Vercel
 (same push): `Ready`. Both confirmed 2026-09-10.
 
-### Real, unmitigated gaps found this round (not fixed — documented, prioritized in the plan doc)
+### Round 2 — technical controls implemented and verified (8 commits, all pushed, CI-confirmed green)
 
-No rate limiting anywhere in the backend; no malware/AV scanning of
-uploads; CNP (Romanian national ID) not comprehensively minimized
-(full value in most responses, including `/patients/search` and
-`/admin/patients/search`; appears in a URL query string on
-`GET /emergency/search?type=cnp&q=...` specifically); no
-encryption-at-rest for CNP (design-only, deliberately not migrated —
-`docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`); no RLS (design-only,
-deliberately not enabled — `docs/security/RLS_PLAN.md` explains exactly
-why blind activation would be unsafe with this app's Neon pooling/
-background-job architecture); no CI at all (`.github/workflows`
-doesn't exist); no data-minimization before sending document content
-to OpenAI (full page image + up to 12,000 chars of OCR text) or
-Reducto; no token-revocation mechanism; no self-deletion endpoint for
-doctor/admin/care_partner/emergency_worker accounts (patient
-self-deletion is fixed and working); a real (found via testing, not
-fixed) `StaleDataError` race between account deletion and an in-flight
-background upload job. Full prioritized list:
-`BRAGI_SECURITY_GDPR_PLAN.md` §24 and
+Continuation of the same effort, picking up exactly the items round 1
+deferred. `807f2fd` (CNP-in-URL fix via a new `POST /emergency/search`
++ CNP masked in every list/search response + a reusable AI-provider
+data-minimization boundary, `app/services/ai_minimization.py`),
+`c1d06a3` (real rate limiting, `app/rate_limit.py` — Redis-backed when
+configured, an explicitly-labeled per-instance in-memory fallback
+otherwise, fails open on backend errors), `fce4652`/`326908d`/
+`8e61f24`/`9f5618f` (a full 245-commit git-history secret scan via
+gitleaks — zero real findings; Bandit/Semgrep static analysis — zero
+High findings; a real CI pipeline, `.github/workflows/ci.yml` +
+`nightly-security.yml`, confirmed with real GitHub Actions runs
+including one genuine caught-and-fixed Bandit failure), `7292b0d`
+(`POST /my/export` — a real DSAR data export for patients), `9f6f55b`
+(`DELETE /my/account` now covers doctor/admin/care_partner too, with
+deliberately different semantics per role — see below), `77c8f48` (a
+real malware-scanning pipeline boundary — `upload -> security_scan ->
+accepted/quarantined -> processing` — plus a narrow heuristic screen
+for the most unambiguous malicious-PDF markers), `9f4f0df` (the CNP
+regression suite the first CNP commit should have shipped with).
+
+Full backend suite: 138 tests passing (up from 96 at the end of round
+1), all against the real dev DB, confirmed both locally and in CI
+against a fresh ephemeral Postgres. See `BRAGI_SECURITY_GDPR_PLAN.md`
+§3a for the itemized status table with evidence citations, and each
+linked `docs/security/*.md`/`docs/privacy/DSAR_RUNBOOK.md` doc for full
+narrative detail — this section is a pointer, not a duplicate.
+
+### Real, unmitigated gaps remaining after round 2
+
+- No real antivirus engine connected (the pipeline boundary and a
+  narrow heuristic screen exist and are enforced, but this is not a
+  substitute for a real scanner) — `[EXTERNAL ACTION]`, vendor
+  selection.
+- No distributed (Redis) rate-limit backend configured in the actual
+  Render environment yet — the mechanism exists and works correctly on
+  the in-memory fallback for today's single instance, but
+  `RATE_LIMIT_REDIS_URL` isn't set.
+- No encryption-at-rest for CNP (design-only, deliberately not migrated
+  — `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`).
+- No RLS (design-only, deliberately not enabled — `docs/security/
+  RLS_PLAN.md` explains exactly why blind activation would be unsafe
+  with this app's Neon pooling/background-job architecture).
+- No token-revocation mechanism.
+- `emergency_worker` accounts have no self-deletion path at all
+  (deliberate — see below); doctor/admin self-deletion is a soft-delete,
+  not a full erasure (`[LEGAL REVIEW]` on whether that's the right final
+  policy).
+- A real (found via testing in round 1, still not fixed) `StaleDataError`
+  race between account deletion and an in-flight background upload job.
+- Rectification/change-history mechanism still doesn't exist — an edit
+  still silently overwrites the prior value with no record of what it
+  was corrected from.
+
+Full prioritized list with evidence: `BRAGI_SECURITY_GDPR_PLAN.md` §24,
 `docs/PRODUCTION_READINESS_CHECKLIST.md`'s "highest-priority next
-steps."
+steps", and `docs/EXTERNAL_COMPLIANCE_ACTIONS.md` for everything that
+needs a vendor/legal/product decision outside engineering.
 
 ### Things requiring a product decision (not silently changed)
 
@@ -418,6 +455,16 @@ server-side gate for `doctor`/`admin` beyond a code for `care_partner`
 without confirming intent risks breaking the actual current onboarding/
 admin workflow, which this round's own production-safety rules
 prohibit doing without confirmation. See plan §5/§6.
+
+Round 2 added two more: `emergency_worker` accounts have no
+self-deletion path (a clean 403 today, not a broken feature — emergency-
+access accounts are commonly tied to institutional/break-glass
+provisioning this codebase has no visibility into); doctor/admin
+self-deletion is a soft-delete (login disabled, account PII anonymized,
+but the row and other patients' clinical records that reference it
+survive) rather than a full erasure, which is also `[LEGAL REVIEW]` on
+whether that's the correct final policy, not just a product call. See
+`docs/privacy/DSAR_RUNBOOK.md` and `docs/EXTERNAL_COMPLIANCE_ACTIONS.md`.
 
 ### Testing convention this round reused/extended
 
@@ -437,7 +484,19 @@ that needs real authorization checks against real rows. See
 Read `BRAGI_SECURITY_GDPR_PLAN.md` in full first — it is the
 authoritative, up-to-date status. Do not mark anything `[PASS]` without
 the same evidence standard (a named test, a real request/response, a
-real DB query) used throughout. Do not enable RLS, migrate CNP
-encryption, or add rate limiting/CI without reading the corresponding
-design doc first — each documents a specific reason the naive version
-of that change would be unsafe for this app's actual architecture.
+real DB query) used throughout. Do not enable RLS or migrate CNP
+encryption without reading the corresponding design doc first — each
+documents a specific reason the naive version of that change would be
+unsafe for this app's actual architecture. Rate limiting and CI now
+exist (round 2) — read `docs/security/RATE_LIMITING.md` and
+`docs/security/CI_PIPELINE.md` before changing either; the rate
+limiter's own first implementation had a real bug (a class-instance
+`Depends()` callable that broke FastAPI's `Request` recognition) that
+its own test suite caught before it shipped — a cautionary example for
+touching that file casually.
+
+Highest-value next items (see `docs/EXTERNAL_COMPLIANCE_ACTIONS.md` for
+the full external/legal/product list): a real antivirus engine behind
+the now-ready `CLAMAV_HOST` integration; `RATE_LIMIT_REDIS_URL` in
+Render once/if horizontal scaling is planned; a rectification/change-
+history mechanism; DSAR export for non-patient roles.

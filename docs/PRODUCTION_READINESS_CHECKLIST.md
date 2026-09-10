@@ -35,18 +35,18 @@ launch checklist."
 | 21 | Secrets in working tree | `[PASS]` | `detect-secrets` scan, 0 findings |
 | 22 | Emergency/break-glass access design | `[PASS]` | Direct code read: opt-in, 30-min server-enforced expiry, full audit trail, CNP masked in search |
 | 23 | Analytics/monitoring PHI leakage | `[NOT APPLICABLE]` | No analytics/monitoring SDK exists in the codebase |
-| 24 | Secrets in git history | `[UNKNOWN]` | Only working tree scanned this round, not full history |
-| 25 | Static analysis (Bandit/Semgrep) | `[UNKNOWN]` | Not run this round |
-| 26 | Rate limiting | `[FAIL]` | No rate-limiting library/middleware exists anywhere |
-| 27 | Malware/AV scanning of uploads | `[FAIL]` | No scanner integrated; design only (`docs/security/MALWARE_SCANNING_PLAN.md`) |
-| 28 | CNP minimization in responses/URLs | `[FAIL]` | Full CNP in most responses (including `/patients/search`, `/admin/patients/search`); appears in a URL query string on 1 route (`GET /emergency/search?type=cnp&q=...`) |
+| 24 | Secrets in git history | `[PASS]` | gitleaks v8.30.1, full 245-commit history; 1 finding, reviewed false positive; no ROTATION REQUIRED — `docs/security/SECRET_SCAN_HISTORY.md` |
+| 25 | Static analysis (Bandit/Semgrep) | `[PASS]` | 0 High from either tool; 2 Medium reviewed as false positives (fixed-constant URLs, not SSRF) and suppressed with reasoned `# nosec` — `docs/security/STATIC_ANALYSIS.md`; now gated in CI |
+| 26 | Rate limiting | `[PASS]` mechanism + in-memory backend; `[IMPLEMENTED — NOT DEPLOYED]` distributed Redis backend | `backend/app/rate_limit.py`, 14 tests + real live 429/Retry-After verification — `docs/security/RATE_LIMITING.md` |
+| 27 | Malware/AV scanning of uploads | `[PASS]` pipeline boundary + heuristic screen; `[FAIL]`/`[EXTERNAL ACTION]` real AV engine | `backend/app/services/security_scan.py`, 9 tests incl. real end-to-end quarantine of an actual malicious PDF — `docs/security/MALWARE_SCANNING_PLAN.md` |
+| 28 | CNP minimization in responses/URLs | `[PASS]` | CNP removed from URLs entirely (POST-only for CNP search); masked in every list/search response; full value only to the patient's own profile view — `backend/tests/test_cnp_identifier_minimization.py`, 10 tests; `BRAGI_SECURITY_GDPR_PLAN.md` §8 |
 | 29 | CNP/identifier encryption at rest | `[FAIL]` | Plaintext columns; design only, deliberately not migrated (`docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`) |
 | 30 | Row-Level Security (RLS) | `[FAIL]` for "enabled"; design exists | Not implemented — `docs/security/RLS_PLAN.md`; absence assessed as defense-in-depth gap, not a currently-exploitable hole, since app-layer authorization is independently verified working |
 | 31 | Token revocation / session denylist | `[FAIL]` | No mechanism exists; logout is client-side only |
 | 32 | Full production-error-handling audit (beyond the 2 fixed leaks) | `[UNKNOWN]` | Not exhaustively re-reviewed this round |
 | 33 | Open-redirect audit (frontend) | `[UNKNOWN]` | Not performed this round |
 | 34 | Document-DELETE authorization re-verification | `[UNKNOWN]` | READ routes were this round's IDOR-suite focus; DELETE not equivalently covered |
-| 35 | CI security gates | `[FAIL]` | No CI exists at all (`.github/workflows` absent) |
+| 35 | CI security gates | `[PASS]` | `.github/workflows/ci.yml` + `nightly-security.yml`, confirmed with real GitHub Actions runs (including one real caught-and-fixed failure) — `docs/security/CI_PIPELINE.md` |
 
 ## Privacy / GDPR — documentation & design
 
@@ -60,7 +60,7 @@ launch checklist."
 | 41 | Vendor register | `[PASS]` (documented); DPA status `[UNKNOWN]` per vendor — `docs/privacy/VENDOR_REGISTER.md` |
 | 42 | International transfer register | `[UNKNOWN]` throughout — `docs/privacy/TRANSFER_REGISTER.md` |
 | 43 | Retention policy | `[LEGAL REVIEW]` for clinical-data limits; no auto-deletion implemented (deliberately) — `docs/privacy/RETENTION_POLICY.md` |
-| 44 | DSAR runbook | `[PASS]` (documented); export feature `[FAIL]` (doesn't exist); non-patient-role erasure `[FAIL]` (no endpoint) — `docs/privacy/DSAR_RUNBOOK.md` |
+| 44 | DSAR runbook | `[PASS]` (documented); export feature `[PASS]` (`POST /my/export`, patient role, 8 tests); non-patient-role erasure `[PASS]` for care_partner (real delete) and doctor/admin (soft-delete, `[LEGAL REVIEW]`ed), `[FAIL]`/`[PRODUCT DECISION REQUIRED]` for emergency_worker — `docs/privacy/DSAR_RUNBOOK.md` |
 | 45 | Privacy notice | `[LEGAL REVIEW]`, not published — `docs/privacy/PRIVACY_NOTICE_DRAFT.md` |
 | 46 | DPIA | `[LEGAL REVIEW]`, draft only — `docs/privacy/DPIA_DRAFT.md` |
 | 47 | ROPA | `[LEGAL REVIEW]`, draft only — `docs/privacy/ROPA_DRAFT.md` |
@@ -69,7 +69,7 @@ launch checklist."
 | 50 | Production access policy | `[UNKNOWN]` for current enforcement; policy documented — `docs/security/PRODUCTION_ACCESS_POLICY.md` |
 | 51 | Key rotation runbook | `[PASS]` (documented procedure); `SECRET_KEY` rotation has no graceful dual-key window (real gap, noted) — `docs/security/KEY_ROTATION_RUNBOOK.md` |
 | 52 | AI governance (forward-looking) | `[NOT APPLICABLE — FORWARD-LOOKING REQUIREMENT DOCUMENTED]` — Ask Bragi doesn't exist — `docs/ai/AI_GOVERNANCE.md` |
-| 53 | AI vendor data-minimization (existing pipeline) | `[FAIL]` — full page images/OCR text sent to OpenAI without minimization — `docs/vendors/OPENAI_PRODUCTION_REQUIREMENTS.md` |
+| 53 | AI vendor data-minimization (existing pipeline) | `[PASS]` for the reusable boundary + this round's audit (every existing call sends only the document itself, no separate patient-context object — nothing to strip); `[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for vendor DPA/ZDR terms, unchanged — `app/services/ai_minimization.py`, `docs/vendors/OPENAI_PRODUCTION_REQUIREMENTS.md` |
 | 54 | MDR/EU AI Act boundary statement | `[LEGAL REVIEW]`, conservative language, no certification claimed — `docs/regulatory/INTENDED_PURPOSE_DRAFT.md` |
 
 ## Never claimed (explicitly, per this task's own rules)
@@ -83,7 +83,7 @@ completes it.
 
 ## What actually shipped to production this round
 
-Three commits on `main`, all deployed and confirmed live:
+### Round 1 — three commits, all deployed and confirmed live
 - `b4ad7dc` — dependency upgrades (Python CVEs)
 - `5ceec0c` — backend security hardening (headers, auth timing, FK
   fixes, upload validation, PHI-in-logs, authorization staleness, 20
@@ -94,18 +94,48 @@ Render deploy `dep-daheeitckfvc73bq8bug` for commit `7142646`: status
 `live`. Vercel production deployment (same push): status `Ready`. Both
 confirmed 2026-09-10.
 
-## Highest-priority next steps (not done this round, scope-limited by time)
+### Round 2 — eight commits, all pushed and CI-confirmed green
 
-1. Rate limiting (§26)
-2. CNP minimization (§28)
-3. CI pipeline with security gates (§35)
-4. Malware scanning (§27)
-5. Full git-history secrets scan (§24)
-6. Static analysis (Bandit/Semgrep) (§25)
-7. AI vendor data minimization (§53)
-8. Data-export feature for DSAR completeness (§44)
-9. Non-patient-role self-deletion endpoints (§44)
-10. Rectification/change-history mechanism (`docs/privacy/DSAR_RUNBOOK.md`)
+`807f2fd` (CNP URL fix + response minimization + AI-minimization
+boundary), `c1d06a3` (rate limiting), `fce4652`/`326908d`/`8e61f24`/
+`9f5618f` (secret history scan + static analysis + CI pipeline —
+including a real CI-caught-and-fixed Bandit finding), `7292b0d` (DSAR
+export), `9f6f55b` (deletion completeness), `77c8f48` (malware-scanning
+pipeline boundary), `9f4f0df` (CNP regression suite). Every commit
+independently production-safe (additive, backward-compatible) per this
+plan's own rule. Full backend suite: 138 tests passing, confirmed both
+locally and in a real GitHub Actions run against a fresh ephemeral
+Postgres instance.
+
+## Highest-priority next steps (updated after round 2)
+
+Round 1's list (rate limiting, CNP minimization, CI, malware scanning,
+git-history secret scan, static analysis, AI vendor data minimization,
+DSAR export, non-patient-role self-deletion) is now `[PASS]` — see the
+table above and `BRAGI_SECURITY_GDPR_PLAN.md` §3a for the consolidated
+evidence. Carried forward:
+
+1. Rectification/change-history mechanism (`docs/privacy/DSAR_RUNBOOK.md`)
+   — still not implemented; edits still silently overwrite prior values
+   with no change history.
+2. A real antivirus engine (`[EXTERNAL ACTION]` — vendor selection) —
+   the pipeline boundary exists but nothing is connected.
+3. Distributed (Redis) rate-limit backend in the actual Render
+   environment (`[EXTERNAL ACTION]`/config-only) — the mechanism exists,
+   `RATE_LIMIT_REDIS_URL` isn't set yet.
+4. DSAR export for non-patient roles (doctor/admin/care_partner/
+   emergency_worker) — smaller personal-data footprint, lower priority.
+5. `emergency_worker` self-deletion — `[PRODUCT/LEGAL DECISION
+   REQUIRED]`, see `docs/EXTERNAL_COMPLIANCE_ACTIONS.md`.
+6. Whether doctor/admin soft-delete is the correct final erasure policy
+   — `[LEGAL REVIEW]`, see `docs/EXTERNAL_COMPLIANCE_ACTIONS.md`.
+7. Token revocation mechanism (§15 of the plan) — unchanged, still open.
+8. `role` self-selection at signup, `/admin/patients/search` scoping —
+   both still `[PRODUCT DECISION REQUIRED]`, unchanged.
+
+See `docs/EXTERNAL_COMPLIANCE_ACTIONS.md` for the full consolidated list
+of everything that needs a vendor, a legal determination, or a product
+decision outside this engineering effort.
 
 This checklist is a living document — update status labels and evidence
 citations as each item above is actually completed and verified, never

@@ -95,6 +95,35 @@ status `Ready`, both confirmed 2026-09-10).
 | 14 | npm dependency CVEs beyond Next.js itself (axios, brace-expansion, js-yaml, nanoid, browserslist, @babel/core, baseline-browser-mapping) | `[PASS]` | `npm audit fix`, verified 0 remaining |
 | 15 | Undeclared `requests` dependency, unbounded `openai` dependency | `[PASS]` | Pinned in `backend/requirements.txt` |
 
+## 3a. Round 2: technical controls implemented and verified (this round)
+
+The previous round completed documentation and a first hardening pass
+but explicitly deferred several items as `[FAIL]`/near-term follow-ups
+(§24 below, and `docs/PRODUCTION_READINESS_CHECKLIST.md`'s "highest-
+priority next steps"). This round implemented and verified those
+technical controls. Commits on `main` (all deployed, all independently
+production-safe per this plan's own rule): `807f2fd` (CNP-in-URL fix +
+response minimization + AI-minimization boundary), `c1d06a3` (rate
+limiting), `fce4652`/`326908d`/`8e61f24`/`9f5618f` (secret history scan +
+static analysis + CI pipeline, including a real caught-and-fixed CI
+failure), `7292b0d` (DSAR export), `9f6f55b` (deletion completeness),
+`77c8f48` (malware-scanning pipeline boundary), `9f4f0df` (CNP
+regression suite). See each linked doc for full detail; this section is
+the pointer, not a duplicate.
+
+| # | Item | Status | Evidence |
+|---|---|---|---|
+| 16 | CNP removed from URLs (`GET /emergency/search?type=cnp`) | `[PASS]` | New `POST /emergency/search` (JSON body) used by every frontend caller for every search type; the legacy `GET` form now rejects `type=cnp` with 400 unconditionally. `backend/tests/test_cnp_identifier_minimization.py` — 10 tests, real dev DB, including a real POST-based CNP search that still finds the right patient |
+| 17 | CNP minimized in API responses | `[PASS]` | Masked in `/patients`, `/my-patients`, `/patients/search`, `/admin/patients/search`, `/patients/{id}/documents`; full value only to the patient viewing their own `/my/profile` (masked for a doctor/admin viewing `/patients/{id}/profile`); masked for care_partner viewers of `/documents/{id}`. Evidence: same 10-test suite above |
+| 18 | Reusable AI-provider data-minimization boundary | `[PASS]` (boundary + audit); `[NOT APPLICABLE — no current call needs it]` for retrofitting existing calls | `backend/app/services/ai_minimization.py` + 9 tests (`test_ai_minimization.py`). Audited all 3 existing OpenAI call sites: none inject a separate patient-context object (no email/phone/address — `Patient` model doesn't even have those columns); the identity fields these calls return are the intended extraction output, not incidental exposure. See §21 |
+| 19 | Rate limiting | `[PASS]` for the mechanism + in-memory (single-instance) backend; `[IMPLEMENTED — NOT DEPLOYED]` for the distributed (Redis) backend, since no `RATE_LIMIT_REDIS_URL` is configured in production yet | `backend/app/rate_limit.py`, 14 unit tests + a real live verification (real `uvicorn`, 12 real HTTP requests, 10×200 then 2×429 with a real `Retry-After` header). See §9, `docs/security/RATE_LIMITING.md` |
+| 20 | Full git-history secret scan | `[PASS]` | gitleaks v8.30.1, 245 commits, full history (`--log-opts="--all"`). One finding, reviewed as a false positive. No `ROTATION REQUIRED` entries. See §11, `docs/security/SECRET_SCAN_HISTORY.md` |
+| 21 | Static analysis (Bandit/Semgrep) | `[PASS]` | 0 High findings from either tool; 2 Medium (Bandit)/2 (Semgrep, same 2) reviewed as false positives and suppressed with reasoned `# nosec` annotations, caught by CI's own first real run (see §18 below). See §13, `docs/security/STATIC_ANALYSIS.md` |
+| 22 | CI security pipeline | `[PASS]` | `.github/workflows/ci.yml` (every push — backend tests against a real ephemeral Postgres service container, Bandit, frontend typecheck/lint/build, full-history secret scan) + `nightly-security.yml` (daily — pip-audit, npm audit, broader Semgrep). Both confirmed via real GitHub Actions runs, not just local dry-runs — see §18, `docs/security/CI_PIPELINE.md` |
+| 23 | DSAR export | `[PASS]` (patient role) | `POST /my/export` — 8 tests including real cross-patient isolation and a real original-file embedding round-trip. Non-patient-role export not implemented this round (documented). See §19a, `docs/privacy/DSAR_RUNBOOK.md` |
+| 24 | Non-patient-role account deletion | `[PASS]` for care_partner (real delete) and doctor/admin (soft-delete/deactivation — `[LEGAL REVIEW]`ed design decision, not a full erasure); `[FAIL]`/`[PRODUCT DECISION REQUIRED]` for emergency_worker (deliberately not offered) | 6 tests (`test_deletion_completeness.py`), real DB, including a real active-access-grant-ends-with-no-500 check. See §19a |
+| 25 | Malware-scanning pipeline boundary | `[PASS]` for the boundary + a narrow heuristic screen; `[FAIL]`/`[EXTERNAL ACTION]` for a real connected antivirus engine (not softened) | `backend/app/services/security_scan.py`, wired into `process_upload_job()`. 9 tests including a real end-to-end HTTP upload of a PDF with an actual `/Launch` action, confirmed quarantined before reaching clinical processing. See §10, `docs/security/MALWARE_SCANNING_PLAN.md` |
+
 Deferred/declined upgrades (documented, not forced — see §12):
 `starlette` CVEs (blocked by `fastapi==0.115.12`'s own `starlette<0.47.0`
 constraint — needs a coordinated FastAPI major bump); `pyasn1` CVEs
@@ -107,22 +136,24 @@ algorithms).
 
 See `docs/security/THREAT_MODEL.md` — 19 threat scenarios assessed,
 each with likelihood/impact/controls/evidence. Summary of the highest-
-priority open items (all `[FAIL]` or partial):
+priority items from the first round, updated with this round's status:
 
-- No rate limiting anywhere in the backend (login, signup, uploads, AI,
-  exports, emergency access all unlimited) — §9 below.
-- No malware/antivirus scanning of uploaded files — `docs/security/MALWARE_SCANNING_PLAN.md`.
-- CNP (Romanian national ID) not comprehensively minimized in API
-  responses or masked in all frontend views; appears in 2 URL query
-  strings — §8 below.
-- No data-minimization layer before sending documents to Reducto/OpenAI/
-  Google Document AI — `docs/vendors/`.
+- Rate limiting: **implemented** — §9. A distributed (Redis) backend
+  isn't configured in production yet, but the mechanism and in-memory
+  fallback are real and verified.
+- Malware/antivirus scanning: **pipeline boundary implemented**, no real
+  AV engine connected yet — §10, `docs/security/MALWARE_SCANNING_PLAN.md`.
+- CNP (Romanian national ID) exposure: **fixed** — masked in API
+  responses/frontend list views, removed from URLs entirely — §8 below.
+- AI vendor data-minimization: **boundary implemented**; existing calls
+  audited and found to need no retrofit (they never sent more than the
+  document's own content) — §21 below.
 - Client-supplied `role` at signup has no server-side gate beyond a
   code for `care_partner` — a product decision is needed, not a silent
-  fix (§6).
+  fix (§6). Unchanged.
 - No RLS at the database layer (`docs/security/RLS_PLAN.md` assesses
   actual risk given that application-layer authorization is functioning
-  — absence of RLS is not automatically scored as Critical).
+  — absence of RLS is not automatically scored as Critical). Unchanged.
 
 ## 5. Authorization
 
@@ -167,90 +198,143 @@ only; no RLS policy has been written or applied to any table.
 
 ## 8. Identifier exposure (CNP)
 
-Found, not fixed this round (see `docs/security/THREAT_MODEL.md` §4.11
-for full detail): CNP appears in full in most authenticated JSON
-responses — including `GET /patients/search` and `GET /admin/patients/
-search`, both of which return the unmasked `cnp` field, though neither
-accepts CNP as a search term (both search by name/identifier/code
-only, confirmed by reading both route bodies) — and is masked in only
-3 of the frontend's list views. Separately, `GET /emergency/search?
-type=cnp&q=<CNP>` puts the full CNP value in a URL query string (this
-IS a real search-by-CNP endpoint) — confirmed the only route that does
-so; no other route accepts or echoes CNP as a query parameter.
-`[FAIL]` for response-body minimization; `[FAIL]`, narrower in scope
-than earlier assumed, for URL exposure specifically (one route, not
-two).
+**Fixed and verified this round** (§3a items 16-17;
+`backend/tests/test_cnp_identifier_minimization.py`, 10 tests, real dev
+DB):
 
-Planned fix (not yet implemented — needs its own careful pass, not a
-rushed one, given CNP is used as a real search/lookup key in emergency
-workflows where breaking search would itself be a patient-safety
-regression): convert `/emergency/search`'s CNP lookup to POST-with-body
-(removing it from URLs/logs), and apply the existing `_mask_cnp()`
-helper consistently to every response that doesn't require CNP for form-
-prefill (edit forms genuinely need the real value; list/search views do
-not). See `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md` for the
+- `GET /emergency/search?type=cnp&q=<CNP>` no longer accepts `cnp` — it
+  returns 400 unconditionally. A new `POST /emergency/search` (JSON
+  body) handles every search type, including CNP, and is what both
+  frontend callers (`emergency/search`, `emergency/workspace`) now use.
+  The CNP-search functional path is preserved and tested end-to-end (a
+  real POST search by CNP still finds the right patient); no other route
+  accepts or echoes CNP as a query parameter (confirmed by the original
+  audit, unchanged this round).
+- CNP is now masked (`_mask_cnp()`) in every list/search response that
+  doesn't need the real value: `GET /patients`, `/my-patients`,
+  `/patients/search`, `/admin/patients/search`,
+  `/patients/{id}/documents`. `GET /patients/{id}/profile` (and
+  `/my/profile`, sharing `build_patient_profile_response`) returns the
+  full value only to the patient viewing their own record — a
+  doctor/admin viewing someone else's profile gets the masked value.
+  `GET /documents/{id}` masks CNP specifically for `care_partner`
+  viewers (no identity-matching workflow needs it there); patient/
+  doctor/admin keep the full value for the identity-review/correction
+  workflow it exists for.
+- Verified no identity-matching logic depends on any of these response
+  bodies — `services/patient_identity.py`'s comparison runs entirely
+  server-side against the uploaded document's own extracted CNP.
+
+`[PASS]` for both response-body minimization and URL exposure. See
+`docs/security/THREAT_MODEL.md` §4.11 for the original audit this fix
+responds to. See `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md` for the
 separate, larger question of encrypting CNP at rest — explicitly NOT
 undertaken impulsively this round per the user's instruction never to
 migrate production encryption without a proven, reversible strategy.
 
 ## 9. Rate limiting
 
-`[FAIL]` — no rate-limiting library or middleware exists anywhere in
-the backend (confirmed by dependency list and code search). This is a
-real, unmitigated gap for `/auth/login`, `/auth/signup`, uploads,
-AI-triggering endpoints, exports, and `/emergency/access-sessions`.
+**Implemented and verified this round** — `[PASS]` for the mechanism
+and the in-memory (single-instance) backend; `[IMPLEMENTED — NOT
+DEPLOYED]` for the distributed (Redis) backend specifically, since no
+`RATE_LIMIT_REDIS_URL` is configured in the actual Render environment
+yet (an env-var-only activation step, no code change needed — see
+`docs/security/RATE_LIMITING.md`). `backend/app/rate_limit.py`: a
+FastAPI dependency factory selecting Redis (real, shared, correctly
+distributed across however many instances are running) when
+`RATE_LIMIT_REDIS_URL`/`REDIS_URL` is set, or an explicitly-documented
+per-instance-only in-memory fallback otherwise — never described as
+distributed when it isn't. Fails open on any backend error (a
+rate-limiter outage must never take the app down with it).
 
-Not implemented this round: Render's current deployment is a single
-instance (verified via `render services` — no horizontal scaling
-configured), so an in-process limiter (e.g. `slowapi`) would be
-technically correct today but would silently stop working exactly when
-the app is scaled to multiple instances, without any noisy failure
-mode — a foot-gun this plan declines to introduce without also
-documenting the scaling caveat prominently. Recommended approach:
-`slowapi` (Starlette-native) for immediate protection, with an explicit
-TODO to migrate to a shared store (Redis, or Postgres-backed) before or
-at the same time as any horizontal scaling change. `[IMPLEMENTED — NOT
-DEPLOYED]` is not accurate here since nothing has been written yet —
-correctly `[FAIL]`, scheduled as a near-term follow-up rather than
-blocking the rest of this plan's documentation deliverables.
+Applied to `/auth/signup` (10/hour), `/auth/login` (15/5min),
+`/upload`+`/upload/background`+`/upload/batch` (30/hour),
+`/documents/{id}/file`+`/source-evidence/{id}/view`+
+`/lab-results/{id}/source` (120/5min), `/my/medications/{id}/
+refresh-official-info` (20/hour, external RxNorm lookup), `GET`+
+`POST /emergency/search` (60/5min), `/emergency/access-sessions`
+(30/hour), and `POST /my/export` (3/day, added with the DSAR feature —
+see §19a). Password reset/verification/Ask-Bragi endpoints don't exist
+in this codebase — nothing to limit there yet.
+
+14 unit tests (`test_rate_limit.py`) plus a real live verification: a
+real local `uvicorn` process, 12 real HTTP `POST /auth/signup` requests
+(10×200, then 2×429 with a real `Retry-After: 3571` header), followed by
+real login+delete cleanup of all 10 synthetic accounts. A real bug (a
+class-instance `Depends()` callable breaking FastAPI's `Request`
+parameter recognition, which would have 422'd every rate-limited route
+in production) was caught by this round's own test suite before it
+shipped — see `docs/security/RATE_LIMITING.md`'s postmortem note.
 
 ## 10. File upload & malware scanning
 
-Extension/content/size validation: `[PASS]` (§3 item 8). Malware/AV
-scanning: `[FAIL]` — no scanner integrated. See
-`docs/security/MALWARE_SCANNING_PLAN.md` for a design that can be
-added without breaking the current upload flow (async post-upload
-scan + quarantine state, reusing the existing `UploadJob.status`
-state machine which already has a `quarantined` value defined but
-currently only reachable via other logic — confirm and wire up).
+Extension/content/size validation: `[PASS]` (§3 item 8).
+
+**Malware-scanning pipeline boundary implemented and verified this
+round**: `[PASS]` for the boundary itself and a narrow, honestly-labeled
+heuristic screen; `[FAIL]`/`[EXTERNAL ACTION]` for a real connected
+antivirus engine (no ClamAV or equivalent is connected in any
+environment today — not softened into a false pass).
+`backend/app/services/security_scan.py`, wired into
+`process_upload_job()` (the single canonical processing entry point
+every upload route funnels through) right after the file is confirmed
+saved and BEFORE SHA-256/duplicate detection, Reducto, OpenAI, or any
+other clinical-processing step. Two backends: ClamAV (real AV, active
+when `CLAMAV_HOST` is set — ready to activate, not connected) and a
+heuristic structural screen (fallback, always available — PyMuPDF-based
+detection of a PDF `/Launch` action or an embedded file with an
+executable-shaped extension; deliberately never flags `/JavaScript`
+alone, to avoid false-positiving on legitimate PDF forms). Only an
+`infected` verdict blocks processing — a new, distinct
+`UploadJob.status = "security_quarantined"` (never conflated with the
+pre-existing `"quarantined"` value, which means an identity mismatch).
+Never labeled "malware scanning" in code/logs/API responses when only
+the heuristic screen ran.
+
+9 tests: `test_security_scan.py` (7 unit tests — a real PDF built with
+an actual `/Launch` action and a real embedded `.exe`, both correctly
+flagged; ClamAV-configured-but-unreachable falls back rather than
+false-claiming clean) and `test_malware_quarantine.py` (2 end-to-end
+tests, real DB, real HTTP — a real malicious PDF uploaded through the
+real `/upload/background` endpoint is confirmed quarantined with no
+Document ever created, i.e. it never reached clinical processing; a
+real clean PDF is confirmed not blocked). See
+`docs/security/MALWARE_SCANNING_PLAN.md`.
 
 ## 11. Secrets
 
-Working-tree secrets scan: `[PASS]` — `detect-secrets scan` run
-against all real source directories (`backend/app`, `backend/tests`,
-`frontend/app`, `frontend/components`, `frontend/lib`, root docs); zero
-findings requiring `ROTATION REQUIRED`. Git history: not exhaustively
-scanned this round (a full-history `detect-secrets` pass across every
-commit was not run due to time; recommended as a near-term follow-up,
-`[UNKNOWN]` for history, `[PASS]` for current working tree).
-`.env`/`backend/.env` confirmed `.gitignore`d.
+Working-tree secrets scan: `[PASS]` — unchanged from the prior round.
+**Full git-history scan completed this round**: `[PASS]` — gitleaks
+v8.30.1 against the full history (`--log-opts="--all"`, 245 commits,
+~5.09MB), plus targeted pickaxe cross-checks for Postgres/OpenAI/
+Reducto/AWS/GCP/GitHub/Slack credential shapes. One finding, reviewed
+and dismissed as a false positive (a boolean env-var assignment in
+prose). **No entries require `ROTATION REQUIRED`.** See
+`docs/security/SECRET_SCAN_HISTORY.md`. `.env`/`backend/.env` confirmed
+`.gitignore`d (unchanged).
 
 ## 12. Dependency / supply-chain security
 
-Python: `pip-audit` run before and after this round's fixes — see §3.
-Deferred (documented, not forced): `starlette`, `pyasn1` (both blocked
-by direct-dependency version constraints, need coordinated major-
-version work — see §3). npm: `npm audit` — see §3, 11→0. GitHub
-Actions: `[NOT APPLICABLE]` — no `.github/workflows` exists in this
-repo (confirmed), so there is no Actions supply chain to audit yet;
-becomes relevant once CI is added (§18).
+Python: `pip-audit` re-run this round — same 3 findings as before
+(pyasn1/starlette/ecdsa), all still correctly deferred/not-applicable
+for the same reasons (see §3, §13). npm: `npm audit` re-run — 0
+vulnerabilities. GitHub Actions: **no longer `[NOT APPLICABLE]`** — CI
+now exists (§18); every third-party action in both workflows is pinned
+to a full commit SHA, not a floating version tag.
 
 ## 13. Static & dynamic analysis
 
-Not yet run this round: Bandit (Python SAST), Semgrep. `[UNKNOWN]` —
-scheduled as a near-term follow-up; both can run safely against the
-codebase with no production impact and should be added to CI (§18)
-rather than run as a one-off.
+**Bandit and Semgrep run this round** — `[PASS]`. Bandit (`bandit -r
+app`): 0 High, 2 Medium (both `urllib.request.urlopen` calls whose
+target host is always a hardcoded constant, never user input — reviewed
+as false positives, not an SSRF vector, suppressed with reasoned
+`# nosec B310` annotations so CI's severity gate stays meaningful), 12
+Low (permissive `try/except/pass` error handling and a `"bearer"`
+string false-positived as a hardcoded password — reviewed, no action
+needed). Semgrep (`p/security-audit` + `p/python`): identical 2 findings,
+no new ones. Full detail: `docs/security/STATIC_ANALYSIS.md`. Now wired
+into CI (§18) so this doesn't require another manual pass to stay
+current.
 
 Dynamic/API tests run this round beyond the 20 regression tests: SQL
 injection (`[PASS]` — 100% ORM query construction, no raw string-built
@@ -311,15 +395,25 @@ own right, see `docs/security/PRODUCTION_ACCESS_POLICY.md`.
 
 ## 18. CI / CD security gates
 
-`[FAIL]` — no CI exists at all (`.github/workflows` confirmed absent).
-This is a genuine, sizable gap: none of this round's new regression
-tests run automatically on any commit today; they only ran because
-they were run manually. Designing and adding a real CI pipeline (fast
-checks on every push — lint/typecheck/unit tests/secret-scan; heavier
-checks — full pytest with DB, `pip-audit`/`npm audit`, Bandit/Semgrep —
-on a scheduled/nightly job, per the user's explicit instruction not to
-make every commit unusably slow) is in scope for this plan and tracked
-as a near-term follow-up alongside rate limiting and the CNP fix.
+**Implemented and verified this round** — `[PASS]`.
+`.github/workflows/ci.yml` (every push/PR to `main`): backend tests
+against a real ephemeral Postgres 16 service container (which doubles as
+migration-sanity checking), Bandit (fails on Medium/High), frontend
+`tsc`/ESLint/production build, and a full-history gitleaks secret scan.
+`.github/workflows/nightly-security.yml` (daily + manual dispatch):
+`pip-audit`, `npm audit`, a broader Semgrep ruleset. No production
+secrets in either workflow (the backend job's `DATABASE_URL` points at a
+container-local ephemeral Postgres; no vendor API key is ever set).
+Every third-party action is pinned to a full commit SHA.
+
+Both workflows were confirmed with real GitHub Actions runs, not just
+local dry-runs — including a genuine catch: the first real `ci.yml` run
+correctly failed on 2 Bandit findings that had been reviewed as false
+positives (§13) but not yet suppressed in code; fixed with a reasoned
+`# nosec` annotation, re-run confirmed green. See
+`docs/security/CI_PIPELINE.md` for the exact run links and design
+rationale (the fast-vs-nightly split, why ESLint is non-blocking this
+round).
 
 ## 19. Data retention & deletion
 
@@ -330,12 +424,43 @@ speculative auto-deletion of clinical data may be added without legal
 approval, since retention periods for health records are frequently
 legally mandated minimums, not just privacy-driven maximums).
 
-Deletion path re-audit: `DELETE /my/account` (patient self-deletion) —
-`[PASS]` post-fix, §3 item 6. **Doctor, admin, care_partner, and
-emergency_worker accounts have no self-deletion endpoint at all** —
-`[FAIL]`, a real gap for DSAR/right-to-erasure requests from non-
-patient users, tracked in the DSAR runbook as a manual-process fallback
-until a proper endpoint exists.
+### 19a. Deletion completeness and DSAR export (this round)
+
+`DELETE /my/account` now covers every role except `emergency_worker`,
+with deliberately different semantics per role rather than one forced
+shape — see `docs/privacy/DSAR_RUNBOOK.md` for full rationale:
+
+- **patient**: unchanged, real row delete (`[PASS]`, prior round).
+- **care_partner**: real row delete (`[PASS]`) — their only rows
+  (`CarePartnerPatientLink`, `SharedStructuredPage`) have no independent
+  clinical/audit value to anyone else.
+- **doctor/admin**: a soft-delete (`[PASS]` for what it does; `[LEGAL
+  REVIEW]` for whether this is the correct final policy) — the row
+  persists (`users.deleted_at` set) because ~8 tables hold NOT-NULL
+  clinical/audit references to a clinician/admin's user id that are part
+  of OTHER patients' own records (who treated them, who uploaded a
+  document) and must not disappear or go anonymous. What does happen:
+  every active `DoctorPatientAccess` grant ends immediately; the
+  account's own login-identifying data (email, password) is
+  irreversibly replaced; `get_current_user()`/`login()` both reject the
+  account outright, so an already-issued JWT stops working immediately.
+- **emergency_worker**: deliberately not offered (`[FAIL]`/`[PRODUCT
+  DECISION REQUIRED]`) — a clean 403, not a 500 or silent no-op;
+  emergency-access accounts are commonly tied to institutional
+  provisioning this codebase has no visibility into.
+
+6 tests (`test_deletion_completeness.py`), real dev DB, including a real
+active-access-grant-ends-with-no-500 check and double-deletion
+idempotency.
+
+**DSAR export implemented**: `POST /my/export` (patient role) — `[PASS]`,
+returns a zip (profile/labs/medications/events/access-relationships/
+emergency-contacts/documents-manifest/original-files/README, capped at
+500MB). Reuses existing authorization exactly (no separate "which
+patient" parameter to get wrong). Rate-limited (3/day). 8 tests
+including real cross-patient isolation and a real original-file
+embedding round-trip. Non-patient-role export not implemented this round
+(documented, lower priority — smaller personal-data footprint).
 
 ## 20. Safe security testing rules (governs all testing under this plan)
 
@@ -347,9 +472,12 @@ runs, automated SQL-injection scanners, load/DoS tests, rate-limit
 flooding, malware-upload flooding, destructive deletion testing against
 real user accounts, mass enumeration of `SourceEvidence`/document IDs,
 intentional spend attacks against OpenAI/Reducto/Google, or destructive
-database tests. All 20 regression tests added this round comply: they
-run against the dev DB, use synthetic `@example.com` accounts created
-via `/auth/signup`, and delete their own fixtures on teardown.
+database tests. The 20 regression tests from the first round and every
+test added in this round (rate limiting, CNP minimization, DSAR export,
+deletion completeness, malware-scan quarantine — 138 backend tests
+total as of this round) comply: they run against the dev DB, use
+synthetic `@example.com` accounts created via `/auth/signup`, and delete
+(or, for doctor/admin, soft-delete) their own fixtures on teardown.
 
 ## 21. AI / vendor data handling
 
@@ -362,11 +490,34 @@ summary extraction, both send substantial raw content), and Google
 Document AI (`app/services/document_ai_layout.py`,
 `app/services/google_document_ai_service.py` — OCR and discharge-
 summary support, confirmed as live imports in `main.py`, not dead
-code). No data-minimization layer exists before any of the three
-calls. `[FAIL]` for minimization; see the vendor docs for what each
-vendor's own data-handling terms would need to say before this can be
-called acceptable, which is not knowable from this codebase alone —
-`[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for the actual DPA/ZDR terms.
+code).
+
+**This round**: audited exactly what each of the 3 OpenAI call sites
+sends (`ai_extract.py`, `services/openai_discharge_service.py`,
+`services/discharge_summary_pipeline.py`) — each sends only the raw
+uploaded document (page image/native PDF bytes) plus a fixed
+extraction-schema prompt; none separately constructs or attaches a
+patient-context object (no email/phone/address — the `Patient` model
+doesn't even have those columns). The identity fields these calls
+return (name/CNP/DOB) are the intended extraction output (matching a
+document to the right patient), not incidental exposure. Built
+`app/services/ai_minimization.py` — reusable
+`redact_direct_identifiers()`/`minimize_patient_context()` helpers plus
+a documented boundary (user → server authz → minimum-necessary
+retrieval → identity stripping → provider call) for any FUTURE call that
+DOES need to assemble a patient-context object, most obviously a future
+Ask Bragi retrieval step. 9 tests
+(`backend/tests/test_ai_minimization.py`). `[PASS]` for the boundary +
+this-round's audit of existing calls; `[NOT APPLICABLE]` for retrofitting
+existing calls with input-stripping, since none currently sends anything
+beyond the document's own inherent content. Reducto assessed the same
+way, same conclusion (file handed directly, no separate patient-context
+injection) — consistent with this document's own acknowledgment that
+document extraction inherently requires document contents.
+
+Vendor DPA/ZDR terms remain not knowable from this codebase alone —
+`[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for the actual contract terms with
+OpenAI/Reducto/Google, unchanged this round.
 
 Ask Bragi (AI chat): does not exist in this codebase (confirmed via
 exhaustive grep for conversation/chat/ask_bragi identifiers across
@@ -387,23 +538,46 @@ this document uses conservative language throughout and does NOT state
 that Bragi is definitively outside MDR/EU-AI-Act scope, nor that it is
 certified under either.
 
-## 24. Residual risks (carried forward, not resolved this round)
+## 24. Residual risks
+
+Resolved this round (moved out of the open list; kept here for
+traceability): rate limiting (§9), CNP exposure in URLs/unmasked
+responses (§8), the AI-vendor data-minimization boundary (§21, for
+existing calls — see below for what's still open), no CI (§18), no
+non-patient-role self-deletion endpoint (§19/§19a, except
+`emergency_worker` — see #6 below), no malware-scanning pipeline
+boundary (§10, though no real AV engine is connected — see #2 below).
+
+**Still open / carried forward:**
 
 1. Real `StaleDataError` race condition between account deletion and an
-   in-flight background upload job (found via testing this round, not
-   fixed — see §3 item 8's evidence and `backend/tests/test_upload_validation.py`'s
-   fixture comment). Low likelihood (narrow timing window), but real.
-2. No rate limiting (§9).
-3. No malware scanning (§10).
-4. CNP exposure in URLs/unmasked responses (§8).
-5. No AI vendor data minimization (§21).
-6. No token revocation mechanism (§15).
-7. No CI (§18).
-8. No non-patient-role self-deletion endpoint (§19).
-9. `role` self-selection at signup with no server-side gate (§6) — needs a
-   product decision.
-10. `GET /admin/patients/search` has no scoping (§5) — needs a product
-    decision.
+   in-flight background upload job (found via testing in the prior
+   round, not fixed — see §3 item 8's evidence and
+   `backend/tests/test_upload_validation.py`'s fixture comment). Low
+   likelihood (narrow timing window), but real.
+2. No real antivirus engine connected (§10) — the pipeline boundary and
+   a narrow heuristic screen exist and are enforced, but this is not a
+   substitute for a real scanner. `[EXTERNAL ACTION]` for vendor
+   selection.
+3. No distributed (Redis) rate-limit backend configured in the actual
+   Render environment yet (§9) — the in-memory fallback is correct for
+   today's single instance but must be paired with `RATE_LIMIT_REDIS_URL`
+   before/at the same time as any horizontal scaling change.
+4. Doctor/admin account deletion is a soft-delete, not a full erasure
+   (§19a) — `[LEGAL REVIEW]` on whether that's the correct final policy.
+5. No token revocation mechanism (§15) — unchanged.
+6. `emergency_worker` accounts have no self-deletion path at all (§19a)
+   — `[PRODUCT/LEGAL DECISION REQUIRED]`.
+7. `role` self-selection at signup with no server-side gate (§6) — needs
+   a product decision. Unchanged.
+8. `GET /admin/patients/search` has no scoping (§5) — needs a product
+   decision. Unchanged.
+9. DSAR export doesn't cover doctor/admin/care_partner/emergency_worker
+   roles (§19a) — documented, lower priority than the patient export.
+10. Non-`.pdf` files (images, etc.) get no heuristic security screening
+    at all (§10) — `scan_unavailable`, not blocking, but also not
+    checked; only relevant once/if a real AV engine is connected, which
+    would cover every file type regardless.
 
 ## 25. Document index
 
@@ -416,7 +590,12 @@ certified under either.
 | `docs/security/AUTHORIZATION_MATRIX.md` | Done |
 | `docs/security/RLS_PLAN.md` | Done |
 | `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md` | Done |
-| `docs/security/MALWARE_SCANNING_PLAN.md` | Done |
+| `docs/security/MALWARE_SCANNING_PLAN.md` | Done — updated this round with the real implementation |
+| `docs/security/RATE_LIMITING.md` | Done (new this round) |
+| `docs/security/SECRET_SCAN_HISTORY.md` | Done (new this round) |
+| `docs/security/STATIC_ANALYSIS.md` | Done (new this round) |
+| `docs/security/CI_PIPELINE.md` | Done (new this round) |
+| `docs/EXTERNAL_COMPLIANCE_ACTIONS.md` | Done (new this round) |
 | `docs/security/PRODUCTION_ACCESS_POLICY.md` | Done |
 | `docs/security/KEY_ROTATION_RUNBOOK.md` | Done |
 | `docs/security/INCIDENT_RESPONSE.md` | Done |
