@@ -645,6 +645,7 @@ const en = {
 
   // Structured data
   structuredLabRowsExtracted: "structured lab rows extracted.",
+  structuredSectionsExtracted: "structured sections extracted.",
   noStructuredLabsHint:
     "If this was a lab report, re-upload after the OCR/AI extraction backend is deployed.",
 
@@ -1904,6 +1905,7 @@ const ro: Record<keyof typeof en, string> = {
 
   // Structured data
   structuredLabRowsExtracted: "rânduri de analize extrase.",
+  structuredSectionsExtracted: "secțiuni structurate extrase.",
   noStructuredLabsHint:
     "Dacă aceasta a fost o analiză de laborator, reîncarcă documentul după ce procesorul OCR/AI este activ.",
 

@@ -8,6 +8,11 @@ import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { Dialog, LabValue, Status } from "@/components/ui";
 import { IconExternal } from "@/components/ui/icon";
+import {
+  ReaderDocumentType,
+  isReaderDocumentType,
+  sectionLabel,
+} from "@/lib/reader-sections";
 
 type CurrentUser = {
   id: number;
@@ -81,6 +86,8 @@ type DocumentResponse = {
   content_type?: string | null;
   saved_to?: string | null;
   section: string;
+  document_type?: string | null;
+  structured_sections?: Record<string, string>;
   uploaded_by_user_id?: number | null;
   uploaded_by?: UploadedBy | null;
   can_edit_note?: boolean;
@@ -533,7 +540,7 @@ export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
   const documentId = params?.id as string;
-  const { t } = useLanguage();
+  const { t, language } = useLanguage();
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
@@ -679,6 +686,17 @@ export default function DocumentStructuredPage() {
     documentData?.section === "discharge_summary" ||
     parsed?.report_type === "Discharge summary" ||
     Boolean(dischargePayload);
+
+  // Phase 4 — clinical readers for document types with no dedicated
+  // pipeline of their own (see structured_reader_service.py). Only
+  // renders when there's actually something extracted; otherwise the
+  // page falls through to the default view below, same as any other
+  // document without structured labs.
+  const readerDocumentType = isReaderDocumentType(documentData?.document_type)
+    ? (documentData!.document_type as ReaderDocumentType)
+    : null;
+  const readerSections = documentData?.structured_sections || {};
+  const isReaderDocument = Boolean(readerDocumentType) && Object.keys(readerSections).length > 0;
 
   const canEditStructured = currentUser?.role === "doctor" || currentUser?.role === "admin";
   const canVerify = currentUser?.role === "doctor" || currentUser?.role === "admin";
@@ -1459,6 +1477,35 @@ export default function DocumentStructuredPage() {
               )}
             </div>
           </div>
+        </div>
+      ) : isReaderDocument && readerDocumentType ? (
+        <div style={{ display: "grid", gap: 24 }}>
+          <div className="soft-card" style={{ padding: 24 }}>
+            <SectionHeader
+              title={parsed.report_name || t("structuredData")}
+              subtitle={`${Object.keys(readerSections).length} ${t("structuredSectionsExtracted")}`}
+            />
+
+            <div style={{ display: "grid", gap: 14 }}>
+              {Object.entries(readerSections).map(([key, body]) => (
+                <div
+                  key={key}
+                  className="soft-card-tight"
+                  style={{ padding: 18, background: "var(--panel-2)", borderRadius: "var(--r-lg)" }}
+                >
+                  <div className="b-label" style={{ marginBottom: 8 }}>
+                    {sectionLabel(readerDocumentType, key, language)}
+                  </div>
+                  <div style={{ lineHeight: 1.8, whiteSpace: "pre-wrap" }}>{body}</div>
+                </div>
+              ))}
+            </div>
+          </div>
+
+          {/* No section-level "View original" yet — SourceEvidence is
+              currently populated only for structured lab rows (Phase 2/3).
+              The document-level Original button above covers verification
+              for now; see BRAGI_REDUCTO_PLAN.md Phase 4 known issues. */}
         </div>
       ) : editMode ? (
         <form onSubmit={saveStructuredData} style={{ display: "grid", gap: 24 }}>

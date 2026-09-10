@@ -11,7 +11,13 @@ from openai import OpenAI
 
 DISCHARGE_MODEL = os.getenv("OPENAI_DISCHARGE_MODEL", "gpt-4.1")
 
-client = OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
+
+def _client() -> OpenAI:
+    # Lazy on purpose (matches ai_extract.py's _client()): constructing
+    # OpenAI() eagerly at import time raised whenever OPENAI_API_KEY
+    # wasn't set, even for code that only imports this module's helpers
+    # (e.g. structured_reader_service.py) without ever calling the API.
+    return OpenAI(api_key=os.getenv("OPENAI_API_KEY"))
 
 
 DISCHARGE_JSON_SCHEMA = {
@@ -317,7 +323,7 @@ def process_discharge_with_openai(
     else:
         raise ValueError(f"Unsupported discharge file type for OpenAI direct reading: {mime_type}")
 
-    response = client.responses.create(
+    response = _client().responses.create(
         model=DISCHARGE_MODEL,
         input=[
             {

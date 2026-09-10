@@ -83,7 +83,8 @@ Upload (per file)
   abstraction, taxonomy, rule-based classifier, `needs_confirmation`
   flow, `/upload/batch`, confirmation UI. Done.
 - **Phase 2 — Identity / duplicates / canonical data / provenance.** Done.
-- **Phase 3 — Analize + source verification.** Done — see §2b.
+- **Phase 3 — Analize + source verification.** Done.
+- **Phase 4 — Clinical readers.** Done — see §2c.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -214,6 +215,70 @@ only, no replacement, per the hard requirement.
   already-relied-upon `/documents/{id}/file`, but wasn't given its own
   integration test (this repo has no TestClient/test-DB fixture
   convention yet — worth adding in Phase 7 if time allows).
+
+## 2c. Phase 4 — what was actually built
+
+Only `discharge_summary`/`bloodwork` had a real structured pipeline
+before this phase. The other 6 taxonomy types (imaging, operative,
+pathology, prescription, medication_list, specialist_consultation) had
+none — a document of one of these types stored only raw OCR text with
+no structure at all.
+
+- **`backend/app/services/structured_reader_service.py`**: a
+  conservative structured extractor for those 6 types, following the
+  *exact same convention* as the existing `openai_discharge_service.py`
+  (reads the source file directly via OpenAI's vision-capable Responses
+  API, temperature 0, explicit "do not infer/fabricate — null if not
+  present" instruction, JSON-only output). Per-type section key lists
+  live in `SECTION_KEYS`; labels (EN/RO) live in the frontend's
+  `lib/reader-sections.ts`, keyed identically.
+- Wired into `process_upload_job`: runs once, after the document is
+  created, only for the 6 new types; stored as
+  `Document.structured_sections` (JSON). Best-effort — a missing
+  `OPENAI_API_KEY` or a failed call never fails the upload; the Reader
+  always still has `extracted_text` to fall back to.
+- `GET /documents/{id}` (via the shared `get_document_payload`) now
+  returns `document_type` and the parsed `structured_sections` object.
+- **Frontend**: a new branch in `documents/[id]/page.tsx`'s existing
+  ternary (alongside the note/discharge/edit branches, not a new route)
+  renders each populated section as a labeled card when
+  `document_type` is one of the 6 reader types and at least one section
+  was extracted. Falls through to the existing default view otherwise —
+  zero behavior change for bloodwork/other/未-extracted documents.
+- **Found and fixed a second pre-existing issue** (like Phase 2's
+  `is_verified`): `openai_discharge_service.py` constructed its `OpenAI`
+  client eagerly at *module import time*, which raised whenever
+  `OPENAI_API_KEY` wasn't set — even for code that only needed its MIME-
+  detection helpers. Changed to the same lazy `_client()` pattern
+  `ai_extract.py` already uses elsewhere in this codebase. No behavior
+  change when the key *is* set (the only path production actually
+  exercises); makes the module importable/testable without one.
+
+### Deferred from the original Phase 4 spec
+- **Outline / section navigation, document search, "30-second read",
+  "what changed", "what happens next", conflict/uncertainty display**:
+  none of this is built yet. The mega-spec's Phase 4 is realistically
+  its own multi-week effort; what shipped is the foundation (source-
+  grounded structured extraction + a place to display it) rather than
+  the full Reader experience. Recommend a dedicated follow-up phase for
+  these rather than a rushed version now.
+- **Section-level "View original"**: `SourceEvidence` is currently only
+  populated for structured lab rows (Phase 2/3). The reader sections
+  above have no per-section evidence rows yet, so they rely on the
+  existing document-level "Original" button rather than a per-section
+  link. Extending `SourceEvidence` to non-lab entities was explicitly
+  named as future work in Phase 2's design (`lab_result_id` is nullable
+  for exactly this reason) — worth doing alongside outline/search.
+- **Prescription/medication_list → `PatientMedication` linkage**: not
+  built. A prescription's extracted `medications` section is currently
+  just display text, not parsed into the medication system. That's a
+  longitudinal-record concern, more natural for Phase 5.
+- **A separate route per document type** (`/documents/{id}/imaging`,
+  etc., mirroring the existing dedicated `/documents/{id}/discharge`):
+  not built. One parameterized branch in the existing page was chosen
+  instead, given the shared card-based layout was already sufficient and
+  6 near-duplicate page files would have been pure risk for no display
+  difference at this stage.
 
 ## 3. Reducto integration status (important)
 

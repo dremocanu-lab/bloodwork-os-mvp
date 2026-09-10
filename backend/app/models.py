@@ -156,6 +156,15 @@ class Document(Base):
     review_status = Column(String, nullable=True, index=True)
     intended_patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
 
+    # Phase 4 — conservative structured extraction for document types with
+    # no dedicated pipeline (imaging/operative/pathology/prescription/
+    # medication_list/specialist_consultation). JSON-encoded
+    # {language, sections: {key: text}} from
+    # app.services.structured_reader_service; null/empty when extraction
+    # was unavailable or found nothing — the Reader always falls back to
+    # extracted_text.
+    structured_sections = Column(Text, nullable=True)
+
     # NOTE: the live Postgres column is `boolean` (pre-existing schema drift
     # from this model's prior `Integer` declaration — discovered and fixed
     # during Phase 2 testing; no migration needed since the DB column was

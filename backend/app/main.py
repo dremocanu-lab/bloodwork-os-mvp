@@ -41,6 +41,10 @@ from app.services.patient_identity import (
     IdentityCheckResult,
     check_patient_identity,
 )
+from app.services.structured_reader_service import (
+    SECTION_KEYS as READER_SECTION_KEYS,
+    extract_structured_sections,
+)
 
 app = FastAPI()
 
@@ -207,6 +211,7 @@ def run_migrations():
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS identity_status VARCHAR"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_status VARCHAR"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS intended_patient_id INTEGER REFERENCES patients(id)"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS structured_sections TEXT"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_sha256 ON documents(file_sha256)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_review_status ON documents(review_status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_intended_patient_id ON documents(intended_patient_id)"))
@@ -728,6 +733,13 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
     if current_user and current_user.role == "doctor":
         reviewed_by_current_doctor = doctor_reviewed_document(db, current_user.id, document.id)
 
+    structured_sections = {}
+    if document.structured_sections:
+        try:
+            structured_sections = json.loads(document.structured_sections).get("sections") or {}
+        except Exception:
+            structured_sections = {}
+
     return {
         "document_id": document.id,
         "id": document.id,
@@ -736,6 +748,10 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "content_type": document.content_type,
         "saved_to": document.saved_to,
         "section": document.section,
+        "document_type": document.document_type,
+        "classification_status": document.classification_status,
+        "identity_status": document.identity_status,
+        "structured_sections": structured_sections,
         "uploaded_by_user_id": document.uploaded_by_user_id,
         "uploaded_by": uploaded_by,
         "extracted_text": document.extracted_text or "",
@@ -1247,6 +1263,41 @@ def process_upload_job(job_id: int):
                 actor="system",
                 details=str(warning),
             )
+
+        # Phase 4 — conservative structured extraction for document types
+        # with no dedicated pipeline of their own. Best-effort: a failure
+        # or missing OPENAI_API_KEY here must never fail the upload — the
+        # Reader always has extracted_text as a fallback.
+        if document.document_type in READER_SECTION_KEYS:
+            try:
+                reader_result = extract_structured_sections(
+                    document_type=document.document_type,
+                    file_path=file_path,
+                    filename=job.filename,
+                    content_type=job.content_type,
+                )
+
+                if reader_result.get("sections"):
+                    document.structured_sections = json.dumps(reader_result, ensure_ascii=False)
+                    add_audit_log(
+                        db=db,
+                        document_id=document.id,
+                        action="structured_extraction_completed",
+                        actor="legacy_openai_reader",
+                        details=f"Extracted {len(reader_result['sections'])} section(s) for {document.document_type}.",
+                    )
+                else:
+                    for warning in reader_result.get("warnings", []):
+                        add_audit_log(
+                            db=db,
+                            document_id=document.id,
+                            action="processing_warning",
+                            actor="system",
+                            details=str(warning),
+                        )
+            except Exception:
+                print(f"UPLOAD JOB {job_id}: structured reader extraction failed:")
+                print(traceback.format_exc())
 
         job.status = "done"
         job.progress = 100
