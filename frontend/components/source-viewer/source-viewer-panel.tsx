@@ -38,6 +38,7 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
   const [zoomOverride, setZoomOverride] = useState<number | null>(null);
   const [pageRendering, setPageRendering] = useState(false);
   const [renderError, setRenderError] = useState("");
+  const [renderRetryKey, setRenderRetryKey] = useState(0);
 
   const scale = zoomOverride ?? fitWidthScale;
   const numPages = pdfDoc?.numPages ?? 0;
@@ -53,6 +54,7 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
             zoomOut: "Micșorează",
             fitWidth: "Potrivește lățimea",
             loading: "Se încarcă documentul original...",
+            renderingPage: "Se randează pagina...",
             pageOf: (p: number, n: number) => `Pagina ${p} din ${n}`,
             noExactLocation: "Locația exactă nu este disponibilă — se afișează documentul.",
             pageOnly: "Pagina exactă este cunoscută; poziția precisă nu este disponibilă.",
@@ -68,6 +70,7 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
             zoomOut: "Zoom out",
             fitWidth: "Fit width",
             loading: "Loading original document...",
+            renderingPage: "Rendering page...",
             pageOf: (p: number, n: number) => `Page ${p} of ${n}`,
             noExactLocation: "Exact location isn't available — showing the document.",
             pageOnly: "The exact page is known; precise position isn't available.",
@@ -91,6 +94,16 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       if (cancelled || !containerRef.current) return;
       const baseViewport = page.getViewport({ scale: 1 });
       const available = containerRef.current.clientWidth - 32; // panel padding
+      // The split pane can report a near-zero/negative clientWidth for a
+      // frame or two right after it first mounts (before the flex layout
+      // has actually resolved) — committing that would fit-scale the page
+      // down to MIN_SCALE and, combined with nothing giving the canvas
+      // wrapper a floor size (see .b-source-viewer-canvas-wrap's
+      // min-height/min-width in globals.css), collapse the whole viewer to
+      // a sliver. Skip a degenerate measurement rather than commit it; the
+      // ResizeObserver below fires again once the container has real
+      // layout and recomputes correctly.
+      if (available < 80) return;
       setFitWidthScale(Math.max(MIN_SCALE, Math.min(MAX_SCALE, available / baseViewport.width)));
     }
 
@@ -138,15 +151,31 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       const context = canvas.getContext("2d");
       if (!context) return;
 
-      canvas.width = viewport.width;
-      canvas.height = viewport.height;
+      // High-DPI rendering: the canvas BUFFER is sized up by the device
+      // pixel ratio so text/lines stay crisp on Retina/HiDPI displays,
+      // while the canvas's own CSS box (and the wrapper the bbox
+      // highlight positions itself against, in percentages) stays at the
+      // un-scaled viewport size — so this only affects sharpness, never
+      // highlight alignment. Capped at 2x: real quality gain beyond that
+      // is imperceptible for document text and not worth the extra memory
+      // on a 3x+ device for a page that might already be large.
+      const dpr = Math.min(window.devicePixelRatio || 1, 2);
+      canvas.width = Math.round(viewport.width * dpr);
+      canvas.height = Math.round(viewport.height * dpr);
+      canvas.style.width = `${viewport.width}px`;
+      canvas.style.height = `${viewport.height}px`;
       if (canvasWrapRef.current) {
         canvasWrapRef.current.style.width = `${viewport.width}px`;
         canvasWrapRef.current.style.height = `${viewport.height}px`;
       }
 
       renderTaskRef.current?.cancel();
-      const task = page.render({ canvasContext: context, viewport, canvas });
+      const task = page.render({
+        canvasContext: context,
+        viewport,
+        canvas,
+        transform: dpr !== 1 ? [dpr, 0, 0, dpr, 0, 0] : undefined,
+      });
       renderTaskRef.current = task;
 
       try {
@@ -175,17 +204,35 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       cancelled = true;
       renderTaskRef.current?.cancel();
     };
-  }, [pdfDoc, currentPage, scale, data?.precision]);
+  }, [pdfDoc, currentPage, scale, data?.precision, renderRetryKey]);
 
   const canZoomIn = scale < MAX_SCALE;
   const canZoomOut = scale > MIN_SCALE;
 
-  const showBbox =
-    data?.precision === "exact_bbox" &&
-    data.bbox_x != null &&
-    data.bbox_y != null &&
-    data.bbox_width != null &&
-    data.bbox_height != null;
+  // Prefer the derived "whole row" presentation region for lab evidence —
+  // it's the same real geometry unioned + padded server-side (see
+  // BRAGI_REDUCTO_PLAN.md), never a separate guess. Falls back to the raw
+  // single-field bbox (still provenance-accurate, just narrower) when a row
+  // region wasn't available — e.g. non-lab evidence, or a row with fewer
+  // than two field citations to union.
+  const hasRowBbox =
+    data?.row_bbox_x != null &&
+    data?.row_bbox_y != null &&
+    data?.row_bbox_width != null &&
+    data?.row_bbox_height != null;
+
+  const highlightBox = hasRowBbox
+    ? {
+        x: data!.row_bbox_x as number,
+        y: data!.row_bbox_y as number,
+        width: data!.row_bbox_width as number,
+        height: data!.row_bbox_height as number,
+      }
+    : data?.bbox_x != null && data?.bbox_y != null && data?.bbox_width != null && data?.bbox_height != null
+    ? { x: data.bbox_x, y: data.bbox_y, width: data.bbox_width, height: data.bbox_height }
+    : null;
+
+  const showBbox = data?.precision === "exact_bbox" && highlightBox != null;
 
   return (
     <div
@@ -294,20 +341,36 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
           <div className="b-source-viewer-canvas-scroll">
             <div className="b-source-viewer-canvas-wrap" ref={canvasWrapRef}>
               <canvas ref={canvasRef} />
-              {showBbox ? (
+              {showBbox && highlightBox ? (
                 <div
                   ref={highlightRef}
                   className="b-source-highlight"
                   style={{
-                    left: `${(data!.bbox_x as number) * 100}%`,
-                    top: `${(data!.bbox_y as number) * 100}%`,
-                    width: `${(data!.bbox_width as number) * 100}%`,
-                    height: `${(data!.bbox_height as number) * 100}%`,
+                    left: `${highlightBox.x * 100}%`,
+                    top: `${highlightBox.y * 100}%`,
+                    width: `${highlightBox.width * 100}%`,
+                    height: `${highlightBox.height * 100}%`,
                   }}
                 />
               ) : null}
-              {pageRendering ? <div className="b-source-viewer-page-loading" /> : null}
-              {renderError ? <div className="b-source-viewer-notice">{renderError}</div> : null}
+              {pageRendering ? (
+                <div className="b-source-viewer-page-loading">
+                  <span className="b-spinner" />
+                  <span>{labels.renderingPage}</span>
+                </div>
+              ) : null}
+              {renderError ? (
+                <div className="b-source-viewer-page-error">
+                  <span>{renderError}</span>
+                  <button
+                    type="button"
+                    className="b-btn b-btn-secondary b-btn-sm"
+                    onClick={() => setRenderRetryKey((k) => k + 1)}
+                  >
+                    {labels.retry}
+                  </button>
+                </div>
+              ) : null}
             </div>
           </div>
         )}

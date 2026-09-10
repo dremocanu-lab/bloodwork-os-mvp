@@ -17,7 +17,8 @@
  * split layout.
  */
 
-import { createContext, ReactNode, useCallback, useContext, useMemo, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useMemo, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import type { PDFDocumentProxy } from "pdfjs-dist";
 import { api, getErrorMessage } from "@/lib/api";
 import { ensurePdfWorkerConfigured, pdfjsLib } from "./pdf-worker";
@@ -30,11 +31,23 @@ export type SourceEvidenceView = {
   document_filename: string;
   document_type: string | null;
   report_name: string | null;
+  lab_result_id: number | null;
   page_number: number | null;
   bbox_x: number | null;
   bbox_y: number | null;
   bbox_width: number | null;
   bbox_height: number | null;
+  // Presentation-only region for laboratory evidence: the whole table row
+  // the field came from, expanded with a small padding margin so the
+  // highlight frames the row instead of hugging exactly the value's own
+  // bbox. Null for non-lab evidence (or when there wasn't enough per-row
+  // geometry to derive one) — callers fall back to bbox_* in that case.
+  // Raw bbox_* above is untouched provenance and is never overwritten by
+  // this.
+  row_bbox_x: number | null;
+  row_bbox_y: number | null;
+  row_bbox_width: number | null;
+  row_bbox_height: number | null;
   source_text: string | null;
   provider: string | null;
   precision: SourcePrecision;
@@ -145,6 +158,30 @@ export function SourceViewerProvider({ children }: { children: ReactNode }) {
     // Intentionally keep loadedPdfRef/loadedDocumentIdRef cached so
     // reopening the same document (a very common next action) is instant.
   }, []);
+
+  // The viewer belongs to whatever page/context opened it — it must not
+  // outlive that context. Pressing Back, moving to another top-level
+  // route, or switching patient all change the pathname (query-string-only
+  // navigation, like the ?lab= chart deep link or switching between two
+  // lab rows' evidence on the SAME document page, does not), so closing on
+  // every pathname change is exactly "close when the open source no longer
+  // applies" without also closing on the in-page evidence switches that
+  // should keep the viewer open. Skip the very first render so mounting
+  // the provider (e.g. landing directly on a document URL) doesn't
+  // immediately close a viewer nothing has opened yet.
+  const pathname = usePathname();
+  const previousPathnameRef = useRef(pathname);
+  useEffect(() => {
+    if (previousPathnameRef.current === pathname) return;
+    previousPathnameRef.current = pathname;
+    setIsOpen(false);
+    lastRequestedIdRef.current = null;
+    // A route change is also a context change for cached PDF bytes: the
+    // next open() on the new page should not silently reuse a document
+    // left over from wherever the user just came from.
+    loadedDocumentIdRef.current = null;
+    loadedPdfRef.current = null;
+  }, [pathname]);
 
   const value = useMemo<SourceViewerContextValue>(
     () => ({

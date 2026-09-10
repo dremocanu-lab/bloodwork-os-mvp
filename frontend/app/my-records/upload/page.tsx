@@ -3,7 +3,7 @@
 import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
+import { ErrorNote, SectionHead, Status } from "@/components/ui";
 import { IconClose, IconUpload } from "@/components/ui/icon";
 import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
@@ -191,8 +191,6 @@ export default function MyRecordsUploadPage() {
   const [confirmChoice, setConfirmChoice] = useState("");
   const [confirmBusy, setConfirmBusy] = useState(false);
   const [confirmError, setConfirmError] = useState("");
-
-  const canUpload = items.length > 0;
 
   const documentTypeLabel = useMemo(() => {
     const map = new Map(documentTypes.map((choice) => [choice.value, choice]));
@@ -410,48 +408,16 @@ export default function MyRecordsUploadPage() {
       <div className="b-stack" style={{ maxWidth: 900 }}>
         {error ? <ErrorNote>{error}</ErrorNote> : null}
 
-        {/* The dropzone is the whole first step now — there is no document-type
-            selector to fill in first. Bragi classifies each file from its
-            content once it's uploaded (see the queue below), and only asks
-            when it's genuinely unsure about one file. */}
-        <section className="b-surface">
-          <div style={{ padding: "var(--s4)" }}>
-            <input
-              ref={hiddenFileInputRef}
-              type="file"
-              multiple
-              style={{ display: "none" }}
-              onChange={(event) => appendFiles(event.target.files || [])}
-            />
-
-            <div
-              className={`b-drop ${dragActive ? "is-over" : ""}`}
-              onDragOver={handleDragOver}
-              onDragLeave={handleDragLeave}
-              onDrop={handleDrop}
-            >
-              <span className="b-empty-icon">
-                <IconUpload size={17} />
-              </span>
-              <div className="b-drop-title">{labels.dragTitle}</div>
-              <button
-                type="button"
-                className="b-btn b-btn-secondary"
-                onClick={() => hiddenFileInputRef.current?.click()}
-              >
-                {labels.browse}
-              </button>
-              <p className="b-drop-hint" style={{ maxWidth: "56ch" }}>
-                {labels.supportText}
-              </p>
-            </div>
-          </div>
-        </section>
-
-        {/* The queue. Each row states which file, how big, and where it is
-            in the pipeline — including the type Bragi detected once it's
-            known. A row with a "?" badge is the only one that needs input;
-            everything else keeps moving on its own. */}
+        {/* One coherent upload workspace: the dropzone, the queue, and the
+            upload action all live in a single card. There is no document-
+            type selector to fill in first — Bragi classifies each file from
+            its content once it's uploaded, and only asks when it's genuinely
+            unsure about one file. When nothing is queued yet, the dropzone
+            itself (full height) is the only content — no separate,
+            redundant "empty" card underneath it. Once files are queued, the
+            dropzone collapses to a compact single-row strip so it keeps
+            working as an "add more files" target without eating vertical
+            space the queue now needs. */}
         <section className="b-surface">
           <SectionHead
             title={labels.selectedFiles}
@@ -465,6 +431,63 @@ export default function MyRecordsUploadPage() {
               ) : null
             }
           />
+
+          <div style={{ padding: "0 var(--s4) var(--s4)" }}>
+            <input
+              ref={hiddenFileInputRef}
+              type="file"
+              multiple
+              style={{ display: "none" }}
+              onChange={(event) => appendFiles(event.target.files || [])}
+            />
+
+            {uploadRows.length ? (
+              <div
+                className={`b-drop-compact ${dragActive ? "is-over" : ""}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <span className="b-empty-icon" style={{ flexShrink: 0 }}>
+                  <IconUpload size={15} />
+                </span>
+                <span style={{ minWidth: 0 }}>
+                  <div className="b-drop-title">{labels.dragTitle}</div>
+                  <p className="b-drop-hint">{labels.supportText}</p>
+                </span>
+                <button
+                  type="button"
+                  className="b-btn b-btn-secondary b-btn-sm"
+                  style={{ marginLeft: "auto", flexShrink: 0 }}
+                  onClick={() => hiddenFileInputRef.current?.click()}
+                >
+                  {labels.browse}
+                </button>
+              </div>
+            ) : (
+              <div
+                className={`b-drop ${dragActive ? "is-over" : ""}`}
+                onDragOver={handleDragOver}
+                onDragLeave={handleDragLeave}
+                onDrop={handleDrop}
+              >
+                <span className="b-empty-icon">
+                  <IconUpload size={17} />
+                </span>
+                <div className="b-drop-title">{labels.dragTitle}</div>
+                <button
+                  type="button"
+                  className="b-btn b-btn-secondary"
+                  onClick={() => hiddenFileInputRef.current?.click()}
+                >
+                  {labels.browse}
+                </button>
+                <p className="b-drop-hint" style={{ maxWidth: "56ch" }}>
+                  {labels.supportText}
+                </p>
+              </div>
+            )}
+          </div>
 
           {uploadRows.length ? (
             <div>
@@ -645,47 +668,38 @@ export default function MyRecordsUploadPage() {
                 );
               })}
             </div>
-          ) : (
-            <EmptyState
-              icon={<IconUpload size={17} />}
-              title={labels.emptyTitle}
-              description={labels.emptyDesc}
-            />
-          )}
+          ) : null}
 
-          <div
-            style={{
-              display: "flex",
-              alignItems: "center",
-              justifyContent: "flex-end",
-              gap: "var(--s2)",
-              padding: "var(--s3) var(--s4)",
-              borderTop: "1px solid var(--border)",
-            }}
-          >
-            <button
-              type="button"
-              className="b-btn b-btn-secondary"
-              onClick={() => router.push("/my-records")}
+          {/* Single primary action — this only appears once there's
+              something local to actually send; already-uploading/finished
+              rows need no action here (they're tracked live above), so a
+              second "Continue"/cancel button next to it would just be a
+              silent way to abandon a still-local pick. Leaving the page
+              via the header's "Back" button already covers that. */}
+          {items.length ? (
+            <div
+              style={{
+                display: "flex",
+                alignItems: "center",
+                justifyContent: "flex-end",
+                gap: "var(--s2)",
+                padding: "var(--s3) var(--s4)",
+                borderTop: "1px solid var(--border)",
+              }}
             >
-              {labels.continue}
-            </button>
-            <button
-              type="button"
-              className="b-btn b-btn-primary"
-              onClick={uploadDocuments}
-              disabled={!canUpload}
-            >
-              <IconUpload size={14} />
-              {labels.upload}
-              {items.length ? ` (${items.length})` : ""}
-            </button>
-          </div>
+              <button type="button" className="b-btn b-btn-primary" onClick={uploadDocuments}>
+                <IconUpload size={14} />
+                {labels.upload} ({items.length})
+              </button>
+            </div>
+          ) : null}
 
-          <p className="b-meta" style={{ padding: "0 var(--s4) var(--s3)" }}>
-            Uploading continues in the background — you can leave this page and the
-            documents will appear in your record when processing finishes.
-          </p>
+          {uploadRows.length ? (
+            <p className="b-meta" style={{ padding: "0 var(--s4) var(--s3)" }}>
+              Uploading continues in the background — you can leave this page and the
+              documents will appear in your record when processing finishes.
+            </p>
+          ) : null}
         </section>
       </div>
 

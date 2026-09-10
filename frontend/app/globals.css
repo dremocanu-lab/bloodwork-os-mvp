@@ -1638,6 +1638,7 @@ tr:focus-within .b-row-actions {
   background: var(--primary-soft);
   color: var(--primary);
   font-weight: 550;
+  box-shadow: inset 2px 0 0 var(--primary);
 }
 
 .b-nav-icon {
@@ -2270,6 +2271,16 @@ tr:focus-within .b-row-actions {
   white-space: nowrap;
 }
 
+/* This row's evidence is the one currently open — a subtle active tint,
+   not a bigger button; the row's own selected state (see
+   .document-lab-table tr.source-open-row) already carries most of the
+   signal. */
+.b-source-action-active {
+  color: var(--primary);
+  background: var(--brand-100);
+  border-color: var(--primary-soft-border);
+}
+
 /* Shared Bragi source viewer — Analize/charts/Reader/Timeline/Documents
    "View in original" all render through this one surface. Desktop: a
    real split-view sibling of the main content (no backdrop, since it's
@@ -2352,6 +2363,15 @@ tr:focus-within .b-row-actions {
   position: relative;
   flex-shrink: 0;
   box-shadow: var(--shadow-md);
+  /* Floor size so the wrapper — and everything positioned against it in
+     percentages, including the loading/error overlays and the bbox
+     highlight — never collapses to a sliver before the first successful
+     page render sets its real inline width/height (or if a render never
+     completes at all). This was the root cause behind an apparently
+     "blank" viewer: nothing gave this element a size of its own. */
+  min-width: 280px;
+  min-height: 360px;
+  background: var(--surface);
 }
 
 .b-source-viewer-canvas-wrap canvas {
@@ -2360,13 +2380,22 @@ tr:focus-within .b-row-actions {
   height: 100%;
 }
 
-/* Highlight: visible but professional — no neon, no flashing/pulsing.
-   One gentle fade-in on first appearance; respects reduced motion. */
+/* Highlight: frames the evidence rather than painting over it. The border
+   sits AT the (already padded, for lab rows) region edge; `outline` adds a
+   few more pixels of breathing room outside that without changing the
+   element's own box (so it never eats into the fill), and the fill itself
+   stays extremely light — enough to read as "this region" at a glance,
+   never enough to compete with the printed text underneath it. No neon,
+   no flashing/pulsing — one gentle fade-in on first appearance, respects
+   reduced motion. */
 .b-source-highlight {
   position: absolute;
-  border: 2px solid var(--primary);
-  background: color-mix(in srgb, var(--primary) 18%, transparent);
-  border-radius: 3px;
+  border: 1.5px solid var(--primary);
+  outline: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline-offset: 3px;
+  background: color-mix(in srgb, var(--primary) 6%, transparent);
+  border-radius: 4px;
+  box-shadow: 0 1px 6px -1px color-mix(in srgb, var(--primary) 35%, transparent);
   pointer-events: none;
   animation: b-highlight-in var(--dur-3) var(--ease) both;
 }
@@ -2383,7 +2412,29 @@ tr:focus-within .b-row-actions {
 .b-source-viewer-page-loading {
   position: absolute;
   inset: 0;
-  background: color-mix(in srgb, var(--surface) 55%, transparent);
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s2);
+  background: color-mix(in srgb, var(--surface) 70%, transparent);
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+.b-source-viewer-page-error {
+  position: absolute;
+  inset: 0;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s3);
+  padding: var(--s5);
+  text-align: center;
+  background: var(--surface);
+  color: var(--danger);
+  font-size: var(--fs-sm);
 }
 
 .b-source-viewer-state {
@@ -2850,12 +2901,36 @@ tr:focus-within .b-row-actions {
   font-weight: 600;
 }
 
+/* A little restrained color per metric: a tinted top border plus a very
+   pale wash of the same hue, not a saturated card. Kept as a single
+   accent-strength value per class so four metrics read as one family,
+   not four unrelated colors. */
 .stat-card-accent-violet,
 .stat-card-accent-blue,
 .stat-card-accent-green,
 .stat-card-accent-orange {
   background: var(--surface);
-  border-top: 1px solid var(--border);
+  border-top: 2px solid var(--border);
+}
+
+.stat-card-accent-violet {
+  border-top-color: var(--brand-500);
+  background: color-mix(in srgb, var(--brand-500) 4%, var(--surface));
+}
+
+.stat-card-accent-blue {
+  border-top-color: var(--info);
+  background: color-mix(in srgb, var(--info) 4%, var(--surface));
+}
+
+.stat-card-accent-green {
+  border-top-color: var(--ok);
+  background: color-mix(in srgb, var(--ok) 4%, var(--surface));
+}
+
+.stat-card-accent-orange {
+  border-top-color: var(--warning, #c2650c);
+  background: color-mix(in srgb, var(--warning, #c2650c) 4%, var(--surface));
 }
 
 .stat-pill {
@@ -2864,11 +2939,20 @@ tr:focus-within .b-row-actions {
   color: var(--muted);
 }
 
-.stat-pill-violet,
-.stat-pill-blue,
-.stat-pill-green,
+.stat-pill-violet {
+  color: var(--brand-600);
+}
+
+.stat-pill-blue {
+  color: var(--info);
+}
+
+.stat-pill-green {
+  color: var(--ok);
+}
+
 .stat-pill-orange {
-  color: var(--muted);
+  color: var(--warning, #c2650c);
 }
 
 /* --------------------------------------------------------------------------
@@ -3258,6 +3342,35 @@ tr:focus-within .b-row-actions {
 .b-drop-hint {
   font-size: var(--fs-sm);
   color: var(--muted);
+}
+
+/* Compact variant: once at least one file is queued, the full-height
+   dropzone collapses to a single row so it can keep acting as a drop
+   target / "add more files" affordance without dominating the page. */
+.b-drop-compact {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border: 1px dashed var(--border-strong);
+  border-radius: var(--r-lg);
+  background: var(--surface-2);
+  text-align: left;
+  transition: border-color var(--dur-2) var(--ease), background var(--dur-2) var(--ease);
+}
+
+.b-drop-compact.is-over {
+  border-color: var(--primary);
+  background: var(--primary-soft);
+}
+
+.b-drop-compact .b-drop-title {
+  font-size: var(--fs-sm);
+  font-weight: 550;
+}
+
+.b-drop-compact .b-drop-hint {
+  font-size: var(--fs-micro);
 }
 
 .b-queue-row {

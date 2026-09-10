@@ -721,6 +721,16 @@ export default function MyRecordsPage() {
   /**
    * Featured: the abnormal result that moved most in percentage terms since
    * the previous reading - the thing a patient most likely wants to see.
+   *
+   * If no trend qualifies for that (nothing abnormal yet, or nothing has a
+   * second reading to compare against), that does NOT mean there's no
+   * bloodwork data - sortedTrends can still be non-empty. Falling back to
+   * null in that case previously surfaced a false "No bloodwork data yet"
+   * empty state on top of real Records/Bloodwork/Labs counts (the actual
+   * bug this fixes). Instead, fall back to the best-ranked trend
+   * (sortedTrends is already abnormal-first, so this stays a meaningful
+   * choice, not an arbitrary one) - same fallback sortedTrends already uses
+   * when a manually-picked featuredOverride key doesn't resolve.
    */
   const featuredTrend = useMemo(() => {
     if (!sortedTrends.length) return null;
@@ -737,7 +747,7 @@ export default function MyRecordsPage() {
         trend.previous.value !== 0
     );
 
-    if (!candidates.length) return null;
+    if (!candidates.length) return sortedTrends[0];
 
     return candidates.reduce((max, trend) => {
       const pct = Math.abs(trend.delta! / trend.previous!.value);
@@ -1087,9 +1097,15 @@ export default function MyRecordsPage() {
           }
         />
 
-        {/* Patients get the plain-language explanation a clinician does not
-            need: the shaded band is the normal range for this test. */}
-        {hasReferenceBand(featuredTrend.latest?.reference_range) ? (
+        {/* Truthful state for a single-reading analyte: the chart above
+            already renders a single point safely, but without this note a
+            flat single dot can look like a rendering glitch rather than
+            "there's only one reading so far." */}
+        {featuredTrend.points.length <= 1 ? (
+          <p className="b-meta" style={{ marginTop: "var(--s2)" }}>
+            Only one reading so far — a trend line needs at least two.
+          </p>
+        ) : hasReferenceBand(featuredTrend.latest?.reference_range) ? (
           <p className="b-meta" style={{ marginTop: "var(--s2)" }}>
             The shaded band shows the normal range for this test. A result outside it is not
             necessarily a problem — discuss it with your doctor.

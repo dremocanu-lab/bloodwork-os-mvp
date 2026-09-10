@@ -272,12 +272,17 @@ type LabSourceEvidence = {
 function LabSourceAction({
   labId,
   autoOpen,
+  active,
 }: {
   labId: number;
   /** Set when this row is the target of a chart-point "View original" deep
    * link (?lab={id} — see the Trends chart's onPointClick and
    * BRAGI_REDUCTO_PLAN.md Phase 6). Opens the viewer once on mount. */
   autoOpen?: boolean;
+  /** This row's evidence is the one currently shown in the source viewer —
+   * a subtle active treatment on the button itself, matching the row's own
+   * selected state (not a separate, oversized CTA). */
+  active?: boolean;
 }) {
   const { language } = useLanguage();
   const { openSourceEvidence } = useSourceViewer();
@@ -330,9 +335,10 @@ function LabSourceAction({
     <span ref={rowRef}>
       <button
         type="button"
-        className="b-btn b-btn-ghost b-btn-sm b-source-action"
+        className={`b-btn b-btn-ghost b-btn-sm b-source-action${active ? " b-source-action-active" : ""}`}
         onClick={handleOpen}
         disabled={loading}
+        aria-pressed={active || undefined}
       >
         {loading ? <span className="b-spinner" /> : <IconExternal size={12} />}
         {labels.action}
@@ -523,6 +529,13 @@ export default function DocumentStructuredPage() {
   // Chart-point → source deep link: /documents/{id}?lab={labResultId}
   // (see the Trends chart's onPointClick and BRAGI_REDUCTO_PLAN.md Phase 6).
   const deepLinkedLabId = Number(searchParams?.get("lab")) || null;
+
+  // Which lab row (if any) is the one currently shown in the source
+  // viewer — drives the row's restrained purple "selected" state. Tied to
+  // real evidence (SourceEvidenceView.lab_result_id from the backend),
+  // never a visual/array index.
+  const { data: openSourceData, isOpen: sourceViewerOpen } = useSourceViewer();
+  const openLabResultId = sourceViewerOpen ? openSourceData?.lab_result_id ?? null : null;
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
@@ -1055,8 +1068,39 @@ export default function DocumentStructuredPage() {
           color: var(--muted);
         }
 
-        .document-lab-table tbody tr:hover td {
-          background: var(--surface-hover);
+        .document-lab-table td {
+          transition: background var(--dur-2) var(--ease);
+        }
+
+        /* Desktop-only: a real pointer can hover, so a subtle Bragi-tinted
+           gradient signals "this row is interactive" without touching
+           color on devices where hover would otherwise get stuck after a
+           tap (touchscreens report a synthetic, non-dismissable hover). */
+        @media (hover: hover) {
+          .document-lab-table tbody tr:hover td {
+            background: linear-gradient(
+              90deg,
+              var(--surface-hover),
+              color-mix(in srgb, var(--brand-500) 7%, var(--surface-hover))
+            );
+          }
+        }
+
+        /* The row whose source is currently open in the viewer - restrained
+           but unmistakable, and wins over the hover tint above (more
+           specific selector + declared later). */
+        .document-lab-table tr.source-open-row td {
+          background: var(--brand-50);
+        }
+
+        .document-lab-table tr.source-open-row td:first-child {
+          box-shadow: inset 2px 0 0 var(--primary);
+        }
+
+        @media (hover: hover) {
+          .document-lab-table tr.source-open-row:hover td {
+            background: color-mix(in srgb, var(--brand-50) 80%, var(--brand-100));
+          }
         }
 
         .document-edit-grid {
@@ -1091,6 +1135,14 @@ export default function DocumentStructuredPage() {
           }
 
           .document-lab-table tr.abnormal-row td:first-child {
+            box-shadow: none;
+          }
+
+          .document-lab-table tr.source-open-row {
+            box-shadow: inset 2px 0 0 var(--primary);
+          }
+
+          .document-lab-table tr.source-open-row td:first-child {
             box-shadow: none;
           }
 
@@ -1806,11 +1858,14 @@ export default function DocumentStructuredPage() {
                           {rows.map((lab) => {
                             const nil = isNilValue(lab.value);
                             const abnormal = !nil && (lab.is_abnormal || isAbnormalFlag(lab.flag));
+                            const sourceOpen = openLabResultId === lab.id;
 
                             return (
                               <tr
                                 key={lab.id}
-                                className={`${abnormal ? "abnormal-row" : ""} ${nil ? "nil-row" : ""}`}
+                                className={`${abnormal ? "abnormal-row" : ""} ${nil ? "nil-row" : ""} ${
+                                  sourceOpen ? "source-open-row" : ""
+                                }`}
                               >
                                 <td data-label={t("test")}>
                                   <span className="b-cell-title" style={{ whiteSpace: "normal" }}>
@@ -1855,6 +1910,7 @@ export default function DocumentStructuredPage() {
                                     <LabSourceAction
                                       labId={lab.id}
                                       autoOpen={deepLinkedLabId === lab.id}
+                                      active={sourceOpen}
                                     />
                                   </span>
                                 </td>
