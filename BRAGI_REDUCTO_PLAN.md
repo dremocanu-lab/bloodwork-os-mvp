@@ -1971,3 +1971,143 @@ one and only place the structure branched.
   runner exists in this repo (confirmed again this round — same as
   every prior one) to add automated frontend assertions beyond
   `tsc`/`eslint`/`build`.
+
+## 15. Real browser proof: visual-anchor scroll preservation (§14's fix was incomplete)
+
+§14 claimed the structured-pane jump was fixed based on code/CSS/
+reconciliation inspection alone — explicitly flagged as unverified in a
+live browser. A live retest (screenshot) proved that claim wrong: the
+left pane still jumped to the top. This section describes what was
+actually still broken, found and fixed using a real local browser
+session (Playwright + Chromium, already present in this repo's
+devDependencies — `@playwright/test` — not a new tool), a real synthetic
+patient account created through the normal `/auth/signup` endpoint, and
+a real document processed through the live Reducto API, not mocks.
+
+### 15a. What §14's fix actually did, and why it wasn't enough
+
+§14's `Shell` fix (stable DOM wrapper + numeric `scrollY`↔`scrollTop`
+transfer) was real and correct for what it targeted — it stops the
+component **remount** and correctly transfers a numeric scroll
+**offset** between the window and `.b-app-split-main`. Direct
+measurement in a real browser confirmed this part works exactly as
+designed.
+
+What it does not — and structurally cannot — account for: opening the
+split view makes the structured pane **narrower** (from full width down
+to roughly 55% of the viewport). Its content reflows at that new width
+— longer test/section names wrap onto more lines, cards resize, etc. —
+which changes how much content sits above any given row **independent
+of the scroll offset itself**. Real measurement on a 20-row synthetic
+CBC document: opening the viewer with "White Blood Cell Count" at
+screen-Y 821px, with the numeric-offset transfer alone, left it at
+screen-Y 1405px — an 583px jump, despite the transferred `scrollTop`
+being numerically "correct." A single number cannot capture "this
+specific row should stay at this specific screen position" once the
+content around it has reflowed to a different shape.
+
+### 15b. The fix: a real visual anchor, not just a number
+
+New `captureVisualAnchor()` (`source-viewer-context.tsx`): captures
+`document.activeElement` (whatever the user just clicked — a click
+focuses its target in every evergreen browser) plus its current
+`getBoundingClientRect().top`. `openSourceEvidence()` now accepts an
+optional pre-captured anchor as a second argument; `SourceViewerProvider`
+stores it in a `visualAnchorRef` exposed on the context (a ref, not
+state — reading/writing it must never itself trigger a render).
+
+`Shell`'s `useLayoutEffect` (`app-shell-with-source-viewer.tsx`) now
+does the numeric transfer as before, THEN re-measures the SAME anchored
+element's new `getBoundingClientRect().top` (forcing the browser to
+compute the already-committed, already-reflowed layout) and nudges
+`.b-app-split-main.scrollTop` by exactly the difference. Real
+measurement after this fix: "White Blood Cell Count" went from 821.41px
+to 821.86px — a 0.45px difference, effectively pixel-perfect.
+
+**A real timing bug found and fixed along the way**: the first version
+of this fix anchored inside `openSourceEvidence()` itself, called from
+`LabSourceAction.handleOpen()` — a handler that does `const response =
+await api.get(...)` (fetching which evidence id to open) BEFORE calling
+`openSourceEvidence()`. Immediately before that await, `handleOpen()`
+calls `setLoading(true)`, which disables the very button that was just
+clicked — and disabling a focused element blurs it (the browser moves
+focus elsewhere, typically to `document.body`). By the time the network
+call resolved and `openSourceEvidence()` actually ran, `document.
+activeElement` was no longer the clicked row — it was `body`, which
+`captureVisualAnchor()` correctly refuses to use (returns `null`),
+silently falling back to numeric-only transfer and reproducing the
+exact bug this was meant to fix. Confirmed via real instrumentation
+(focusin/focusout event logging in an actual browser) before concluding
+this was the cause, not assumed. Fixed by having `LabSourceAction.
+handleOpen()` call `captureVisualAnchor()` as the literal first
+statement — before `setLoading(true)` — and pass the result through to
+`openSourceEvidence(id, anchor)` explicitly, so the anchor is captured
+while the row is still genuinely focused.
+
+**Closing** uses the same anchor element (not cleared on close — it's
+re-measured, not re-picked): `close()` re-measures the anchor's CURRENT
+position (still within the split layout, right before it goes away) —
+necessary because `document.activeElement` at close-click time is the
+viewer's own close button (in the right pane, useless as a left-pane
+anchor), and because the user may have independently scrolled the left
+pane while comparing rows, making the original open-time position
+stale. `Shell`'s closing branch re-measures the same element post-close
+and nudges `window.scrollTo` by the difference. Real measurement: 427.86px
+before close, 427.66px after — 0.2px difference.
+
+### 15c. Real browser test results (all four, Playwright + Chromium,
+real synthetic account, real Reducto-processed document)
+
+1. **Open preserves position**: WBC row screen-Y 821.41 → 821.86px
+   (Δ0.45px). PASS.
+2. **Switching to an already-visible row doesn't move the pane**: WBC
+   → RBC (adjacent, already visible without scrolling), WBC's own
+   screen-Y 821.86 → 820.86px (Δ1px). PASS. (A separate finding, not a
+   bug: switching to a row that ISN'T currently visible — e.g. two rows
+   further down, outside the 900px-tall pane — does scroll, because the
+   button has to become visible before Playwright, or a real mouse, can
+   click it at all; this is unavoidable and correct, not a regression.
+   Confirmed by direct instrumentation that the scroll happens between
+   the click's `focusin` and `focusout`, sized to bring the target
+   fully into view — not an unrelated extra jump.)
+3. **Page isolation**: selected RBC (page 1 evidence), manually clicked
+   to page 2 — notice banner correctly reads "The selected source is on
+   page 1" with a "Return to source" link, **zero** `.b-source-highlight`
+   elements present on page 2 (screenshot confirms empty page, no stray
+   frame). Then selected Glucose (a real page-2 analyte) — viewer
+   correctly shows "Page 2 of 2" with a full-row highlight there
+   (68.7% of page width — the whole row, not a value capsule).
+   Screenshots confirm all of this visually, not just via DOM queries.
+4. **Close preserves position**: anchor (Glucose, the last-selected row)
+   at screen-Y 427.86 before close, 427.66 after (Δ0.2px). PASS.
+
+Also re-confirmed from real (not synthetic/handcrafted) Reducto
+citation data on this same document: the WBC row's highlight spans
+70.2% of the page width (name through unit, not a value-only capsule)
+with a 1px outline and 6%-opacity fill — the §13e/§14 highlight-framing
+work holds up under real, fresh extraction.
+
+### 15d. Verification
+
+- `tsc --noEmit` clean; `npm run build` succeeds (33 routes); `eslint`
+  clean on every touched file.
+- Backend: unchanged this round (the remaining bug was entirely
+  frontend) — `pytest -q` re-run for safety: 67 passed.
+- Real browser QA actually performed (not "not run" this time): a local
+  Next.js dev server + local FastAPI backend (pointed at the same Neon
+  dev DB other rounds have used), a synthetic patient account created
+  through the real `/auth/signup` endpoint (not a bypass — normal
+  registration, normal JWT issuance), a real 20-row 2-page synthetic
+  CBC + Basic Metabolic Panel PDF generated with PyMuPDF and uploaded
+  through the real `/upload/batch` auto-classify endpoint so it went
+  through actual live Reducto classify + extract (not the legacy OCR
+  path — confirmed via the document's own audit trail:
+  `classification_completed / reducto / confidence=1.0`). The test
+  account and document were deleted after testing; no production
+  system or data was touched.
+- Not run: the repo's own `qa/flows.mjs`/`qa/a11y.mjs` suite (a
+  separate, broader regression pass) — this round's testing was a
+  narrowly-targeted script against the exact reported scenario, not a
+  full QA sweep. Multi-page-report testing beyond the 2-page synthetic
+  document, and mobile/tablet-sheet-variant testing, were not covered
+  this round either.

@@ -12,13 +12,19 @@ round (§12: fixed a fabricated PSW clinical claim from §11, completed
 the popup audit), a visual/interaction correction pass (§13: upload
 compaction, an Overview display bug, source-viewer route lifecycle,
 full-lab-row PDF framing, PDF render quality, a blank-viewer layout
-bug), and a source-highlighting correctness pass (§14: page-association
-bleed, a structured-pane scroll-jump bug) are implemented and merged to
-`main`. See plan §2f, §8, §9, §10, §11, §12, §13, §14 for exactly what
-"done" means here and what's honestly still deferred. `REDUCTO_ENABLED`
-is `true` in production (confirmed via live traffic) — see §10 for the
-real production bug that was blocking every upload there and is now
-fixed.
+bug), a source-highlighting correctness pass (§14: page-association
+bleed, a structured-pane scroll-jump bug — code-level fix only, NOT yet
+proven in a real browser at that point), and a real-browser-verified
+fix for what §14 missed (§15: the structured pane still jumped in
+practice because content reflow at the new, narrower width moves a row
+independent of scroll offset — fixed with a real visual anchor, proven
+with an actual local Playwright/Chromium session against a real
+Reducto-processed document, not just code inspection) are implemented
+and merged to `main`. See plan §2f, §8, §9, §10, §11, §12, §13, §14,
+§15 for exactly what "done" means here and what's honestly still
+deferred. `REDUCTO_ENABLED` is `true` in production (confirmed via live
+traffic) — see §10 for the real production bug that was blocking every
+upload there and is now fixed.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -88,6 +94,28 @@ fixed.
     stable DOM wrapper (`display: contents` when inactive) plus
     explicitly carrying the scroll offset across the transition in both
     directions. See plan §14.
+15. §14's scroll-jump fix turned out to be real but incomplete — a live
+    retest (screenshot) proved the pane still jumped. Root cause: the
+    numeric scrollTop transfer was correct, but the left pane also gets
+    NARROWER when the split opens, so its content reflows (longer names
+    wrap onto more lines, etc.) — a row can end up several hundred
+    pixels from where it was even with a numerically "correct" scroll
+    offset, since reflow changes how much content sits above it,
+    independent of scrollTop. Fixed with a real visual anchor
+    (`captureVisualAnchor()` — captures the clicked element + its
+    on-screen position, re-measures it after the layout swap, nudges
+    scroll by the exact difference) instead of just a number. A second,
+    subtler bug was found and fixed in the same pass: the anchor was
+    initially captured too late (after an async gap during which the
+    clicked button had already been disabled and therefore blurred),
+    landing on `document.body` instead of the real row — fixed by
+    capturing the anchor as the very first thing the click handler does.
+    This round was verified in an ACTUAL local browser (Playwright +
+    Chromium, a real synthetic patient account, a real document
+    processed through live Reducto) — not just code inspection: open
+    preserves position to within 0.45px, close to within 0.2px, page-2
+    navigation shows zero highlight bleed, and a real page-2 analyte
+    highlights correctly there. See plan §15.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
 - **Production was actually broken for uploads before §10** — `documents.
@@ -152,14 +180,26 @@ fixed.
   §14b. There's no backfill path short of re-processing the original
   document through Reducto again; not attempted this round (out of
   scope, and would cost real API quota per affected document).
-- §14's fixes (page-association gating, the scroll-preservation
-  architecture) were verified by direct code/CSS/reconciliation
-  inspection plus a real Reducto extraction test (see plan §14a), not a
-  live browser pass — same `BRAGI_TOKENS` blocker as always. If you get
-  real QA tokens, the highest-value things to confirm live: scroll a
-  structured lab table to the middle, click "View in original," confirm
-  the left pane didn't move; manually page-navigate the PDF pane away
-  from a selected evidence's page and confirm no highlight follows.
+- §14's page-association gating was real and held up under real-browser
+  retesting (§15). §14's scroll-preservation claim did NOT hold up —
+  it was verified only by code/CSS inspection at the time, and a live
+  retest proved it wrong (content reflow at the narrower split width
+  moves rows independent of scroll offset). This is a standing lesson,
+  not just a fixed bug: for anything that depends on actual browser
+  layout/reflow behavior, code-level reasoning is not sufficient
+  evidence of "fixed" — see plan §15 for how it was actually verified
+  this time (a real local Playwright/Chromium session, a real synthetic
+  account, a real Reducto-processed document, pixel-level before/after
+  measurements).
+- §15's fix was verified locally (see plan §15d for the exact method)
+  but not against the repo's own `qa/flows.mjs`/`qa/a11y.mjs` suite,
+  and not beyond a 2-page synthetic document or the desktop split
+  layout (mobile/tablet's full-screen sheet variant wasn't retested
+  this round). `BRAGI_TOKENS` itself is still not available as a
+  pre-existing file, but this round found a working alternative: create
+  a synthetic account through the real `/auth/signup` endpoint, use its
+  real JWT — that path is now proven to work locally and could be
+  extended to run the full `qa/` suite too, if a future round needs it.
 
 ## Architecture decisions (cumulative — see plan for full detail per phase)
 - `document_type` rides alongside the existing `section` column
@@ -255,9 +295,29 @@ file that was never actually read.
   produces correct, page-scoped geometry for every row across both
   pages (see plan §14a for the full transcript of what was verified).
   The page-association fix and the scroll-preservation architecture
-  were verified by direct code/CSS/reconciliation-behavior inspection,
-  not a live browser pass — same `BRAGI_TOKENS` blocker as always; see
-  plan §14f.
+  were verified by direct code/CSS/reconciliation-behavior inspection
+  ONLY, not a live browser pass — and that turned out to matter: see §15.
+- §15: this round actually ran a real browser (Playwright + Chromium —
+  already an existing devDependency, `@playwright/test`, not a new
+  tool) against a local Next.js dev server + local FastAPI backend
+  pointed at the shared Neon dev DB. `BRAGI_TOKENS` as a pre-existing
+  file is still unavailable, but this round found and used a legitimate
+  alternative: a synthetic patient account created through the real
+  `/auth/signup` endpoint (normal registration, normal JWT — not an
+  auth bypass), seeded into `localStorage` the same way the existing
+  `qa/flows.mjs` harness seeds its own tokens. A real 20-row, 2-page
+  synthetic CBC + Basic Metabolic Panel PDF was uploaded through the
+  real `/upload/batch` endpoint and confirmed (via its own audit trail)
+  to have gone through live Reducto classify+extract, not the legacy
+  OCR path. Four scenarios were measured directly in the browser (DOM
+  `getBoundingClientRect()`, not assumptions) with screenshots as
+  supporting evidence: open-preserves-position (Δ0.45px), switch-to-a-
+  visible-row-doesn't-move (Δ1px), page-isolation (zero highlight
+  elements on an unrelated page; a real page-2 analyte highlights
+  correctly there), close-preserves-position (Δ0.2px). The synthetic
+  account and document were deleted after testing. Not run: the repo's
+  own broader `qa/flows.mjs`/`qa/a11y.mjs` suite, multi-page documents
+  beyond 2 pages, or the mobile/tablet full-screen-sheet variant.
 
 ## Known issues
 See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;
@@ -273,6 +333,13 @@ for the Reducto-integration-specific ones.
   integration (see plan §8) and is in `backend/.env` (gitignored, local
   only) — rotate/replace it if you don't want that key used further.
   `REDUCTO_ENABLED=true` is confirmed live in production already.
-- **Playwright QA**: generate a `BRAGI_TOKENS` file (see `qa/flows.mjs`
-  for the expected shape) if you want to run the existing QA harness
-  against this work — still nobody's been able to generate this safely.
+- **Playwright QA**: nobody's generated a real `BRAGI_TOKENS` file
+  covering every role (see `qa/flows.mjs` for the expected shape) —
+  but §15 found and used a working way to get at least one real,
+  legitimate token when needed: sign up a synthetic account through the
+  actual `/auth/signup` endpoint (normal registration, real JWT
+  returned), then seed it into `localStorage` the same way `qa/flows.mjs`'s
+  own `seed()` does. That covers one role at a time (whichever the
+  synthetic account was created as) — building a full `BRAGI_TOKENS`
+  covering every role the same way (patient/doctor/pcp/admin/care_partner/
+  emergency_worker) is mechanical from here, just not done this round.
