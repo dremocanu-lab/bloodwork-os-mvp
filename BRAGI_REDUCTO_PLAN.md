@@ -750,23 +750,144 @@ live before being written down.
   get) — scoped out for time; a child's lab rows are always inserted as
   new rows even if they duplicate an existing observation.
 
-### Turning it on (`REDUCTO_ENABLED=true`)
+### Turning it on (`REDUCTO_ENABLED=true`) — superseded, see §9
 
-Not recommended yet. Before doing it anywhere:
+§9 below is a full DB-backed verification round that closes most of the
+gaps this section originally listed. Read §9 before following the
+checklist that used to be here.
 
-1. Run the multi-file batch upload flow (§13) against your own local
-   Postgres with `REDUCTO_ENABLED=true`/`REDUCTO_API_KEY` set, using
-   real or synthetic documents, and confirm Document/LabResult/
-   SourceEvidence rows look right and "View original" highlights
-   correctly.
-2. Try at least one genuinely mixed PDF and confirm the parent + child
-   documents both look correct and the child pages open at the right
-   spot in the parent file.
-3. Decide whether the known limitations above (non-contiguous split
-   page mapping untested live, no per-section confirmation UI, no
-   Level-3 dedup for split children) are acceptable for your first
-   rollout, or worth closing first.
-4. Only then set `DOCUMENT_EXTRACTION_PROVIDER=reducto`,
-   `DOCUMENT_EXTRACTION_FALLBACK=legacy` (keep the fallback — a Reducto
-   outage should degrade, not break, uploads), and `REDUCTO_ENABLED=true`
-   in that environment specifically.
+## 9. Production-readiness verification (follow-up round, real Postgres)
+
+A further follow-up round ran the full `POST /upload/batch` path
+end-to-end — real HTTP requests against a real running FastAPI server,
+`REDUCTO_ENABLED=true`, backed by a real (non-production) Neon Postgres
+dev database — closing the biggest gap named in §8 ("what was NOT
+verified": the DB-backed HTTP flow had never actually run).
+
+### What was verified live, against real Postgres, this round
+
+All of the following are real HTTP calls through a real running server
+to a real database, not function-level calls or mocks — see the test
+script referenced in the commit for the full scenario list:
+
+- **Multi-file batch independence**: 6 files (lab, discharge, imaging,
+  prescription, consultation, a genuinely ambiguous one) uploaded in one
+  `POST /upload/batch` call. 4 processed and completed correctly and
+  independently; the ambiguous one correctly stopped at
+  `needs_confirmation` without blocking the other 5; the 6th
+  (`discharge_summary`) failed for a reason unrelated to Reducto (see
+  "found and fixed" below).
+- **Romanian lab → structured Analize → View original → bbox
+  highlight**: a real 2-page synthetic lab report produced exactly 7
+  `LabResult` rows with correct canonicalization (`"Hemoglobina"` →
+  `canonical_name="hemoglobin"`), and `GET /lab-results/{id}/source`
+  returned a real, non-null page number and bbox
+  (`bbox_x/y/width/height`) with `provider="reducto"` — this is the
+  actual coordinate data "View original" highlighting depends on,
+  confirmed present in the database, not just in the Reducto API
+  response.
+- **Exact duplicate**: uploading the identical file twice → the second
+  upload's job came back `status="duplicate"` pointing at the original
+  `Document`.
+- **Wrong-patient quarantine**: a synthetic lab document for a
+  completely different (fictitious) patient, uploaded to the first
+  patient's account → `status="quarantined"`, and the document appeared
+  in `GET /documents/quarantined`.
+- **Mixed-PDF split**: the same 9-page synthetic mixed PDF from §8
+  (pages 1-2 lab / 3 imaging / 4-8 discharge / 9 prescription), this
+  time run through the real database — produced exactly 1 parent +
+  4 child `Document` rows with the correct `page_range_start`/
+  `page_range_end` on each, the lab child's `LabResult`/`SourceEvidence`
+  rows present and correct, and — critically — every child's `saved_to`
+  equal to the **parent's** `saved_to` (confirmed by direct comparison),
+  so "View original" opens the real original file, never a throwaway
+  slice.
+- **Non-contiguous split page remapping** (the specific edge case §8
+  flagged as reasoned-through but not observed): a new synthetic 3-page
+  document was built with laboratory content on pages 1 and 3 and
+  imaging content on page 2 (nothing in §8's documents exercised this).
+  Reducto Split genuinely returned one `laboratory_results` section with
+  `pages=[1, 3]` — confirming Reducto itself merges non-adjacent same-
+  category pages into one section, which is exactly the case the
+  `_original_page` list-based mapping (rather than a flat offset) exists
+  for. Verified end-to-end: the resulting lab child's `SourceEvidence`
+  rows carry `page_number` values of exactly `{1, 3}` — the real
+  original pages — never `2` (the imaging page) and never the slice-
+  local `{1, 2}` a naive offset would have produced.
+- **Reducto Parse persistence** (new this round — closes the other gap
+  named in the original spec, "rather than relying only on Extract"):
+  `parse_document()` (new in `reducto_extraction.py`) calls Reducto
+  Parse and stores its full page/bbox-tagged blocks in a new
+  `Document.parsed_content` column (JSON), and `extracted_text` is now
+  the real parsed document text rather than a synthesized
+  labs-list/sections-only reconstruction. Verified: `parsed_content`
+  populated with real blocks carrying real page numbers, and
+  `extracted_text` containing text that only a real parse (not the
+  Extract schema) would have — e.g. the `"HEMOLEUCOGRAMA COMPLETA"`
+  section header, which no Extract schema field asked for.
+
+### Found and fixed this round
+
+- **Real bug: overlapping Split sections were wrongly treated as a
+  "mixed PDF."** The synthetic ambiguous document from §8 (one page
+  legitimately readable as either `laboratory_results` or
+  `discharge_summary` — the same case Classify's confidence-tie
+  detection exists for) came back from Split as **two sections that
+  both claimed page 1** — not two sections on different pages. The
+  original code treated any `>1` non-empty Split section as "mixed" and
+  short-circuited straight into the split/child-document path,
+  bypassing Classify's `needs_confirmation` decision entirely and
+  silently creating two overlapping child documents for one ambiguous
+  page. Fixed: `ReductoSplitResult.is_mixed` now requires every
+  section's pages to be disjoint from every other section's — only a
+  genuine page-range split (no page claimed by more than one section)
+  counts as "mixed." An overlapping result now correctly falls through
+  to Classify's own `needs_confirmation` status, exactly as intended.
+  Verified live both before the fix (wrong: silently split) and after
+  (right: `needs_confirmation`, user asked to pick one).
+- **Not a Reducto bug, but worth recording**: the `discharge_summary.pdf`
+  batch file failed with `RuntimeError: OPENAI_API_KEY is not set.` —
+  `discharge_summary` intentionally still uses its existing, unchanged
+  OpenAI-based pipeline (a deliberate decision in §8, "not clearly
+  broken"), and this test environment has no `OPENAI_API_KEY`
+  configured. Reducto Classify correctly identified it as
+  `discharge_summary` at confidence 1.0 before the (unrelated,
+  pre-existing) pipeline failed on the missing key. Confirmed via the
+  server's own traceback, not assumed.
+
+### What still wasn't verified
+
+- **The doctor/care-partner upload paths** — unchanged by design (only
+  `POST /upload/batch`, the patient multi-file flow, uses Reducto), so
+  not exercised this round either; they still use the legacy pipeline
+  exactly as before.
+- **`discharge_summary` end-to-end** — blocked by the missing
+  `OPENAI_API_KEY` above; this exercises pre-existing, non-Reducto code,
+  not this integration.
+- **Playwright QA** — still not run (no `BRAGI_TOKENS`), same as every
+  prior round.
+- **Scale/performance**: Starlette's `BackgroundTasks` run sequentially
+  in-process — 6 files in one batch took ~4 minutes end-to-end in this
+  test (each file makes 2-5 real Reducto HTTP calls). This is correctness-
+  verified, not load-tested; a much larger batch, or many users
+  uploading concurrently, will queue up behind each other rather than
+  parallelize. Worth watching in production, not a correctness concern.
+- **Level-2 semantic duplicate matching, per-section split confirmation
+  UI, and Level-3 dedup for split children** — still not implemented,
+  as named in §8.
+
+### Is `REDUCTO_ENABLED=true` safe now?
+
+For the scope this integration actually covers (`POST /upload/batch`,
+the patient multi-file upload flow) — yes, with the caveats above. Every
+core claim (classification, ambiguity handling, split, non-contiguous
+page remapping, duplicate detection, identity quarantine, structured
+Analize, source provenance, Parse persistence) has now been verified
+against a real database, not just the live Reducto API in isolation.
+The one real bug found this round (overlapping-split-as-ambiguity) is
+fixed and re-verified. Recommended next step before flipping it in any
+environment with real patients: a quick pass on the two things this
+round couldn't reach — Playwright/manual QA of the actual upload UI, and
+either an `OPENAI_API_KEY` in that environment or accepting that
+`discharge_summary` uploads will fail until one is configured (true
+regardless of Reducto).

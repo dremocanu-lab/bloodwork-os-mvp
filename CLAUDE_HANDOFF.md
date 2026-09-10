@@ -4,11 +4,13 @@ See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
 ## CURRENT PHASE
-None — all 7 phases from the original spec, **plus a real Reducto
-integration (§8)**, are implemented and merged to `main`. See plan §2f
-and §8 for exactly what "done" means here and what's honestly still
-deferred. `REDUCTO_ENABLED` is still `false` everywhere — see §8's
-"turning it on" section for what to verify before flipping it.
+None — all 7 phases from the original spec, a real Reducto integration
+(§8), and a full DB-backed production-readiness verification round (§9)
+are implemented and merged to `main`. See plan §2f, §8, and §9 for
+exactly what "done" means here and what's honestly still deferred.
+`REDUCTO_ENABLED` is still `false` everywhere in the repo — see §9's
+"is it safe now" for the current answer and what's still worth doing
+first.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -26,11 +28,16 @@ deferred. `REDUCTO_ENABLED` is still `false` everywhere — see §8's
    full cumulative diff review. See plan §2f.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
-- **Reducto is now really integrated (see plan §8)** — classify, split,
-  and extract were implemented and verified against the live API with
-  synthetic documents. Before setting `REDUCTO_ENABLED=true` anywhere:
-  run the full multi-file/mixed-PDF flow through your own local Postgres
-  (this session had no DB credentials — see §8's "what wasn't verified").
+- **Reducto is now really integrated and DB-verified (see plan §8, §9)**
+  — classify, split, extract, and parse-persistence were implemented and
+  verified against both the live Reducto API and a real non-production
+  Postgres database end-to-end (multi-file batch, Romanian lab →
+  Analize → bbox, duplicates, wrong-patient quarantine, mixed-PDF split
+  including the non-contiguous page-mapping edge case). One real bug
+  (overlapping Split sections wrongly treated as a mixed PDF instead of
+  deferring to Classify's ambiguity handling) was found and fixed this
+  round. See §9 for exactly what's still not covered before flipping
+  `REDUCTO_ENABLED=true` anywhere real.
 - Run the repo's own Playwright QA (`qa/flows.mjs`, `qa/a11y.mjs`)
   locally against the new upload/reader/chart flows at the responsive
   breakpoints the original spec named — this session couldn't safely

@@ -165,6 +165,14 @@ class Document(Base):
     # extracted_text.
     structured_sections = Column(Text, nullable=True)
 
+    # Real Reducto Parse persistence: the full document read (page/bbox-
+    # tagged blocks), stored once at upload time rather than re-parsed on
+    # every open — JSON-encoded {blocks: [{type, page, bbox_x/y/width/
+    # height, content, confidence}], provider, parser_version}. Null for
+    # documents processed by the legacy pipeline or before this existed;
+    # `extracted_text` (already on this model) is always the fallback.
+    parsed_content = Column(Text, nullable=True)
+
     # Real Reducto Split integration: a single upload that Reducto Split
     # detected as containing multiple logical documents (e.g. one PDF with
     # labs + an imaging report + a discharge summary) is stored as one

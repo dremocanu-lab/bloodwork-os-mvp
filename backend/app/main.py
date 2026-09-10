@@ -222,6 +222,7 @@ def run_migrations():
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_status VARCHAR"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS intended_patient_id INTEGER REFERENCES patients(id)"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS structured_sections TEXT"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parsed_content TEXT"))
         # Real Reducto Split integration — mixed-PDF parent/child documents.
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parent_document_id INTEGER REFERENCES documents(id)"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_range_start INTEGER"))
@@ -759,6 +760,13 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         except Exception:
             structured_sections = {}
 
+    parsed_content = None
+    if document.parsed_content:
+        try:
+            parsed_content = json.loads(document.parsed_content)
+        except Exception:
+            parsed_content = None
+
     return {
         "document_id": document.id,
         "id": document.id,
@@ -774,6 +782,7 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "classification_status": document.classification_status,
         "identity_status": document.identity_status,
         "structured_sections": structured_sections,
+        "parsed_content": parsed_content,
         "uploaded_by_user_id": document.uploaded_by_user_id,
         "uploaded_by": uploaded_by,
         "extracted_text": document.extracted_text or "",
@@ -1014,6 +1023,13 @@ def _finish_mixed_reducto_upload(
                 return None
             return original_pages[slice_local_page - 1]
 
+        # parsed_content blocks were parsed from the slice — remap their
+        # page numbers back to the original document too, same as evidence
+        # below, so they stay consistent with each other.
+        if child_pipeline_result.get("parsed_content"):
+            for block in child_pipeline_result["parsed_content"].get("blocks", []):
+                block["page"] = _original_page(block.get("page"))
+
         child_parsed_data = child_pipeline_result.get("parsed_data") or {}
 
         child_document = models.Document(
@@ -1042,6 +1058,11 @@ def _finish_mixed_reducto_upload(
             structured_sections=(
                 json.dumps(child_pipeline_result["_reducto_structured_sections"], ensure_ascii=False)
                 if child_pipeline_result.get("_reducto_structured_sections", {}).get("sections")
+                else None
+            ),
+            parsed_content=(
+                json.dumps(child_pipeline_result["parsed_content"], ensure_ascii=False)
+                if child_pipeline_result.get("parsed_content")
                 else None
             ),
             is_verified=False,
@@ -1471,6 +1492,11 @@ def process_upload_job(job_id: int):
             classification_status=job.classification_status,
             classification_confidence=job.classification_confidence,
             classification_source=job.classification_source,
+            parsed_content=(
+                json.dumps(pipeline_result["parsed_content"], ensure_ascii=False)
+                if pipeline_result.get("parsed_content")
+                else None
+            ),
 
             is_verified=False,
             verified_by=None,

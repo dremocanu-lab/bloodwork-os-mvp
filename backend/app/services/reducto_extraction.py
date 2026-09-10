@@ -26,6 +26,7 @@ from typing import Any
 from app.services.document_taxonomy import DocumentType, is_valid_document_type
 from app.services.reducto_client import (
     ReductoClient,
+    ReductoError,
     ReductoMalformedResponseError,
 )
 from app.services.reducto_schemas import (
@@ -72,10 +73,33 @@ class ReductoSplitResult:
 
     @property
     def is_mixed(self) -> bool:
-        """True when Split found more than one distinct, non-empty
-        section — i.e. this single upload actually contains multiple
-        logically separate documents that must not be filed as one."""
-        return len([s for s in self.sections if s.pages]) > 1
+        """True when Split found more than one *distinct* section — pages
+        that don't overlap with any other section's pages, i.e. this
+        single upload really does contain multiple separate documents
+        back to back.
+
+        Found by testing (not assumed): a genuinely ambiguous single-page
+        document — legitimately readable as either of two categories, the
+        same real case Classify's own confidence-tie detection exists for
+        — comes back from Split as two sections that both claim the SAME
+        page, not two sections on different pages. That is same-content
+        ambiguity, not a mixed PDF, and must defer to Classify's
+        needs_confirmation decision rather than silently becoming two
+        overlapping child documents. Only disjoint page sets count as a
+        real split.
+        """
+        non_empty = [s for s in self.sections if s.pages]
+        if len(non_empty) <= 1:
+            return False
+
+        seen_pages: set[int] = set()
+        for section in non_empty:
+            pages = set(section.pages)
+            if seen_pages & pages:
+                return False
+            seen_pages |= pages
+
+        return True
 
 
 @dataclass
@@ -100,6 +124,12 @@ class ReductoLabExtraction:
 class ReductoReaderExtraction:
     sections: dict[str, str]
     warnings: list[str] = field(default_factory=list)
+
+
+@dataclass
+class ReductoParseResult:
+    text: str
+    blocks: list[dict[str, Any]]
 
 
 def _client() -> ReductoClient:
@@ -386,6 +416,44 @@ def extract_reader_sections(file_id: str, document_type: str) -> ReductoReaderEx
 
 
 # ---------------------------------------------------------------------------
+# Parse — the full document read (text + page/bbox-tagged blocks), stored
+# so the Reader and full-text search have the complete document, not just
+# whatever a narrow Extract schema happened to ask for. Verified live: a
+# 2-page synthetic lab report came back as a single chunk whose `content`
+# is the full page-ordered markdown (headings, both tables, signature
+# line) — used directly as `extracted_text` in place of the earlier
+# labs-only/sections-only synthesized text.
+# ---------------------------------------------------------------------------
+
+def parse_document(file_id: str) -> ReductoParseResult:
+    client = _client()
+    body = client.parse(file_id)
+    result = body["result"]
+
+    chunks = result.get("chunks") or []
+    text = "\n\n".join(chunk.get("content", "") for chunk in chunks if chunk.get("content"))
+
+    blocks: list[dict[str, Any]] = []
+    for chunk in chunks:
+        for block in chunk.get("blocks") or []:
+            bbox = block.get("bbox") or {}
+            blocks.append(
+                {
+                    "type": block.get("type"),
+                    "page": bbox.get("original_page") or bbox.get("page"),
+                    "bbox_x": bbox.get("left"),
+                    "bbox_y": bbox.get("top"),
+                    "bbox_width": bbox.get("width"),
+                    "bbox_height": bbox.get("height"),
+                    "content": block.get("content"),
+                    "confidence": block.get("confidence"),
+                }
+            )
+
+    return ReductoParseResult(text=text, blocks=blocks)
+
+
+# ---------------------------------------------------------------------------
 # Pipeline-result builders — shape-compatible with what process_upload_job
 # already expects from process_uploaded_document/process_uploaded_discharge_summary
 # (see main.py), so the Document/LabResult/SourceEvidence creation code
@@ -414,13 +482,27 @@ def _sections_to_extracted_text(sections: dict[str, str]) -> str:
     return "\n\n".join(f"{key.replace('_', ' ').upper()}\n{value}" for key, value in sections.items())
 
 
+def _try_parse_document(file_id: str) -> ReductoParseResult | None:
+    """Parse is best-effort on top of a successful Extract — a Parse
+    failure must not blank out labs/sections that already extracted fine.
+    Falls back to None; callers use their own synthesized text instead."""
+    try:
+        return parse_document(file_id)
+    except ReductoError as error:
+        print(f"Reducto parse (persistence) failed for {file_id}, falling back to synthesized text: {error}")
+        return None
+
+
 def build_pipeline_result_labs(file_id: str, page_range: tuple[int, int] | None = None) -> dict[str, Any]:
     """Real Reducto Extract for a laboratory_results document, mapped into
     the same `{extracted_text, parsed_data: {..., labs: [...]}}` shape the
     legacy bloodwork pipeline (`document_pipeline.process_bloodwork_document`)
     already produces — main.py's Document/LabResult/SourceEvidence creation
-    code is untouched."""
+    code is untouched. Also runs real Reducto Parse and persists its full
+    text + page/bbox blocks (`parsed_content`) so the Reader/search have
+    the complete document, not just the lab table Extract asked for."""
     extraction = extract_lab_results(file_id, page_range=page_range)
+    parsed = _try_parse_document(file_id)
 
     parsed_data = {
         "patient_name": extraction.identity.get("patient_name"),
@@ -436,9 +518,14 @@ def build_pipeline_result_labs(file_id: str, page_range: tuple[int, int] | None 
         "warnings": extraction.warnings,
     }
 
+    extracted_text = (parsed.text if parsed and parsed.text else None) or _labs_to_extracted_text(
+        extraction.labs, extraction.identity
+    )
+
     return {
-        "extracted_text": _labs_to_extracted_text(extraction.labs, extraction.identity),
+        "extracted_text": extracted_text,
         "parsed_data": parsed_data,
+        "parsed_content": {"blocks": parsed.blocks, "provider": "reducto", "parser_version": PARSER_VERSION} if parsed else None,
         "warnings": extraction.warnings,
     }
 
@@ -451,13 +538,14 @@ def build_pipeline_result_reader(file_id: str, document_type: str) -> dict[str, 
     so the Phase 4 Reader call site can use it directly instead of paying
     for a second (OpenAI) extraction of the same document."""
     reader = extract_reader_sections(file_id, document_type)
+    parsed = _try_parse_document(file_id)
 
     try:
         identity = extract_identity(file_id)
     except ReductoMalformedResponseError:
         identity = {}
 
-    extracted_text = _sections_to_extracted_text(reader.sections)
+    extracted_text = (parsed.text if parsed and parsed.text else None) or _sections_to_extracted_text(reader.sections)
 
     parsed_data = {
         "patient_name": identity.get("patient_name"),
@@ -475,5 +563,6 @@ def build_pipeline_result_reader(file_id: str, document_type: str) -> dict[str, 
         "note_body": extracted_text or None,
         "parsed_data": parsed_data,
         "_reducto_structured_sections": {"language": None, "sections": reader.sections, "warnings": reader.warnings},
+        "parsed_content": {"blocks": parsed.blocks, "provider": "reducto", "parser_version": PARSER_VERSION} if parsed else None,
         "warnings": reader.warnings,
     }
