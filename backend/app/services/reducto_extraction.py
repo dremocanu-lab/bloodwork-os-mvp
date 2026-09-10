@@ -39,7 +39,7 @@ from app.services.reducto_schemas import (
     NEEDS_CONFIRMATION_RUNNER_UP_MIN_CONFIDENCE,
     READER_EXTRACT_SCHEMAS,
 )
-from app.synonyms import normalize_test_name
+from app.services.lab_resolver import resolve_test_name_dict
 
 CLASSIFIED = "classified"
 NEEDS_CONFIRMATION = "needs_confirmation"
@@ -376,7 +376,15 @@ def extract_lab_results(
         if not _in_page_range(name_evidence, page_range):
             continue
 
-        normalized = normalize_test_name(test_name)
+        item_unit = _field_value(item.get("unit"))
+        item_section = _field_value(item.get("section"))
+        # Generic OCR-aware resolver (app/services/lab_resolver.py) — tries
+        # the existing exact/alias matchers first; only falls to
+        # confusion-aware fuzzy scoring if those find nothing. Never
+        # modifies `test_name` itself — the provider's raw extraction is
+        # preserved verbatim as `raw_test_name` below regardless of what
+        # (if anything) it resolves to.
+        normalized = resolve_test_name_dict(test_name, unit=item_unit, category_hint=item_section)
         value = _field_value(item.get("value"))
         confidence_parts = [
             _field_evidence(item.get(k)) for k in ("test_name", "value", "unit", "reference_range")
@@ -392,12 +400,14 @@ def extract_lab_results(
                 "canonical_name": normalized["canonical_name"],
                 "display_name": normalized["display_name"],
                 "category": normalized["category"],
-                "source_section": _field_value(item.get("section")),
+                "source_section": item_section,
                 "value": value,
-                "unit": _field_value(item.get("unit")),
+                "unit": item_unit,
                 "reference_range": _field_value(item.get("reference_range")),
                 "flag": _field_value(item.get("flag")),
                 "confidence": overall_confidence,
+                "normalization_confidence": normalized.get("normalization_confidence"),
+                "normalization_method": normalized.get("normalization_method"),
                 "evidence": evidence,
             }
         )

@@ -308,6 +308,12 @@ class LabResult(Base):
     verification_state = Column(String, nullable=True, default="unverified")
     extraction_confidence = Column(Float, nullable=True)
     normalization_confidence = Column(Float, nullable=True)
+    # How canonical_name/display_name were resolved from raw_test_name —
+    # "exact" | "alias" | "ocr_fuzzy" | "unresolved" (see
+    # app/services/lab_resolver.py). Provenance for the generic OCR-aware
+    # analyte resolver: raw_test_name always stays the provider's literal
+    # output regardless of this.
+    normalization_method = Column(String, nullable=True)
     # Set when Level-3 duplicate-observation detection links this row to an
     # earlier one describing the same measurement instead of inserting a
     # second row for it (see process_upload_job).

@@ -6,7 +6,7 @@ import re
 from typing import Any
 
 from app.report_fields import extract_report_metadata
-from app.synonyms import normalize_test_name
+from app.services.lab_resolver import resolve_test_name_dict
 
 
 KNOWN_TEST_ALIASES = {
@@ -708,7 +708,13 @@ def build_lab_result(
 ) -> dict:
     test_key = normalize_test_token(raw_test_name)
     display_candidate = KNOWN_TEST_ALIASES.get(test_key, clean_text(raw_test_name))
-    normalized = normalize_test_name(display_candidate)
+    # Generic OCR-aware resolver (see app/services/lab_resolver.py) — tries
+    # the existing exact/alias matcher first (unchanged behavior for
+    # anything that already worked), only falling to fuzzy scoring if
+    # that doesn't find a match.
+    normalized = resolve_test_name_dict(
+        display_candidate, unit=str(unit) if unit else None, category_hint=source_section
+    )
 
     qualitative = is_qualitative_value(value)
     final_value = clean_text(value) if qualitative else normalize_decimal(value)
@@ -752,6 +758,8 @@ def build_lab_result(
         "reference_range": final_reference,
         "unit": final_unit,
         "confidence": confidence,
+        "normalization_confidence": normalized.get("normalization_confidence"),
+        "normalization_method": normalized.get("normalization_method"),
     }
 
     if source_section is not None:

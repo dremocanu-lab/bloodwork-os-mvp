@@ -302,6 +302,7 @@ def run_migrations():
         conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS verification_state VARCHAR DEFAULT 'unverified'"))
         conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS extraction_confidence FLOAT"))
         conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS normalization_confidence FLOAT"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS normalization_method VARCHAR"))
         conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS duplicate_of_lab_result_id INTEGER REFERENCES lab_results(id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_results_observation_datetime ON lab_results(observation_datetime)"))
         conn.execute(text("""
@@ -674,6 +675,11 @@ def serialize_lab_result(lab):
         "flag": lab.flag,
         "reference_range": lab.reference_range,
         "unit": lab.unit,
+        # Provenance: how raw_test_name -> canonical/display_name was
+        # resolved (see app/services/lab_resolver.py). Never displayed
+        # prominently in Analize itself — for provenance/debugging surfaces.
+        "normalization_confidence": lab.normalization_confidence,
+        "normalization_method": lab.normalization_method,
     }
 
 
@@ -1161,6 +1167,8 @@ def _finish_mixed_reducto_upload(
                 observation_datetime=child_parsed_data.get("collected_on") or child_parsed_data.get("reported_on"),
                 institution=child_parsed_data.get("lab_name"),
                 extraction_confidence=lab.get("confidence"),
+                normalization_confidence=lab.get("normalization_confidence"),
+                normalization_method=lab.get("normalization_method"),
             )
             db.add(lab_result)
             db.flush()
@@ -1630,6 +1638,8 @@ def process_upload_job(job_id: int):
                 observation_datetime=observation_datetime,
                 institution=document.lab_name,
                 extraction_confidence=lab.get("confidence"),
+                normalization_confidence=lab.get("normalization_confidence"),
+                normalization_method=lab.get("normalization_method"),
             )
 
             # Phase 2, Level 3 duplicate-observation detection: same
@@ -3574,6 +3584,66 @@ def get_document_file(
         filename=document.filename,
         media_type=document.content_type or "application/octet-stream",
     )
+
+
+@app.get("/source-evidence/{source_evidence_id}/view")
+def get_source_evidence_view(
+    source_evidence_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Resolve one SourceEvidence row into everything the shared Bragi
+    source viewer needs to open it — the general-purpose
+    `openSourceEvidence(sourceEvidenceId)` backend contract (see
+    BRAGI_REDUCTO_PLAN.md), used today by Analize/charts and intended as
+    the canonical citation-resolution endpoint for future Ask Bragi too.
+
+    Authorization is identical to the existing `/documents/{id}/file`
+    route (`can_access_patient`, no care-partner access) — this endpoint
+    exposes bbox/page metadata, never a bare/public file URL; the actual
+    PDF bytes are still fetched through the existing authenticated file
+    route using the `document_id` this returns.
+    """
+    evidence = db.query(models.SourceEvidence).filter(models.SourceEvidence.id == source_evidence_id).first()
+
+    if not evidence:
+        raise HTTPException(status_code=404, detail="Source evidence not found")
+
+    document = db.query(models.Document).filter(models.Document.id == evidence.document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Source document not found")
+
+    if current_user.role == "care_partner":
+        raise HTTPException(status_code=403, detail="Care partners cannot access source evidence.")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    has_bbox = evidence.bbox_x is not None and evidence.bbox_y is not None
+    if evidence.page_number and has_bbox:
+        precision = "exact_bbox"
+    elif evidence.page_number:
+        precision = "page_only"
+    elif evidence.source_text:
+        precision = "text_only"
+    else:
+        precision = "document_only"
+
+    return {
+        "source_evidence_id": evidence.id,
+        "document_id": document.id,
+        "document_filename": document.filename,
+        "document_type": document.document_type,
+        "report_name": document.report_name,
+        "page_number": evidence.page_number,
+        "bbox_x": evidence.bbox_x,
+        "bbox_y": evidence.bbox_y,
+        "bbox_width": evidence.bbox_width,
+        "bbox_height": evidence.bbox_height,
+        "source_text": evidence.source_text,
+        "provider": evidence.provider,
+        "precision": precision,
+    }
 
 
 @app.get("/lab-results/{lab_result_id}/source")
