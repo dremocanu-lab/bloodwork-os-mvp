@@ -104,11 +104,23 @@ avoid an unnecessary long local build; will run for real on the first
 GitHub Actions execution of this workflow), and `gitleaks detect --source
 . --log-opts="--all"` (245 commits, 1 reviewed false positive).
 
-**Not yet verified**: an actual GitHub Actions run of `ci.yml`/
-`nightly-security.yml` on the real runner (Ubuntu, ephemeral Postgres
-service container) — every step above was run locally with equivalent
-commands, but the workflow YAML itself (service container startup,
-`working-directory`, action pinning) has not yet executed end-to-end on
-GitHub's infrastructure as of this round's authoring. Confirm the first
-real run is green before relying on this as a gate — see this repo's
-Actions tab after the commit that adds these files is pushed.
+**Confirmed with a real GitHub Actions run** (not just local dry-runs):
+the first push (`fce4652`) correctly FAILED the `backend` job — `bandit
+-r app -ll` caught the same 2 Medium findings this document already
+identifies as reviewed false positives, which had been documented but
+not yet suppressed in code. Fixed by adding a reasoned inline `# nosec
+B310` at each of the two call sites (commit `326908d`) rather than
+lowering the severity gate. The next run
+(https://github.com/dremocanu-lab/bloodwork-os-mvp/actions/runs/34527610904)
+passed all three jobs: `Frontend` (1m6s), `Secret scan` (7s), `Backend`
+(57s, including the full pytest suite against the real ephemeral
+Postgres service container). This is real evidence the workflow YAML
+itself works end-to-end on GitHub's infrastructure, not just that the
+equivalent commands work locally — and it's a real example of this
+round's own CI catching a genuine (if low-severity, already-triaged)
+issue before it could regress silently.
+
+`nightly-security.yml` has not yet run (it fires on a schedule/manual
+dispatch, not on push) — it can be triggered manually via `gh workflow
+run nightly-security.yml` or the Actions UI to verify before relying on
+its first scheduled firing.
