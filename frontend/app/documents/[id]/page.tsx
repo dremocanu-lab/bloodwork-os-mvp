@@ -1,7 +1,7 @@
 "use client";
 
-import { FormEvent, useEffect, useMemo, useState } from "react";
-import { useParams, useRouter } from "next/navigation";
+import { FormEvent, useEffect, useMemo, useRef, useState } from "react";
+import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
@@ -268,12 +268,24 @@ type LabSourceEvidence = {
  * full source file (reusing the parent page's existing openOriginal
  * blob-fetch, passed in rather than duplicated).
  */
-function LabSourceAction({ labId, onOpenOriginal }: { labId: number; onOpenOriginal: () => void }) {
+function LabSourceAction({
+  labId,
+  onOpenOriginal,
+  autoOpen,
+}: {
+  labId: number;
+  onOpenOriginal: () => void;
+  /** Set when this row is the target of a chart-point "View original" deep
+   * link (?lab={id} — see the Trends chart's onPointClick and
+   * BRAGI_REDUCTO_PLAN.md Phase 6). Opens the dialog once on mount. */
+  autoOpen?: boolean;
+}) {
   const { language } = useLanguage();
-  const [open, setOpen] = useState(false);
+  const [open, setOpen] = useState(Boolean(autoOpen));
   const [loading, setLoading] = useState(false);
   const [evidence, setEvidence] = useState<LabSourceEvidence[]>([]);
   const [fetchError, setFetchError] = useState("");
+  const rowRef = useRef<HTMLSpanElement>(null);
 
   const labels =
     language === "ro"
@@ -294,9 +306,7 @@ function LabSourceAction({ labId, onOpenOriginal }: { labId: number; onOpenOrigi
           loading: "Loading...",
         };
 
-  async function handleOpen() {
-    setOpen(true);
-
+  async function loadEvidence() {
     if (evidence.length || loading) return;
 
     setLoading(true);
@@ -312,8 +322,29 @@ function LabSourceAction({ labId, onOpenOriginal }: { labId: number; onOpenOrigi
     }
   }
 
+  function handleOpen() {
+    setOpen(true);
+    loadEvidence();
+  }
+
+  useEffect(() => {
+    // `open`'s initial state already accounts for autoOpen (no setState
+    // here) — this effect only handles the two side effects that actually
+    // belong in one: scrolling the row into view and fetching its evidence.
+    if (!autoOpen) return;
+    rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
+    // Fetching on mount for a deep-linked row — the standard data-fetch-in-
+    // effect pattern already used elsewhere in this file (e.g. the page's
+    // own init() effect); `open`'s initial state (not this effect) is what
+    // shows the dialog, so this only ever kicks off the network request.
+    // eslint-disable-next-line react-hooks/set-state-in-effect
+    loadEvidence();
+    // Only ever fire once, when this specific row is the deep-link target.
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [autoOpen]);
+
   return (
-    <>
+    <span ref={rowRef}>
       <button
         type="button"
         className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
@@ -360,7 +391,7 @@ function LabSourceAction({ labId, onOpenOriginal }: { labId: number; onOpenOrigi
           </button>
         </div>
       </Dialog>
-    </>
+    </span>
   );
 }
 
@@ -539,8 +570,13 @@ function parseDischargePayload(noteBody?: string | null): DischargeNotePayload |
 export default function DocumentStructuredPage() {
   const params = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
   const documentId = params?.id as string;
   const { t, language } = useLanguage();
+
+  // Chart-point → source deep link: /documents/{id}?lab={labResultId}
+  // (see the Trends chart's onPointClick and BRAGI_REDUCTO_PLAN.md Phase 6).
+  const deepLinkedLabId = Number(searchParams?.get("lab")) || null;
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [documentData, setDocumentData] = useState<DocumentResponse | null>(null);
@@ -1857,7 +1893,11 @@ export default function DocumentStructuredPage() {
                                     ) : (
                                       <span className="b-range">—</span>
                                     )}
-                                    <LabSourceAction labId={lab.id} onOpenOriginal={openOriginal} />
+                                    <LabSourceAction
+                                      labId={lab.id}
+                                      onOpenOriginal={openOriginal}
+                                      autoOpen={deepLinkedLabId === lab.id}
+                                    />
                                   </span>
                                 </td>
                               </tr>

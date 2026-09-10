@@ -66,6 +66,7 @@ export type LabResult = {
 
 export type TrendPoint = {
   document_id: number;
+  lab_result_id?: number | null;
   date: string;
   value: number;
   value_display: string;

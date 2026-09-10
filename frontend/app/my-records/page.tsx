@@ -138,6 +138,7 @@ type MyProfileResponse = {
 
 type TrendPoint = {
   document_id: number;
+  lab_result_id?: number | null;
   date: string;
   value: number;
   value_display: string;
@@ -1037,7 +1038,9 @@ export default function MyRecordsPage() {
           referenceRange={featuredTrend.latest?.reference_range}
           height={210}
           formatDate={formatShortDate}
-          onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+          onPointClick={(documentId, labResultId) =>
+            router.push(labResultId ? `/documents/${documentId}?lab=${labResultId}` : `/documents/${documentId}`)
+          }
         />
 
         {/* Patients get the plain-language explanation a clinician does not
@@ -1476,7 +1479,9 @@ export default function MyRecordsPage() {
                               referenceRange={trend.latest?.reference_range}
                               height={190}
                               formatDate={formatShortDate}
-                              onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+                              onPointClick={(documentId, labResultId) =>
+            router.push(labResultId ? `/documents/${documentId}?lab=${labResultId}` : `/documents/${documentId}`)
+          }
                             />
 
                             <div className="b-label" style={{ marginTop: "var(--s4)" }}>

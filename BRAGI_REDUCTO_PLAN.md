@@ -85,8 +85,8 @@ Upload (per file)
 - **Phase 2 — Identity / duplicates / canonical data / provenance.** Done.
 - **Phase 3 — Analize + source verification.** Done.
 - **Phase 4 — Clinical readers.** Done.
-- **Phase 5 — Longitudinal / Timeline / document organization.** Done —
-  see §2d.
+- **Phase 5 — Longitudinal / Timeline / document organization.** Done.
+- **Phase 6 — Chart system.** Done — see §2e.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -336,6 +336,58 @@ types) — so an imaging report and an operative report both just read
 - Prescription/medication_list → `PatientMedication` linkage (noted in
   Phase 4) is still outstanding — the natural place for it, but not
   reached this phase either.
+
+## 2e. Phase 6 — what was actually built
+
+Inspection found the chart system already substantially matches the
+spec's intent: `lib/chart-theme.ts` (a genuinely restrained, theme-aware
+ECharts base — no rainbow palettes, no fake 3D, honest axis choices) and
+`components/ui/trend.tsx` (`Sparkline` + `TrendChart`, hand-rolled SVG on
+purpose for the per-row/table case to avoid mounting 50 ECharts
+instances) were already in good shape, and "chart point → source"
+already existed in outline (`TrendChart.onPointClick` already navigated
+to the source document). Phase 6 closed the two real gaps found:
+
+- **Reference-band honesty fix** (`TrendChart`): the bell/line honesty
+  requirement — "do NOT apply one universal reference band if that would
+  be misleading" — wasn't actually being followed. The band was drawn
+  from a single caller-supplied `referenceRange` (the *latest* point's
+  range) applied across the whole chart, even though every point already
+  carries its own `reference_range`. Now the band only renders when every
+  point in view agrees with that range; if any point's own range
+  disagrees (different lab/assay/date), the band is omitted rather than
+  misrepresenting older points. The per-point reference range still shows
+  in the hover readout either way.
+- **Chart-point → source, closed the loop to the exact row**: trend
+  points now carry `lab_result_id` (backend: `/patients/{id}/bloodwork-
+  trends`; frontend: `TrendPoint`). `TrendChart.onPointClick` passes it
+  through (backward-compatible — existing callers that only read the
+  first arg are unaffected). The two real chart pages
+  (`my-records/page.tsx`, `patients/[id]/page.tsx`) now deep-link to
+  `/documents/{id}?lab={labResultId}`; the document page reads that query
+  param, scrolls the matching lab row into view, and auto-opens its
+  Phase-3 source dialog — "select a point → see the exact source" now
+  works end to end without the user hunting through the results table.
+
+### Deferred from the original Phase 6 spec
+- **The large ECharts-based analytics dashboard**
+  (`app/patients/[id]/analytics/page.tsx`, ~2400 lines, many chart
+  instances already built) was inspected but not modified — some
+  instances use a hardcoded, non-theme-aware color (e.g. `#7c3aed` in the
+  marker-relationship scatter) rather than the shared chart-theme tokens.
+  A full consistency pass across every chart in that file was judged
+  higher-risk than value to attempt in the time remaining across all
+  seven phases; flagging it here rather than doing a rushed, partial
+  edit across a file of that size.
+- Sparklines, mobile touch interaction, and accessibility on the
+  existing `TrendChart`/`Sparkline` were reviewed, not rebuilt — they
+  already look reasonable (generous invisible hit targets, `role="img"`
+  + `aria-label` on the SVG, `ResizeObserver`-driven width). No changes
+  made since nothing unsafe or dishonest was found there.
+- No new "BragiChart"/"BragiLabTrendChart" wrapper components were
+  introduced — the existing `chart-theme.ts` + `trend.tsx` already serve
+  that role for the parts of the app inspected this phase; introducing
+  parallel naming would have been churn without changing behavior.
 
 ## 3. Reducto integration status (important)
 

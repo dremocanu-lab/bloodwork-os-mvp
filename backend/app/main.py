@@ -3341,6 +3341,7 @@ def get_patient_bloodwork_trends(
         trends[test_key]["points"].append(
             {
                 "document_id": document.id,
+                "lab_result_id": lab.id,
                 "date": date,
                 "value": numeric_value,
                 "value_display": str(lab.value).strip(),

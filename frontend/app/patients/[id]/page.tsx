@@ -1099,7 +1099,9 @@ export default function PatientChartPage() {
           referenceRange={featuredTrend.latest?.reference_range}
           height={200}
           formatDate={formatShortDate}
-          onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+          onPointClick={(documentId, labResultId) =>
+            router.push(labResultId ? `/documents/${documentId}?lab=${labResultId}` : `/documents/${documentId}`)
+          }
         />
       </div>
     </section>
@@ -1588,7 +1590,9 @@ export default function PatientChartPage() {
                               referenceRange={trend.latest?.reference_range}
                               height={190}
                               formatDate={formatShortDate}
-                              onPointClick={(documentId) => router.push(`/documents/${documentId}`)}
+                              onPointClick={(documentId, labResultId) =>
+            router.push(labResultId ? `/documents/${documentId}?lab=${labResultId}` : `/documents/${documentId}`)
+          }
                             />
 
                             <div className="b-label" style={{ marginTop: "var(--s4)" }}>

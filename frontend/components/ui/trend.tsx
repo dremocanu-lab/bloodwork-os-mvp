@@ -122,7 +122,11 @@ export function TrendChart({
   unit?: string | null;
   referenceRange?: string | null;
   height?: number;
-  onPointClick?: (documentId: number) => void;
+  /** labResultId lets a caller deep-link straight to that row's source
+   * (e.g. `/documents/{documentId}?lab={labResultId}`) instead of just the
+   * document — see BRAGI_REDUCTO_PLAN.md Phase 6. Existing callers that
+   * only take `documentId` keep working unchanged. */
+  onPointClick?: (documentId: number, labResultId?: number | null) => void;
   highlightedDocumentId?: number | null;
   formatDate?: (value?: string | null) => string;
 }) {
@@ -160,7 +164,20 @@ export function TrendChart({
     const plotH = height - margin.top - margin.bottom;
 
     const values = points.map((p) => p.value);
-    const range = parseRange(referenceRange);
+
+    // Reference intervals can differ by lab/assay/age/sex/date. Drawing one
+    // band across the whole time span is only honest when every point in
+    // it actually shares the same interval — if any point's own
+    // reference_range disagrees with the one the caller passed (typically
+    // the latest result's), omit the band entirely rather than mislead
+    // older points. Per-point range still shows in the hover readout below.
+    const candidateRange = parseRange(referenceRange);
+    const rangesAgree = points.every((p) => {
+      const pointRange = parseRange(p.reference_range);
+      if (!pointRange || !candidateRange) return true; // nothing to contradict
+      return pointRange.low === candidateRange.low && pointRange.high === candidateRange.high;
+    });
+    const range = rangesAgree ? candidateRange : null;
 
     // Include the reference band in the domain so it is always visible.
     const candidates = [...values, ...(range ? [range.low, range.high] : [])];
@@ -313,7 +330,7 @@ export function TrendChart({
                 style={{ cursor: onPointClick ? "pointer" : "default" }}
                 onMouseEnter={() => setHover(index)}
                 onMouseLeave={() => setHover(null)}
-                onClick={() => onPointClick?.(c.point.document_id)}
+                onClick={() => onPointClick?.(c.point.document_id, c.point.lab_result_id)}
               />
             </g>
           );

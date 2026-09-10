@@ -4,46 +4,41 @@ See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale. This file is
 status only.
 
 ## CURRENT PHASE
-Phase 6 — Chart system: starting.
+Phase 7 — Full integration / responsive QA: starting (final phase).
 
 ## COMPLETED PHASES
-- **Phase 1**: extraction-provider abstraction, taxonomy, classifier,
-  `/upload/batch`, classification confirmation.
-- **Phase 2**: SHA-256 dedup, patient identity check + quarantine,
-  `SourceEvidence`, Level-3 duplicate-observation linking.
-- **Phase 3**: row-level "View original" for lab rows.
-- **Phase 4**: conservative structured extraction for the 6 document
-  types with no prior pipeline.
-- **Phase 5**: `document_type` now flows through `serialize_document_card`,
-  `get_document_payload`, the shared `ClinicalTimeline` component, and
-  the PCP-workspace timeline's event-type/summary derivation — every
-  timeline/document list shows the finer-grained Bragi type instead of
-  just the coarse legacy section, additively (falls back cleanly for
-  pre-Phase-1 documents).
+1. Reducto foundation + multi-file classification.
+2. Identity / duplicates / canonical data / provenance.
+3. Row-level source verification.
+4. Conservative clinical readers (6 new document types).
+5. Longitudinal timeline / document organization labeling.
+6. Chart system: reference-band honesty fix + chart-point → exact-row
+   source deep link.
 
 ## NEXT PHASE
-Phase 6 — Chart system: centralize the existing ECharts usage
-(`lib/chart-theme.ts`, `components/ui/trend.tsx` already exist) into a
-shared Bragi chart theme/components, honest reference-range handling,
-chart-point → source (using Phase 2/3's `SourceEvidence`).
+Phase 7 — final pass: run full test suite, tsc/eslint across the whole
+frontend (not just changed files), re-review the full cumulative diff
+for secrets/PHI, verify migrations one more time, then merge this
+branch to `main` and push (per explicit instruction).
 
 ## Architecture decisions
-- Phase 5 found that "episodes of care" grouping already existed
-  (admission-parent nesting in the timeline pages) — treated as done,
-  not rebuilt.
-- Chose to enhance labels within the existing 6-bucket section
-  navigation/grouping rather than restructure it — see plan §2d for the
-  risk/value reasoning.
+- Phase 6 found the chart system already close to spec (restrained
+  ECharts theme, honest per-point data) — fixed the one real honesty
+  gap (single-band-across-differing-ranges) rather than rebuilding.
+- Chart-point → source now carries `lab_result_id` end-to-end
+  (backend trend endpoint → `TrendPoint` → `onPointClick` → query param
+  → auto-opened source dialog), reusing Phase 2/3's `SourceEvidence`
+  work rather than a new data path.
 
 ## Important files (new/changed this phase)
-- `backend/app/main.py` — `document_type` in `serialize_document_card`,
-  `_event_type_for`/`_DOC_SUMMARY_BY_EVENT_TYPE` in the PCP timeline
-- `frontend/components/clinical-timeline.tsx` — `documentType` field +
-  label preference
-- `frontend/lib/document-taxonomy-labels.ts` (new)
-- `frontend/app/my-records/page.tsx`, `my-records/timeline/page.tsx`,
-  `patients/[id]/page.tsx`, `patients/[id]/timeline/page.tsx` — pass
-  `documentType` through to timeline items
+- `backend/app/main.py` — `lab_result_id` in trend points
+- `frontend/components/ui/trend.tsx` — reference-band agreement check,
+  `onPointClick` second arg
+- `frontend/lib/analytes/types.ts` — `TrendPoint.lab_result_id`
+- `frontend/app/my-records/page.tsx`, `patients/[id]/page.tsx` — deep-link
+  navigation on point click
+- `frontend/app/documents/[id]/page.tsx` — `?lab=` query param handling,
+  auto-open + scroll-into-view
 
 ## Migrations
 None this phase.
@@ -52,21 +47,29 @@ None this phase.
 Unchanged.
 
 ## Tests / status
-- `cd backend && pytest -q` → **42 passed** (unchanged — this phase was
-  read/label plumbing, no new backend logic needing its own unit test).
+- `cd backend && pytest -q` → **42 passed** (unchanged — this phase
+  touched serialization/frontend, no new backend logic needing a unit
+  test beyond what's already covered).
 - Full `app.main` import succeeded against the local dev DB.
 - `pyflakes`: same 4 pre-existing warnings, nothing new.
-- Frontend: `tsc --noEmit` clean. `eslint` on all 6 changed files shows
-  only **pre-existing** issues, confirmed via `git diff --unified=0` to
-  be nowhere near any line I touched (a handful of long-standing
-  `setState`-in-`useEffect` findings in two large pages, and two
-  pre-existing `exhaustive-deps` warnings).
+- Frontend: `tsc --noEmit` clean on all changed files. `eslint`: one new
+  `react-hooks/set-state-in-effect` finding on the deep-link auto-open
+  effect was fixed properly (moved the dialog-open state into `useState`
+  initial value instead of setting it inside the effect) rather than
+  suppressed; the one remaining disable-comment is for the effect's
+  data-fetch call, matching the standard fetch-on-mount pattern already
+  used elsewhere in this same file. All other findings across touched
+  files confirmed pre-existing via `git diff --unified=0`.
 
 ## Known issues
-- Top-level document organization (tabs/filters) still groups by the 6
-  legacy `section` values, not the full 16-type taxonomy — see plan §2d.
-- Prescription/medication_list → `PatientMedication` linkage still not
-  built (carried over from Phase 4).
+- The large ECharts analytics dashboard (~2400 lines) has at least one
+  hardcoded, non-theme color; a full consistency pass was not attempted
+  this phase (see plan §2e).
+- Everything else carried over from Phases 1-5 (see their sections in
+  the plan) is still outstanding: no Reducto integration tested against
+  the real API, no outline/search/30-second-read/conflicts UI, no
+  prescription → PatientMedication linkage, no top-level document-
+  organization restructure beyond label improvements.
 
 ## Manual configuration/authentication required
 - None to keep everything working as-is.
