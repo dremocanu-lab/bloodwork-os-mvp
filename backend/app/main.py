@@ -55,6 +55,7 @@ from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
 from app.services.file_hash import compute_sha256
+from app.services.security_scan import run_security_scan
 from app.rate_limit import RateLimiter
 from app.services.patient_identity import (
     MISMATCH,
@@ -1501,6 +1502,35 @@ def process_upload_job(job_id: int):
             job.progress = 100
             job.message = "Upload failed."
             job.error = "Uploaded file could not be located for processing."
+            job.finished_at = now_iso()
+            db.commit()
+            return
+
+        # Security-scan pipeline boundary (Priority 9,
+        # BRAGI_SECURITY_GDPR_PLAN.md §10 — see
+        # app/services/security_scan.py and
+        # docs/security/MALWARE_SCANNING_PLAN.md): a file that scans as
+        # explicitly malicious never reaches SHA-256/duplicate detection,
+        # Reducto, OpenAI, or any other clinical-processing step below —
+        # it is quarantined here, before any of that runs. A
+        # scan_unavailable verdict (no real scanner configured, or the
+        # heuristic screen's narrow scope didn't apply) does NOT block —
+        # uploads keep working exactly as before in any environment that
+        # hasn't configured CLAMAV_HOST, per this plan's "never make the
+        # app unusable" rule.
+        scan_result = run_security_scan(file_path)
+        if scan_result.blocks_processing:
+            print(
+                f"UPLOAD JOB {job_id}: security scan blocked processing — "
+                f"provider={scan_result.provider} reason={scan_result.reason}"
+            )
+            job.status = "security_quarantined"
+            job.progress = 100
+            job.message = "This file could not be processed and has been set aside for security review."
+            # Short, non-PHI marker (provider name only) — the durable
+            # audit trail for WHY is the print() line above (server logs,
+            # operator-only), not this user-visible field.
+            job.error = f"security_scan:{scan_result.provider}"
             job.finished_at = now_iso()
             db.commit()
             return

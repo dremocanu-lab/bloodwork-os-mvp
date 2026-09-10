@@ -19,3 +19,8 @@ requests==2.33.1
 # docs/security/RATE_LIMITING.md. Installed unconditionally so activating
 # it later is an env-var change, not a deploy that adds a dependency.
 redis==5.2.1
+# Optional real malware-scanner client — only imported/connected when
+# CLAMAV_HOST is set; see app/services/security_scan.py and
+# docs/security/MALWARE_SCANNING_PLAN.md. Same "installed unconditionally,
+# activated by env var" pattern as redis above.
+clamd==1.0.2
