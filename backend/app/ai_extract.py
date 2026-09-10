@@ -9,6 +9,11 @@ from typing import Any
 import fitz
 from openai import OpenAI
 
+# Data-minimization audit (BRAGI_SECURITY_GDPR_PLAN.md §21): this module
+# sends OpenAI the raw page image + generic OCR text only — no separate
+# patient-context object (no email/phone/address) is ever attached. See
+# app/services/ai_minimization.py for the reusable minimization helpers.
+
 
 OPENAI_MODEL = os.getenv("OPENAI_EXTRACTION_MODEL", "gpt-5.4")
 

@@ -617,7 +617,9 @@ function AddPatientModal({
     setResults([]);
     setSearched(false);
     try {
-      const res = await emergencyApi.get("/emergency/search", { params: { type: searchType, q } });
+      // POST with a JSON body — see emergency/search/page.tsx for why a
+      // CNP lookup must never travel in a URL query string.
+      const res = await emergencyApi.post("/emergency/search", { type: searchType, q });
       const data = res.data as SearchResult[];
       setResults(data);
       setSearched(true);

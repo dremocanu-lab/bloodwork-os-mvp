@@ -1013,6 +1013,16 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         models.PatientCarePartnerCode.patient_id == patient.id
     ).first()
 
+    # Full CNP is only returned to the patient viewing their own profile.
+    # A doctor/admin viewing someone else's profile through this same
+    # response shape (GET /patients/{id}/profile) gets a masked value —
+    # the frontend doesn't need the real value merely because the model
+    # has it, and no identity-matching logic depends on this response
+    # (that comparison happens server-side against the uploaded
+    # document's own extracted CNP, not the frontend-supplied value).
+    is_self = bool(current_user) and current_user.role == "patient" and patient.linked_user_id == current_user.id
+    cnp_out = patient.cnp if is_self else _mask_cnp(patient.cnp)
+
     return {
         "patient": {
             "id": patient.id,
@@ -1021,7 +1031,7 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
             "date_of_birth": patient.date_of_birth,
             "age": patient.age,
             "sex": patient.sex,
-            "cnp": patient.cnp,
+            "cnp": cnp_out,
             "patient_identifier": patient.patient_identifier,
             "care_partner_code": code_record.code if code_record else None,
         },
@@ -1087,7 +1097,11 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
             "date_of_birth": document.date_of_birth,
             "age": document.age,
             "sex": document.sex,
-            "cnp": document.cnp,
+            # Full value only for roles that can act on identity
+            # review/correction (patient/doctor/admin); a care_partner
+            # only ever has read access to a specific shared document and
+            # has no identity-matching workflow that needs it.
+            "cnp": document.cnp if not (current_user and current_user.role == "care_partner") else _mask_cnp(document.cnp),
             "patient_identifier": document.patient_identifier,
             "lab_name": document.lab_name,
             "sample_type": document.sample_type,
@@ -2563,7 +2577,10 @@ def get_patients(
             "date_of_birth": patient.date_of_birth,
             "age": patient.age,
             "sex": patient.sex,
-            "cnp": patient.cnp,
+            # List view: masked. Full CNP isn't needed to browse a patient
+            # list, only to confirm identity on a specific record — see
+            # build_patient_profile_response / get_document_payload.
+            "cnp": _mask_cnp(patient.cnp),
             "patient_identifier": patient.patient_identifier,
         }
         for patient in patients
@@ -2678,7 +2695,7 @@ def get_my_patients(
                     "date_of_birth": patient.date_of_birth,
                     "age": patient.age,
                     "sex": patient.sex,
-                    "cnp": patient.cnp,
+                    "cnp": _mask_cnp(patient.cnp),
                     "patient_identifier": patient.patient_identifier,
                 },
                 "active_event": serialize_patient_event(active_event) if active_event else None,
@@ -3043,7 +3060,7 @@ def search_patients(
                 "date_of_birth": patient.date_of_birth,
                 "age": patient.age,
                 "sex": patient.sex,
-                "cnp": patient.cnp,
+                "cnp": _mask_cnp(patient.cnp),
                 "patient_identifier": patient.patient_identifier,
                 "care_partner_code": code_record.code if code_record else None,
                 "has_access": has_access,
@@ -3217,7 +3234,10 @@ def get_patient_documents(
             "date_of_birth": patient.date_of_birth,
             "age": patient.age,
             "sex": patient.sex,
-            "cnp": patient.cnp,
+            # Masked — this is a document-list view, not an identity/edit
+            # workflow; see build_patient_profile_response for the one
+            # place the full value is returned.
+            "cnp": _mask_cnp(patient.cnp),
             "patient_identifier": patient.patient_identifier,
         },
         "documents": [serialize_document_card(db, document, current_user) for document in documents],
@@ -4825,7 +4845,7 @@ def admin_search_patients(
             "id": p.id,
             "full_name": p.full_name,
             "date_of_birth": p.date_of_birth,
-            "cnp": p.cnp,
+            "cnp": _mask_cnp(p.cnp),
             "patient_identifier": p.patient_identifier,
             "care_partner_code": code_rec.code if code_rec else None,
         })
@@ -4927,7 +4947,7 @@ def admin_doctor_current_patients(
             "patient_id": a.patient.id,
             "full_name": a.patient.full_name,
             "date_of_birth": a.patient.date_of_birth,
-            "cnp": a.patient.cnp,
+            "cnp": _mask_cnp(a.patient.cnp),
             "patient_identifier": a.patient.patient_identifier,
             "assigned_at": a.granted_at,
         }
@@ -4958,7 +4978,7 @@ def admin_doctor_patient_history(
             "patient_id": a.patient.id,
             "full_name": a.patient.full_name,
             "date_of_birth": a.patient.date_of_birth,
-            "cnp": a.patient.cnp,
+            "cnp": _mask_cnp(a.patient.cnp),
             "patient_identifier": a.patient.patient_identifier,
             "assigned_at": a.granted_at,
             "ended_at": a.ended_at,
@@ -5620,14 +5640,12 @@ class EmergencySessionCreateRequest(BaseModel):
     reason_note: str | None = None
 
 
-@app.get("/emergency/search")
-def emergency_search(
-    type: str = Query(...),
-    q: str = Query(...),
-    request: Request = None,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_emergency_role()),
-):
+class EmergencySearchRequest(BaseModel):
+    type: str
+    q: str
+
+
+def _run_emergency_search(type: str, q: str, request: Request, db: Session, current_user) -> list[dict]:
     q = q.strip()
     if not q:
         return []
@@ -5693,6 +5711,43 @@ def emergency_search(
     db.commit()
 
     return results
+
+
+@app.post("/emergency/search")
+def emergency_search_post(
+    payload: EmergencySearchRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    """POST form of emergency search — the only path that accepts a CNP
+    lookup. CNP travels in the JSON request body, never in a URL query
+    string (so it never lands in browser history, server access logs, or
+    a proxy/CDN's request-URL logging). This is the endpoint every
+    current frontend caller uses, for every search type."""
+    return _run_emergency_search(payload.type, payload.q, request, db, current_user)
+
+
+@app.get("/emergency/search")
+def emergency_search(
+    type: str = Query(...),
+    q: str = Query(...),
+    request: Request = None,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_emergency_role()),
+):
+    """Legacy GET form, kept only for `code`/`name` lookups (a Bragi
+    care-partner code or a name substring are not direct identifiers the
+    same way a national ID is). A CNP is a direct identifier and must
+    never be placed in a URL query string — that path is closed here
+    unconditionally, independent of which client is calling. Use
+    POST /emergency/search for CNP lookups."""
+    if type == "cnp":
+        raise HTTPException(
+            status_code=400,
+            detail="CNP search requires POST /emergency/search with a JSON body, not a query string.",
+        )
+    return _run_emergency_search(type, q, request, db, current_user)
 
 
 @app.post("/emergency/access-sessions")

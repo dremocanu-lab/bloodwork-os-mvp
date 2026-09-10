@@ -8,6 +8,11 @@ from typing import Any, Dict, List, Optional
 
 from openai import OpenAI
 
+# Data-minimization audit (BRAGI_SECURITY_GDPR_PLAN.md §21): this module
+# sends OpenAI the raw uploaded file only — no separate patient-context
+# object (no email/phone/address) is ever attached. See
+# app/services/ai_minimization.py for the reusable minimization helpers.
+
 
 DISCHARGE_MODEL = os.getenv("OPENAI_DISCHARGE_MODEL", "gpt-4.1")
 

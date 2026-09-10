@@ -11,6 +11,16 @@ from typing import Any
 import fitz
 from openai import OpenAI
 
+# Data-minimization audit (BRAGI_SECURITY_GDPR_PLAN.md §21): this module
+# sends OpenAI the raw page image/native PDF text only — no separate
+# patient-context object (no email/phone/address) is ever attached. The
+# patient name/CNP/DOB this pipeline transcribes are the intended
+# extraction output (identity fields used for patient matching), not
+# incidental data. See app/services/ai_minimization.py for the reusable
+# minimization helpers used by any future provider call that DOES need to
+# assemble a patient-context object (e.g. a future Ask Bragi retrieval
+# step).
+
 
 MODEL = os.getenv("OPENAI_DISCHARGE_LAYOUT_MODEL", "gpt-4.1")
 PAGE_MAX_OUTPUT_TOKENS = int(os.getenv("OPENAI_DISCHARGE_PAGE_MAX_OUTPUT_TOKENS", "32000"))

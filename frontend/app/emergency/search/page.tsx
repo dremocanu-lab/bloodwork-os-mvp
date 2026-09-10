@@ -99,8 +99,13 @@ export default function EmergencySearchPage() {
     setResults([]);
     setSearched(false);
     try {
-      const res = await emergencyApi.get("/emergency/search", {
-        params: { type: searchType, q },
+      // POST with a JSON body — a CNP lookup must never travel in a URL
+      // query string (browser history / server access logs / proxy
+      // logging). Used for every search type, not just CNP, so there's
+      // one code path instead of a CNP-only special case.
+      const res = await emergencyApi.post("/emergency/search", {
+        type: searchType,
+        q,
       });
       const data = res.data as SearchResult[];
       setResults(data);
