@@ -2979,6 +2979,65 @@ def get_document_file(
     )
 
 
+@app.get("/lab-results/{lab_result_id}/source")
+def get_lab_result_source(
+    lab_result_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Provenance for one structured lab row — the "View original" flagship
+    feature's data source (see BRAGI_REDUCTO_PLAN.md Phase 3).
+
+    Returns every SourceEvidence row for this lab result (there can be
+    more than one once Level-3 duplicate-observation linking has
+    attached evidence from more than one document to the same
+    observation). Page/bbox fields are present but null until a real
+    Reducto Parse integration can supply them — never fabricated.
+    """
+    lab = db.query(models.LabResult).filter(models.LabResult.id == lab_result_id).first()
+
+    if not lab:
+        raise HTTPException(status_code=404, detail="Lab result not found")
+
+    document = db.query(models.Document).filter(models.Document.id == lab.document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if current_user.role == "care_partner":
+        raise HTTPException(status_code=403, detail="Care partners cannot access source evidence.")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    evidence_rows = (
+        db.query(models.SourceEvidence)
+        .filter(models.SourceEvidence.lab_result_id == lab_result_id)
+        .order_by(models.SourceEvidence.id.asc())
+        .all()
+    )
+
+    return {
+        "lab_result_id": lab.id,
+        "document_id": document.id,
+        "document_filename": document.filename,
+        "evidence": [
+            {
+                "id": row.id,
+                "document_id": row.document_id,
+                "page_number": row.page_number,
+                "bbox_x": row.bbox_x,
+                "bbox_y": row.bbox_y,
+                "bbox_width": row.bbox_width,
+                "bbox_height": row.bbox_height,
+                "source_text": row.source_text,
+                "extraction_confidence": row.extraction_confidence,
+                "provider": row.provider,
+            }
+            for row in evidence_rows
+        ],
+    }
+
+
 @app.put("/documents/{document_id}")
 def update_document(
     document_id: int,

@@ -6,7 +6,8 @@ import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
-import { LabValue, Status } from "@/components/ui";
+import { Dialog, LabValue, Status } from "@/components/ui";
+import { IconExternal } from "@/components/ui/icon";
 
 type CurrentUser = {
   id: number;
@@ -243,6 +244,117 @@ function formatDate(value?: string | null) {
 
 function bestDisplayName(lab: LabRow | EditableLabRow) {
   return lab.display_name || lab.canonical_name || lab.raw_test_name || "Unnamed test";
+}
+
+type LabSourceEvidence = {
+  id: number;
+  page_number: number | null;
+  source_text: string | null;
+  provider: string | null;
+};
+
+/**
+ * Row-level "View original" (Phase 3 — see BRAGI_REDUCTO_PLAN.md). No
+ * bbox/page-highlight exists yet without a real Reducto Parse
+ * integration, so this shows the exact raw text Bragi extracted for this
+ * value — an honest, verifiable stand-in — plus a button to open the
+ * full source file (reusing the parent page's existing openOriginal
+ * blob-fetch, passed in rather than duplicated).
+ */
+function LabSourceAction({ labId, onOpenOriginal }: { labId: number; onOpenOriginal: () => void }) {
+  const { language } = useLanguage();
+  const [open, setOpen] = useState(false);
+  const [loading, setLoading] = useState(false);
+  const [evidence, setEvidence] = useState<LabSourceEvidence[]>([]);
+  const [fetchError, setFetchError] = useState("");
+
+  const labels =
+    language === "ro"
+      ? {
+          action: "Sursă",
+          title: "Sursă originală",
+          desc: "Textul exact extras de Bragi pentru această valoare.",
+          openOriginal: "Deschide documentul original",
+          noEvidence: "Nu există încă text sursă salvat pentru acest rând.",
+          loading: "Se încarcă...",
+        }
+      : {
+          action: "Source",
+          title: "Original source",
+          desc: "The exact text Bragi extracted for this value.",
+          openOriginal: "Open original document",
+          noEvidence: "No source text has been saved for this row yet.",
+          loading: "Loading...",
+        };
+
+  async function handleOpen() {
+    setOpen(true);
+
+    if (evidence.length || loading) return;
+
+    setLoading(true);
+    setFetchError("");
+
+    try {
+      const response = await api.get<{ evidence: LabSourceEvidence[] }>(`/lab-results/${labId}/source`);
+      setEvidence(response.data.evidence || []);
+    } catch (err) {
+      setFetchError(getErrorMessage(err, "Could not load source."));
+    } finally {
+      setLoading(false);
+    }
+  }
+
+  return (
+    <>
+      <button
+        type="button"
+        className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+        onClick={handleOpen}
+        aria-label={labels.action}
+        title={labels.action}
+      >
+        <IconExternal size={13} />
+      </button>
+
+      <Dialog open={open} onClose={() => setOpen(false)} title={labels.title} description={labels.desc}>
+        <div className="b-stack" style={{ gap: "var(--s3)" }}>
+          {loading ? (
+            <span className="muted-text">{labels.loading}</span>
+          ) : fetchError ? (
+            <span style={{ color: "var(--danger)" }}>{fetchError}</span>
+          ) : evidence.length ? (
+            evidence.map((row) => (
+              <div key={row.id} className="soft-card-tight" style={{ padding: 12 }}>
+                <div style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "var(--fs-sm)" }}>
+                  {row.source_text}
+                </div>
+                {row.page_number ? (
+                  <div className="b-meta" style={{ marginTop: 6 }}>
+                    Page {row.page_number}
+                  </div>
+                ) : null}
+              </div>
+            ))
+          ) : (
+            <span className="muted-text">{labels.noEvidence}</span>
+          )}
+
+          <button
+            type="button"
+            className="b-btn b-btn-secondary"
+            onClick={() => {
+              setOpen(false);
+              onOpenOriginal();
+            }}
+          >
+            <IconExternal size={13} />
+            {labels.openOriginal}
+          </button>
+        </div>
+      </Dialog>
+    </>
+  );
 }
 
 function categorySortIndex(category: string) {
@@ -1686,17 +1798,20 @@ export default function DocumentStructuredPage() {
                                 </td>
 
                                 <td data-label={t("flag")}>
-                                  {nil ? (
-                                    <Status tone="muted">nil</Status>
-                                  ) : isEffectivelyNormalFlag(lab.flag) ? (
-                                    <Status tone="ok">{lab.flag}</Status>
-                                  ) : abnormal ? (
-                                    <Status tone="danger">
-                                      {hasDisplayableFlag(lab.flag) ? lab.flag : "Abnormal"}
-                                    </Status>
-                                  ) : (
-                                    <span className="b-range">—</span>
-                                  )}
+                                  <span style={{ display: "flex", alignItems: "center", gap: 4 }}>
+                                    {nil ? (
+                                      <Status tone="muted">nil</Status>
+                                    ) : isEffectivelyNormalFlag(lab.flag) ? (
+                                      <Status tone="ok">{lab.flag}</Status>
+                                    ) : abnormal ? (
+                                      <Status tone="danger">
+                                        {hasDisplayableFlag(lab.flag) ? lab.flag : "Abnormal"}
+                                      </Status>
+                                    ) : (
+                                      <span className="b-range">—</span>
+                                    )}
+                                    <LabSourceAction labId={lab.id} onOpenOriginal={openOriginal} />
+                                  </span>
                                 </td>
                               </tr>
                             );

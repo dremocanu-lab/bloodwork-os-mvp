@@ -82,8 +82,8 @@ Upload (per file)
 - **Phase 1 — Reducto foundation + multi-file classification.** Provider
   abstraction, taxonomy, rule-based classifier, `needs_confirmation`
   flow, `/upload/batch`, confirmation UI. Done.
-- **Phase 2 — Identity / duplicates / canonical data / provenance.**
-  Done — see status below.
+- **Phase 2 — Identity / duplicates / canonical data / provenance.** Done.
+- **Phase 3 — Analize + source verification.** Done — see §2b.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -180,6 +180,40 @@ Reducto contract and current DB scale — update this file when they do.
   `main.py`) for quarantine-awareness: unnecessary — quarantined
   documents get `patient_id = NULL`, so they're automatically invisible
   everywhere without touching those sites.
+
+## 2b. Phase 3 — what was actually built
+
+Structured Analize stays exactly as it was — this phase is additive
+only, no replacement, per the hard requirement.
+
+- **`GET /lab-results/{id}/source`**: returns every `SourceEvidence` row
+  for a lab result (usually one; more if Level-3 linking attached
+  evidence from a second document to the same observation). Same
+  authorization pattern as the existing `/documents/{id}/file` route
+  (`can_access_patient`, no care-partner access).
+- **Row-level "View original"** in `frontend/app/documents/[id]/page.tsx`
+  (a `LabSourceAction` component next to each lab row's flag): opens a
+  dialog showing the exact raw text Bragi extracted for that value
+  (`SourceEvidence.source_text`), with a button to open the full source
+  file. This reuses the page's pre-existing `openOriginal()` (a
+  document-level "View original" already existed — Phase 3 makes it
+  row-specific).
+- **No bbox/page-highlight** — honest limitation, not a placeholder bug.
+  Real coordinate-level highlighting needs a Reducto Parse integration
+  that hasn't been built (see §3). The source-text quote is the current
+  best verifiable stand-in and is explicitly documented as such in code.
+- Chart-point → source (labs Trends view) is **not** wired this phase —
+  that lives with the rest of the chart system work in Phase 6, so it's
+  built once against the final shared chart component rather than twice.
+
+### Deferred from the original Phase 3 spec
+- Bbox/coordinate highlighting (needs Reducto Parse — see §3).
+- Chart-point → source (Phase 6, see above).
+- A DB-backed test for `/lab-results/{id}/source`'s authorization — the
+  route reuses the same `can_access_patient` pattern as the existing,
+  already-relied-upon `/documents/{id}/file`, but wasn't given its own
+  integration test (this repo has no TestClient/test-DB fixture
+  convention yet — worth adding in Phase 7 if time allows).
 
 ## 3. Reducto integration status (important)
 
