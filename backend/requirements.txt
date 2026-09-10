@@ -14,3 +14,8 @@ google-cloud-documentai==3.2.0
 google-auth==2.36.0
 PyMuPDF==1.24.14
 requests==2.33.1
+# Optional distributed rate-limit backend — only imported/connected when
+# RATE_LIMIT_REDIS_URL (or REDIS_URL) is set; see app/rate_limit.py and
+# docs/security/RATE_LIMITING.md. Installed unconditionally so activating
+# it later is an env-var change, not a deploy that adds a dependency.
+redis==5.2.1

@@ -53,6 +53,7 @@ from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
 from app.services.file_hash import compute_sha256
+from app.rate_limit import RateLimiter
 from app.services.patient_identity import (
     MISMATCH,
     NEEDS_CONFIRMATION,
@@ -2210,8 +2211,28 @@ def root():
     return {"message": "API is running"}
 
 
+@app.get("/admin/ops/rate-limit-status")
+def rate_limit_status(current_user=Depends(require_role("admin"))):
+    """Read-only diagnostic so ops can confirm which rate-limit backend is
+    actually active in a given environment — never inferred from an env
+    var alone, since a misconfigured/unreachable Redis silently falls
+    back to the in-memory (per-instance-only) backend. See
+    docs/security/RATE_LIMITING.md."""
+    from app.rate_limit import RATE_LIMIT_DISABLED, RATE_LIMIT_REDIS_URL, is_distributed
+
+    return {
+        "distributed": is_distributed(),
+        "redis_configured": bool(RATE_LIMIT_REDIS_URL),
+        "disabled": RATE_LIMIT_DISABLED,
+    }
+
+
 @app.post("/auth/signup")
-def signup(payload: SignupRequest, db: Session = Depends(get_db)):
+def signup(
+    payload: SignupRequest,
+    db: Session = Depends(get_db),
+    _rl=Depends(RateLimiter(limit=10, window_seconds=3600, key_prefix="signup")),
+):
     if payload.role not in {"patient", "doctor", "admin", "care_partner", "emergency_worker"}:
         raise HTTPException(status_code=400, detail="Invalid role")
 
@@ -2285,7 +2306,11 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 
 
 @app.post("/auth/login")
-def login(payload: LoginRequest, db: Session = Depends(get_db)):
+def login(
+    payload: LoginRequest,
+    db: Session = Depends(get_db),
+    _rl=Depends(RateLimiter(limit=15, window_seconds=300, key_prefix="login")),
+):
     user = db.query(models.User).filter(models.User.email == payload.email).first()
 
     # Always pays real bcrypt cost, whether or not `user` exists — see
@@ -3322,6 +3347,7 @@ async def create_background_upload(
     patient_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=30, window_seconds=3600, key_prefix="upload")),
 ):
     if section not in ALLOWED_SECTIONS:
         raise HTTPException(status_code=400, detail="Invalid document section")
@@ -3383,6 +3409,7 @@ async def upload_compatibility_route(
     patient_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=30, window_seconds=3600, key_prefix="upload")),
 ):
     return await create_background_upload(
         background_tasks=background_tasks,
@@ -3436,6 +3463,7 @@ async def create_batch_upload(
     patient_id: int | None = Form(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=30, window_seconds=3600, key_prefix="upload")),
 ):
     """Independent multi-file ingestion.
 
@@ -3836,6 +3864,7 @@ def get_document_file(
     document_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=120, window_seconds=300, key_prefix="source_retrieval")),
 ):
     document = db.query(models.Document).filter(models.Document.id == document_id).first()
 
@@ -3867,6 +3896,7 @@ def get_source_evidence_view(
     source_evidence_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=120, window_seconds=300, key_prefix="source_retrieval")),
 ):
     """Resolve one SourceEvidence row into everything the shared Bragi
     source viewer needs to open it — the general-purpose
@@ -3932,6 +3962,7 @@ def get_lab_result_source(
     lab_result_id: int,
     db: Session = Depends(get_db),
     current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=120, window_seconds=300, key_prefix="source_retrieval")),
 ):
     """Provenance for one structured lab row — the "View original" flagship
     feature's data source (see BRAGI_REDUCTO_PLAN.md Phase 3).
@@ -5449,6 +5480,7 @@ def refresh_medication_official_info(
     background_tasks: BackgroundTasks,
     db: Session = Depends(get_db),
     current_user=Depends(require_role("patient")),
+    _rl=Depends(RateLimiter(limit=20, window_seconds=3600, key_prefix="external_lookup")),
 ):
     patient = ensure_patient_for_user(db, current_user)
     med = db.query(models.PatientMedication).filter(
@@ -5719,6 +5751,7 @@ def emergency_search_post(
     request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(require_emergency_role()),
+    _rl=Depends(RateLimiter(limit=60, window_seconds=300, key_prefix="emergency_search")),
 ):
     """POST form of emergency search — the only path that accepts a CNP
     lookup. CNP travels in the JSON request body, never in a URL query
@@ -5735,6 +5768,7 @@ def emergency_search(
     request: Request = None,
     db: Session = Depends(get_db),
     current_user=Depends(require_emergency_role()),
+    _rl=Depends(RateLimiter(limit=60, window_seconds=300, key_prefix="emergency_search")),
 ):
     """Legacy GET form, kept only for `code`/`name` lookups (a Bragi
     care-partner code or a name substring are not direct identifiers the
@@ -5756,6 +5790,7 @@ def create_emergency_session(
     request: Request,
     db: Session = Depends(get_db),
     current_user=Depends(require_emergency_role()),
+    _rl=Depends(RateLimiter(limit=30, window_seconds=3600, key_prefix="emergency_session")),
 ):
     from datetime import timedelta
 
