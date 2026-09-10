@@ -1078,3 +1078,230 @@ round couldn't reach — Playwright/manual QA of the actual upload UI, and
 either an `OPENAI_API_KEY` in that environment or accepting that
 `discharge_summary` uploads will fail until one is configured (true
 regardless of Reducto).
+
+## 11. Lab normalization, shared source viewer, and global popup rework
+
+Three-part round: (A) generic OCR-tolerant lab-analyte resolution, (B) an
+in-app source-verification viewer replacing "open PDF in a new tab", (C)
+a global popup/dialog interaction rework. Full detail in this section;
+CLAUDE_HANDOFF.md carries the status summary.
+
+### 11a. PSV/PSW root cause and the generic resolver
+
+**Root cause, traced layer by layer**: a real production document's
+analyte the source visibly labels "PSW" was extracted by Reducto as
+"PSV" — a single visually-confusable glyph misread inside Reducto's own
+OCR/vision layer (Parse/Extract), not introduced by anything downstream.
+Bragi's existing normalization (`synonyms.normalize_test_name`,
+`lab_catalog.find_lab_definition`) does exact/substring matching only —
+correctly, conservatively, left "PSV" unresolved rather than guessing,
+but that also meant a genuine one-glyph OCR slip was never recovered:
+the unresolved fallback echoes the raw string back as both
+`raw_test_name` and the synthesized `display_name`, which is exactly
+what "Bragi representing PSV" looks like from the outside. Reproduced
+synthetically (a rendered PDF with a real "PSW" row goes through Reducto
+and reads back correctly — confirming clean text isn't naturally
+misread; the fix targets the resolution side, not Reducto's OCR itself,
+which isn't ours to change) and exercised deterministically against the
+exact confusion classes the product spec named (real OCR corruption
+isn't reproducible on demand from clean synthetic renders, so the
+resolver's behavior on a known corrupted input is the right thing to
+test directly; live-verified end-to-end separately).
+
+**Architecture** (`backend/app/services/lab_resolver.py`, new module —
+extends rather than replaces the two existing catalogs):
+1. `synonyms.normalize_test_name` (unchanged) — exact/alias match
+   against the 39-entry CBC+chemistry catalog.
+2. `lab_catalog.find_lab_definition` (unchanged) — scored substring
+   match against the ~140-entry broader catalog.
+3. Only if neither matches: OCR-confusion-aware weighted edit-distance
+   scoring across BOTH catalogs' combined alias lists (V/W, I/l/1, O/0,
+   S/5, B/8 as reduced-cost single-glyph substitutions; rn/m as a
+   bigram-variant pre-pass) — resolves only above a confidence floor
+   calibrated against the real psv-vs-psw case (one same-class
+   substitution on a 3-character token scores 0.90), with contextual
+   corroboration (category/section hint, a small explicitly-partial
+   unit-compatibility table) as a real but narrow signal — not
+   exhaustive, not claimed to be. Two genuinely different candidates
+   scoring closely together stay unresolved (a real bug found by testing:
+   the same concept existing as two separate candidate objects — one
+   per source catalog — was initially mis-flagged as "ambiguous"; fixed
+   to compare by normalized display name, not candidate identity).
+
+**"PSW" itself**: added as a real, independently-justified alias on the
+existing `pdw` (Platelet Distribution Width) catalog entry in
+`synonyms.py` — "Platelet Size Width" is a real alternate vendor
+abbreviation some hematology analyzer templates use for the same index.
+Deliberately not adding "PSV" anywhere — an OCR misread of "PSW" must
+resolve through the generic scorer or not at all. A dedicated test
+(`test_no_hardcoded_psv_to_psw_mapping_exists`) inspects the actual
+source of both modules for the dangerous code shapes (dict key/value,
+equality comparison) and fails if either exists.
+
+**Wired into both extraction pipelines**: `reducto_extraction.py`'s
+`extract_lab_results()` (the live path) and the legacy
+`bloodwork_parser.py`'s `build_lab_result()` (after its existing
+`KNOWN_TEST_ALIASES` pre-pass, unchanged). `raw_test_name` is never
+modified by any of this; a new `LabResult.normalization_method` column
+(`exact`/`alias`/`ocr_fuzzy`/`unresolved`) plus the already-existing
+`normalization_confidence` column record provenance, migrated
+idempotently. `document_pipeline.py`'s separate non-CBC path (via
+`lab_catalog.find_lab_definition` directly) was left on its existing
+matcher only — a reasonable follow-up, not done this round.
+
+**Tests**: `backend/tests/test_lab_resolver.py`, 11 cases — the
+no-hardcode proof, the real PSV-to-PSW resolution, every CBC/metabolic
+term named in the spec confirmed unaffected (still exact, confidence
+1.0), OCR-confusion recovery on real terms, unrelated tokens staying
+unresolved, the cross-catalog "same concept, two candidates" fix.
+Live-verified: a synthetic document with a real "PSW" row, run through
+the actual Reducto API, resolved correctly end-to-end into a real
+LabResult row with normalization_method="exact".
+
+### 11b. Shared Bragi source viewer
+
+**Real stored bbox format** (checked against live SourceEvidence rows,
+not assumed): bbox_x/bbox_y/bbox_width/bbox_height are already
+normalized, page-relative fractions in [0, 1], origin top-left —
+Reducto's own citation format (bbox.left/top/width/height), stored
+as-is. This is already exactly the provider-independent,
+resolution-independent representation the spec asks for — no geometry
+normalization layer was needed; a highlight div positioned via
+left/top/width/height: {value * 100}% inside a container sized to the
+rendered PDF.js canvas stays aligned at any zoom/container size for
+free. Rotation: PDF.js's own page.getViewport({scale}) already accounts
+for the page's stored /Rotate value, so rotated pages are handled by not
+overriding that — not independently tested against a real rotated
+document this round (honest limitation, not silently assumed safe).
+
+**Backend**: new `GET /source-evidence/{id}/view` (app/main.py) —
+resolves SourceEvidence to Document to authorization via the same
+can_access_patient check /documents/{id}/file already uses (no new
+authorization logic), returns page/bbox/precision/document metadata,
+never a bare or long-lived file URL — the actual PDF bytes still go
+through the existing authenticated /documents/{id}/file route.
+`precision` is one of exact_bbox / page_only / text_only /
+document_only, computed from what's actually present — never a
+fabricated bbox. Live-verified end-to-end (real Reducto lab upload to
+real bbox returned to real PDF bytes fetched) plus IDOR checks
+(cross-patient 403 on both the new endpoint and the existing file route,
+unauthenticated 401, nonexistent-evidence 404) — all against the real
+dev DB.
+
+**Frontend** (frontend/components/source-viewer/): PDF.js
+(pdfjs-dist, new dependency) via a Context (SourceViewerProvider /
+useSourceViewer()) mounted once at the root layout, exposing
+openSourceEvidence(sourceEvidenceId) globally — no PDF URL, patient ID,
+page, or bbox ever passed around by callers, exactly the contract asked
+for. SourceViewerPanel is the one shared rendering surface (canvas
+render + percentage-based bbox overlay + auto-scroll-into-view on
+render + page nav/zoom/fit-width controls), reused for both:
+- Desktop (app-shell-with-source-viewer.tsx): a real CSS flex split at
+  the root layout level — main content + viewer side by side
+  (.b-app-split), not an overlay, so any page that calls
+  openSourceEvidence gets the split for free, not just ones that
+  specifically build a grid layout for it.
+- Tablet (under 1025px) / mobile: full-screen local surface (nothing
+  left to dim behind it, since it covers the screen itself) — the same
+  SourceViewerPanel, different CSS wrapper class.
+
+Same-document reuse (spec requirement): the loaded pdfjs document is
+cached by document_id across openSourceEvidence calls, so clicking a
+second row from the same PDF doesn't re-fetch/re-parse it.
+
+**Analize integration** (highest priority, done): LabSourceAction in
+documents/[id]/page.tsx — the old icon-only button + dialog-with-raw-
+text is replaced with a visible "View in original" text action (never
+icon-only, any viewport) that fetches the row's evidence id and calls
+openSourceEvidence. The chart-point deep-link (?lab={id}) still
+auto-opens the same way, now into the real viewer instead of the old
+text-only dialog.
+
+**Not done this round** (scoped out, documented rather than silently
+dropped): AnalyticsDrilldownDrawer's "Open source document" still
+navigates to the document page rather than calling openSourceEvidence
+directly — the analytics data pipeline doesn't currently carry a
+lab_result_id/source_evidence_id through to that drawer (only
+document_id), and plumbing one through is a separate-scope backend and
+type-chain change, not a viewer-architecture problem. Reader/Timeline/
+Documents-list integration: not wired this round either — the shared
+primitive (openSourceEvidence) is globally available for them to adopt
+next, and the architecture was deliberately built so that's a small,
+mechanical addition per surface (find/fetch a source_evidence_id, call
+the hook) rather than new viewer work.
+
+### 11c. Global popup rework
+
+**Inventory** (see the commit for the full table): one shared overlay
+system (components/ui/index.tsx's Dialog/ConfirmDialog/Drawer/Menu,
+styled by globals.css's "OVERLAYS" section) plus six ad-hoc, one-off
+overlays that bypassed it with their own inconsistent inline backdrop
+styles (three different darkening colors/opacities, one pair using
+backdrop-blur — explicitly prohibited by the spec). No Radix/shadcn/
+Floating UI anywhere; Menu was already a correctly-anchored,
+never-dimmed popover — the existing model the rest of the system now
+follows.
+
+**Centralized fix** (globals.css): .b-scrim (the shared backdrop element
+used by Dialog/ConfirmDialog/Drawer, the mobile sidebar overlay, and the
+bottom-nav sheet) changed from a darkening layer (rgba(15,23,42,.35) /
+dark rgba(0,0,0,.55)) to fully transparent — kept only as an invisible
+click-outside-to-close hit target, not a visual backdrop.
+.b-dialog/.b-drawer/.b-sheet gained a stronger border (--border-strong)
+to stay visually distinguishable without dimming anything behind them.
+One CSS change, every current usage of the shared system fixed at once
+— this is the highest-leverage part of the rework.
+
+**Six ad-hoc overlays fixed individually** (their own inline
+background/backdropFilter removed, role="presentation"/role="dialog"/
+role="alertdialog" added, border+shadow strengthened to compensate): the
+two near-duplicate delete-document confirmations (documents/[id]/page.tsx,
+documents/[id]/discharge/page.tsx — the only two with backdrop-blur),
+AnalyticsDrilldownDrawer, the emergency workspace's AddPatientModal, and
+my-records/settings's regenerate-care-partner-code and delete-account
+confirmations. The account-deletion confirmation deliberately kept its
+larger, centered surface (a significant destructive action, per the
+spec's own allowance) — only the dark dimming was removed, not its
+safety mechanism (still requires the existing "type delete to confirm"
+input).
+
+**Upload classification confirmation** (explicitly named highest
+priority): converted from a page-level centered Dialog to an inline
+expansion directly inside the ambiguous file's own row
+(my-records/upload/page.tsx) — the type picker + Confirm/Cancel appear
+exactly at File C's row when File C alone needs confirmation; every
+other file's row is completely unaffected, no page-level overlay at all.
+
+**What still remains centered** (undimmed, but not anchored to a
+specific trigger — documented, not silently left): the "featured
+analyte" picker (Analize/patient-chart pages), the emergency
+session-start dialog, and any other Dialog/ConfirmDialog call site not
+named above. Converting every dialog in the app into a fully
+trigger-anchored popover would mean threading a trigger-element
+reference through each call site — a much larger, higher-risk change
+than fixing the shared backdrop; the centralized fix already satisfies
+"no dark backdrop" for 100% of current Dialog/ConfirmDialog/Drawer
+usage, and the two explicitly-named highest-priority cases (upload
+confirmation, lab source viewing) are fully anchored/contextual, not
+just undimmed.
+
+### 11d. What wasn't safely completed this round
+
+- Browser/Playwright QA of the actual popup positioning and
+  source-viewer interactions — same longstanding blocker as every prior
+  round (no BRAGI_TOKENS); verified instead via real backend E2E tests
+  (Reducto to DB to API), tsc --noEmit, full production next build, and
+  eslint on every changed file, all clean.
+- Chart/Reader/Timeline/Documents-list source-viewer integration beyond
+  Analize (see 11b).
+- A real rotated-page PDF was not available to verify highlight
+  alignment against; the underlying mechanism (PDF.js's own viewport
+  rotation handling) is sound but untested end-to-end for that specific
+  case.
+- BRAGI_ASK_BRAGI_PLAN.md does not exist in this repository — nothing to
+  update there. The architecture decision to record for whenever it's
+  created: Ask Bragi citations should resolve through
+  openSourceEvidence(sourceEvidenceId), the same contract Analize uses
+  today, and any Ask Bragi contextual UI should follow this round's
+  popup rule (no dark backdrop, anchored/contextual surface over a
+  centered modal).

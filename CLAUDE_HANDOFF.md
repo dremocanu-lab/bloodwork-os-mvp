@@ -5,12 +5,13 @@ final verification detail. This file is status only.
 
 ## CURRENT PHASE
 None — all 7 phases from the original spec, a real Reducto integration
-(§8), and a full DB-backed production-readiness verification round (§9)
-are implemented and merged to `main`. See plan §2f, §8, and §9 for
-exactly what "done" means here and what's honestly still deferred.
-`REDUCTO_ENABLED` is still `false` everywhere in the repo — see §9's
-"is it safe now" for the current answer and what's still worth doing
-first.
+(§8), a full DB-backed production-readiness round (§9), a real
+production-failure fix + classification-latency round (§10), and a
+normalization/source-viewer/popup-rework round (§11) are implemented and
+merged to `main`. See plan §2f, §8, §9, §10, §11 for exactly what "done"
+means here and what's honestly still deferred. `REDUCTO_ENABLED` is
+`true` in production (confirmed via live traffic) — see §10 for the real
+production bug that was blocking every upload there and is now fixed.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -26,22 +27,45 @@ first.
 7. Full integration verification: `next build`, real `uvicorn` boot +
    OpenAPI route check, full-project `eslint`, full backend test suite,
    full cumulative diff review. See plan §2f.
+8. Real Reducto integration (classify/split/extract, verified against the
+   live API). See plan §8.
+9. Full DB-backed production-readiness round (real Neon Postgres,
+   multi-file batch, quarantine, duplicates, mixed-PDF split, Parse
+   persistence). See plan §9.
+10. Real production failure diagnosed and fixed (`documents.is_verified`
+    schema drift blocking every upload, any provider — see plan §10),
+    plus real classification-latency fixes (parallel Classify+Split,
+    accurate stage messaging, bounded multi-file concurrency, error
+    categorization).
+11. Generic OCR-aware lab-analyte resolver (the PSV/PSW fix), a shared
+    in-app source-verification viewer (PDF.js, replacing "open in a new
+    tab"), and a global popup/dialog rework (no dark backdrops, anchored
+    contextual UI). See plan §11.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
-- **Reducto is now really integrated and DB-verified (see plan §8, §9)**
-  — classify, split, extract, and parse-persistence were implemented and
-  verified against both the live Reducto API and a real non-production
-  Postgres database end-to-end (multi-file batch, Romanian lab →
-  Analize → bbox, duplicates, wrong-patient quarantine, mixed-PDF split
-  including the non-contiguous page-mapping edge case). One real bug
-  (overlapping Split sections wrongly treated as a mixed PDF instead of
-  deferring to Classify's ambiguity handling) was found and fixed this
-  round. See §9 for exactly what's still not covered before flipping
-  `REDUCTO_ENABLED=true` anywhere real.
+- **Production was actually broken for uploads before §10** — `documents.
+  is_verified` was Boolean in the model but integer in production's real
+  column, so every Document insert failed (any provider). Fixed via an
+  idempotent migration, deployed, and confirmed via a real synthetic
+  upload against the live server (`done` status, real Reducto
+  classification + extraction). If you see upload failures again, check
+  `render logs` for `psycopg.errors.DatatypeMismatch` first — that class
+  of bug (a model type that doesn't match the live column) can recur for
+  other columns if a future model change isn't paired with a migration.
+- Chart/Reader/Timeline/Documents-list still don't use the new shared
+  source viewer (`openSourceEvidence`) — only Analize does. See plan
+  §11b for exactly what's blocking `AnalyticsDrilldownDrawer`
+  specifically (needs a `lab_result_id`/`source_evidence_id` threaded
+  through the analytics data pipeline, which doesn't carry one today).
+- A number of `Dialog`/`ConfirmDialog` call sites still render centered
+  (undimmed, but not anchored to their trigger) — see plan §11c for the
+  full list and why converting every one was judged lower-value than the
+  centralized backdrop fix this round.
 - Run the repo's own Playwright QA (`qa/flows.mjs`, `qa/a11y.mjs`)
-  locally against the new upload/reader/chart flows at the responsive
-  breakpoints the original spec named — this session couldn't safely
-  generate the `BRAGI_TOKENS` file it needs (same blocker as before).
+  locally against the new upload/reader/chart/source-viewer/popup flows
+  at the responsive breakpoints the original spec named — this session
+  couldn't safely generate the `BRAGI_TOKENS` file it needs (same
+  blocker as every prior round).
 - Try a real end-to-end upload through live Google Document AI/OpenAI
   (classification + structured reader extraction) for the legacy-provider
   path — every phase avoided spending real API quota; this is the one
@@ -65,9 +89,18 @@ first.
   `Document` tables, not new parallel tables, except `SourceEvidence`
   (genuinely new: no analogous data existed before).
 - Two pre-existing bugs were found via testing and fixed as part of this
-  work: `Document.is_verified` Integer/Boolean schema drift (Phase 2),
-  and `openai_discharge_service.py`'s eager `OpenAI()` client
-  construction at import time (Phase 4).
+  work: `Document.is_verified` Integer/Boolean schema drift (Phase 2, the
+  declaration; actually converting the live column happened in §10 after
+  it was found still broken in production), and
+  `openai_discharge_service.py`'s eager `OpenAI()` client construction at
+  import time (Phase 4).
+- Lab-analyte resolution (§11a) is a new stage layered on top of the two
+  existing catalogs (`synonyms.py`, `lab_catalog.py`), not a replacement
+  for either — see `lab_resolver.py`.
+- The shared source viewer (§11b) resolves/authorizes via a new endpoint
+  but reuses the existing `/documents/{id}/file` route and its exact
+  authorization pattern for the actual PDF bytes — no new file-serving
+  mechanism.
 
 ## Migrations
 All additive (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`)
@@ -91,24 +124,30 @@ file that was never actually read.
 
 ## Tests / status (final)
 - Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
-  → **42 passed**, unit-only (no DB fixtures convention exists yet).
+  → **53 passed** (42 original + 11 new `test_lab_resolver.py` cases),
+  unit-only (no DB fixtures convention exists yet).
 - Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
-  full-project `eslint .` shows only pre-existing findings unrelated to
-  this work (see plan §2f). Not re-run after the Reducto integration
-  (backend-only change; no frontend files touched — see plan §8).
+  `eslint` on every file touched this round is clean (a few pre-existing
+  `react-hooks` findings remain in files this round didn't otherwise
+  touch — see plan §2f/§11d, not fixed, out of scope).
 - Live checks this session actually ran (not just described): a real
-  SHA-256-duplicate functional test against the dev DB (temp rows
-  cleaned up after, Phase 2), a real `uvicorn` boot with an OpenAPI route
-  check, `run_migrations()` applied cleanly against the dev DB after
-  every phase, **and the real Reducto integration (plan §8): live
-  upload/classify/split/parse/extract calls against platform.reducto.ai
-  with synthetic Romanian documents, plus function-level tests of the
-  actual provider code (not just ad-hoc scripts)**.
+  SHA-256-duplicate functional test (Phase 2), a real `uvicorn` boot with
+  an OpenAPI route check, `run_migrations()` applied cleanly against the
+  dev DB after every phase, the real Reducto integration (plan §8), a
+  full DB-backed multi-scenario round against real Neon Postgres (plan
+  §9), a real synthetic upload against the LIVE production server
+  confirming the §10 fix (`done` status, real classification+extraction,
+  cleaned up after), and this round: a real synthetic "PSW" document
+  through the live Reducto API resolving correctly end-to-end into a
+  `LabResult` row, plus a real `/source-evidence/{id}/view` round-trip
+  (real bbox, real PDF bytes, and IDOR checks — cross-patient 403 on both
+  the new endpoint and the existing file route, unauthenticated 401,
+  nonexistent-evidence 404) against the dev DB.
 - Not run: live OCR/AI calls through the legacy provider (real API
-  cost), the repo's Playwright QA suite (needs live tokens this session
-  couldn't generate), and — new this round — the full HTTP/DB-backed
-  upload flow for the Reducto path (this session had no local Postgres
-  credentials; see plan §8 "what wasn't verified").
+  cost), the repo's Playwright QA suite (needs live tokens no session has
+  been able to generate yet), and any actual browser click-through of the
+  new source viewer / popup positioning (verified via build/typecheck/
+  lint + real backend E2E instead — see plan §11d).
 
 ## Known issues
 See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;
@@ -116,15 +155,14 @@ the headline items are in this file's "Next steps" above, plus plan §8
 for the Reducto-integration-specific ones.
 
 ## Manual configuration/authentication required
-- **None** to keep the app working exactly as it did before this work —
-  every new feature defaults to safe/off or additive/backward-compatible
-  behavior; `REDUCTO_ENABLED` still defaults to `false`.
-- **Reducto**: a real `REDUCTO_API_KEY` was used to build and verify this
+- **None new this round.** No Render environment variables were changed
+  or need changing; `frontend/package.json` gained one new dependency
+  (`pdfjs-dist`, for the in-app PDF viewer) — a normal `npm install` on
+  the next frontend deploy picks it up.
+- **Reducto**: a real `REDUCTO_API_KEY` was used to build and verify the
   integration (see plan §8) and is in `backend/.env` (gitignored, local
   only) — rotate/replace it if you don't want that key used further.
-  Before setting `REDUCTO_ENABLED=true` in any real environment, run the
-  full upload flow against your own local Postgres first (this session
-  couldn't) and read plan §8's "turning it on" checklist.
+  `REDUCTO_ENABLED=true` is confirmed live in production already.
 - **Playwright QA**: generate a `BRAGI_TOKENS` file (see `qa/flows.mjs`
   for the expected shape) if you want to run the existing QA harness
-  against this work.
+  against this work — still nobody's been able to generate this safely.
