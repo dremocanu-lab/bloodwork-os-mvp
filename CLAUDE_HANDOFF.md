@@ -6,11 +6,13 @@ final verification detail. This file is status only.
 ## CURRENT PHASE
 None — all 7 phases from the original spec, a real Reducto integration
 (§8), a full DB-backed production-readiness round (§9), a real
-production-failure fix + classification-latency round (§10), and a
-normalization/source-viewer/popup-rework round (§11) are implemented and
-merged to `main`. See plan §2f, §8, §9, §10, §11 for exactly what "done"
-means here and what's honestly still deferred. `REDUCTO_ENABLED` is
-`true` in production (confirmed via live traffic) — see §10 for the real
+production-failure fix + classification-latency round (§10), a
+normalization/source-viewer/popup-rework round (§11), and a
+correction round (§12: fixed a fabricated PSW clinical claim from §11,
+completed the popup audit) are implemented and merged to `main`. See
+plan §2f, §8, §9, §10, §11, §12 for exactly what "done" means here and
+what's honestly still deferred. `REDUCTO_ENABLED` is `true` in
+production (confirmed via live traffic) — see §10 for the real
 production bug that was blocking every upload there and is now fixed.
 
 ## COMPLETED PHASES
@@ -41,6 +43,16 @@ production bug that was blocking every upload there and is now fixed.
     in-app source-verification viewer (PDF.js, replacing "open in a new
     tab"), and a global popup/dialog rework (no dark backdrops, anchored
     contextual UI). See plan §11.
+12. Corrected §11: removed a fabricated "PSW = Platelet Distribution
+    Width" catalog alias that had no real source, and rearchitected the
+    resolver around two independent confidence axes (OCR-text-match vs.
+    clinical-semantic) so PSW/PSV now honestly resolves unresolved rather
+    than silently asserting an invented clinical meaning. Also completed
+    the popup audit: converted every remaining routine/contextual
+    centered dialog (revoke access, regenerate code, end assignment, both
+    featured-analyte pickers) to an anchored popover, and documented the
+    three that legitimately stay centered (emergency session-start,
+    document deletion, account deletion). See plan §12.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
 - **Production was actually broken for uploads before §10** — `documents.
@@ -57,10 +69,15 @@ production bug that was blocking every upload there and is now fixed.
   §11b for exactly what's blocking `AnalyticsDrilldownDrawer`
   specifically (needs a `lab_result_id`/`source_evidence_id` threaded
   through the analytics data pipeline, which doesn't carry one today).
-- A number of `Dialog`/`ConfirmDialog` call sites still render centered
-  (undimmed, but not anchored to their trigger) — see plan §11c for the
-  full list and why converting every one was judged lower-value than the
-  centralized backdrop fix this round.
+- The popup audit is now complete (plan §12b) — every remaining centered
+  dialog (emergency session-start, document deletion, account deletion)
+  is a deliberate, documented exception for a genuine blocking/
+  irreversible workflow, not a deferred conversion. Nothing left to
+  revisit here unless a new dialog is added.
+- If a future document needs "PSW" or a similarly uncertain analyte name
+  resolved, do not add a global synonym without a real cited source —
+  see plan §12a for the vendor-specific escape hatch
+  (`VENDOR_SPECIFIC_ALIASES`) and why the global catalogs stayed clean.
 - Run the repo's own Playwright QA (`qa/flows.mjs`, `qa/a11y.mjs`)
   locally against the new upload/reader/chart/source-viewer/popup flows
   at the responsive breakpoints the original spec named — this session
@@ -124,12 +141,13 @@ file that was never actually read.
 
 ## Tests / status (final)
 - Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
-  → **53 passed** (42 original + 11 new `test_lab_resolver.py` cases),
-  unit-only (no DB fixtures convention exists yet).
+  → **57 passed** (42 original + 15 `test_lab_resolver.py` cases, after
+  §12a's rewrite), unit-only (no DB fixtures convention exists yet).
 - Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
   `eslint` on every file touched this round is clean (a few pre-existing
   `react-hooks` findings remain in files this round didn't otherwise
-  touch — see plan §2f/§11d, not fixed, out of scope).
+  touch — confirmed via `git stash` to predate this round — see plan
+  §2f/§12b, not fixed, out of scope).
 - Live checks this session actually ran (not just described): a real
   SHA-256-duplicate functional test (Phase 2), a real `uvicorn` boot with
   an OpenAPI route check, `run_migrations()` applied cleanly against the
@@ -137,12 +155,15 @@ file that was never actually read.
   full DB-backed multi-scenario round against real Neon Postgres (plan
   §9), a real synthetic upload against the LIVE production server
   confirming the §10 fix (`done` status, real classification+extraction,
-  cleaned up after), and this round: a real synthetic "PSW" document
-  through the live Reducto API resolving correctly end-to-end into a
-  `LabResult` row, plus a real `/source-evidence/{id}/view` round-trip
-  (real bbox, real PDF bytes, and IDOR checks — cross-patient 403 on both
-  the new endpoint and the existing file route, unauthenticated 401,
-  nonexistent-evidence 404) against the dev DB.
+  cleaned up after), a real `/source-evidence/{id}/view` round-trip (real
+  bbox, real PDF bytes, and IDOR checks — cross-patient 403 on both the
+  new endpoint and the existing file route, unauthenticated 401,
+  nonexistent-evidence 404) against the dev DB, and this round: a real
+  synthetic "PSW" document through the live Reducto API, confirming
+  Reducto reads the clean source text as "PSW" correctly and the resolver
+  now honestly leaves it `normalization_method="unresolved"` (§12a — this
+  is the corrected, truthful outcome, not a regression from §11a's
+  claim).
 - Not run: live OCR/AI calls through the legacy provider (real API
   cost), the repo's Playwright QA suite (needs live tokens no session has
   been able to generate yet), and any actual browser click-through of the

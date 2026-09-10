@@ -199,16 +199,16 @@ CBC_TEST_DEFINITIONS = [
             "platelet distribution width",
             "latimea distributiei trombocitare",
             "lățimea distribuției trombocitare",
-            # "PSW" ("Platelet Size Width") is a real alternate vendor
-            # abbreviation some hematology analyzer report templates use for
-            # this same platelet-size-variability index — added as a
-            # genuine catalog alias, independent of any specific OCR error.
-            # Deliberately NOT adding "PSV" here: an OCR misread of "PSW"
-            # must resolve through the generic OCR-aware candidate resolver
-            # (see lab_resolver.py), never through a direct alias lookup —
-            # see BRAGI_REDUCTO_PLAN.md's normalization-architecture section.
-            "psw",
-            "platelet size width",
+            # NOTE: an earlier session added "psw"/"platelet size width"
+            # here as a supposed alternate vendor abbreviation for PDW.
+            # That was WRONG — invented to make a specific OCR-misread demo
+            # resolve, with no real evidence "PSW" means this (or anything).
+            # A web search for authoritative analyzer/hematology
+            # documentation found no attested meaning for "PSW" anywhere.
+            # Removed. Do not re-add a PSW alias without real source/
+            # vendor documentation — see lab_resolver.py's "clinically
+            # verified" mechanism for how to add one correctly when real
+            # evidence exists, and BRAGI_REDUCTO_PLAN.md §11a/§12.
         ],
     },
     {

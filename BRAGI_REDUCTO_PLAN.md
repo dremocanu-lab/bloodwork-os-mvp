@@ -1128,15 +1128,18 @@ extends rather than replaces the two existing catalogs):
    per source catalog — was initially mis-flagged as "ambiguous"; fixed
    to compare by normalized display name, not candidate identity).
 
-**"PSW" itself**: added as a real, independently-justified alias on the
-existing `pdw` (Platelet Distribution Width) catalog entry in
-`synonyms.py` — "Platelet Size Width" is a real alternate vendor
-abbreviation some hematology analyzer templates use for the same index.
-Deliberately not adding "PSV" anywhere — an OCR misread of "PSW" must
-resolve through the generic scorer or not at all. A dedicated test
-(`test_no_hardcoded_psv_to_psw_mapping_exists`) inspects the actual
-source of both modules for the dangerous code shapes (dict key/value,
-equality comparison) and fails if either exists.
+**"PSW" itself — CORRECTED in §12, see there for the full story**: this
+paragraph originally claimed "Platelet Size Width" as a real alternate
+vendor abbreviation for PDW and added it to `synonyms.py` as a PDW
+alias. That claim was fabricated (no invented justification, no actual
+source) and has been removed; §12a explains the root-cause mistake and
+the fix. What's still true from this round: "PSV" is never hardcoded
+anywhere as an alias for anything (still enforced by
+`test_no_hardcoded_psv_to_psw_mapping_exists`), and an OCR misread must
+resolve through the generic scorer or not at all — §12a adds a second,
+independent axis (text-match confidence vs. clinical-semantic
+confidence) so a confident text match no longer has to silently imply a
+confident clinical meaning.
 
 **Wired into both extraction pipelines**: `reducto_extraction.py`'s
 `extract_lab_results()` (the live path) and the legacy
@@ -1149,14 +1152,17 @@ idempotently. `document_pipeline.py`'s separate non-CBC path (via
 `lab_catalog.find_lab_definition` directly) was left on its existing
 matcher only — a reasonable follow-up, not done this round.
 
-**Tests**: `backend/tests/test_lab_resolver.py`, 11 cases — the
-no-hardcode proof, the real PSV-to-PSW resolution, every CBC/metabolic
-term named in the spec confirmed unaffected (still exact, confidence
-1.0), OCR-confusion recovery on real terms, unrelated tokens staying
-unresolved, the cross-catalog "same concept, two candidates" fix.
-Live-verified: a synthetic document with a real "PSW" row, run through
-the actual Reducto API, resolved correctly end-to-end into a real
-LabResult row with normalization_method="exact".
+**Tests (as of this round, see §12a for the current count/assertions)**:
+`backend/tests/test_lab_resolver.py` — the no-hardcode proof, every
+CBC/metabolic term named in the spec confirmed unaffected (still exact,
+confidence 1.0), OCR-confusion recovery on real terms, unrelated tokens
+staying unresolved, the cross-catalog "same concept, two candidates"
+fix. Live-verified: a synthetic document with a real "PSW" row, run
+through the actual Reducto API, produces a raw_test_name of "PSW" (the
+OCR-correction axis working — Reducto reads it cleanly, no PSV garbling
+on clean input) with normalization_method="unresolved" (the correct,
+honest outcome now that the fabricated PDW alias is gone — see §12a for
+why this is right, not a regression).
 
 ### 11b. Shared Bragi source viewer
 
@@ -1272,18 +1278,16 @@ expansion directly inside the ambiguous file's own row
 exactly at File C's row when File C alone needs confirmation; every
 other file's row is completely unaffected, no page-level overlay at all.
 
-**What still remains centered** (undimmed, but not anchored to a
-specific trigger — documented, not silently left): the "featured
-analyte" picker (Analize/patient-chart pages), the emergency
-session-start dialog, and any other Dialog/ConfirmDialog call site not
-named above. Converting every dialog in the app into a fully
-trigger-anchored popover would mean threading a trigger-element
-reference through each call site — a much larger, higher-risk change
-than fixing the shared backdrop; the centralized fix already satisfies
-"no dark backdrop" for 100% of current Dialog/ConfirmDialog/Drawer
-usage, and the two explicitly-named highest-priority cases (upload
-confirmation, lab source viewing) are fully anchored/contextual, not
-just undimmed.
+**What still remains centered as of this round** (undimmed, but not
+anchored to a specific trigger): the "featured analyte" picker
+(Analize/patient-chart pages), the emergency session-start dialog, and
+any other Dialog/ConfirmDialog call site not named above. **Superseded
+by §12b**: the featured-analyte picker and every other case listed here
+were audited and converted to trigger-anchored popovers in the next
+round; §12b has the final, current list of every dialog that remains
+centered and why. The general point still holds: the centralized
+backdrop fix already satisfies "no dark backdrop" for 100% of current
+Dialog/ConfirmDialog/Drawer usage regardless of anchoring.
 
 ### 11d. What wasn't safely completed this round
 
@@ -1305,3 +1309,158 @@ just undimmed.
   today, and any Ask Bragi contextual UI should follow this round's
   popup rule (no dark backdrop, anchored/contextual surface over a
   centered modal).
+
+## 12. PSW semantic correction and popup audit completion
+
+Two corrections to §11, requested after review found a real problem in
+§11a and an incomplete audit in §11c.
+
+### 12a. PSW: separating OCR-correction confidence from clinical-semantic confidence
+
+**The mistake**: §11a's "PSW itself" paragraph added `"psw"` /
+`"platelet size width"` to the `pdw` (Platelet Distribution Width) entry
+in `synonyms.py` as a "real alternate vendor abbreviation," with no
+actual source. It was invented to make the PSV-to-PSW demo case resolve
+cleanly. This conflated two genuinely different claims:
+
+1. **OCR-correction confidence** — is the raw text Reducto extracted
+   ("PSV") a plausible misread of what the source document actually
+   shows ("PSW")? This is well-supported: reproduced synthetically, and
+   the OCR-confusion scorer (V/W as a same-glyph-class substitution)
+   correctly identifies it as a high-confidence text match.
+2. **Clinical-semantic confidence** — does "PSW," once recovered as the
+   source text, mean Platelet Distribution Width? This is *not*
+   supported. A web search turned up no analyzer, vendor, or hematology
+   reference using "PSW" for PDW; the standard abbreviation everywhere
+   is "PDW". Claim 1 being true says nothing about claim 2.
+
+**The fix — two independent axes, not one confidence score**
+(`backend/app/services/lab_resolver.py`, rewritten): `ResolvedAnalyte`
+now separates `resolved_source_text` / `ocr_match_confidence` (axis 1:
+what does the text say) from `canonical_name` / `resolved` /
+`normalization_confidence` (axis 2: what does it mean). Each catalog
+candidate carries a `clinically_verified: bool` flag. When the
+best-scoring text candidate has `clinically_verified=False`, the
+resolver now returns `normalization_method="text_matched_unverified"` —
+axis 1 resolves (the text match is surfaced honestly), axis 2 stays
+unresolved (`resolved=False`, no `canonical_name` asserted as fact,
+`category="other"`). This is a real, load-bearing code path, not a flag
+that's always true in practice today: the two axes can and do diverge,
+proven with a test-local fictional fixture rather than a fabricated
+real-catalog claim.
+
+**PSW/PSV specifically**: the fabricated `pdw` alias is removed. No
+global "PSW to PDW" mapping exists anywhere in the catalogs. "PSV"
+resolves via the OCR-confusion scorer to the text candidate "PSW" (axis
+1, high confidence) — but "PSW" itself has no `clinically_verified`
+catalog entry, so the overall result is `normalization_method
+="unresolved"`, `resolved=False`, `canonical_name=None`. Live-verified
+against the real Reducto API with the synthetic `psw_lab.pdf` document:
+Reducto reads the clean source text as "PSW" correctly (confirming the
+document really does say PSW, not PSV — the original OCR-misread
+premise), and the resolver leaves it fully unresolved on the clinical
+axis. `raw_test_name`/`provider_extracted_name` is never mutated by any
+of this, in either direction — the provider's literal "PSV" (or "PSW")
+stays intact in the stored row regardless of resolution outcome.
+
+**Vendor-specific escape hatch, unused by default**:
+`VENDOR_SPECIFIC_ALIASES: dict[str, list[dict]] = {}` in
+`lab_resolver.py` — empty, with a commented example showing the shape
+real evidence would take (vendor name, source document reference,
+analyte code). If institution-specific analyzer documentation is ever
+found establishing what "PSW" means for a specific lab/vendor, it goes
+here, scoped to that institution, not into the global synonym catalog.
+Nothing currently populates it.
+
+**Tests** (`backend/tests/test_lab_resolver.py`, 15 cases, all passing):
+`test_no_psw_alias_in_real_catalog` (fails if `"psw"` or `"platelet
+size width"` reappears anywhere in `synonyms.py`'s real catalog),
+`test_psv_is_genuinely_unresolved_on_both_axes_without_evidence`
+(replaces the old, wrong "PSV resolves to PDW" assertion),
+`test_text_matched_unverified_candidate_resolves_text_but_not_clinical_meaning`
+and `test_text_matched_unverified_vs_verified_same_similarity_different_outcome`
+(prove the two-axis split with a fictional test-local fixture — same
+similarity score, different `clinically_verified`, different outcome —
+so the mechanism is independently exercised, not just asserted),
+`test_provider_raw_text_is_never_mutated_regardless_of_outcome`,
+`test_vendor_specific_mapping_is_empty_by_default`, plus every
+pre-existing case from §11a re-verified against the rewritten resolver
+(legitimate CBC/metabolic terms still resolve exactly at confidence
+1.0, no hardcoded PSV mapping, cross-catalog dedup still correct).
+
+**What this does NOT establish**: PSW does not have an independently
+verified clinical meaning in this system. It is not mapped to PDW or
+anything else. If a future document needs PSW resolved, that requires
+either (a) real published vendor/analyzer documentation entered into
+`VENDOR_SPECIFIC_ALIASES` with a cited source, or (b) a generically
+justified, source-cited addition to the real catalogs — not another
+guess.
+
+### 12b. Popup audit completion
+
+§11c's "what still remains centered" list was reviewed and closed out.
+
+**Converted this round** (routine/contextual to anchored `Popover`, a
+new primitive in `components/ui/index.tsx`: controlled, positioned off
+a `RefObject` trigger, no backdrop, closes on outside-click/Escape,
+becomes a bottom sheet under 640px via CSS media query):
+- **Revoke doctor access** / **regenerate care-partner code**
+  (my-records/access/page.tsx) — each row's action button gets its own
+  anchored Popover; for the list case (revoke access, one button per
+  row) the open target is tracked by id and compared per-row rather
+  than a single shared ref, since any row can be the trigger.
+- **End doctor-patient assignment** (admin/doctors/[id]/page.tsx) — the
+  action lives inside a `DataTable` `render` callback where hooks can't
+  be used directly, so it's a small local component
+  (`EndAssignmentAction`) with its own `useState`/`useRef`, rendered
+  once per row.
+- **Featured-analyte picker**, both the patient's own view
+  (my-records/page.tsx) and the doctor's view (patients/[id]/page.tsx)
+  — was a page-level centered `Dialog`; now an anchored `Popover` off
+  the "Change" trigger in `SectionHead`.
+
+**Reviewed and kept centered, each with its reason documented in the
+code itself (not just here)**:
+- **Emergency session-start** (`emergency/search/page.tsx`'s `confirm`
+  dialog, and `emergency/workspace/page.tsx`'s `AddPatientModal`) —
+  granting read access to a real patient's record, written to the audit
+  log: a genuine blocking/critical workflow, not routine. Also has no
+  single stable anchor point (the trigger can be any row in a search
+  result list, or either of two separate entry points in the
+  workspace). No dark backdrop; the surface itself stays centered for a
+  stable, predictable location during a time-pressured workflow.
+- **Document deletion** (`documents/[id]/page.tsx`,
+  `documents/[id]/discharge/page.tsx`) — permanently removes something
+  from a patient's medical record; irreversible. Unlike revoke-access
+  (reversible relationship change) or regenerate-code (reversible,
+  non-destructive), this carries the same weight as account deletion,
+  so it keeps the centered, more prominent confirmation surface rather
+  than being downgraded to a lightweight anchored popover. No dark
+  backdrop.
+- **Account deletion** (`my-records/settings/page.tsx`) — irreversible,
+  removes the user's access and data entirely; unchanged from §11c
+  (comment reworded to match this section's framing), still requires
+  typing a confirmation phrase. No dark backdrop.
+
+**Full audit method, not just a targeted look**: grepped the entire
+frontend for every remaining `Dialog`/`ConfirmDialog` usage (two hits:
+the documented emergency-search exception, and the component
+definitions themselves), every custom `role="alertdialog"` modal (the
+three named above — nothing else in the codebase uses that pattern),
+every `zIndex: 999`/`zIndex: 1000` overlay (same three files, no
+others), and every `position: "fixed"` block across `app/` and
+`components/` (the rest are theme/language-toggle corner widgets and
+full-page loading spinners — not popups, not in scope). This accounts
+for every centered surface in the application; there is no remaining
+undocumented centered dialog.
+
+**Verification**: `npx tsc --noEmit` clean across the frontend; `npm
+run build` (Next.js/Turbopack) succeeds, all 33 routes compile; `eslint`
+run on every touched file — the only pre-existing errors it surfaces
+(`react-hooks/set-state-in-effect` in `patients/[id]/page.tsx`,
+`my-records/page.tsx`, `emergency/workspace/page.tsx`) are confirmed via
+`git stash` to be unrelated to this round's changes (present on
+unmodified files, same line numbers); the two new unused-variable
+warnings in `my-records/settings/page.tsx` are leftover dead state from
+before this round's comment-only edit there, not introduced by it.
+Backend: `pytest -q`, 57 passed.
