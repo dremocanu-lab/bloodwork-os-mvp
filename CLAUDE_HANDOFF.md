@@ -343,3 +343,99 @@ for the Reducto-integration-specific ones.
   synthetic account was created as) — building a full `BRAGI_TOKENS`
   covering every role the same way (patient/doctor/pcp/admin/care_partner/
   emergency_worker) is mechanical from here, just not done this round.
+
+## BRAGI SECURITY / GDPR
+
+A full security/GDPR/privacy/data-governance hardening round. Master
+document: `BRAGI_SECURITY_GDPR_PLAN.md` (repo root) — read that first;
+this section is a pointer/summary, not a duplicate. Supporting
+documents: `docs/security/*`, `docs/privacy/*`, `docs/vendors/*`,
+`docs/ai/AI_GOVERNANCE.md`, `docs/regulatory/INTENDED_PURPOSE_DRAFT.md`,
+`docs/PRODUCTION_READINESS_CHECKLIST.md` (the compact, evidence-cited
+launch checklist).
+
+**Status labeling convention introduced this round** (used consistently
+across all of the above, and recommended for any future security/
+compliance work in this repo): `[PASS]` (implemented AND verified with
+real evidence — never code-appearance alone), `[FAIL]`,
+`[IMPLEMENTED — NOT DEPLOYED]`, `[EXTERNAL ACTION]`, `[LEGAL REVIEW]`,
+`[INDEPENDENT VALIDATION]`, `[NOT APPLICABLE]`, `[UNKNOWN]` (never
+turned into a false `[PASS]` for uncertainty). No GDPR/HIPAA/MDR/EU-AI-
+Act/ISO-27001/SOC-2 compliance or certification is claimed anywhere —
+none has been externally established.
+
+### Shipped to production this round (3 commits, all deployed and confirmed live)
+
+- `b4ad7dc` — Python dependency CVE fixes (jose, multipart, dotenv);
+  `starlette`/`pyasn1` CVEs correctly left un-upgraded (blocked by
+  direct-dependency version constraints — see plan §3/§12, not forced).
+- `5ceec0c` — backend hardening: security response headers, login-
+  timing side-channel fix, password-length floor, 4 real account-
+  deletion FK-cascade bugs found via live reproduction and fixed
+  (500→200, DB-verified audit-trail preservation), `is_active`
+  staleness fix in 2 doctor-facing endpoints, file-upload validation
+  (extension/magic-byte/size), PHI removed from `ai_extract.py` logs,
+  2 info-disclosure fixes, 20 new regression tests (IDOR, headers,
+  upload validation) — all against the real dev DB, all passing.
+- `7142646` — frontend CSP + security headers (`next.config.ts`,
+  verified live in a real Playwright/Chromium session including the
+  PDF.js source viewer — zero violations), Next.js critical CVE fix
+  (16.2.4→16.3.4, `npm audit` 11→0).
+
+Render (`dep-daheeitckfvc73bq8bug`, commit `7142646`): `live`. Vercel
+(same push): `Ready`. Both confirmed 2026-09-10.
+
+### Real, unmitigated gaps found this round (not fixed — documented, prioritized in the plan doc)
+
+No rate limiting anywhere in the backend; no malware/AV scanning of
+uploads; CNP (Romanian national ID) not comprehensively minimized
+(full value in most responses, appears in 2 URL query strings); no
+encryption-at-rest for CNP (design-only, deliberately not migrated —
+`docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`); no RLS (design-only,
+deliberately not enabled — `docs/security/RLS_PLAN.md` explains exactly
+why blind activation would be unsafe with this app's Neon pooling/
+background-job architecture); no CI at all (`.github/workflows`
+doesn't exist); no data-minimization before sending document content
+to OpenAI (full page image + up to 12,000 chars of OCR text) or
+Reducto; no token-revocation mechanism; no self-deletion endpoint for
+doctor/admin/care_partner/emergency_worker accounts (patient
+self-deletion is fixed and working); a real (found via testing, not
+fixed) `StaleDataError` race between account deletion and an in-flight
+background upload job. Full prioritized list:
+`BRAGI_SECURITY_GDPR_PLAN.md` §24 and
+`docs/PRODUCTION_READINESS_CHECKLIST.md`'s "highest-priority next
+steps."
+
+### Things requiring a product decision (not silently changed)
+
+`role` is entirely client-supplied at `/auth/signup` with no
+server-side gate for `doctor`/`admin` beyond a code for `care_partner`
+— could be intentional self-service onboarding or a real gap;
+`/admin/patients/search` has no department/hospital scoping unlike
+`/admin/doctors`. Neither was changed unilaterally — changing either
+without confirming intent risks breaking the actual current onboarding/
+admin workflow, which this round's own production-safety rules
+prohibit doing without confirmation. See plan §5/§6.
+
+### Testing convention this round reused/extended
+
+Real dev DB (Neon, via `backend/.env`, gitignored), synthetic accounts
+created through the real `/auth/signup` endpoint (never mocked), FastAPI
+`TestClient`-based pytest tests gated with
+`pytest.skip(..., allow_module_level=True)` when `DATABASE_URL` is
+unset — a deliberate departure from this repo's prior unit-only
+convention, added specifically for IDOR/security regression coverage
+that needs real authorization checks against real rows. See
+`backend/tests/test_idor_regression.py`,
+`backend/tests/test_security_headers.py`,
+`backend/tests/test_upload_validation.py`.
+
+### If you continue this work
+
+Read `BRAGI_SECURITY_GDPR_PLAN.md` in full first — it is the
+authoritative, up-to-date status. Do not mark anything `[PASS]` without
+the same evidence standard (a named test, a real request/response, a
+real DB query) used throughout. Do not enable RLS, migrate CNP
+encryption, or add rate limiting/CI without reading the corresponding
+design doc first — each documents a specific reason the naive version
+of that change would be unsafe for this app's actual architecture.
