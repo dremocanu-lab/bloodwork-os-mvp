@@ -111,7 +111,8 @@ function getUploadHint(file: File) {
 export default function MyRecordsUploadPage() {
   const router = useRouter();
   const { language } = useLanguage();
-  const { enqueueAutoClassifyUploads, confirmDocumentType, visibleTasks, refreshUploadJobs } = useUploadManager();
+  const { enqueueAutoClassifyUploads, confirmDocumentType, confirmIdentity, visibleTasks, refreshUploadJobs } =
+    useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
 
   const labels = useMemo(() => {
@@ -141,6 +142,10 @@ export default function MyRecordsUploadPage() {
         bestGuess: "Estimare Bragi",
         cancel: "Anulează",
         confirmAction: "Confirmă tipul",
+        itsMe: "Sunt eu",
+        notMine: "Nu e al meu",
+        setAside: "Pus deoparte",
+        alreadyUploaded: "Deja încărcat",
       };
     }
 
@@ -169,6 +174,10 @@ export default function MyRecordsUploadPage() {
       bestGuess: "Bragi's best guess",
       cancel: "Cancel",
       confirmAction: "Confirm type",
+      itsMe: "It's me",
+      notMine: "Not mine",
+      setAside: "Set aside",
+      alreadyUploaded: "Already uploaded",
     };
   }, [language]);
 
@@ -531,6 +540,27 @@ export default function MyRecordsUploadPage() {
                         >
                           {labels.confirmType}
                         </button>
+                      ) : row.status === "needs_identity_confirmation" ? (
+                        <span style={{ display: "flex", gap: "var(--s1)" }}>
+                          <button
+                            type="button"
+                            className="b-btn b-btn-secondary b-btn-sm"
+                            onClick={() => row.jobId && confirmIdentity(row.jobId, true)}
+                          >
+                            {labels.itsMe}
+                          </button>
+                          <button
+                            type="button"
+                            className="b-btn b-btn-ghost b-btn-sm"
+                            onClick={() => row.jobId && confirmIdentity(row.jobId, false)}
+                          >
+                            {labels.notMine}
+                          </button>
+                        </span>
+                      ) : row.status === "quarantined" ? (
+                        <Status tone="danger">{labels.setAside}</Status>
+                      ) : row.status === "duplicate" ? (
+                        <Status tone="muted">{labels.alreadyUploaded}</Status>
                       ) : row.status === "done" ? (
                         <Status tone="ok">Ready</Status>
                       ) : row.status === "error" ? (

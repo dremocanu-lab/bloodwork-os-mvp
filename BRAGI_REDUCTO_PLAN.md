@@ -79,15 +79,11 @@ Upload (per file)
 
 ## 2. Phases (adapted from the original 7-phase spec)
 
-- **Phase 1 — Reducto foundation + multi-file classification (this
-  phase).** Provider abstraction, taxonomy, rule-based classifier,
-  `needs_confirmation` flow, `/upload/batch`, confirmation UI. Done —
-  see status below.
+- **Phase 1 — Reducto foundation + multi-file classification.** Provider
+  abstraction, taxonomy, rule-based classifier, `needs_confirmation`
+  flow, `/upload/batch`, confirmation UI. Done.
 - **Phase 2 — Identity / duplicates / canonical data / provenance.**
-  SHA-256 exact-duplicate detection, patient identity mismatch +
-  quarantine, `ClinicalObservation` (raw + canonical) evolving
-  `LabResult`, `SourceEvidence` (document/page/bbox/text), audit
-  expansion, DB-backed test fixtures (first tests that need a DB).
+  Done — see status below.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -102,8 +98,88 @@ Upload (per file)
   reference ranges, chart-point → source.
 - **Phase 7 — Full integration / responsive QA.**
 
-Phase boundaries may still shift as Phase 2+ reveals more about the real
+Phase boundaries may still shift as Phase 3+ reveals more about the real
 Reducto contract and current DB scale — update this file when they do.
+
+## 2a. Phase 2 — what was actually built
+
+- **SHA-256 exact-duplicate detection** (`app/services/file_hash.py`):
+  computed on every upload before any OCR/AI cost is spent; an identical
+  file already on the *same patient's* record short-circuits the job to
+  `status="duplicate"` pointing at the existing document — no second
+  Document/LabResult set is ever created. Verified against the local dev
+  DB with a live functional test (temporary patient/file, cleaned up
+  after).
+- **Patient identity check** (`app/services/patient_identity.py`):
+  conservative rule-based comparator (CNP/patient_identifier exact match,
+  name via token-overlap, DOB exact match) producing `matched` /
+  `needs_confirmation` / `mismatch` / `insufficient_identity`. Blank
+  patient fields are now backfilled from an uploaded document **only**
+  when the check comes back `matched`/`insufficient_identity`/
+  `matched_override` — previously (pre-Phase-2) any extracted identity
+  silently overwrote blank fields with no check at all.
+  - `mismatch` → the document is quarantined: `patient_id` is left NULL
+    (so it's invisible to every existing patient-scoped query without
+    auditing all of them — see below) and `intended_patient_id` +
+    `review_status="quarantined"` record what happened, for review via
+    `GET /documents/quarantined` + `POST /documents/{id}/identity-review`.
+  - `needs_confirmation` → job pauses as `needs_identity_confirmation`
+    (nothing persisted yet, same reprocess-from-scratch shortcut as
+    classification `needs_confirmation`); resolved via
+    `POST /upload-jobs/{id}/confirm-identity`. Confirming sets
+    `UploadJob.identity_override` (audited) so the next run skips the
+    check for that one job.
+- **`SourceEvidence`** table: `document_id` + `lab_result_id` (nullable —
+  generalizes beyond labs later) + page/bbox (all null for now, never
+  fabricated) + `source_text` + confidence/provider/parser_version. Every
+  lab row created in Phase 2 gets one populated with the raw
+  name/value/unit/range as `source_text` — the "View original" flagship
+  feature (Phase 3) has something to render even before real bbox
+  coordinates exist.
+- **Level-3 duplicate-observation linking**: within the same patient, a
+  new lab row with an *exact* match on canonical test + observation date
+  + value + unit is linked via `LabResult.duplicate_of_lab_result_id`
+  instead of inserted as a second independent point; `SourceEvidence` for
+  it attaches to the original row (multiple sources, one observation).
+  The bloodwork-trends endpoint excludes linked duplicates so they don't
+  plot twice. Deliberately exact-match-only — see "false merging is worse
+  than conservative duplication."
+- **Canonical/provenance columns added directly to `LabResult`** rather
+  than a new `ClinicalObservation` table: `observation_datetime`,
+  `institution`, `specimen`, `accession_id`, `verification_state`,
+  `extraction_confidence`, `normalization_confidence`. `LabResult`
+  already had the raw/canonical split (`raw_test_name` vs.
+  `canonical_name`/`display_name`/`category`); a new table would have
+  required migrating every existing Analize query for no real benefit at
+  this stage. `specimen`/`accession_id` are schema-ready but not
+  populated yet — nothing currently extracts them.
+- **Discovered and fixed a pre-existing bug**, unrelated to this phase:
+  `Document.is_verified` was declared `Integer` in the model but the live
+  Postgres column is `boolean` — found because a functional test failed
+  on it. Fixed by changing the model to `Boolean` (no migration needed,
+  the DB column was already correct; only the Python declaration and the
+  two `is_verified=0/1` write sites were wrong). Worth a quick check that
+  production has the same drift.
+
+### Deferred from the original Phase 2 spec
+
+- **Level-2 semantic document-level duplicate matching** (institution +
+  collection date + accession/specimen ID fingerprint): not implemented.
+  Nothing in the current pipeline reliably extracts accession/specimen
+  IDs yet, so a Level-2 heuristic would be guessing on missing data —
+  higher false-merge risk than benefit right now. Revisit once Phase 3/4
+  extraction is richer.
+- **A dedicated patient-facing quarantine review page**: the backend
+  (`GET /documents/quarantined`, `POST /documents/{id}/identity-review`)
+  is done and covers the far more common in-upload-flow
+  `needs_identity_confirmation` pause (handled inline, same pattern as
+  classification confirmation). A standalone review page for the rarer
+  `mismatch`/quarantine case is not built this phase — worth adding
+  alongside Phase 4/5 UI work rather than as a one-off.
+- **Auditing every `Document.patient_id ==` query site** (9 in
+  `main.py`) for quarantine-awareness: unnecessary — quarantined
+  documents get `patient_id = NULL`, so they're automatically invisible
+  everywhere without touching those sites.
 
 ## 3. Reducto integration status (important)
 

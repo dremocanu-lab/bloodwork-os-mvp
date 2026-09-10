@@ -4,101 +4,85 @@ See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale. This file is
 status only.
 
 ## CURRENT PHASE
-Phase 1 — Reducto foundation + multi-file classification: **done, committed.**
+Phase 3 — Analize + source verification: starting.
 
 ## COMPLETED PHASES
-- **Phase 1**: `DocumentExtractionProvider` abstraction (legacy/Reducto),
-  16-type document taxonomy, rule-based RO/EN classifier, `needs_confirmation`
-  flow, `POST /upload/batch`, `POST /upload-jobs/{id}/confirm-type`,
-  `GET /document-types`, rewritten patient upload page (no manual type
-  picker), 23 passing unit tests.
+- **Phase 1**: extraction-provider abstraction, document taxonomy,
+  rule-based classifier, `/upload/batch`, classification confirmation.
+- **Phase 2**: SHA-256 exact-duplicate short-circuit, patient identity
+  check (matched/needs_confirmation/mismatch/insufficient_identity) with
+  quarantine for mismatches (`patient_id=NULL` + `intended_patient_id`),
+  `SourceEvidence` table, Level-3 duplicate-observation linking on
+  `LabResult`, canonical/provenance columns on `LabResult`. Fixed a
+  pre-existing `Document.is_verified` Integer/Boolean schema-drift bug
+  found via testing. 36 passing unit tests + one live functional test
+  (dedup short-circuit, against the real dev DB, cleaned up after).
 
 ## NEXT PHASE
-Phase 2 — Identity / duplicates / canonical data / provenance:
-- SHA-256 exact-duplicate detection on upload.
-- Patient identity mismatch detection + quarantine (today: none — a
-  document's extracted identity only fills *blank* patient fields, never
-  flags a mismatch).
-- `ClinicalObservation` (raw + canonical) evolving `LabResult` (which
-  already has raw/canonical fields — a head start).
-- `SourceEvidence` model (document/page/bbox/text) — no provenance model
-  exists yet at all.
-- First DB-backed tests (need fixtures — none exist yet).
+Phase 3 — Analize + source verification: wire "View original" using
+`SourceEvidence.source_text` (no bbox yet — none exists without real
+Reducto Parse); keep structured Analize as the primary lab experience
+(no replacement).
 
 ## Architecture decisions
-- New `document_type` rides *alongside* the existing `section` column
-  (not a replacement) — every current route/page/filter on `section`
-  keeps working. See `backend/app/services/document_taxonomy.py` for the
-  mapping.
-- Migrations follow the repo's existing convention: idempotent
-  `ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements appended to
-  `run_migrations()` in `backend/app/main.py` (no Alembic). They ran
-  automatically against the local dev DB during this phase (verified —
-  see Tests/status) and will run automatically on the next backend start
-  in any other environment, including production, on deploy.
-- Reducto is fully abstracted but **not implemented** — no Reducto MCP
-  or API key was available this phase. `ReductoExtractionProvider`
-  always raises until it's actually wired up (see plan §3).
+- Quarantine uses `Document.patient_id = NULL` + `intended_patient_id`
+  rather than auditing every `patient_id ==` query site — automatically
+  invisible everywhere.
+- Canonical/provenance fields went onto the existing `LabResult` table
+  (not a new `ClinicalObservation` table) — see plan §2a for why.
+- Migrations still follow `run_migrations()` in `main.py` (idempotent
+  `ADD COLUMN IF NOT EXISTS`) — ran automatically against the local dev
+  DB this phase, verified.
 
-## Important files
-- `backend/app/services/document_taxonomy.py` — taxonomy + legacy-section mapping
-- `backend/app/services/document_classifier.py` — "legacy_rules" keyword classifier
-- `backend/app/services/extraction_provider.py` — provider abstraction/factory
-- `backend/app/main.py` — `run_migrations()`, `process_upload_job()` classification
-  block, `/upload/batch`, `/upload-jobs/{id}/confirm-type`, `/document-types`
-- `backend/app/models.py` — new columns on `Document` and `UploadJob`
-- `frontend/components/upload-provider.tsx` — `enqueueAutoClassifyUploads`,
-  `confirmDocumentType` (additive; `enqueueUploads` unchanged for other pages)
-- `frontend/app/my-records/upload/page.tsx` — rewritten patient upload page
+## Important files (new/changed this phase)
+- `backend/app/services/patient_identity.py`, `file_hash.py`
+- `backend/app/main.py` — dedup + identity blocks in `process_upload_job`,
+  `/upload-jobs/{id}/confirm-identity`, `/documents/quarantined`,
+  `/documents/{id}/identity-review`
+- `backend/app/models.py` — `SourceEvidence`, new `Document`/`UploadJob`/
+  `LabResult` columns, fixed `is_verified` type
+- `frontend/components/upload-provider.tsx`,
+  `frontend/app/my-records/upload/page.tsx` — inline identity confirm/
+  reject UI
 
 ## Migrations
-No manual step needed — `run_migrations()` runs on every backend start
-and only adds nullable columns (`document_type`, `classification_status`,
-`classification_confidence`, `classification_source` on `documents` and
-`upload_jobs`). Verified against the local dev DB this phase (20 existing
-`documents` rows, 0 `upload_jobs` — untouched, columns added cleanly).
+No manual step — same `run_migrations()` auto-apply as Phase 1. Verified
+against the local dev DB (`mvp1_phase1`): all new columns + the
+`source_evidence` table applied cleanly, 20 pre-existing documents
+untouched.
 
-## Environment variables (manual configuration needed for Phase 3+, NOT now)
-Added to `backend/.env.example`, all safe defaults already in place —
-**no action needed to keep the app working as before**:
-```
-DOCUMENT_EXTRACTION_PROVIDER=legacy   # only "legacy" actually works right now
-DOCUMENT_EXTRACTION_FALLBACK=legacy
-REDUCTO_API_KEY=                      # backend-only; never NEXT_PUBLIC_*
-REDUCTO_ENABLED=false                 # do not set true until §3 of the plan is done
-```
-When you're ready to start real Reducto integration (Phase 3+), you'll
-need to get a Reducto account/API key yourself — I have no way to
-provision one. Nothing else needs manual setup for what's shipped so far.
+## Environment variables
+No new ones this phase. Still: `REDUCTO_ENABLED=false` everywhere until
+Phase 3+ implements the real integration (see plan §3).
 
 ## Tests / status
-- `cd backend && pip install -r requirements-dev.txt && pytest -q` →
-  **23 passed** (taxonomy, classifier, provider abstraction — all
-  unit-only, no DB).
-- `python -m py_compile` / `ast.parse` clean on all edited/new backend
-  files; `pyflakes app/main.py` shows only 4 **pre-existing** warnings,
-  none touching this phase's code.
-- Full `app.main` import succeeded against the local dev DB
-  (`mvp1_phase1` on `localhost:5432`) with a throwaway `SECRET_KEY`/
-  `OPENAI_API_KEY` — confirms `run_migrations()` applied the new columns
-  without error and without touching existing rows.
-- Frontend: `npx tsc --noEmit` clean, `npx eslint` clean on both changed
-  files.
-- **Not done this phase**: a real end-to-end upload through live Google
-  Document AI / OpenAI (would spend real API quota — run this locally
-  yourself when convenient by uploading a real or synthetic file through
-  "Add medical records" and watching the classification label appear).
+- `cd backend && pytest -q` → **36 passed** (unit-only, no DB).
+- Live functional test against the dev DB: SHA-256 duplicate
+  short-circuit exercised end-to-end (`process_upload_job` on a real
+  temp patient/document), asserted `status == "duplicate"` and correct
+  `document_id`, then fully cleaned up (deleted temp rows + file,
+  confirmed document count back to 20).
+- `pyflakes app/main.py`: only the same 4 pre-existing warnings from
+  before this phase.
+- Frontend: `tsc --noEmit` and `eslint` clean.
+- **Not done**: live OCR/AI end-to-end test (same reasoning as Phase 1 —
+  would spend real API quota).
 
 ## Known issues
-See `BRAGI_REDUCTO_PLAN.md` §6 — the main one worth knowing about:
-auto-classified uploads currently run OCR twice (once to classify, once
-inside the existing bloodwork/discharge pipeline). Deliberate, documented
-shortcut; fix lands naturally with Phase 3's "parse once, persist"
-requirement.
+- Level-2 semantic duplicate detection deferred (see plan §2a) —
+  nothing extracts accession/specimen IDs yet to key off.
+- No dedicated quarantine review *page* yet (backend done; the common
+  in-flow identity-confirmation case has UI, the rarer full-mismatch
+  quarantine case doesn't yet).
+- Double-OCR-on-classify shortcut from Phase 1 still stands.
+- **Worth checking**: this session found `Document.is_verified` had
+  drifted from the model (Integer) vs. the live DB (boolean) on the
+  local dev DB. Fixed the model to match. If production has the same
+  drift, this fix helps it; if production's column was already boolean
+  (likely, if it was bootstrapped from an older model version), nothing
+  changes for it either way — but worth a quick manual check.
 
 ## Manual configuration/authentication required
-- None to keep everything working as-is today.
-- For Phase 3+ real Reducto integration: you'll need to create/provide a
-  Reducto account and `REDUCTO_API_KEY` yourself, and confirm current
-  Reducto Classify/Split/Parse/Extract API behavior (no Reducto MCP was
-  connected this session to verify it directly).
+- None to keep everything working as-is.
+- Reducto: still need your own account/API key + current API docs before
+  Phase 3+ can implement the real provider (unchanged from Phase 1).

@@ -1,4 +1,4 @@
-from sqlalchemy import Column, Float, ForeignKey, Integer, String, Text
+from sqlalchemy import Boolean, Column, Float, ForeignKey, Integer, String, Text
 from sqlalchemy.orm import relationship
 
 from app.db import Base
@@ -37,7 +37,7 @@ class Patient(Base):
     emergency_search_consent_text_version = Column(String, nullable=True)
 
     linked_user = relationship("User", back_populates="linked_patient")
-    documents = relationship("Document", back_populates="patient")
+    documents = relationship("Document", back_populates="patient", foreign_keys="Document.patient_id")
     doctor_access_links = relationship("DoctorPatientAccess", back_populates="patient")
     access_requests = relationship("DoctorPatientAccessRequest", back_populates="patient")
     events = relationship("PatientEvent", back_populates="patient")
@@ -145,13 +145,29 @@ class Document(Base):
     classification_confidence = Column(Float, nullable=True)
     classification_source = Column(String, nullable=True)
 
-    is_verified = Column(Integer, nullable=False, default=0)
+    # Phase 2 — identity/duplicate safety (see app.services.patient_identity,
+    # app.services.file_hash). identity_status: matched | needs_confirmation |
+    # mismatch | insufficient_identity. A "mismatch" document is quarantined:
+    # patient_id is left NULL (so it never appears in any patient-scoped
+    # query) and intended_patient_id records who it was uploaded for, for
+    # review. review_status: null | "quarantined".
+    file_sha256 = Column(String, nullable=True, index=True)
+    identity_status = Column(String, nullable=True)
+    review_status = Column(String, nullable=True, index=True)
+    intended_patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+
+    # NOTE: the live Postgres column is `boolean` (pre-existing schema drift
+    # from this model's prior `Integer` declaration — discovered and fixed
+    # during Phase 2 testing; no migration needed since the DB column was
+    # already boolean, only this declaration was wrong).
+    is_verified = Column(Boolean, nullable=False, default=False)
     verified_by = Column(String, nullable=True)
     verified_at = Column(String, nullable=True)
     last_edited_at = Column(String, nullable=True)
     created_at = Column(String, nullable=True)
 
-    patient = relationship("Patient", back_populates="documents")
+    patient = relationship("Patient", back_populates="documents", foreign_keys=[patient_id])
+    intended_patient = relationship("Patient", foreign_keys=[intended_patient_id])
     uploaded_by_user = relationship("User", back_populates="uploaded_documents")
     lab_results = relationship("LabResult", back_populates="document", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="document", cascade="all, delete-orphan")
@@ -216,6 +232,14 @@ class UploadJob(Base):
     classification_confidence = Column(Float, nullable=True)
     classification_source = Column(String, nullable=True)
 
+    # Phase 2 — identity/duplicate safety. identity_override is set only by
+    # POST /upload-jobs/{id}/confirm-identity (an audited manual override
+    # after a needs_confirmation/mismatch review) and makes process_upload_job
+    # skip the identity check entirely on the next run.
+    file_sha256 = Column(String, nullable=True, index=True)
+    identity_status = Column(String, nullable=True)
+    identity_override = Column(Integer, nullable=False, default=0)
+
     created_at = Column(String, nullable=False)
     started_at = Column(String, nullable=True)
     finished_at = Column(String, nullable=True)
@@ -241,7 +265,60 @@ class LabResult(Base):
     reference_range = Column(String, nullable=True)
     unit = Column(String, nullable=True)
 
+    # Phase 2 — canonical-observation groundwork. LabResult already carried
+    # the raw/canonical split (raw_test_name vs. canonical_name/display_name/
+    # category); these add the rest of the fields BRAGI_REDUCTO_PLAN.md calls
+    # for, additively, rather than introducing a new ClinicalObservation
+    # table that would require migrating every existing Analize query.
+    observation_datetime = Column(String, nullable=True, index=True)
+    institution = Column(String, nullable=True)
+    specimen = Column(String, nullable=True)
+    accession_id = Column(String, nullable=True)
+    verification_state = Column(String, nullable=True, default="unverified")
+    extraction_confidence = Column(Float, nullable=True)
+    normalization_confidence = Column(Float, nullable=True)
+    # Set when Level-3 duplicate-observation detection links this row to an
+    # earlier one describing the same measurement instead of inserting a
+    # second row for it (see process_upload_job).
+    duplicate_of_lab_result_id = Column(Integer, ForeignKey("lab_results.id"), nullable=True)
+
     document = relationship("Document", back_populates="lab_results")
+    source_evidence = relationship("SourceEvidence", back_populates="lab_result", cascade="all, delete-orphan")
+
+
+class SourceEvidence(Base):
+    """Provenance: where a clinical fact came from, down to the source text.
+
+    Phase 2 populates `document_id` + `source_text` (+ `page_number` where
+    known) for lab rows; normalized bbox coordinates are left null until a
+    real Reducto Parse integration (Phase 3+) can supply them — no bbox is
+    ever fabricated. `lab_result_id` is nullable because SourceEvidence is
+    meant to generalize to other clinical entities (diagnoses, medications,
+    procedures) in later phases, not just lab rows.
+    """
+
+    __tablename__ = "source_evidence"
+
+    id = Column(Integer, primary_key=True, index=True)
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
+    lab_result_id = Column(Integer, ForeignKey("lab_results.id"), nullable=True, index=True)
+
+    page_number = Column(Integer, nullable=True)
+    bbox_x = Column(Float, nullable=True)
+    bbox_y = Column(Float, nullable=True)
+    bbox_width = Column(Float, nullable=True)
+    bbox_height = Column(Float, nullable=True)
+    source_block_id = Column(String, nullable=True)
+    source_text = Column(Text, nullable=True)
+
+    extraction_confidence = Column(Float, nullable=True)
+    provider = Column(String, nullable=True)
+    parser_version = Column(String, nullable=True)
+
+    created_at = Column(String, nullable=False)
+
+    document = relationship("Document")
+    lab_result = relationship("LabResult", back_populates="source_evidence")
 
 
 class AuditLog(Base):

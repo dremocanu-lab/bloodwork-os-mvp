@@ -34,6 +34,13 @@ from app.services.document_taxonomy import (
 )
 from app.services.extraction_provider import get_extraction_provider
 from app.services.ocr_service import extract_text as ocr_extract_text
+from app.services.file_hash import compute_sha256
+from app.services.patient_identity import (
+    MISMATCH,
+    NEEDS_CONFIRMATION,
+    IdentityCheckResult,
+    check_patient_identity,
+)
 
 app = FastAPI()
 
@@ -192,6 +199,49 @@ def run_migrations():
                 text("UPDATE emergency_access_sessions SET public_id = :pid WHERE id = :id AND public_id IS NULL"),
                 {"pid": generate_public_id("brg-em"), "id": row[0]},
             )
+        conn.commit()
+
+        # Phase 2 — identity/duplicate safety + provenance groundwork
+        # (see BRAGI_REDUCTO_PLAN.md Phase 2).
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS file_sha256 VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS identity_status VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_status VARCHAR"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS intended_patient_id INTEGER REFERENCES patients(id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_sha256 ON documents(file_sha256)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_review_status ON documents(review_status)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_intended_patient_id ON documents(intended_patient_id)"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS file_sha256 VARCHAR"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS identity_status VARCHAR"))
+        conn.execute(text("ALTER TABLE upload_jobs ADD COLUMN IF NOT EXISTS identity_override INTEGER NOT NULL DEFAULT 0"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS observation_datetime VARCHAR"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS institution VARCHAR"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS specimen VARCHAR"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS accession_id VARCHAR"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS verification_state VARCHAR DEFAULT 'unverified'"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS extraction_confidence FLOAT"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS normalization_confidence FLOAT"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS duplicate_of_lab_result_id INTEGER REFERENCES lab_results(id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_results_observation_datetime ON lab_results(observation_datetime)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS source_evidence (
+                id SERIAL PRIMARY KEY,
+                document_id INTEGER NOT NULL REFERENCES documents(id),
+                lab_result_id INTEGER REFERENCES lab_results(id),
+                page_number INTEGER,
+                bbox_x FLOAT,
+                bbox_y FLOAT,
+                bbox_width FLOAT,
+                bbox_height FLOAT,
+                source_block_id VARCHAR,
+                source_text TEXT,
+                extraction_confidence FLOAT,
+                provider VARCHAR,
+                parser_version VARCHAR,
+                created_at VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_source_evidence_document_id ON source_evidence(document_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_source_evidence_lab_result_id ON source_evidence(lab_result_id)"))
         conn.commit()
 
 run_migrations()
@@ -746,6 +796,7 @@ def serialize_upload_job(job) -> dict:
         "document_type": job.document_type,
         "classification_status": job.classification_status,
         "classification_confidence": job.classification_confidence,
+        "identity_status": job.identity_status,
         "created_at": job.created_at,
         "started_at": job.started_at,
         "finished_at": job.finished_at,
@@ -789,6 +840,43 @@ def process_upload_job(job_id: int):
             job.finished_at = now_iso()
             db.commit()
             return
+
+        # Phase 2, Level 1 duplicate detection: identical file already on
+        # this patient's record. Detect before spending any OCR/AI cost,
+        # and never create a second Document/LabResult set for it.
+        try:
+            job.file_sha256 = compute_sha256(file_path)
+        except Exception:
+            job.file_sha256 = None
+
+        if job.file_sha256:
+            existing_document = (
+                db.query(models.Document)
+                .filter(
+                    models.Document.patient_id == patient.id,
+                    models.Document.file_sha256 == job.file_sha256,
+                )
+                .order_by(models.Document.id.asc())
+                .first()
+            )
+
+            if existing_document:
+                job.status = "duplicate"
+                job.document_id = existing_document.id
+                job.progress = 100
+                job.message = "This file was already uploaded."
+                job.finished_at = now_iso()
+                db.commit()
+
+                add_audit_log(
+                    db=db,
+                    document_id=existing_document.id,
+                    action="duplicate_detected",
+                    actor="system",
+                    details=f"Re-upload of {job.filename} matched existing document {existing_document.id} by SHA-256.",
+                )
+                db.commit()
+                return
 
         if job.section == AUTO_CLASSIFY_SECTION:
             job.progress = 25
@@ -887,6 +975,90 @@ def process_upload_job(job_id: int):
             or pipeline_result.get("source_language")
         )
 
+        # Phase 2 — patient identity check. Never let extraction silently
+        # overwrite the patient's blank identity fields, or feed clinical
+        # data into the wrong patient's record, without this passing.
+        if job.identity_override:
+            identity_result = IdentityCheckResult(
+                status="matched_override",
+                reasons=["Manually confirmed by the uploader after a mismatch/uncertainty review."],
+            )
+        else:
+            identity_result = check_patient_identity(
+                patient_full_name=patient.full_name,
+                patient_dob=patient.date_of_birth,
+                patient_cnp=patient.cnp,
+                patient_identifier=patient.patient_identifier,
+                extracted_full_name=parsed_data.get("patient_name"),
+                extracted_dob=parsed_data.get("date_of_birth"),
+                extracted_cnp=parsed_data.get("cnp"),
+                extracted_patient_identifier=parsed_data.get("patient_identifier"),
+            )
+
+        job.identity_status = identity_result.status
+
+        if identity_result.status == NEEDS_CONFIRMATION and not job.identity_override:
+            # Ambiguous, not a clear mismatch — pause rather than guess.
+            # Nothing is persisted yet; confirming re-runs this job from
+            # scratch (same accepted shortcut as classification
+            # needs_confirmation — see BRAGI_REDUCTO_PLAN.md known issues).
+            job.status = "needs_identity_confirmation"
+            job.progress = 60
+            job.message = "; ".join(identity_result.reasons) or "Please confirm this document belongs to you."
+            db.commit()
+            return
+
+        if identity_result.status == MISMATCH:
+            quarantined_document = models.Document(
+                patient_id=None,
+                intended_patient_id=patient.id,
+                uploaded_by_user_id=user.id,
+                section=job.section,
+                filename=job.filename,
+                content_type=job.content_type,
+                saved_to=job.saved_to,
+                extracted_text=extracted_text,
+                file_sha256=job.file_sha256,
+                patient_name=parsed_data.get("patient_name"),
+                date_of_birth=parsed_data.get("date_of_birth"),
+                age=parsed_data.get("age"),
+                sex=parsed_data.get("sex"),
+                cnp=parsed_data.get("cnp"),
+                patient_identifier=parsed_data.get("patient_identifier"),
+                report_name=report_name,
+                report_type=report_type,
+                source_language=source_language,
+                document_type=job.document_type,
+                classification_status=job.classification_status,
+                classification_confidence=job.classification_confidence,
+                classification_source=job.classification_source,
+                identity_status=MISMATCH,
+                review_status="quarantined",
+                is_verified=False,
+                created_at=now_iso(),
+                public_id=generate_public_id("brg-doc"),
+            )
+            db.add(quarantined_document)
+            db.flush()
+
+            add_audit_log(
+                db=db,
+                document_id=quarantined_document.id,
+                action="quarantined",
+                actor="system",
+                details=f"Identity mismatch for {job.filename}: {'; '.join(identity_result.reasons)}",
+            )
+
+            job.status = "quarantined"
+            job.document_id = quarantined_document.id
+            job.progress = 100
+            job.message = "This document appears to belong to a different patient and has been set aside for review."
+            job.finished_at = now_iso()
+            db.commit()
+            return
+
+        # matched / insufficient_identity / matched_override: safe to fill
+        # blank patient fields and proceed with full processing.
         if parsed_data.get("patient_name") and not patient.full_name:
             patient.full_name = parsed_data.get("patient_name")
 
@@ -914,6 +1086,8 @@ def process_upload_job(job_id: int):
             saved_to=job.saved_to,
 
             extracted_text=extracted_text,
+            file_sha256=job.file_sha256,
+            identity_status=identity_result.status,
 
             patient_name=parsed_data.get("patient_name") or patient.full_name,
             date_of_birth=parsed_data.get("date_of_birth") or patient.date_of_birth,
@@ -943,7 +1117,7 @@ def process_upload_job(job_id: int):
             classification_confidence=job.classification_confidence,
             classification_source=job.classification_source,
 
-            is_verified=0,
+            is_verified=False,
             verified_by=None,
             verified_at=None,
             last_edited_at=None,
@@ -954,20 +1128,89 @@ def process_upload_job(job_id: int):
         db.add(document)
         db.flush()
 
+        observation_datetime = (
+            document.collected_on
+            or document.test_date
+            or document.reported_on
+            or document.registered_on
+        )
+        linked_duplicate_count = 0
+
         for lab in labs:
-            db.add(
-                models.LabResult(
-                    document_id=document.id,
-                    raw_test_name=lab.get("raw_test_name"),
-                    canonical_name=lab.get("canonical_name"),
-                    display_name=lab.get("display_name"),
-                    category=lab.get("category"),
-                    source_section=lab.get("source_section"),
-                    value=lab.get("value"),
-                    flag=lab.get("flag"),
-                    reference_range=lab.get("reference_range"),
-                    unit=lab.get("unit"),
+            lab_result = models.LabResult(
+                document_id=document.id,
+                raw_test_name=lab.get("raw_test_name"),
+                canonical_name=lab.get("canonical_name"),
+                display_name=lab.get("display_name"),
+                category=lab.get("category"),
+                source_section=lab.get("source_section"),
+                value=lab.get("value"),
+                flag=lab.get("flag"),
+                reference_range=lab.get("reference_range"),
+                unit=lab.get("unit"),
+                observation_datetime=observation_datetime,
+                institution=document.lab_name,
+                extraction_confidence=lab.get("confidence"),
+            )
+
+            # Phase 2, Level 3 duplicate-observation detection: same
+            # patient + same canonical test + same observation date +
+            # identical value + identical unit is treated as the same
+            # real-world measurement rather than a second one. Exact-match
+            # only, on purpose — false merging is worse than a harmless
+            # extra row (see BRAGI_REDUCTO_PLAN.md).
+            identity_key = (lab.get("canonical_name") or lab.get("raw_test_name") or "").strip().lower()
+            duplicate_target = None
+
+            if identity_key and observation_datetime and lab.get("value") is not None:
+                duplicate_target = (
+                    db.query(models.LabResult)
+                    .join(models.Document, models.LabResult.document_id == models.Document.id)
+                    .filter(
+                        models.Document.patient_id == patient.id,
+                        models.LabResult.duplicate_of_lab_result_id.is_(None),
+                        models.LabResult.observation_datetime == observation_datetime,
+                        models.LabResult.value == lab.get("value"),
+                        models.LabResult.unit == lab.get("unit"),
+                        func.lower(func.coalesce(models.LabResult.canonical_name, models.LabResult.raw_test_name))
+                        == identity_key,
+                    )
+                    .order_by(models.LabResult.id.asc())
+                    .first()
                 )
+
+            if duplicate_target:
+                lab_result.duplicate_of_lab_result_id = duplicate_target.id
+                linked_duplicate_count += 1
+
+            db.add(lab_result)
+            db.flush()
+
+            source_text_parts = [
+                str(part)
+                for part in [lab.get("raw_test_name"), lab.get("value"), lab.get("unit"), lab.get("reference_range")]
+                if part
+            ]
+
+            if source_text_parts:
+                db.add(
+                    models.SourceEvidence(
+                        document_id=document.id,
+                        lab_result_id=duplicate_target.id if duplicate_target else lab_result.id,
+                        source_text=" | ".join(source_text_parts),
+                        extraction_confidence=lab.get("confidence"),
+                        provider=job.classification_source or "legacy_pipeline",
+                        created_at=now_iso(),
+                    )
+                )
+
+        if linked_duplicate_count:
+            add_audit_log(
+                db=db,
+                document_id=document.id,
+                action="duplicate_observation_linked",
+                actor="system",
+                details=f"{linked_duplicate_count} lab row(s) matched existing observations by date/value/unit and were linked rather than duplicated.",
             )
 
         add_audit_log(
@@ -2416,6 +2659,185 @@ def confirm_upload_job_document_type(
     return serialize_upload_job(job)
 
 
+class ConfirmIdentityRequest(BaseModel):
+    confirmed: bool
+
+
+@app.post("/upload-jobs/{job_id}/confirm-identity")
+def confirm_upload_job_identity(
+    job_id: int,
+    payload: ConfirmIdentityRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Resolve a needs_identity_confirmation upload job.
+
+    `confirmed=True` is an audited manual override: the uploader asserts
+    this document is really theirs despite the ambiguous signal, and
+    reprocessing skips the identity check this one time
+    (UploadJob.identity_override). `confirmed=False` sets the job aside —
+    nothing was persisted yet (see process_upload_job), so there is
+    nothing to quarantine.
+    """
+    job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+
+    if not job:
+        raise HTTPException(status_code=404, detail="Upload job not found")
+
+    if job.user_id != current_user.id and current_user.role != "admin":
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if job.status != "needs_identity_confirmation":
+        raise HTTPException(status_code=400, detail="This upload is not awaiting identity confirmation.")
+
+    if not payload.confirmed:
+        job.status = "quarantined"
+        job.progress = 100
+        job.message = "Set aside — not associated with your record."
+        job.finished_at = now_iso()
+        db.commit()
+        return serialize_upload_job(job)
+
+    job.identity_override = 1
+    job.identity_status = None
+    job.status = "queued"
+    job.progress = 0
+    job.message = "Confirmed. Processing..."
+    job.error = None
+    db.commit()
+    db.refresh(job)
+
+    background_tasks.add_task(process_upload_job, job.id)
+
+    return serialize_upload_job(job)
+
+
+class IdentityReviewRequest(BaseModel):
+    action: str  # "confirm_mine" | "reject"
+
+
+@app.get("/documents/quarantined")
+def get_quarantined_documents(
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Documents set aside for a wrong-patient identity mismatch.
+
+    Patients see quarantined documents intended for their own record;
+    admins see everything. Doctors do not have a review surface here yet
+    (out of scope for this phase — see BRAGI_REDUCTO_PLAN.md).
+    """
+    query = db.query(models.Document).filter(models.Document.review_status == "quarantined")
+
+    if current_user.role == "admin":
+        pass
+    elif current_user.role == "patient":
+        patient = ensure_patient_for_user(db, current_user)
+        if not patient:
+            return []
+        query = query.filter(models.Document.intended_patient_id == patient.id)
+    else:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    documents = query.order_by(models.Document.id.desc()).all()
+
+    return [
+        {
+            "id": doc.id,
+            "filename": doc.filename,
+            "document_type": doc.document_type,
+            "created_at": doc.created_at,
+            "identity_status": doc.identity_status,
+        }
+        for doc in documents
+    ]
+
+
+@app.post("/documents/{document_id}/identity-review")
+def review_quarantined_document(
+    document_id: int,
+    payload: IdentityReviewRequest,
+    background_tasks: BackgroundTasks,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if document.review_status != "quarantined":
+        raise HTTPException(status_code=400, detail="This document is not awaiting identity review.")
+
+    if current_user.role == "admin":
+        pass
+    elif current_user.role == "patient":
+        patient = ensure_patient_for_user(db, current_user)
+        if not patient or document.intended_patient_id != patient.id:
+            raise HTTPException(status_code=403, detail="Forbidden")
+    else:
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    if payload.action == "reject":
+        document.review_status = "resolved_rejected"
+        db.commit()
+
+        add_audit_log(
+            db=db,
+            document_id=document.id,
+            action="quarantine_rejected",
+            actor=current_user.full_name,
+            details="Uploader confirmed this document does not belong to them.",
+        )
+        db.commit()
+
+        return {"ok": True, "document_id": document.id, "review_status": document.review_status}
+
+    if payload.action == "confirm_mine":
+        if not document.intended_patient_id:
+            raise HTTPException(status_code=400, detail="This document has no intended patient to confirm.")
+
+        job = models.UploadJob(
+            user_id=current_user.id,
+            patient_id=document.intended_patient_id,
+            section=(legacy_section_for(document.document_type) if document.document_type else AUTO_CLASSIFY_SECTION),
+            filename=document.filename,
+            content_type=document.content_type,
+            saved_to=document.saved_to,
+            status="queued",
+            progress=0,
+            message="Reprocessing after identity confirmation...",
+            error=None,
+            document_id=None,
+            file_sha256=document.file_sha256,
+            identity_override=1,
+            created_at=now_iso(),
+            started_at=None,
+            finished_at=None,
+        )
+
+        db.add(job)
+        document.review_status = "resolved_confirmed"
+        db.commit()
+        db.refresh(job)
+
+        add_audit_log(
+            db=db,
+            document_id=document.id,
+            action="identity_manually_confirmed",
+            actor=current_user.full_name,
+            details=f"Uploader confirmed this document is theirs; reprocessing as upload job {job.id}.",
+        )
+        db.commit()
+
+        background_tasks.add_task(process_upload_job, job.id)
+
+        return {"ok": True, "document_id": document.id, "new_upload_job": serialize_upload_job(job)}
+
+    raise HTTPException(status_code=400, detail="Unknown action.")
+
+
 @app.get("/upload-jobs")
 def get_my_upload_jobs(
     db: Session = Depends(get_db),
@@ -2644,7 +3066,7 @@ def verify_document(
     if not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    document.is_verified = 1
+    document.is_verified = True
     document.verified_by = payload.verifier_name or current_user.full_name
     document.verified_at = now_iso()
 
@@ -2740,7 +3162,13 @@ def get_patient_bloodwork_trends(
 
     labs = (
         db.query(models.LabResult)
-        .filter(models.LabResult.document_id.in_(document_ids))
+        .filter(
+            models.LabResult.document_id.in_(document_ids),
+            # Rows linked as Level-3 duplicate observations describe the
+            # same real-world measurement as an earlier row — counting both
+            # would plot the same value twice.
+            models.LabResult.duplicate_of_lab_result_id.is_(None),
+        )
         .all()
     )
 

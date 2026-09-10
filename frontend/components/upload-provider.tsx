@@ -12,7 +12,16 @@ import {
 } from "react";
 import { api, getErrorMessage } from "@/lib/api";
 
-export type UploadStatus = "queued" | "uploading" | "processing" | "done" | "error" | "needs_confirmation";
+export type UploadStatus =
+  | "queued"
+  | "uploading"
+  | "processing"
+  | "done"
+  | "error"
+  | "needs_confirmation"
+  | "needs_identity_confirmation"
+  | "quarantined"
+  | "duplicate";
 
 export type UploadTask = {
   id: string;
@@ -32,6 +41,7 @@ export type UploadTask = {
   documentType?: string | null;
   classificationStatus?: string | null;
   classificationConfidence?: number | null;
+  identityStatus?: string | null;
 };
 
 type UploadDestination = {
@@ -59,6 +69,7 @@ type BackendUploadJob = {
   document_type?: string | null;
   classification_status?: string | null;
   classification_confidence?: number | null;
+  identity_status?: string | null;
   created_at: string;
   started_at?: string | null;
   finished_at?: string | null;
@@ -71,6 +82,7 @@ type UploadManagerContextValue = {
   enqueueUploads: (files: File[], destination: UploadDestination) => void;
   enqueueAutoClassifyUploads: (files: File[], destination: AutoClassifyDestination) => void;
   confirmDocumentType: (jobId: number, documentType: string) => Promise<void>;
+  confirmIdentity: (jobId: number, confirmed: boolean) => Promise<void>;
   clearFinishedUploads: () => void;
   refreshUploadJobs: () => Promise<void>;
 };
@@ -98,6 +110,9 @@ function statusFromBackend(status: string): UploadStatus {
   if (status === "done") return "done";
   if (status === "error") return "error";
   if (status === "needs_confirmation") return "needs_confirmation";
+  if (status === "needs_identity_confirmation") return "needs_identity_confirmation";
+  if (status === "quarantined") return "quarantined";
+  if (status === "duplicate") return "duplicate";
   if (status === "processing") return "processing";
   if (status === "uploading") return "uploading";
   return "queued";
@@ -108,7 +123,8 @@ function isActive(status: UploadStatus) {
     status === "queued" ||
     status === "uploading" ||
     status === "processing" ||
-    status === "needs_confirmation"
+    status === "needs_confirmation" ||
+    status === "needs_identity_confirmation"
   );
 }
 
@@ -174,6 +190,7 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
             documentType: job.document_type ?? null,
             classificationStatus: job.classification_status ?? null,
             classificationConfidence: job.classification_confidence ?? null,
+            identityStatus: job.identity_status ?? null,
           };
 
           const oldStatus = existingIndex >= 0 ? next[existingIndex].status : undefined;
@@ -383,6 +400,30 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
     [refreshUploadJobs]
   );
 
+  const confirmIdentity = useCallback(
+    async (jobId: number, confirmed: boolean) => {
+      const response = await api.post<BackendUploadJob>(`/upload-jobs/${jobId}/confirm-identity`, {
+        confirmed,
+      });
+
+      setTasks((current) =>
+        current.map((task) =>
+          task.jobId === jobId
+            ? {
+                ...task,
+                status: statusFromBackend(response.data.status),
+                progress: response.data.progress || task.progress,
+                message: response.data.message || task.message,
+              }
+            : task
+        )
+      );
+
+      await refreshUploadJobs();
+    },
+    [refreshUploadJobs]
+  );
+
   useEffect(() => {
     void refreshUploadJobs();
 
@@ -415,6 +456,7 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
       enqueueUploads,
       enqueueAutoClassifyUploads,
       confirmDocumentType,
+      confirmIdentity,
       clearFinishedUploads,
       refreshUploadJobs,
     }),
@@ -425,6 +467,7 @@ export function UploadManagerProvider({ children }: { children: ReactNode }) {
       enqueueUploads,
       enqueueAutoClassifyUploads,
       confirmDocumentType,
+      confirmIdentity,
       clearFinishedUploads,
       refreshUploadJobs,
     ]
