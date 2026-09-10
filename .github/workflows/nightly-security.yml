@@ -1,0 +1,58 @@
+name: Nightly security scan
+
+# Deeper/slower security scanning that would make ordinary CI (ci.yml)
+# too slow or too flaky to gate every push on — dependency-vulnerability
+# databases that need a live network fetch, and a broader Semgrep
+# ruleset. Runs on a schedule instead, plus on-demand via
+# workflow_dispatch. See docs/security/CI_PIPELINE.md.
+
+on:
+  schedule:
+    - cron: "17 3 * * *" # daily, 03:17 UTC — off-peak, arbitrary offset to avoid the top-of-hour thundering herd
+  workflow_dispatch: {}
+
+permissions:
+  contents: read
+
+jobs:
+  dependency-scan:
+    name: Dependency vulnerability scan (pip-audit, npm audit)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: pip-audit
+        working-directory: backend
+        run: |
+          pip install pip-audit
+          # Non-blocking: this repo has 3 known, deliberately-deferred
+          # findings (pyasn1/starlette/ecdsa — see
+          # docs/security/STATIC_ANALYSIS.md for why each is blocked by
+          # a direct-dependency constraint or not applicable). A human
+          # reviews this job's output rather than every run failing on
+          # already-triaged findings; a genuinely new, actionable
+          # finding should be caught by a human reading this log, not by
+          # a red X blocking unrelated work.
+          pip-audit -r requirements.txt || true
+      - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
+        with:
+          node-version: "22"
+      - name: npm audit
+        working-directory: frontend
+        run: npm audit || true
+
+  semgrep:
+    name: Semgrep (broad ruleset)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
+      - uses: actions/setup-python@ece7cb06caefa5fff74198d8649806c4678c61a1 # v6
+        with:
+          python-version: "3.13"
+      - name: Semgrep
+        working-directory: backend
+        run: |
+          pip install semgrep
+          semgrep --config p/security-audit --config p/python --config p/owasp-top-ten app
