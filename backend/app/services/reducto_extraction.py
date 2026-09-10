@@ -112,6 +112,10 @@ class ReductoEvidence:
     bbox_height: float | None
     source_text: str | None
     confidence: float | None
+    # Presentation-only "whole row" region for lab evidence — see
+    # `_union_row_bbox` below. None unless there was real multi-field
+    # geometry to union; never guessed/hardcoded.
+    row_bbox: tuple[float, float, float, float] | None = None
 
 
 @dataclass
@@ -324,6 +328,70 @@ def _field_evidence(field_obj: Any) -> ReductoEvidence | None:
     )
 
 
+def _union_row_bbox(
+    parts: list[ReductoEvidence | None],
+) -> tuple[float, float, float, float] | None:
+    """Derive a presentation region spanning one lab row from its real
+    per-field citation bboxes (test name, value, unit, reference range —
+    whichever Extract actually returned with coordinates), padded outward a
+    little so a UI highlight can frame the row without its border running
+    through the glyphs.
+
+    This is a union of real, independently-returned bboxes — never a
+    guessed or hardcoded region, and never the same as any single field's
+    own bbox_x/y/width/height (which stays untouched as raw provenance).
+    Requires at least two field bboxes to union; with fewer than that there
+    is nothing meaningfully wider than the existing single-field bbox to
+    compute, so this returns None and callers fall back to it.
+    """
+    boxes = [
+        (e.bbox_x, e.bbox_y, e.bbox_width, e.bbox_height, e.page)
+        for e in parts
+        if e
+        and e.bbox_x is not None
+        and e.bbox_y is not None
+        and e.bbox_width is not None
+        and e.bbox_height is not None
+    ]
+    if len(boxes) < 2:
+        return None
+
+    # A row's fields should all cite the same page; if Reducto ever splits
+    # them across a page break, union only the majority page rather than
+    # spanning across it.
+    pages = [b[4] for b in boxes if b[4] is not None]
+    if pages:
+        common_page = max(set(pages), key=pages.count)
+        boxes = [b for b in boxes if b[4] is None or b[4] == common_page]
+    if len(boxes) < 2:
+        return None
+
+    left = min(b[0] for b in boxes)
+    top = min(b[1] for b in boxes)
+    right = max(b[0] + b[2] for b in boxes)
+    bottom = max(b[1] + b[3] for b in boxes)
+    width = right - left
+    height = bottom - top
+    if width <= 0 or height <= 0:
+        return None
+
+    # Breathing room, computed relative to the row's own size (normalized
+    # page-fraction coordinates, so this scales correctly at any zoom):
+    # a little horizontal padding, and proportionally more vertical padding
+    # since a table row is usually short vertically and a highlight sitting
+    # flush against the row's own text/table rules above and below would
+    # look like it's cutting through them.
+    pad_x = max(width * 0.06, 0.004)
+    pad_y = max(height * 0.35, 0.003)
+
+    left = max(0.0, left - pad_x)
+    top = max(0.0, top - pad_y)
+    right = min(1.0, right + pad_x)
+    bottom = min(1.0, bottom + pad_y)
+
+    return (left, top, right - left, bottom - top)
+
+
 def _in_page_range(evidence: ReductoEvidence | None, page_range: tuple[int, int] | None) -> bool:
     if page_range is None:
         return True
@@ -393,6 +461,8 @@ def extract_lab_results(
         overall_confidence = round(sum(confidences) / len(confidences), 3) if confidences else None
 
         evidence = _field_evidence(item.get("value")) or name_evidence
+        if evidence is not None:
+            evidence.row_bbox = _union_row_bbox(confidence_parts)
 
         labs.append(
             {

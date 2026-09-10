@@ -345,6 +345,21 @@ class SourceEvidence(Base):
     bbox_y = Column(Float, nullable=True)
     bbox_width = Column(Float, nullable=True)
     bbox_height = Column(Float, nullable=True)
+
+    # Presentation-only geometry for laboratory evidence: the union of every
+    # field-level citation bbox captured for this lab row (test name, value,
+    # unit, reference range - whichever were returned), padded outward a
+    # little so the UI can frame the whole row rather than a single cell.
+    # Derived once at extraction time from real per-field bboxes above -
+    # never a guessed/hardcoded region - and never overwrites them. Null
+    # when there weren't at least two field bboxes to union (nothing
+    # meaningfully wider than the raw bbox_* to compute), or for non-lab
+    # evidence; callers fall back to bbox_* in that case.
+    row_bbox_x = Column(Float, nullable=True)
+    row_bbox_y = Column(Float, nullable=True)
+    row_bbox_width = Column(Float, nullable=True)
+    row_bbox_height = Column(Float, nullable=True)
+
     source_block_id = Column(String, nullable=True)
     source_text = Column(Text, nullable=True)
 

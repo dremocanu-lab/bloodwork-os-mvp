@@ -325,6 +325,12 @@ def run_migrations():
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_source_evidence_document_id ON source_evidence(document_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_source_evidence_lab_result_id ON source_evidence(lab_result_id)"))
+        # Presentation-only "whole row" geometry for lab evidence — derived
+        # from the real per-field bboxes above, see models.py's docstring.
+        conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_x FLOAT"))
+        conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_y FLOAT"))
+        conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_width FLOAT"))
+        conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_height FLOAT"))
         conn.commit()
 
 run_migrations()
@@ -1185,6 +1191,10 @@ def _finish_mixed_reducto_upload(
                         bbox_y=evidence.bbox_y,
                         bbox_width=evidence.bbox_width,
                         bbox_height=evidence.bbox_height,
+                        row_bbox_x=evidence.row_bbox[0] if evidence.row_bbox else None,
+                        row_bbox_y=evidence.row_bbox[1] if evidence.row_bbox else None,
+                        row_bbox_width=evidence.row_bbox[2] if evidence.row_bbox else None,
+                        row_bbox_height=evidence.row_bbox[3] if evidence.row_bbox else None,
                         extraction_confidence=evidence.confidence,
                         provider="reducto",
                         parser_version=reducto_extraction.PARSER_VERSION,
@@ -1700,6 +1710,10 @@ def process_upload_job(job_id: int):
                         bbox_y=evidence.bbox_y if evidence else None,
                         bbox_width=evidence.bbox_width if evidence else None,
                         bbox_height=evidence.bbox_height if evidence else None,
+                        row_bbox_x=(evidence.row_bbox[0] if evidence and evidence.row_bbox else None),
+                        row_bbox_y=(evidence.row_bbox[1] if evidence and evidence.row_bbox else None),
+                        row_bbox_width=(evidence.row_bbox[2] if evidence and evidence.row_bbox else None),
+                        row_bbox_height=(evidence.row_bbox[3] if evidence and evidence.row_bbox else None),
                         extraction_confidence=lab.get("confidence"),
                         provider=job.classification_source or "legacy_pipeline",
                         parser_version=(reducto_extraction.PARSER_VERSION if evidence is not None else None),
@@ -3635,11 +3649,16 @@ def get_source_evidence_view(
         "document_filename": document.filename,
         "document_type": document.document_type,
         "report_name": document.report_name,
+        "lab_result_id": evidence.lab_result_id,
         "page_number": evidence.page_number,
         "bbox_x": evidence.bbox_x,
         "bbox_y": evidence.bbox_y,
         "bbox_width": evidence.bbox_width,
         "bbox_height": evidence.bbox_height,
+        "row_bbox_x": evidence.row_bbox_x,
+        "row_bbox_y": evidence.row_bbox_y,
+        "row_bbox_width": evidence.row_bbox_width,
+        "row_bbox_height": evidence.row_bbox_height,
         "source_text": evidence.source_text,
         "provider": evidence.provider,
         "precision": precision,
