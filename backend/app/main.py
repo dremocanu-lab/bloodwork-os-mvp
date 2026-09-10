@@ -8,6 +8,13 @@ import uuid
 from datetime import UTC, datetime
 from pathlib import Path
 
+from dotenv import load_dotenv
+
+# Loads backend/.env for local development (documented in .env.example).
+# No-op if the file doesn't exist — production (Render etc.) sets real
+# environment variables directly, so this never overrides those.
+load_dotenv()
+
 
 def generate_public_id(prefix: str) -> str:
     return f"{prefix}-{uuid.uuid4().hex[:12]}"
@@ -28,11 +35,14 @@ from app.services.discharge_summary_pipeline import process_uploaded_discharge_s
 from app.services.medication_lookup import lookup_medication
 from app.services.document_taxonomy import (
     AUTO_CLASSIFY_SECTION,
+    DOCUMENT_TYPE_LABELS,
     document_type_choices,
     is_valid_document_type,
     legacy_section_for,
 )
-from app.services.extraction_provider import get_extraction_provider
+from app.services.extraction_provider import REDUCTO, get_extraction_provider
+from app.services.reducto_client import ReductoError
+from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
 from app.services.file_hash import compute_sha256
 from app.services.patient_identity import (
@@ -212,6 +222,11 @@ def run_migrations():
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS review_status VARCHAR"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS intended_patient_id INTEGER REFERENCES patients(id)"))
         conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS structured_sections TEXT"))
+        # Real Reducto Split integration — mixed-PDF parent/child documents.
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS parent_document_id INTEGER REFERENCES documents(id)"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_range_start INTEGER"))
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS page_range_end INTEGER"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_parent_document_id ON documents(parent_document_id)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_file_sha256 ON documents(file_sha256)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_review_status ON documents(review_status)"))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_intended_patient_id ON documents(intended_patient_id)"))
@@ -618,6 +633,9 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
         "created_at": document.created_at,
         "section": document.section,
         "document_type": document.document_type,
+        "parent_document_id": document.parent_document_id,
+        "page_range_start": document.page_range_start,
+        "page_range_end": document.page_range_end,
         "is_verified": bool(document.is_verified),
         "has_abnormal": has_abnormal,
         "has_abnormal_labs": has_abnormal,
@@ -750,6 +768,9 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "saved_to": document.saved_to,
         "section": document.section,
         "document_type": document.document_type,
+        "parent_document_id": document.parent_document_id,
+        "page_range_start": document.page_range_start,
+        "page_range_end": document.page_range_end,
         "classification_status": document.classification_status,
         "identity_status": document.identity_status,
         "structured_sections": structured_sections,
@@ -818,6 +839,269 @@ def serialize_upload_job(job) -> dict:
         "started_at": job.started_at,
         "finished_at": job.finished_at,
     }
+
+
+def _finish_mixed_reducto_upload(
+    db,
+    job: "models.UploadJob",
+    user: "models.User",
+    patient: "models.Patient",
+    file_path: Path,
+    split_result,
+) -> None:
+    """A single upload that real Reducto Split found to contain multiple
+    logically separate documents (see BRAGI_REDUCTO_PLAN.md §5). The
+    ORIGINAL file is preserved untouched as a parent Document; each
+    section becomes its own child Document, sliced from the parent's
+    pages purely to give Reducto a clean single-section input (see
+    app.services.pdf_split) — every child's `saved_to` still points at the
+    parent's real file, and evidence page numbers are remapped back to the
+    parent's original page numbers, so "View original" always opens the
+    real source at the real page.
+
+    Identity is checked exactly once for the whole physical document
+    (it's one piece of paper/one file, one patient) — never bypassed just
+    because Reducto found multiple sections in it.
+    """
+    from app.services import pdf_split
+
+    try:
+        identity_fields = reducto_extraction.extract_identity(split_result.file_id)
+    except ReductoError as error:
+        identity_fields = {}
+        print(f"UPLOAD JOB {job.id}: Reducto identity extract failed for split document: {error}")
+
+    if job.identity_override:
+        identity_result = IdentityCheckResult(
+            status="matched_override",
+            reasons=["Manually confirmed by the uploader after a mismatch/uncertainty review."],
+        )
+    else:
+        identity_result = check_patient_identity(
+            patient_full_name=patient.full_name,
+            patient_dob=patient.date_of_birth,
+            patient_cnp=patient.cnp,
+            patient_identifier=patient.patient_identifier,
+            extracted_full_name=identity_fields.get("patient_name"),
+            extracted_dob=identity_fields.get("date_of_birth"),
+            extracted_cnp=identity_fields.get("cnp"),
+            extracted_patient_identifier=identity_fields.get("patient_identifier"),
+        )
+
+    job.identity_status = identity_result.status
+
+    if identity_result.status == NEEDS_CONFIRMATION and not job.identity_override:
+        job.status = "needs_identity_confirmation"
+        job.progress = 60
+        job.message = "; ".join(identity_result.reasons) or "Please confirm this document belongs to you."
+        db.commit()
+        return
+
+    section_summary = ", ".join(
+        DOCUMENT_TYPE_LABELS.get(s.document_type, {}).get("en", s.name) if s.document_type else s.name
+        for s in split_result.sections
+        if s.pages
+    )
+
+    if identity_result.status == MISMATCH:
+        quarantined_document = models.Document(
+            patient_id=None,
+            intended_patient_id=patient.id,
+            uploaded_by_user_id=user.id,
+            section="other",
+            filename=job.filename,
+            content_type=job.content_type,
+            saved_to=job.saved_to,
+            extracted_text=f"[Split into {len(split_result.sections)} sections: {section_summary}]",
+            file_sha256=job.file_sha256,
+            report_name=f"Mixed upload ({section_summary})",
+            report_type="mixed_batch_source",
+            identity_status=MISMATCH,
+            review_status="quarantined",
+            is_verified=False,
+            created_at=now_iso(),
+            public_id=generate_public_id("brg-doc"),
+        )
+        db.add(quarantined_document)
+        db.flush()
+        add_audit_log(
+            db=db, document_id=quarantined_document.id, action="quarantined", actor="system",
+            details=f"Identity mismatch for split upload {job.filename}: {'; '.join(identity_result.reasons)}",
+        )
+        job.status = "quarantined"
+        job.document_id = quarantined_document.id
+        job.progress = 100
+        job.message = "This document appears to belong to a different patient and has been set aside for review."
+        job.finished_at = now_iso()
+        db.commit()
+        return
+
+    if identity_fields.get("patient_name") and not patient.full_name:
+        patient.full_name = identity_fields["patient_name"]
+    if identity_fields.get("date_of_birth") and not patient.date_of_birth:
+        patient.date_of_birth = identity_fields["date_of_birth"]
+    if identity_fields.get("cnp") and not patient.cnp:
+        patient.cnp = identity_fields["cnp"]
+    if identity_fields.get("patient_identifier") and not patient.patient_identifier:
+        patient.patient_identifier = identity_fields["patient_identifier"]
+
+    parent_document = models.Document(
+        patient_id=patient.id,
+        uploaded_by_user_id=user.id,
+        section="other",
+        filename=job.filename,
+        content_type=job.content_type,
+        saved_to=job.saved_to,
+        extracted_text=f"Original upload, split by Reducto into {len(split_result.sections)} document(s): {section_summary}.",
+        file_sha256=job.file_sha256,
+        identity_status=identity_result.status,
+        patient_name=identity_fields.get("patient_name") or patient.full_name,
+        date_of_birth=identity_fields.get("date_of_birth") or patient.date_of_birth,
+        cnp=identity_fields.get("cnp") or patient.cnp,
+        patient_identifier=identity_fields.get("patient_identifier") or patient.patient_identifier,
+        report_name=f"Original upload ({section_summary})",
+        report_type="mixed_batch_source",
+        classification_source="reducto",
+        is_verified=False,
+        created_at=now_iso(),
+        public_id=generate_public_id("brg-doc"),
+    )
+    db.add(parent_document)
+    db.flush()
+
+    add_audit_log(
+        db=db, document_id=parent_document.id, action="split_detected", actor="reducto",
+        details=f"Reducto Split found {len(split_result.sections)} section(s): {section_summary}.",
+    )
+
+    child_ids: list[int] = []
+
+    for section in split_result.sections:
+        if not section.pages or section.document_type is None:
+            continue
+
+        # Maps a 1-indexed page within the slice back to the ORIGINAL
+        # document's real page number — a plain offset would be wrong for
+        # a non-contiguous section (e.g. pages [1, 2, 5]).
+        original_pages = sorted(section.pages)
+        slice_path = None
+
+        try:
+            slice_path = pdf_split.slice_pdf_pages(
+                file_path, section.pages, UPLOAD_DIR / "_split_tmp", suffix=section.name
+            )
+            slice_file_id = reducto_extraction.ReductoClient().upload(str(slice_path), filename=slice_path.name)
+
+            document_type = section.document_type.value
+            if document_type == "laboratory_results":
+                child_pipeline_result = reducto_extraction.build_pipeline_result_labs(slice_file_id)
+            elif document_type in READER_SECTION_KEYS:
+                child_pipeline_result = reducto_extraction.build_pipeline_result_reader(slice_file_id, document_type)
+            else:
+                child_pipeline_result = {"extracted_text": "", "parsed_data": {"labs": []}, "warnings": []}
+        except ReductoError as error:
+            print(f"UPLOAD JOB {job.id}: split child extraction failed for section {section.name}: {error}")
+            continue
+        finally:
+            if slice_path is not None:
+                try:
+                    slice_path.unlink(missing_ok=True)
+                except OSError:
+                    pass
+
+        def _original_page(slice_local_page: int | None) -> int | None:
+            if not slice_local_page or slice_local_page < 1 or slice_local_page > len(original_pages):
+                return None
+            return original_pages[slice_local_page - 1]
+
+        child_parsed_data = child_pipeline_result.get("parsed_data") or {}
+
+        child_document = models.Document(
+            patient_id=patient.id,
+            uploaded_by_user_id=user.id,
+            parent_document_id=parent_document.id,
+            page_range_start=min(section.pages),
+            page_range_end=max(section.pages),
+            section=legacy_section_for(section.document_type),
+            filename=job.filename,
+            content_type=job.content_type,
+            saved_to=job.saved_to,  # the PARENT file — a child is a page-range view, not a copy
+            extracted_text=child_pipeline_result.get("extracted_text") or "",
+            note_body=child_pipeline_result.get("note_body"),
+            identity_status=identity_result.status,
+            patient_name=parent_document.patient_name,
+            date_of_birth=parent_document.date_of_birth,
+            cnp=parent_document.cnp,
+            patient_identifier=parent_document.patient_identifier,
+            report_name=child_parsed_data.get("report_name") or document_type.replace("_", " ").title(),
+            report_type=child_parsed_data.get("report_type") or document_type,
+            document_type=document_type,
+            classification_status="classified" if section.confidence == "high" else "needs_confirmation",
+            classification_confidence=1.0 if section.confidence == "high" else 0.5,
+            classification_source="reducto",
+            structured_sections=(
+                json.dumps(child_pipeline_result["_reducto_structured_sections"], ensure_ascii=False)
+                if child_pipeline_result.get("_reducto_structured_sections", {}).get("sections")
+                else None
+            ),
+            is_verified=False,
+            created_at=now_iso(),
+            public_id=generate_public_id("brg-doc"),
+        )
+        db.add(child_document)
+        db.flush()
+        child_ids.append(child_document.id)
+
+        for lab in child_parsed_data.get("labs", []) or []:
+            lab_result = models.LabResult(
+                document_id=child_document.id,
+                raw_test_name=lab.get("raw_test_name"),
+                canonical_name=lab.get("canonical_name"),
+                display_name=lab.get("display_name"),
+                category=lab.get("category"),
+                source_section=lab.get("source_section"),
+                value=lab.get("value"),
+                flag=lab.get("flag"),
+                reference_range=lab.get("reference_range"),
+                unit=lab.get("unit"),
+                observation_datetime=child_parsed_data.get("collected_on") or child_parsed_data.get("reported_on"),
+                institution=child_parsed_data.get("lab_name"),
+                extraction_confidence=lab.get("confidence"),
+            )
+            db.add(lab_result)
+            db.flush()
+
+            evidence = lab.get("evidence")
+            if evidence is not None:
+                db.add(
+                    models.SourceEvidence(
+                        document_id=child_document.id,
+                        lab_result_id=lab_result.id,
+                        source_text=evidence.source_text,
+                        page_number=_original_page(evidence.page),
+                        bbox_x=evidence.bbox_x,
+                        bbox_y=evidence.bbox_y,
+                        bbox_width=evidence.bbox_width,
+                        bbox_height=evidence.bbox_height,
+                        extraction_confidence=evidence.confidence,
+                        provider="reducto",
+                        parser_version=reducto_extraction.PARSER_VERSION,
+                        created_at=now_iso(),
+                    )
+                )
+
+        add_audit_log(
+            db=db, document_id=child_document.id, action="uploaded", actor=user.full_name,
+            details=f"Split from {job.filename} (original pages {min(section.pages)}-{max(section.pages)}) as {document_type}.",
+        )
+
+    job.status = "done"
+    job.progress = 100
+    job.document_id = parent_document.id
+    job.message = f"Split into {len(child_ids)} document(s): {section_summary}."
+    job.finished_at = now_iso()
+    db.commit()
+
 
 def process_upload_job(job_id: int):
     db = SessionLocal()
@@ -895,30 +1179,64 @@ def process_upload_job(job_id: int):
                 db.commit()
                 return
 
+        reducto_file_id = None
+
         if job.section == AUTO_CLASSIFY_SECTION:
             job.progress = 25
             job.message = "Identifying document type..."
             db.commit()
 
-            # Classification input is a plain-text OCR pass, independent of
-            # any type-specific pipeline. This is intentionally cheap and
-            # reused only for routing — process_uploaded_document /
-            # process_uploaded_discharge_summary still run their own
-            # extraction below. Known duplication; see BRAGI_REDUCTO_PLAN.md
-            # Phase 1 "known issues" for the follow-up (share one parsed
-            # representation once Reducto Parse persistence lands).
-            try:
-                classification_ocr = ocr_extract_text(
-                    file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR
-                )
-                classification_text = classification_ocr.get("text") or ""
-            except Exception:
-                print(f"UPLOAD JOB {job_id}: classification OCR pass failed:")
-                print(traceback.format_exc())
-                classification_text = ""
-
             provider, used_fallback, fallback_reason = get_extraction_provider()
-            classification, processing_meta = provider.classify(classification_text)
+
+            if provider.name == REDUCTO and provider.is_enabled():
+                # Real Reducto Classify — operates on the file directly (see
+                # reducto_extraction.py); no separate OCR pass needed for
+                # routing. Any Reducto failure (auth/timeout/malformed
+                # response/etc.) falls back to the legacy keyword classifier
+                # rather than failing the whole upload — a Reducto outage
+                # must never block classification.
+                try:
+                    classification, processing_meta = provider.classify(
+                        "", file_path=str(file_path), filename=job.filename
+                    )
+                    reducto_file_id = processing_meta.reducto_file_id
+
+                    # Real Reducto Split check: does this single upload
+                    # actually contain multiple logically separate documents
+                    # (a mixed PDF)? A failure here just means we proceed as
+                    # a normal single document — never blocks the upload.
+                    try:
+                        split_result = reducto_extraction.split_file(reducto_file_id)
+                    except ReductoError as split_error:
+                        print(f"UPLOAD JOB {job_id}: Reducto split check failed (continuing as single document): {split_error}")
+                        split_result = None
+
+                    if split_result and split_result.is_mixed:
+                        _finish_mixed_reducto_upload(db, job, user, patient, file_path, split_result)
+                        return
+                except ReductoError as reducto_error:
+                    print(f"UPLOAD JOB {job_id}: Reducto classify failed, falling back to legacy_rules: {reducto_error}")
+                    from app.services.extraction_provider import LegacyExtractionProvider
+
+                    provider = LegacyExtractionProvider()
+                    used_fallback = True
+                    fallback_reason = f"Reducto classify failed: {reducto_error}"
+
+            if reducto_file_id is None:
+                # Legacy path (Reducto disabled, or just fell back above):
+                # classification input is a plain-text OCR pass, independent
+                # of any type-specific pipeline.
+                try:
+                    classification_ocr = ocr_extract_text(
+                        file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR
+                    )
+                    classification_text = classification_ocr.get("text") or ""
+                except Exception:
+                    print(f"UPLOAD JOB {job_id}: classification OCR pass failed:")
+                    print(traceback.format_exc())
+                    classification_text = ""
+
+                classification, processing_meta = provider.classify(classification_text)
 
             job.document_type = classification.document_type.value
             job.classification_status = classification.status
@@ -937,18 +1255,38 @@ def process_upload_job(job_id: int):
             job.section = legacy_section_for(classification.document_type)
             db.commit()
 
-        if job.section == "discharge_summary":
-            pipeline_result = process_uploaded_discharge_summary(
-                file_path=file_path,
-                filename=job.filename,
-            )
-        else:
-            pipeline_result = process_uploaded_document(
-                file_path=file_path,
-                filename=job.filename,
-                section=job.section,
-                temp_dir=UPLOAD_DIR,
-            )
+        # Real Reducto Extract, only for the document types it's wired up
+        # for (laboratory_results + the narrative reader types) and only
+        # when classification actually ran through Reducto this call. Falls
+        # through to the existing legacy pipelines for everything else
+        # (discharge_summary keeps its own dedicated pipeline; Reducto
+        # disabled; or a Reducto extract failure) — never a hard failure.
+        pipeline_result = None
+
+        if reducto_file_id and job.document_type == "laboratory_results":
+            try:
+                pipeline_result = reducto_extraction.build_pipeline_result_labs(reducto_file_id)
+            except ReductoError as reducto_error:
+                print(f"UPLOAD JOB {job_id}: Reducto lab extract failed, falling back to legacy pipeline: {reducto_error}")
+        elif reducto_file_id and job.document_type in READER_SECTION_KEYS:
+            try:
+                pipeline_result = reducto_extraction.build_pipeline_result_reader(reducto_file_id, job.document_type)
+            except ReductoError as reducto_error:
+                print(f"UPLOAD JOB {job_id}: Reducto reader extract failed, falling back to legacy pipeline: {reducto_error}")
+
+        if pipeline_result is None:
+            if job.section == "discharge_summary":
+                pipeline_result = process_uploaded_discharge_summary(
+                    file_path=file_path,
+                    filename=job.filename,
+                )
+            else:
+                pipeline_result = process_uploaded_document(
+                    file_path=file_path,
+                    filename=job.filename,
+                    section=job.section,
+                    temp_dir=UPLOAD_DIR,
+                )
 
         job.progress = 70
         job.message = "Saving structured record..."
@@ -1209,14 +1547,28 @@ def process_upload_job(job_id: int):
                 if part
             ]
 
-            if source_text_parts:
+            # Real bbox/page provenance when the lab came from Reducto
+            # Extract (see reducto_extraction.py) — never fabricated for the
+            # legacy pipeline, which has no coordinate data to offer.
+            evidence = lab.get("evidence")
+            source_text = " | ".join(source_text_parts) if source_text_parts else None
+            if evidence is not None and evidence.source_text:
+                source_text = evidence.source_text
+
+            if source_text_parts or evidence is not None:
                 db.add(
                     models.SourceEvidence(
                         document_id=document.id,
                         lab_result_id=duplicate_target.id if duplicate_target else lab_result.id,
-                        source_text=" | ".join(source_text_parts),
+                        source_text=source_text,
+                        page_number=evidence.page if evidence else None,
+                        bbox_x=evidence.bbox_x if evidence else None,
+                        bbox_y=evidence.bbox_y if evidence else None,
+                        bbox_width=evidence.bbox_width if evidence else None,
+                        bbox_height=evidence.bbox_height if evidence else None,
                         extraction_confidence=lab.get("confidence"),
                         provider=job.classification_source or "legacy_pipeline",
+                        parser_version=(reducto_extraction.PARSER_VERSION if evidence is not None else None),
                         created_at=now_iso(),
                     )
                 )
@@ -1271,12 +1623,22 @@ def process_upload_job(job_id: int):
         # Reader always has extracted_text as a fallback.
         if document.document_type in READER_SECTION_KEYS:
             try:
-                reader_result = extract_structured_sections(
-                    document_type=document.document_type,
-                    file_path=file_path,
-                    filename=job.filename,
-                    content_type=job.content_type,
-                )
+                # Reuse the Reducto reader extraction already done above
+                # (build_pipeline_result_reader) instead of paying for a
+                # second, redundant OpenAI vision call on the same file.
+                # Only falls through to OpenAI when Reducto is disabled,
+                # wasn't applicable, or genuinely returned nothing.
+                reader_result = (pipeline_result or {}).get("_reducto_structured_sections")
+                reader_actor = "reducto"
+
+                if not reader_result or not reader_result.get("sections"):
+                    reader_result = extract_structured_sections(
+                        document_type=document.document_type,
+                        file_path=file_path,
+                        filename=job.filename,
+                        content_type=job.content_type,
+                    )
+                    reader_actor = "legacy_openai_reader"
 
                 if reader_result.get("sections"):
                     document.structured_sections = json.dumps(reader_result, ensure_ascii=False)
@@ -1284,7 +1646,7 @@ def process_upload_job(job_id: int):
                         db=db,
                         document_id=document.id,
                         action="structured_extraction_completed",
-                        actor="legacy_openai_reader",
+                        actor=reader_actor,
                         details=f"Extracted {len(reader_result['sections'])} section(s) for {document.document_type}.",
                     )
                 else:

@@ -1,12 +1,14 @@
 # Claude Handoff — Bragi + Reducto
 
-See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f for the
+See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
 ## CURRENT PHASE
-None — all 7 phases from the original spec are implemented, tested, and
-merged to `main`. See plan §2f for exactly what "done" means here and
-what's honestly still deferred.
+None — all 7 phases from the original spec, **plus a real Reducto
+integration (§8)**, are implemented and merged to `main`. See plan §2f
+and §8 for exactly what "done" means here and what's honestly still
+deferred. `REDUCTO_ENABLED` is still `false` everywhere — see §8's
+"turning it on" section for what to verify before flipping it.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -24,17 +26,19 @@ what's honestly still deferred.
    full cumulative diff review. See plan §2f.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
-- Get a Reducto account/API key and current API docs, then implement
-  `ReductoExtractionProvider` for real (see plan §3) — nothing Reducto-
-  shaped has been tested against the live API yet.
+- **Reducto is now really integrated (see plan §8)** — classify, split,
+  and extract were implemented and verified against the live API with
+  synthetic documents. Before setting `REDUCTO_ENABLED=true` anywhere:
+  run the full multi-file/mixed-PDF flow through your own local Postgres
+  (this session had no DB credentials — see §8's "what wasn't verified").
 - Run the repo's own Playwright QA (`qa/flows.mjs`, `qa/a11y.mjs`)
   locally against the new upload/reader/chart flows at the responsive
   breakpoints the original spec named — this session couldn't safely
-  generate the `BRAGI_TOKENS` file it needs.
+  generate the `BRAGI_TOKENS` file it needs (same blocker as before).
 - Try a real end-to-end upload through live Google Document AI/OpenAI
-  (classification + structured reader extraction) — every phase avoided
-  spending real API quota; this is the one class of test only you can
-  run cheaply.
+  (classification + structured reader extraction) for the legacy-provider
+  path — every phase avoided spending real API quota; this is the one
+  class of test only you can run cheaply.
 - Pick up any of the explicitly-deferred items in each phase's plan
   section (outline/search/30-second-read/conflicts UI, Level-2 semantic
   duplicate matching, prescription → `PatientMedication` linkage, a full
@@ -66,43 +70,54 @@ deploy. Verified repeatedly against the local dev DB across every phase
 (20 pre-existing `documents` rows untouched throughout).
 
 ## Environment variables
-Added (all default to current behavior — no action needed):
 ```
-DOCUMENT_EXTRACTION_PROVIDER=legacy   # only "legacy" actually works right now
+DOCUMENT_EXTRACTION_PROVIDER=legacy   # "legacy" or "reducto" — see plan §8
 DOCUMENT_EXTRACTION_FALLBACK=legacy
 REDUCTO_API_KEY=                      # backend-only; never NEXT_PUBLIC_*
-REDUCTO_ENABLED=false                 # leave false until Reducto is really wired up
+REDUCTO_ENABLED=false                 # leave false — see plan §8 "turning it on"
 ```
-No other new env vars — structured reader extraction (Phase 4) reuses
-the existing `OPENAI_API_KEY`.
+No other new env vars — structured reader extraction reuses the existing
+`OPENAI_API_KEY` as the fallback when Reducto is disabled or fails.
+`python-dotenv` is now a dependency and `backend/.env` (gitignored) is
+loaded automatically on startup — previously `.env.example` documented a
+file that was never actually read.
 
 ## Tests / status (final)
 - Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
   → **42 passed**, unit-only (no DB fixtures convention exists yet).
 - Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
   full-project `eslint .` shows only pre-existing findings unrelated to
-  this work (see plan §2f).
+  this work (see plan §2f). Not re-run after the Reducto integration
+  (backend-only change; no frontend files touched — see plan §8).
 - Live checks this session actually ran (not just described): a real
   SHA-256-duplicate functional test against the dev DB (temp rows
-  cleaned up after), a real `uvicorn` boot with an OpenAPI route check,
-  and `run_migrations()` applied cleanly against the dev DB after every
-  phase.
-- Not run: live OCR/AI calls (real API cost), the repo's Playwright QA
-  suite (needs live tokens this session couldn't generate), Reducto
-  itself (no key/MCP available).
+  cleaned up after, Phase 2), a real `uvicorn` boot with an OpenAPI route
+  check, `run_migrations()` applied cleanly against the dev DB after
+  every phase, **and the real Reducto integration (plan §8): live
+  upload/classify/split/parse/extract calls against platform.reducto.ai
+  with synthetic Romanian documents, plus function-level tests of the
+  actual provider code (not just ad-hoc scripts)**.
+- Not run: live OCR/AI calls through the legacy provider (real API
+  cost), the repo's Playwright QA suite (needs live tokens this session
+  couldn't generate), and — new this round — the full HTTP/DB-backed
+  upload flow for the Reducto path (this session had no local Postgres
+  credentials; see plan §8 "what wasn't verified").
 
 ## Known issues
 See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;
-the headline items are in this file's "Next steps" above.
+the headline items are in this file's "Next steps" above, plus plan §8
+for the Reducto-integration-specific ones.
 
 ## Manual configuration/authentication required
 - **None** to keep the app working exactly as it did before this work —
   every new feature defaults to safe/off or additive/backward-compatible
-  behavior.
-- **Reducto**: get your own account + API key, then implement
-  `ReductoExtractionProvider.classify()` (and later `split`/`parse`/
-  `extract`) against current Reducto docs before ever setting
-  `REDUCTO_ENABLED=true` anywhere.
+  behavior; `REDUCTO_ENABLED` still defaults to `false`.
+- **Reducto**: a real `REDUCTO_API_KEY` was used to build and verify this
+  integration (see plan §8) and is in `backend/.env` (gitignored, local
+  only) — rotate/replace it if you don't want that key used further.
+  Before setting `REDUCTO_ENABLED=true` in any real environment, run the
+  full upload flow against your own local Postgres first (this session
+  couldn't) and read plan §8's "turning it on" checklist.
 - **Playwright QA**: generate a `BRAGI_TOKENS` file (see `qa/flows.mjs`
   for the expected shape) if you want to run the existing QA harness
   against this work.

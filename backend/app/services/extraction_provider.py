@@ -36,6 +36,7 @@ from abc import ABC, abstractmethod
 from dataclasses import dataclass
 
 from app.services.document_classifier import ClassificationResult, classify_document_text
+from app.services.reducto_client import ReductoError
 
 LEGACY = "legacy"
 REDUCTO = "reducto"
@@ -47,6 +48,10 @@ class ProcessingMetadata:
     parser_version: str
     processing_time_ms: int
     confidence: float | None = None
+    # Reducto-only: the uploaded file's Reducto file_id, so a subsequent
+    # extract()/split() call for the same document can reuse it instead of
+    # uploading the same bytes to Reducto a second time.
+    reducto_file_id: str | None = None
 
 
 class ReductoNotConfiguredError(RuntimeError):
@@ -60,7 +65,9 @@ class DocumentExtractionProvider(ABC):
     def is_enabled(self) -> bool: ...
 
     @abstractmethod
-    def classify(self, text: str) -> tuple[ClassificationResult, ProcessingMetadata]: ...
+    def classify(
+        self, text: str, file_path: str | None = None, filename: str | None = None
+    ) -> tuple[ClassificationResult, ProcessingMetadata]: ...
 
 
 class LegacyExtractionProvider(DocumentExtractionProvider):
@@ -72,7 +79,9 @@ class LegacyExtractionProvider(DocumentExtractionProvider):
     def is_enabled(self) -> bool:
         return True
 
-    def classify(self, text: str) -> tuple[ClassificationResult, ProcessingMetadata]:
+    def classify(
+        self, text: str, file_path: str | None = None, filename: str | None = None
+    ) -> tuple[ClassificationResult, ProcessingMetadata]:
         started = time.monotonic()
         result = classify_document_text(text)
         elapsed_ms = int((time.monotonic() - started) * 1000)
@@ -87,15 +96,17 @@ class LegacyExtractionProvider(DocumentExtractionProvider):
 
 
 class ReductoExtractionProvider(DocumentExtractionProvider):
-    """Reducto-backed classification.
+    """Real Reducto-backed classification, split, and extraction.
 
-    NOT YET IMPLEMENTED against the live Reducto API — no Reducto MCP
-    connector was available during this phase, so no HTTP integration
-    has been written or tested against Reducto's actual Classify
-    response shape. Wire this up once REDUCTO_API_KEY is available and
-    current Reducto docs have been checked for the Classify/Split/Parse
-    request/response contract; until then this provider stays disabled
-    and `get_extraction_provider()` always falls back to legacy.
+    Implemented and verified against the live Reducto API
+    (platform.reducto.ai) with synthetic Romanian medical documents — see
+    `reducto_extraction.py`'s module docstring for the test transcript
+    summary and BRAGI_REDUCTO_PLAN.md §3 for the full account. Disabled
+    unless both `REDUCTO_ENABLED=true` and `REDUCTO_API_KEY` are set;
+    `get_extraction_provider()` falls back to legacy otherwise, and every
+    Reducto call here can raise `ReductoError` — callers (process_upload_job)
+    must catch it and fall back rather than ever marking a document ready
+    on a failed/partial Reducto result.
     """
 
     name = "reducto"
@@ -107,15 +118,44 @@ class ReductoExtractionProvider(DocumentExtractionProvider):
     def is_enabled(self) -> bool:
         return self.explicitly_enabled and bool(self.api_key)
 
-    def classify(self, text: str) -> tuple[ClassificationResult, ProcessingMetadata]:
+    def classify(
+        self, text: str, file_path: str | None = None, filename: str | None = None
+    ) -> tuple[ClassificationResult, ProcessingMetadata]:
         if not self.is_enabled():
             raise ReductoNotConfiguredError(
                 "Reducto provider is disabled (REDUCTO_ENABLED/REDUCTO_API_KEY not set)."
             )
-        raise NotImplementedError(
-            "Reducto Classify integration has not been implemented yet. "
-            "See BRAGI_REDUCTO_PLAN.md for the Phase 1 follow-up."
+        if not file_path:
+            # Reducto Classify operates on the uploaded file directly, not
+            # OCR'd text (verified live — see reducto_extraction.py) —
+            # unlike the legacy keyword classifier there is no text-only
+            # path.
+            raise ReductoNotConfiguredError("ReductoExtractionProvider.classify() requires file_path.")
+
+        from app.services import reducto_extraction as _reducto
+
+        started = time.monotonic()
+        try:
+            classification = _reducto.classify_file(file_path, filename=filename)
+        except ReductoError:
+            raise
+        elapsed_ms = int((time.monotonic() - started) * 1000)
+
+        result = ClassificationResult(
+            document_type=classification.document_type,
+            status=classification.status,
+            confidence=classification.confidence,
+            matched_terms=[],
+            candidates=classification.category_scores,
         )
+        metadata = ProcessingMetadata(
+            provider=self.name,
+            parser_version=_reducto.PARSER_VERSION,
+            processing_time_ms=elapsed_ms,
+            confidence=classification.confidence,
+            reducto_file_id=classification.file_id,
+        )
+        return result, metadata
 
 
 def get_extraction_provider() -> tuple[DocumentExtractionProvider, bool, str | None]:

@@ -165,6 +165,19 @@ class Document(Base):
     # extracted_text.
     structured_sections = Column(Text, nullable=True)
 
+    # Real Reducto Split integration: a single upload that Reducto Split
+    # detected as containing multiple logical documents (e.g. one PDF with
+    # labs + an imaging report + a discharge summary) is stored as one
+    # parent Document (the original file, untouched) plus one child
+    # Document per detected section. `saved_to` on a child still points at
+    # the PARENT's file — a child is a page-range *view* of the same
+    # source, never a separate copy — so "View original" always opens the
+    # real original upload. page_range_start/end are 1-indexed, inclusive,
+    # and refer to the ORIGINAL document's page numbers (not renumbered).
+    parent_document_id = Column(Integer, ForeignKey("documents.id"), nullable=True, index=True)
+    page_range_start = Column(Integer, nullable=True)
+    page_range_end = Column(Integer, nullable=True)
+
     # NOTE: the live Postgres column is `boolean` (pre-existing schema drift
     # from this model's prior `Integer` declaration — discovered and fixed
     # during Phase 2 testing; no migration needed since the DB column was
@@ -177,6 +190,7 @@ class Document(Base):
 
     patient = relationship("Patient", back_populates="documents", foreign_keys=[patient_id])
     intended_patient = relationship("Patient", foreign_keys=[intended_patient_id])
+    parent_document = relationship("Document", foreign_keys=[parent_document_id], remote_side=[id])
     uploaded_by_user = relationship("User", back_populates="uploaded_documents")
     lab_results = relationship("LabResult", back_populates="document", cascade="all, delete-orphan")
     audit_logs = relationship("AuditLog", back_populates="document", cascade="all, delete-orphan")

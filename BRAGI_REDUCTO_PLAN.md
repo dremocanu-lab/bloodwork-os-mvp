@@ -453,19 +453,24 @@ was faked to look complete: every "done" item above has a passing test,
 a clean build, or a verified live check behind it, and every deferred
 item is named as such rather than silently dropped.
 
-**Reducto itself was never actually integrated** — no Reducto MCP
-connector or API key was available in this environment at any point
-across all 7 phases. Everything Reducto-shaped (the provider
-abstraction, the `REDUCTO_ENABLED`/`REDUCTO_API_KEY` config, the
-disabled `ReductoExtractionProvider` stub) is real, tested scaffolding
-for a future integration — not a working connection to the Reducto API.
-The "legacy_rules" classifier and the existing Google Document AI/OpenAI
-pipeline (extended in Phase 4) do the actual work today. Wiring up real
-Reducto Classify/Split/Parse/Extract remains future work requiring your
-own account and current API docs, exactly as flagged in every phase's
-handoff.
+**Update: Reducto itself is now really integrated — see §8.** At the end
+of the original 7 phases, no Reducto MCP connector or API key was
+available, so everything Reducto-shaped was scaffolding rather than a
+working connection (the "legacy_rules" classifier and the existing
+Google Document AI/OpenAI pipeline did the actual work). A follow-up
+session was given a real `REDUCTO_API_KEY` and implemented
+`ReductoExtractionProvider.classify()`, plus real Split and Extract,
+against the live API — verified with synthetic documents, not guessed
+from documentation. `REDUCTO_ENABLED` is still `false` by default
+everywhere; see §8 for exactly what was and wasn't verified before
+turning it on.
 
-## 3. Reducto integration status (important)
+## 3. Reducto integration status (superseded — see §8)
+
+**This section describes the state before the real integration.** A real
+`REDUCTO_API_KEY` was later provided and Reducto Classify/Split/Parse/
+Extract were implemented and verified against the live API — see §8 for
+the current, accurate status. This section is kept for history.
 
 **No Reducto MCP connector was available in this environment**, and no
 `REDUCTO_API_KEY` was provided, so:
@@ -579,3 +584,189 @@ handoff.
       tests + a full `app.main` import against the local dev DB (with
       the new `ADD COLUMN IF NOT EXISTS` migrations applied and
       verified) stand in for it this phase.
+
+## 8. The real Reducto integration (follow-up session)
+
+A follow-up session was given a real `REDUCTO_API_KEY` (no Reducto MCP
+was connected in that session either) and replaced the disabled stub
+with a working integration, verified against the **live** Reducto API
+(`https://platform.reducto.ai`) using synthetic Romanian medical
+documents generated for testing — not inferred from documentation, per
+the explicit instruction for this round. Every claim below was checked
+live before being written down.
+
+### What was verified against the live API (not just implemented)
+
+- **Upload** (`POST /upload`): multipart file → `reducto://<uuid>.<ext>`
+  file_id. Used for every synthetic document in every test below.
+- **Classify** (`POST /classify`, synchronous): a 15-category
+  `classification_schema` built from the existing 16-value taxonomy
+  (`document_taxonomy.DocumentType`, minus `other` handled specially)
+  correctly separated 6 distinct synthetic document types at confidence
+  1.0/0.0, and — critically — correctly produced a genuine confidence
+  **tie** (1.0/1.0 between `laboratory_results` and `discharge_summary`)
+  for a document deliberately written to legitimately contain both (a
+  discharge letter with an embedded lab table). Reducto's own
+  `response_confidence.categories[]` gives a full per-category
+  confidence breakdown, not just the winner — ambiguity detection
+  (`reducto_extraction._decide_status`) compares the winner's confidence
+  against the runner-up rather than using an invented single-number
+  threshold, calibrated against this real tie.
+- **Parse** (`POST /parse`, synchronous for the document sizes tested):
+  returned page/bbox-tagged blocks (Table/Title/Section Header/Key
+  Value/Text) with Romanian decimal-comma values intact in table markdown
+  (`"13,2"`, `"12,0 - 16,0"`).
+- **Extract** (`POST /extract`, synchronous for the sizes tested, with
+  `settings.citations.enabled=true`): pulled all 7 lab rows from a
+  2-page synthetic Romanian lab report (Hemoglobină, Eritrocite,
+  Leucocite, Trombocite, Creatinină, Glucoză, CRP) with correct
+  decimal-comma values and units, per-field bounding boxes (normalized
+  0-1, with page/original_page), and per-field confidence. Narrative
+  extraction (imaging report → modality/body_region/exam_date/technique/
+  findings/impression) also verified, preserving Romanian text verbatim.
+- **Split** (`POST /split`): a synthetic 9-page mixed PDF (pages 1-2 lab,
+  page 3 imaging, pages 4-8 discharge, page 9 prescription) split into
+  exactly those 4 sections at "high" confidence, using the same
+  taxonomy-derived descriptions as Classify. A genuinely single-type
+  2-page document correctly came back as *one* section spanning both
+  pages (`is_mixed=False`) — confirming Split is safe to call on every
+  Reducto-classified upload without false-positive-splitting normal
+  documents.
+- **Error shapes**: a bad file_id returns `404 {"error":{"code","name":
+  "NOT_FOUND","message"}}`; a bad API key returns `401 {"error":{"code",
+  "name":"AUTH_ERROR","message"}}` — both mapped to typed exceptions in
+  `reducto_client.py`.
+
+### What was implemented
+
+- `app/services/reducto_client.py` — thin HTTP client (upload/classify/
+  parse/extract/split/job polling), typed exceptions
+  (`ReductoAuthError`/`ReductoNotFoundError`/`ReductoTimeoutError`/
+  `ReductoServerError`/`ReductoRateLimitedError`/
+  `ReductoMalformedResponseError`), and a fallback to polling
+  `GET /job/{id}` for the (untested-here, since every document tried was
+  small) case where a large document doesn't return `result` inline.
+- `app/services/reducto_schemas.py` — the Classify taxonomy schema,
+  lab/identity/reader-per-type Extract JSON schemas (reader schemas
+  reuse the exact `structured_reader_service.SECTION_KEYS` used by the
+  OpenAI fallback, so switching providers doesn't change the Reader's
+  data contract), and the confidence thresholds derived from the live
+  tie-detection test above.
+- `app/services/reducto_extraction.py` — classification decision logic,
+  response-to-`labs`-list mapping (reusing `synonyms.normalize_test_name`
+  for canonical_name/category, exactly like the legacy bloodwork
+  pipeline), reader-section mapping, identity-field mapping, and
+  `build_pipeline_result_labs`/`build_pipeline_result_reader`, which
+  produce the *exact same dict shape* `process_upload_job` already reads
+  from `process_uploaded_document`/`process_uploaded_discharge_summary`
+  — so the Document/LabResult/SourceEvidence creation code in `main.py`
+  did not need to change to accept Reducto-sourced data.
+- `app/services/pdf_split.py` — slices a page range out of a source PDF
+  (PyMuPDF, already a dependency) for the mixed-document flow below.
+- `extraction_provider.ReductoExtractionProvider.classify()` — real
+  implementation (was `NotImplementedError`). The abstract `classify()`
+  signature gained an optional `file_path` param (Reducto classifies the
+  file directly, not OCR text — a real difference from the legacy
+  classifier discovered by testing, not assumed); legacy provider is
+  unaffected.
+- **`main.py` wiring** (only inside the existing
+  `AUTO_CLASSIFY_SECTION` multi-file batch-upload path —
+  doctor/care-partner explicit-section uploads are untouched):
+  - Reducto Classify replaces the OCR-then-classify step when enabled,
+    falling back to `legacy_rules` on any `ReductoError`.
+  - Reducto Split runs right after Classify (only in the Reducto path).
+    If it finds more than one section, `_finish_mixed_reducto_upload`
+    takes over: identity is checked **once** for the whole physical
+    file (never bypassed by finding multiple sections in it), a parent
+    `Document` row preserves the original upload untouched, and each
+    section is sliced into its own PDF, uploaded separately, and run
+    through the normal single-document Reducto extract path — producing
+    child `Document` rows (new `parent_document_id`/`page_range_start`/
+    `page_range_end` columns, migrated the same idempotent way as every
+    other column in this project) whose `saved_to` still points at the
+    **parent's** file and whose `SourceEvidence.page_number` is remapped
+    back to the original document's real page numbers (not the slice's
+    1-based numbering) — "View original" opens the real source file at
+    the real page, never a throwaway slice.
+  - For a non-mixed document, `laboratory_results` and the 6 narrative
+    reader types get their extraction from Reducto (labs → the existing
+    `LabResult`/`SourceEvidence` loop, now populated with **real**
+    `page_number`/`bbox_x`/`bbox_y`/`bbox_width`/`bbox_height` instead of
+    always-null; reader sections → reused directly at the existing
+    Phase 4 call site instead of paying for a second OpenAI extraction
+    of the same file). `discharge_summary` keeps its existing dedicated
+    pipeline unchanged (not clearly broken, per this round's
+    instructions) — Reducto handles the other 7 supported types.
+  - Any `ReductoError` at any step falls back to the pre-existing legacy
+    pipeline for that document rather than failing the upload.
+
+### What was NOT verified (be honest about this before flipping `REDUCTO_ENABLED`)
+
+- **The full HTTP/DB-backed upload flow.** This session had no local
+  Postgres credentials (a Postgres instance was running locally but with
+  credentials this session didn't have, and `run_migrations()` is
+  Postgres-specific raw SQL, so a throwaway SQLite DB couldn't stand in).
+  Verified instead: syntax/AST-checked every changed file, all 42
+  pre-existing backend unit tests still pass unmodified, `app.main`
+  imports cleanly up through the DB-connection step (fails only on
+  Postgres auth, not on any Python/import error), and — most
+  importantly — every new function in `reducto_extraction.py`
+  (`classify_file`, `split_file`, `build_pipeline_result_labs`,
+  `build_pipeline_result_reader`) was called directly against the real
+  Reducto API and produced correct, verified output (see above). What
+  was **not** exercised end-to-end: the actual `Document`/`LabResult`/
+  `SourceEvidence` writes, identity-check integration, and duplicate
+  detection running against a real database through the real
+  `/upload/batch` endpoint. Run the multi-file/mixed-PDF scenarios in
+  §13 of this doc against your own local Postgres before trusting this
+  in any shared environment.
+- **A non-contiguous split section's page mapping** (e.g. a section
+  covering pages [1, 2, 5]) — implemented (`_original_page` in
+  `main.py` maps slice-local pages back via an explicit sorted list, not
+  a flat offset) but every live Split test happened to return contiguous
+  ranges, so this specific edge case is reasoned-through, not observed.
+- **A document large enough that Reducto doesn't return `result` inline**
+  (Reducto's own docs say sync calls suit <100 pages; every test
+  document here was 1-9 pages) — the job-polling fallback in
+  `reducto_client._maybe_await_job` is implemented but never triggered.
+- **The Playwright QA suite** — same blocker as every prior phase (no
+  `BRAGI_TOKENS`), unrelated to this round's work.
+- **Frontend changes** — none were needed or made. Split-created child
+  documents surface through the existing generic `document_type`-based
+  display (Phase 5) automatically; `parent_document_id`/
+  `page_range_start`/`page_range_end` are now returned by
+  `serialize_document_card`/`get_document_payload` but nothing in the
+  frontend groups children under their parent yet or shows the page
+  range — a reasonable, explicitly-named follow-up (see §14), not a
+  silent gap.
+- A **low-confidence** (`"conf": "low"`) Split section is still filed
+  automatically as its detected type today; there is no per-section
+  "needs confirmation" UI for an individual mixed-PDF section the way
+  there is for a whole ambiguous single document. Scoped out given the
+  size of the change already made — worth adding if low-confidence
+  splits turn out to be common in practice.
+- Split children skip Level-3 duplicate-observation linking (the
+  same-patient/same-date/same-value/same-unit dedup that whole documents
+  get) — scoped out for time; a child's lab rows are always inserted as
+  new rows even if they duplicate an existing observation.
+
+### Turning it on (`REDUCTO_ENABLED=true`)
+
+Not recommended yet. Before doing it anywhere:
+
+1. Run the multi-file batch upload flow (§13) against your own local
+   Postgres with `REDUCTO_ENABLED=true`/`REDUCTO_API_KEY` set, using
+   real or synthetic documents, and confirm Document/LabResult/
+   SourceEvidence rows look right and "View original" highlights
+   correctly.
+2. Try at least one genuinely mixed PDF and confirm the parent + child
+   documents both look correct and the child pages open at the right
+   spot in the parent file.
+3. Decide whether the known limitations above (non-contiguous split
+   page mapping untested live, no per-section confirmation UI, no
+   Level-3 dedup for split children) are acceptable for your first
+   rollout, or worth closing first.
+4. Only then set `DOCUMENT_EXTRACTION_PROVIDER=reducto`,
+   `DOCUMENT_EXTRACTION_FALLBACK=legacy` (keep the fallback — a Reducto
+   outage should degrade, not break, uploads), and `REDUCTO_ENABLED=true`
+   in that environment specifically.
