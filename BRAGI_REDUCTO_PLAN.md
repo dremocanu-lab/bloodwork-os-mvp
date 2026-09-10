@@ -1742,3 +1742,232 @@ changing its existing background/text color treatment.
   architecturally sound, but were not visually confirmed in a live
   browser this round — an honest limitation, not a silently-assumed
   pass.
+
+## 14. Source highlighting correctness (page bleed, field-only highlight) and structured-pane scroll preservation
+
+Three bugs found via manual testing on the deployed viewer after §13:
+still-small field highlighting, a highlight bleeding onto the wrong PDF
+page, and the structured (left) pane jumping when opening "View in
+original." Root-caused each with real Reducto data before patching
+anything — see below.
+
+### 14a. Investigation: reproducing with real Reducto data, not assumptions
+
+Generated a real synthetic 2-page PDF (PyMuPDF, `backend`'s already-
+available dependency — a CBC panel with WBC/RBC/Hemoglobin/Platelet
+Count/MPV/PDW on page 1, a Basic Metabolic Panel with Glucose/
+Creatinine on page 2, deliberately with a lot of empty space at the
+bottom of page 2 to mirror the screenshot), uploaded it to the real
+Reducto API, and ran the actual `extract_lab_results()` function
+(not a handcrafted rectangle) against it. Findings:
+
+- **The row-bbox union math from §13e is correct.** Calling
+  `_union_row_bbox` on WBC's real captured citations (test name, value,
+  unit, reference range — all four returned with real, mutually-
+  consistent page-1 bboxes) produces `left=0.044, right=0.748` — a wide
+  region spanning name through unit, not a narrow value box. Ran
+  `extract_lab_results()` end to end and confirmed every row (including
+  the page-2 rows) gets its own correctly-scoped `row_bbox`, on its own
+  page, with no cross-page contamination in the union itself. **This
+  means the backend geometry is not the bug** — see 14b for why a small
+  highlight can still appear.
+- **A real, provable frontend bug**: `SourceViewerPanel`'s `showBbox`
+  (`components/source-viewer/source-viewer-panel.tsx`) computed purely
+  from `data.precision` and the presence of bbox values — it never
+  checked whether `data.page_number` (the evidence's own page) matched
+  `currentPage` (whatever page is actually rendered on screen). Manually
+  navigating to a different page while an evidence is selected — or any
+  other moment where the two briefly disagree — kept painting that
+  evidence's percentage-based coordinates onto whatever page happened to
+  be on screen, landing anywhere from a wrong row to empty page space.
+  This exactly reproduces screenshot 2 ("Page 2 of 2" with a highlight
+  floating in empty space).
+- **Page numbering is 1-based end to end already, verified against real
+  data, not assumed**: Reducto's own citation bbox returns both `page`
+  and `original_page` as 1 for a first-page citation (captured directly
+  from the live API response, not from documentation); `_field_evidence`
+  passes it through unchanged (`bbox.get("original_page") or
+  bbox.get("page")`, no arithmetic); `SourceEvidence.page_number` stores
+  that value as-is; `/source-evidence/{id}/view` returns it unchanged;
+  the frontend's `setCurrentPage(view.page_number || 1)` and PDF.js's
+  own `getPage(pageNumber)` are both 1-based. No off-by-one exists
+  anywhere in this chain — confirmed by tracing real values through
+  every layer rather than by inspection alone.
+
+### 14b. Why screenshot 1's highlight still looked field-sized
+
+Given 14a's confirmation that the union math itself is correct for a
+freshly-extracted document, the most likely explanation for a still-
+small highlight in the deployed screenshot is that the specific
+SourceEvidence row being viewed was created **before** §13e's
+`row_bbox_*` columns and extraction logic were deployed — that
+SourceEvidence row has `row_bbox_x/y/width/height = NULL` in the
+database (the migration is additive; it never had per-field citation
+geometry retained to backfill from, since historically only ONE final
+bbox was ever stored per row), so the frontend correctly falls back to
+the old single-field bbox for that specific pre-existing row. This is
+an honest limitation, not a further code bug: any document processed
+before §13e shipped will keep showing a field-only highlight
+permanently, because the four individual field citations needed to
+compute a row union were never retained for it. Re-uploading the same
+document (or any new document) goes through the current extraction
+logic and gets a real `row_bbox`, as directly verified in 14a.
+Documented rather than silently assumed.
+
+### 14c. The fix — page-isolated highlighting, defense in depth
+
+`components/source-viewer/source-viewer-panel.tsx`:
+- `showBbox` now also requires `data.page_number === currentPage`
+  (`evidenceMatchesCurrentPage`) — a highlight can only ever render on
+  the page its own evidence actually belongs to, full stop. This is the
+  primary, definitive fix for the cross-page bleed.
+- A monotonic `renderRequestIdRef` guards every DOM-mutating step inside
+  the async page-render function (canvas sizing, `page.render()`,
+  scroll-to-highlight) — layered on top of (not instead of) the existing
+  effect-cleanup flag and PDF.js's own render-task cancellation, so a
+  slow, superseded page fetch/render can never paint over what's
+  currently displayed even in an unusual timing case neither of the
+  existing guards happened to cover.
+- New `isValidUnitBox()` rejects any bbox/row_bbox whose coordinates
+  aren't a sane `0 ≤ x, y` and `x+width, y+height ≤ 1` rectangle before
+  it's ever used — a last defensive line on top of the backend's own
+  clamping (§13e) and Reducto's own real citation data, not a
+  replacement for either.
+- `.b-source-viewer-canvas-wrap` (the highlight's positioning parent,
+  sized to exactly one page) gained `overflow: hidden` — belt-and-
+  suspenders: even a geometry edge case that slipped past the above
+  can't visually spill past that page's own boundary, since this
+  viewer only ever renders one page's canvas + highlight at a time
+  (no continuous multi-page scroll to bleed across in the first place).
+- The highlight-centering scroll now runs through a new
+  `scrollHighlightIntoView()` that computes the target position via
+  `getBoundingClientRect()` against `containerRef` (`.b-source-viewer-
+  body`) and calls `container.scrollTo(...)` — replacing a bare
+  `highlightRef.current.scrollIntoView(...)`, which walks up every
+  scrollable ancestor and could in principle nudge an ancestor other
+  than the PDF's own pane as a side effect. Now scoped to exactly one
+  element, never window/body/the split's other pane.
+- Switching evidence (`data.source_evidence_id`) is now in the render
+  effect's dependency list alongside `page_number`, so clicking a
+  different lab row that happens to land on the SAME page (e.g. WBC
+  then RBC, both page 1) still re-centers on the new row instead of
+  leaving the view wherever the previous row left it.
+- A small "Return to source" affordance appears in the notice banner
+  when the user has manually browsed away from the selected evidence's
+  page (`data.precision === "exact_bbox" && !evidenceMatchesCurrentPage`)
+  — manual browsing is allowed and no longer shows a stale/wrong
+  highlight while doing so, but there's still a one-click way back
+  rather than a dead end. Clicking the same row's "View in original"
+  again already worked correctly before this round too (`openSourceEvidence`
+  reloads evidence fresh, resetting `currentPage` to the evidence's own
+  page) — unchanged, still true.
+
+### 14d. Backend regression tests (`backend/tests/test_reducto_page_convention.py`, 5 new cases)
+
+Pin down the 1-based page-number convention at `_field_evidence`, the
+one place page numbers first enter the system, using real citation
+shapes captured from the live Reducto response in 14a: page 1 and page
+2 both pass through unchanged (no accidental `-1`/`+1`), `original_page`
+takes priority over `page` when both are present (matters for
+split/multi-panel documents), falls back to `page` when
+`original_page` is absent, and no citations means no page — never a
+fabricated `0`. Full backend suite: 67 passed (62 + 5).
+
+### 14e. Structured-pane scroll jump — root cause and fix
+
+**Root cause, found by reading the actual composition code, not
+assumed**: `components/source-viewer/app-shell-with-source-viewer.tsx`'s
+`Shell` component returned an entirely different top-level React element
+depending on `isOpen` — `<>{children}</>` (a bare Fragment) when closed,
+versus a real `<div className="b-app-split"><div className=
+"b-app-split-main">{children}</div>...</div>` tree when open. Because
+the top-level returned element type changes (Fragment → div), React
+cannot reconcile across that boundary — it unmounts everything the
+closed branch rendered (including the structured page's entire
+component subtree) and mounts the open branch's tree fresh, with
+`children` now nested one level deeper. **`children`'s component
+instance is destroyed and recreated the instant the viewer opens** —
+this is the literal violation of "keep the left pane mounted," and by
+itself already explains the jump (a freshly-mounted subtree starts
+scrolled to the top of whatever new scroll container it wakes up in).
+A second, independent factor compounds it: before opening, the
+structured page scrolls via the ambient window/document scroll (the
+app shell's sidebar uses `position: sticky`, which only makes sense
+against a window-level scroll — confirmed no other scroll container
+exists above it); `.b-app-split-main` is a genuinely separate scrollable
+box once active (`overflow-y: auto`, its own `scrollTop` starting at 0)
+— so even with the remount fixed, the numeric scroll offset itself
+still needed to be carried across explicitly, or the same visual jump
+happens one layer up.
+
+**Fix, two parts**:
+1. **Stop the remount.** `Shell` now always returns the same two-div
+   wrapper shape around `children`; only its `className` changes
+   between the active split layout (`.b-app-split`/`.b-app-split-main`)
+   and a new `.b-app-split-passthrough` class (`display: contents`) when
+   inactive. `display: contents` removes the div from the box model
+   entirely — its children lay out exactly as if the div weren't there —
+   while the div itself stays in the DOM at a stable position, which is
+   what lets React preserve `children`'s mounted instance across every
+   open/close and desktop/mobile transition. Closed-state behavior is
+   pixel-identical to before this fix (verified by comparing the CSS: a
+   `display: contents` wrapper has zero layout effect).
+2. **Carry the scroll offset across, in both directions**, via a
+   `useLayoutEffect` keyed on the `showSplit` boolean transitioning
+   (not on `isOpen`/`isDesktop` individually, since either can change
+   independently — e.g. a window resize while already open): opening
+   captures `window.scrollY` and applies it as `.b-app-split-main`'s
+   `scrollTop`, then resets `window.scrollTo(0, 0)` (safe — `.b-app-
+   split` is capped at `height: 100dvh; overflow: hidden`, so the window
+   has nothing left to scroll while active anyway). Closing needs the
+   reverse, but by the time a `useLayoutEffect`'s body runs, React has
+   *already* committed the DOM change that flips `.b-app-split-main` to
+   `display: contents` — which has no box, and therefore no `scrollTop`,
+   of its own — so reading it fresh at that point would read a
+   meaningless value. A small `useEffect` continuously mirrors the div's
+   live `scrollTop` into a ref (`lastMainScrollTopRef`) via a `scroll`
+   listener while it's the active container; the closing transition
+   applies that last known value to `window.scrollTo(0, ...)` instead of
+   reading the (by-then-gone) element directly. `useLayoutEffect` (not
+   `useEffect`) for the transfer itself so it applies before the browser
+   paints — no visible jump-then-snap-back flicker.
+
+**Confirmed NOT the cause, so left alone**: `LabSourceAction`'s
+`rowRef.current?.scrollIntoView(...)` only ever runs for the `autoOpen`
+deep-link case (`?lab={id}` from a chart-point click — a genuinely
+different, pre-existing, deliberate feature where scrolling the row
+into view IS the intended behavior) — a normal "View in original"
+click never calls it. `openSourceEvidence()` itself performs no router
+navigation, hash change, or query-param push — it's pure React context
+state — so there was no URL-driven scroll reset to fix either. Grepped
+`AppShell` and the document detail page for any other `isOpen`/source-
+viewer awareness: none exists outside `Shell` — confirming this was the
+one and only place the structure branched.
+
+### 14f. Verification
+
+- Backend: `pytest -q` → 67 passed (62 existing + 5 new
+  `test_reducto_page_convention.py` cases).
+- Frontend: `tsc --noEmit` clean; `npm run build` (Turbopack) succeeds,
+  all 33 routes compile; `eslint` clean on every touched file.
+- Real Reducto integration test (14a): a real synthetic 2-page CBC +
+  Basic Metabolic Panel PDF, uploaded and extracted through the actual
+  live Reducto API and the actual `extract_lab_results()` function
+  (not a mocked/handcrafted response) — confirmed every one of WBC,
+  RBC, Hemoglobin, Platelet Count, MPV, PDW (page 1) and Glucose,
+  Creatinine (page 2) receives its own correct, page-scoped `row_bbox`
+  spanning the real row width, with no cross-page mixing in the union
+  itself.
+- Not run: a live browser/Playwright pass exercising the actual click
+  path (scroll a structured table to the middle, click "View in
+  original," assert the left pane's scrollTop is unchanged; navigate
+  the PDF pane to an unrelated page and assert no highlight appears) —
+  same recurring `BRAGI_TOKENS` blocker as every prior round. The page-
+  association logic is a plain, directly-inspectable boolean condition
+  now, and the scroll-preservation architecture was verified by tracing
+  the actual CSS/reconciliation behavior rather than assumed, but
+  neither was confirmed pixel-by-pixel in a live browser this round —
+  an honest limitation, not a silently-assumed pass. No JS unit-test
+  runner exists in this repo (confirmed again this round — same as
+  every prior one) to add automated frontend assertions beyond
+  `tsc`/`eslint`/`build`.

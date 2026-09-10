@@ -9,14 +9,16 @@ None — all 7 phases from the original spec, a real Reducto integration
 production-failure fix + classification-latency round (§10), a
 normalization/source-viewer/popup-rework round (§11), a correction
 round (§12: fixed a fabricated PSW clinical claim from §11, completed
-the popup audit), and a visual/interaction correction pass (§13: upload
+the popup audit), a visual/interaction correction pass (§13: upload
 compaction, an Overview display bug, source-viewer route lifecycle,
 full-lab-row PDF framing, PDF render quality, a blank-viewer layout
-bug) are implemented and merged to `main`. See plan §2f, §8, §9, §10,
-§11, §12, §13 for exactly what "done" means here and what's honestly
-still deferred. `REDUCTO_ENABLED` is `true` in production (confirmed
-via live traffic) — see §10 for the real production bug that was
-blocking every upload there and is now fixed.
+bug), and a source-highlighting correctness pass (§14: page-association
+bleed, a structured-pane scroll-jump bug) are implemented and merged to
+`main`. See plan §2f, §8, §9, §10, §11, §12, §13, §14 for exactly what
+"done" means here and what's honestly still deferred. `REDUCTO_ENABLED`
+is `true` in production (confirmed via live traffic) — see §10 for the
+real production bug that was blocking every upload there and is now
+fixed.
 
 ## COMPLETED PHASES
 1. Reducto foundation + multi-file classification (rule-based
@@ -70,6 +72,22 @@ blocking every upload there and is now fixed.
     state on the lab row whose source is open, a restrained hover
     gradient, HiDPI-aware canvas rendering, and a little more restrained
     color (stat-card accents, nav active edge). See plan §13.
+14. Fixed three more bugs found by manually retesting the deployed §13
+    viewer: the highlight could bleed onto the wrong PDF page (including
+    landing in empty space) because nothing checked that the evidence's
+    own page matched the page actually on screen — now gated, plus a
+    monotonic request-id guard against async render races and a bbox
+    sanity check as defense in depth; still-field-sized highlighting on
+    some documents turned out to be pre-existing SourceEvidence rows
+    created before §13e shipped (no per-field geometry was ever retained
+    for those to backfill from — verified the row-union math itself is
+    correct against a real Reducto extraction, see plan §14a); opening
+    "View in original" was unmounting and remounting the entire
+    structured page (a Fragment-vs-div branch in the split-view
+    composition), destroying its scroll position — fixed by keeping a
+    stable DOM wrapper (`display: contents` when inactive) plus
+    explicitly carrying the scroll offset across the transition in both
+    directions. See plan §14.
 
 ## NEXT STEPS (not a "phase" — your call on priority)
 - **Production was actually broken for uploads before §10** — `documents.
@@ -124,6 +142,24 @@ blocking every upload there and is now fixed.
   touched this round — no screenshot named it, and it doesn't share the
   same three-stacked-cards structure, but it's worth a look if a future
   round revisits upload UX.
+- **Any lab document uploaded before §13e shipped will never show a
+  full-row PDF highlight** — it'll keep falling back to the old
+  field-only bbox forever, because the four individual field citations
+  needed to compute a row union were never retained for pre-existing
+  SourceEvidence rows (only one final bbox was ever stored per row
+  historically). This is why the field-only highlighting in this
+  round's report kept appearing even after §13e shipped — see plan
+  §14b. There's no backfill path short of re-processing the original
+  document through Reducto again; not attempted this round (out of
+  scope, and would cost real API quota per affected document).
+- §14's fixes (page-association gating, the scroll-preservation
+  architecture) were verified by direct code/CSS/reconciliation
+  inspection plus a real Reducto extraction test (see plan §14a), not a
+  live browser pass — same `BRAGI_TOKENS` blocker as always. If you get
+  real QA tokens, the highest-value things to confirm live: scroll a
+  structured lab table to the middle, click "View in original," confirm
+  the left pane didn't move; manually page-navigate the PDF pane away
+  from a selected evidence's page and confirm no highlight follows.
 
 ## Architecture decisions (cumulative — see plan for full detail per phase)
 - `document_type` rides alongside the existing `section` column
@@ -172,9 +208,10 @@ file that was never actually read.
 
 ## Tests / status (final)
 - Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
-  → **62 passed** (42 original + 15 `test_lab_resolver.py` cases after
-  §12a's rewrite + 5 new `test_reducto_row_bbox.py` cases this round),
-  unit-only (no DB fixtures convention exists yet).
+  → **67 passed** (42 original + 15 `test_lab_resolver.py` cases after
+  §12a's rewrite + 5 `test_reducto_row_bbox.py` cases from §13 + 5 new
+  `test_reducto_page_convention.py` cases this round), unit-only (no DB
+  fixtures convention exists yet).
 - Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
   `eslint` on every file touched this round is clean (a few pre-existing
   `react-hooks` findings remain in files this round didn't otherwise
@@ -201,16 +238,26 @@ file that was never actually read.
   been able to generate yet), and any actual browser click-through of the
   new source viewer / popup positioning (verified via build/typecheck/
   lint + real backend E2E instead — see plan §11d).
-- This round (§13): confirmed by direct inspection of the actual
-  production build output that the PDF.js worker is correctly emitted
-  and referenced at its real static-asset path (ruling it out as a
-  contributor to the blank-PDF bug before attributing that bug to a CSS
-  layout-collapse root cause instead — see plan §13f). The row-bbox
-  union/padding geometry is covered by 5 new unit tests. Not run: a live
-  browser pass confirming the fixed layout, the new hover/selected-row
-  treatment, or the row-bbox highlight against a real rendered PDF —
-  same `BRAGI_TOKENS` blocker as always; see plan §13i for exactly what
-  that leaves unverified.
+- §13: confirmed by direct inspection of the actual production build
+  output that the PDF.js worker is correctly emitted and referenced at
+  its real static-asset path (ruling it out as a contributor to the
+  blank-PDF bug before attributing that bug to a CSS layout-collapse
+  root cause instead — see plan §13f). The row-bbox union/padding
+  geometry is covered by 5 unit tests. Not run: a live browser pass
+  confirming the fixed layout, the new hover/selected-row treatment, or
+  the row-bbox highlight against a real rendered PDF — same
+  `BRAGI_TOKENS` blocker as always; see plan §13i for exactly what that
+  leaves unverified.
+- §14: a real synthetic 2-page PDF was generated (PyMuPDF) and run
+  through the actual live Reducto API and the actual
+  `extract_lab_results()` function — not a mocked response or a
+  handcrafted rectangle — confirming the row-bbox union math itself
+  produces correct, page-scoped geometry for every row across both
+  pages (see plan §14a for the full transcript of what was verified).
+  The page-association fix and the scroll-preservation architecture
+  were verified by direct code/CSS/reconciliation-behavior inspection,
+  not a live browser pass — same `BRAGI_TOKENS` blocker as always; see
+  plan §14f.
 
 ## Known issues
 See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;
