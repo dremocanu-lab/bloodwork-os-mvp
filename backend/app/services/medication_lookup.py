@@ -42,7 +42,12 @@ def _fetch_json(url: str) -> Optional[dict]:
             url,
             headers={"User-Agent": "Bragi-Health/1.0"},
         )
-        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:
+        # nosec B310 — host is always RXNORM_BASE/DAILYMED_BASE, both
+        # hardcoded constants (official NLM services); only the
+        # URL-encoded query/path segment varies with user input, never
+        # the host (confirmed by reading every call site in this file).
+        # Reviewed in docs/security/STATIC_ANALYSIS.md; not an SSRF vector.
+        with urllib.request.urlopen(req, timeout=TIMEOUT) as resp:  # nosec B310
             return json.loads(resp.read().decode("utf-8"))
     except Exception:
         return None

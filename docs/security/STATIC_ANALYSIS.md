@@ -18,7 +18,10 @@ Reviewed individually rather than accepted at face value:
   constants (`RXNORM_BASE`/`DAILYMED_BASE`, both official NLM services);
   only the URL-encoded query/path segment varies with user input, never
   the host — confirmed by reading every call site in
-  `medication_lookup.py`. Not an SSRF vector. No fix needed.
+  `medication_lookup.py`. Not an SSRF vector. Suppressed with an inline
+  `# nosec B310` plus a reasoned comment at each site (not a blanket
+  exclusion) so CI's `bandit -r app -ll` gate (Medium/High) stays
+  meaningful for any genuinely new finding.
 - **2× Low, `B105` (`hardcoded_password_string`)** — both are the
   literal string `"bearer"` used while parsing/building an
   `Authorization: Bearer <token>` header, not a credential. False

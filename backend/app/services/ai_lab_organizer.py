@@ -391,7 +391,10 @@ def organize_labs_with_ai(
     )
 
     try:
-        with urllib.request.urlopen(request, timeout=90) as response:
+        # nosec B310 — target is OPENAI_RESPONSES_URL, a hardcoded constant
+        # (OpenAI's own API endpoint), never user-controlled. Reviewed in
+        # docs/security/STATIC_ANALYSIS.md; not an SSRF vector.
+        with urllib.request.urlopen(request, timeout=90) as response:  # nosec B310
             raw = response.read().decode("utf-8")
     except urllib.error.HTTPError as exc:
         body = exc.read().decode("utf-8", errors="replace")
