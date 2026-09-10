@@ -276,7 +276,11 @@ OCR fallback text for this document:
     payload = _safe_json_loads(raw)
 
     if not payload:
-        print(f"AI page extraction returned non-JSON on page {page_number}: {raw[:1200]}")
+        # Never log `raw` here — it's the model's attempted transcription of
+        # this page and can contain real patient name/DOB/lab values. Length
+        # only (a genuinely useful diagnostic for "did the model return
+        # something at all") stays PHI-free.
+        print(f"AI page extraction returned non-JSON on page {page_number}: {len(raw)} chars, not parseable")
         return None
 
     normalized = normalize_ai_extraction(payload)
@@ -287,8 +291,8 @@ OCR fallback text for this document:
             "model": OPENAI_MODEL,
             "page": page_number,
             "labs": len(normalized.get("labs", [])),
-            "patient_name": normalized.get("patient_name"),
-            "report_name": normalized.get("report_name"),
+            "has_patient_name": bool(normalized.get("patient_name")),
+            "has_report_name": bool(normalized.get("report_name")),
         },
     )
 
@@ -388,8 +392,8 @@ def extract_report_with_ai(file_path: Path, upload_dir: Path, ocr_text: str = ""
                     "model": OPENAI_MODEL,
                     "pages": len(image_paths),
                     "labs": len(merged.get("labs", [])),
-                    "patient_name": merged.get("patient_name"),
-                    "report_name": merged.get("report_name"),
+                    "has_patient_name": bool(merged.get("patient_name")),
+                    "has_report_name": bool(merged.get("report_name")),
                 },
             )
 

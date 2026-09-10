@@ -508,7 +508,12 @@ class EmergencyAccessSession(Base):
     id = Column(Integer, primary_key=True, index=True)
     public_id = Column(String, nullable=True, unique=True, index=True)
     emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    # Nullable (not the original NOT NULL) so this access-audit record can
+    # outlive the patient row it names: account deletion detaches the
+    # reference (ON DELETE SET NULL, see run_migrations()) rather than
+    # either deleting a real access-audit record or being blocked by it —
+    # see docs/privacy/RETENTION_POLICY.md.
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
     reason = Column(String, nullable=False)
     reason_note = Column(Text, nullable=True)
     started_at = Column(String, nullable=False)

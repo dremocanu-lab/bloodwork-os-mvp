@@ -2,7 +2,6 @@ import os
 import re
 import json
 import secrets
-import shutil
 import time
 import traceback
 import uuid
@@ -30,7 +29,13 @@ from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.auth import create_access_token, decode_access_token, hash_password, verify_password
+from app.auth import (
+    create_access_token,
+    decode_access_token,
+    hash_password,
+    verify_password,
+    verify_password_timing_safe,
+)
 from app.db import SessionLocal, engine
 from app.services.document_pipeline import process_uploaded_document
 from app.services.lab_catalog import find_lab_definition
@@ -331,6 +336,97 @@ def run_migrations():
         conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_y FLOAT"))
         conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_width FLOAT"))
         conn.execute(text("ALTER TABLE source_evidence ADD COLUMN IF NOT EXISTS row_bbox_height FLOAT"))
+
+        # Same FK-cascade class of bug as parent_document_id/duplicate_of_
+        # lab_result_id above, found by a security audit rather than a live
+        # 500 this time: DELETE /my/account would fail for any patient who
+        # ever had an emergency-access session opened on them, or who
+        # appears (as subject or context) in an admin-action-log row —
+        # both are audit-relevant records that must survive the patient's
+        # own account deletion (see docs/privacy/RETENTION_POLICY.md), so
+        # the fix is to detach the reference (SET NULL), not delete the
+        # audit row. emergency_access_sessions.patient_id is also made
+        # nullable here (was NOT NULL) to allow that — see models.py's
+        # comment on the column; any session still ACTIVE at the moment of
+        # deletion is immediately unusable once nulled (every access check
+        # compares patient_id by equality, so None never matches a real
+        # patient id — fails closed, not open).
+        conn.execute(text("ALTER TABLE emergency_access_sessions ALTER COLUMN patient_id DROP NOT NULL"))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'emergency_access_sessions_patient_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE emergency_access_sessions DROP CONSTRAINT IF EXISTS emergency_access_sessions_patient_id_fkey;
+                    ALTER TABLE emergency_access_sessions ADD CONSTRAINT emergency_access_sessions_patient_id_fkey
+                        FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'emergency_audit_logs_patient_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE emergency_audit_logs DROP CONSTRAINT IF EXISTS emergency_audit_logs_patient_id_fkey;
+                    ALTER TABLE emergency_audit_logs ADD CONSTRAINT emergency_audit_logs_patient_id_fkey
+                        FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        # Found by an actual reproduction, not just reading the schema: a
+        # PATIENT who ever changed their own emergency-access settings gets
+        # an emergency_audit_logs row with emergency_user_id set to THEIR
+        # OWN user id (the actor of that settings change, not necessarily
+        # an emergency_worker role) — so this FK can block deleting an
+        # ordinary patient's user row too, not just an emergency worker's.
+        # emergency_user_id is already nullable; only the constraint's
+        # delete rule needed fixing. Same for session_id (nullable, no
+        # session is ever hard-deleted today, but fixed for consistency/
+        # defense-in-depth rather than assuming that stays true).
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'emergency_audit_logs_emergency_user_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE emergency_audit_logs DROP CONSTRAINT IF EXISTS emergency_audit_logs_emergency_user_id_fkey;
+                    ALTER TABLE emergency_audit_logs ADD CONSTRAINT emergency_audit_logs_emergency_user_id_fkey
+                        FOREIGN KEY (emergency_user_id) REFERENCES users(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'emergency_audit_logs_session_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE emergency_audit_logs DROP CONSTRAINT IF EXISTS emergency_audit_logs_session_id_fkey;
+                    ALTER TABLE emergency_audit_logs ADD CONSTRAINT emergency_audit_logs_session_id_fkey
+                        FOREIGN KEY (session_id) REFERENCES emergency_access_sessions(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
+        conn.execute(text("""
+            DO $$
+            BEGIN
+                IF NOT EXISTS (
+                    SELECT 1 FROM information_schema.referential_constraints
+                    WHERE constraint_name = 'admin_action_logs_patient_id_fkey' AND delete_rule = 'SET NULL'
+                ) THEN
+                    ALTER TABLE admin_action_logs DROP CONSTRAINT IF EXISTS admin_action_logs_patient_id_fkey;
+                    ALTER TABLE admin_action_logs ADD CONSTRAINT admin_action_logs_patient_id_fkey
+                        FOREIGN KEY (patient_id) REFERENCES patients(id) ON DELETE SET NULL;
+                END IF;
+            END $$;
+        """))
         conn.commit()
 
 run_migrations()
@@ -362,8 +458,122 @@ app.add_middleware(
     expose_headers=["Content-Disposition"],
 )
 
+
+@app.middleware("http")
+async def security_headers_middleware(request: Request, call_next):
+    """Baseline response headers — see docs/security/THREAT_MODEL.md.
+
+    This is a JSON API (the browser-rendered surface is the separate
+    Next.js frontend, which sets its own CSP/frame-ancestors in
+    next.config.ts), so the headers here are the ones that matter
+    regardless of content type: no MIME-sniffing, no referrer leakage
+    to third parties, HSTS on the real production host, and a defensive
+    frame-ancestors/CSP in case any endpoint ever returns HTML (an error
+    page, FastAPI's own /docs, etc.) rather than JSON.
+    """
+    response = await call_next(request)
+    response.headers["X-Content-Type-Options"] = "nosniff"
+    response.headers["Referrer-Policy"] = "strict-origin-when-cross-origin"
+    response.headers["Permissions-Policy"] = (
+        "geolocation=(), microphone=(), camera=(), payment=(), usb=()"
+    )
+    # Defense-in-depth only — this API never intentionally serves HTML for
+    # a browser to render (uploaded documents are served with their own
+    # content_type via FileResponse, not text/html), so a restrictive
+    # default-src here costs nothing for the real JSON responses and only
+    # matters if something unexpected (an error page, /docs) is loaded
+    # directly.
+    response.headers["Content-Security-Policy"] = "default-src 'none'; frame-ancestors 'none'"
+    response.headers["X-Frame-Options"] = "DENY"
+    # Render terminates TLS in front of this app; HSTS is safe to set
+    # unconditionally since there is no legitimate plain-HTTP use of this
+    # API (frontend_origins above are all HTTPS in production).
+    if os.getenv("ENVIRONMENT", "production").lower() != "development":
+        response.headers["Strict-Transport-Security"] = "max-age=63072000; includeSubDomains"
+    return response
+
 UPLOAD_DIR = Path(os.getenv("UPLOAD_DIR", "uploads"))
 UPLOAD_DIR.mkdir(parents=True, exist_ok=True)
+
+# File-upload hardening — see docs/security/THREAT_MODEL.md "malicious
+# upload." Every format the product actually offers today (the frontend's
+# getFileBadge()/accept list): PDF, common raster images, and
+# doc/docx (accepted even though no current extraction path reads them,
+# to avoid narrowing an already-advertised upload capability). Nothing
+# else — in particular, no executable/script/archive extension is ever
+# accepted, regardless of what Content-Type a client claims.
+ALLOWED_UPLOAD_EXTENSIONS = {
+    ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".doc", ".docx",
+}
+# Real byte-signature ("magic number") prefixes for the formats above that
+# have one — a client-supplied filename/Content-Type can lie, but the
+# actual first bytes of the file are real. doc/docx aren't included: doc
+# is an OLE/CFB container and docx is a zip, both crossing into "worth a
+# real parsing library, not a hand-rolled prefix check" territory — their
+# risk is already bounded by the extension allowlist above plus the
+# separate size cap, so this is intentionally scoped to formats a simple,
+# unambiguous prefix genuinely identifies.
+UPLOAD_MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
+    ".pdf": (b"%PDF-",),
+    ".png": (b"\x89PNG\r\n\x1a\n",),
+    ".jpg": (b"\xff\xd8\xff",),
+    ".jpeg": (b"\xff\xd8\xff",),
+    ".webp": (b"RIFF",),  # full container check (RIFF....WEBP) below
+    ".tif": (b"II*\x00", b"MM\x00*"),
+    ".tiff": (b"II*\x00", b"MM\x00*"),
+}
+MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50")) * 1024 * 1024
+
+
+def _validate_upload_extension(original_filename: str) -> str:
+    """Returns the lowercased, validated extension or raises 400. Extension
+    is what decides ACCEPT/REJECT — Content-Type is client-supplied and
+    only used later for the response's Content-Type header (unchanged
+    behavior), never for this decision."""
+    suffix = Path(original_filename).suffix.lower()
+    if suffix not in ALLOWED_UPLOAD_EXTENSIONS:
+        allowed = ", ".join(sorted(ALLOWED_UPLOAD_EXTENSIONS))
+        raise HTTPException(
+            status_code=400,
+            detail=f"Unsupported file type '{suffix or '(none)'}'. Allowed: {allowed}.",
+        )
+    return suffix
+
+
+async def _read_and_validate_upload(file: UploadFile, suffix: str) -> bytes:
+    """Reads the whole upload into memory, enforcing the size cap while
+    reading (never trusts a Content-Length header, which a client can
+    misstate) and, where a real signature exists for this extension,
+    verifying the first bytes actually match it — a spoofed extension on
+    an unrelated file type is rejected before ever touching disk."""
+    chunks: list[bytes] = []
+    total = 0
+    chunk_size = 1024 * 1024
+    while True:
+        chunk = await file.read(chunk_size)
+        if not chunk:
+            break
+        total += len(chunk)
+        if total > MAX_UPLOAD_SIZE_BYTES:
+            raise HTTPException(
+                status_code=413,
+                detail=f"File exceeds the {MAX_UPLOAD_SIZE_BYTES // (1024 * 1024)}MB upload limit.",
+            )
+        chunks.append(chunk)
+    data = b"".join(chunks)
+
+    signatures = UPLOAD_MAGIC_BYTES.get(suffix)
+    if signatures:
+        if suffix == ".webp":
+            valid = data.startswith(b"RIFF") and data[8:12] == b"WEBP"
+        else:
+            valid = any(data.startswith(sig) for sig in signatures)
+        if not valid:
+            raise HTTPException(
+                status_code=400,
+                detail=f"File content doesn't match its '{suffix}' extension.",
+            )
+    return data
 
 # Bounded concurrency for multi-file batch uploads (POST /upload/batch): a
 # batch's files are dispatched to this pool instead of FastAPI's
@@ -1889,7 +2099,13 @@ def _normalize_doctor_type(doctor_type_input: str | None, department: str | None
 class SignupRequest(BaseModel):
     email: EmailStr
     full_name: str
-    password: str
+    # 8 is the OWASP-recommended floor for a length-only policy (no
+    # composition rules — composition requirements are no longer
+    # recommended; length is the strongest single lever) — see
+    # docs/security/THREAT_MODEL.md. No pre-existing account is affected;
+    # this only gates new signups (and any future password-change/reset
+    # flow) going forward.
+    password: str = Field(min_length=8, max_length=256)
     role: str
     department: str | None = None
     hospital_name: str | None = None
@@ -2058,7 +2274,9 @@ def signup(payload: SignupRequest, db: Session = Depends(get_db)):
 def login(payload: LoginRequest, db: Session = Depends(get_db)):
     user = db.query(models.User).filter(models.User.email == payload.email).first()
 
-    if not user or not verify_password(payload.password, user.password_hash):
+    # Always pays real bcrypt cost, whether or not `user` exists — see
+    # verify_password_timing_safe's docstring.
+    if not verify_password_timing_safe(payload.password, user.password_hash if user else None):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
     if user.role == "patient":
@@ -2326,7 +2544,10 @@ def get_patients(
         assigned_patient_ids = [
             link.patient_id
             for link in db.query(models.DoctorPatientAccess)
-            .filter(models.DoctorPatientAccess.doctor_user_id == current_user.id)
+            .filter(
+                models.DoctorPatientAccess.doctor_user_id == current_user.id,
+                models.DoctorPatientAccess.is_active == 1,
+            )
             .all()
         ]
 
@@ -2355,7 +2576,10 @@ def get_my_patients(
 ):
     access_links = (
         db.query(models.DoctorPatientAccess)
-        .filter(models.DoctorPatientAccess.doctor_user_id == current_user.id)
+        .filter(
+            models.DoctorPatientAccess.doctor_user_id == current_user.id,
+            models.DoctorPatientAccess.is_active == 1,
+        )
         .all()
     )
 
@@ -2911,6 +3135,16 @@ def delete_my_account(
         db.query(models.PatientEvent).filter(
             models.PatientEvent.patient_id == patient.id
         ).delete(synchronize_session=False)
+        # The patient's own authored data (unlike emergency-access-session/
+        # audit-log rows, which are detached via ON DELETE SET NULL instead
+        # — see run_migrations() — because those are access-audit records,
+        # not this patient's own content).
+        db.query(models.PatientMedication).filter(
+            models.PatientMedication.patient_id == patient.id
+        ).delete(synchronize_session=False)
+        db.query(models.EmergencyContact).filter(
+            models.EmergencyContact.patient_id == patient.id
+        ).delete(synchronize_session=False)
 
         db.delete(patient)
         db.flush()
@@ -3075,16 +3309,20 @@ async def create_background_upload(
     patient = resolve_upload_patient(db, current_user, patient_id)
 
     original_filename = file.filename or "uploaded_document"
-    _suffix = Path(original_filename).suffix.lower()
-    _safe_ext = _suffix if re.match(r"^\.[a-z0-9]{1,10}$", _suffix) else ""
+    _safe_ext = _validate_upload_extension(original_filename)
+    file_data = await _read_and_validate_upload(file, _safe_ext)
     saved_filename = f"{uuid.uuid4().hex}{_safe_ext}"
     saved_path = UPLOAD_DIR / saved_filename
 
     try:
-        with saved_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        saved_path.write_bytes(file_data)
     except Exception as save_error:
-        raise HTTPException(status_code=500, detail=f"Could not save uploaded file: {str(save_error)}")
+        # Full detail (which can include server-side I/O/OS error text — e.g.
+        # actual filesystem paths) goes to server logs only; the client gets
+        # a generic message. See docs/security/THREAT_MODEL.md — "verbose
+        # error disclosure."
+        print(f"UPLOAD SAVE FAILED: {save_error}")
+        raise HTTPException(status_code=500, detail="Could not save uploaded file.")
     finally:
         try:
             await file.close()
@@ -3144,16 +3382,20 @@ async def _save_incoming_file(file: UploadFile) -> tuple[str, str]:
     own inline copy of this logic unchanged.
     """
     original_filename = file.filename or "uploaded_document"
-    _suffix = Path(original_filename).suffix.lower()
-    _safe_ext = _suffix if re.match(r"^\.[a-z0-9]{1,10}$", _suffix) else ""
+    _safe_ext = _validate_upload_extension(original_filename)
+    file_data = await _read_and_validate_upload(file, _safe_ext)
     saved_filename = f"{uuid.uuid4().hex}{_safe_ext}"
     saved_path = UPLOAD_DIR / saved_filename
 
     try:
-        with saved_path.open("wb") as buffer:
-            shutil.copyfileobj(file.file, buffer)
+        saved_path.write_bytes(file_data)
     except Exception as save_error:
-        raise HTTPException(status_code=500, detail=f"Could not save uploaded file: {str(save_error)}")
+        # Full detail (which can include server-side I/O/OS error text — e.g.
+        # actual filesystem paths) goes to server logs only; the client gets
+        # a generic message. See docs/security/THREAT_MODEL.md — "verbose
+        # error disclosure."
+        print(f"UPLOAD SAVE FAILED: {save_error}")
+        raise HTTPException(status_code=500, detail="Could not save uploaded file.")
     finally:
         try:
             await file.close()
