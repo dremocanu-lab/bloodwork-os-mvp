@@ -824,8 +824,18 @@ export default function DischargeStructuredPage() {
     >
       {/* Delete confirm modal */}
       {confirmDeleteOpen && (
-        <div style={{ position: "fixed", inset: 0, zIndex: 1000, background: "rgba(15,23,42,0.42)", display: "grid", placeItems: "center", padding: 20, backdropFilter: "blur(10px)" }}>
-          <div className="soft-card" style={{ width: "min(520px, 100%)", padding: 28, boxShadow: "0 30px 90px rgba(15,23,42,0.32)" }}>
+        <div
+          role="presentation"
+          onClick={() => !deleting && setConfirmDeleteOpen(false)}
+          style={{ position: "fixed", inset: 0, zIndex: 1000, display: "grid", placeItems: "center", padding: 20 }}
+        >
+          <div
+            className="soft-card"
+            role="alertdialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
+            style={{ width: "min(520px, 100%)", padding: 28, border: "1px solid var(--border-strong)", boxShadow: "var(--shadow-lg)" }}
+          >
             <div style={{ fontSize: 22, fontWeight: 600, letterSpacing: "-0.05em" }}>{t("deleteThisDischargeSummary")}</div>
             <div className="muted-text" style={{ marginTop: 10, lineHeight: 1.65 }}>{t("deleteDischargeDesc")}</div>
             <div className="soft-card-tight" style={{ marginTop: 18, padding: 16, background: "var(--panel-2)" }}>

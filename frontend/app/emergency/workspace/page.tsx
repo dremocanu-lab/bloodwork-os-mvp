@@ -665,13 +665,18 @@ function AddPatientModal({
     <div
       className="ew-modal-overlay"
       style={{
-        position: "fixed", inset: 0, background: "rgba(0,0,0,0.5)",
+        position: "fixed", inset: 0,
         display: "flex", alignItems: "flex-start", justifyContent: "center",
         zIndex: 200, padding: "80px 24px 24px", overflowY: "auto",
       }}
       onClick={(e) => { if (e.target === e.currentTarget && !starting) onClose(); }}
     >
-      <div className="soft-card ew-modal-card" style={{ maxWidth: 520, width: "100%", padding: "26px 28px" }}>
+      <div
+        className="soft-card ew-modal-card"
+        role="dialog"
+        aria-modal="true"
+        style={{ maxWidth: 520, width: "100%", padding: "26px 28px", border: "1px solid var(--border-strong)", boxShadow: "var(--shadow-lg)" }}
+      >
         <div style={{ display: "flex", alignItems: "center", justifyContent: "space-between", marginBottom: 20 }}>
           <h2 style={{ fontSize: 18, fontWeight: 600, margin: 0 }}>{t("emergencyAddPatient")}</h2>
           <button type="button" onClick={onClose} style={{ background: "none", border: "none", cursor: "pointer", color: "var(--muted)", fontSize: 20, lineHeight: 1 }}>×</button>

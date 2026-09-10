@@ -1937,19 +1937,20 @@ tr:focus-within .b-row-actions {
    13. OVERLAYS: menu, dialog, drawer, sheet
    -------------------------------------------------------------------------- */
 
+/* Global Bragi popup rule: routine contextual UI (dialogs, drawers,
+   sheets) never darkens the rest of the page — the user keeps visual
+   continuity with whatever they were doing. `.b-scrim` stays as an
+   invisible click-outside-to-close catcher (and a11y hit-target), not a
+   visual backdrop; `.b-dialog`/`.b-drawer`/`.b-sheet` carry a stronger
+   border+shadow instead, so the surface itself stays visually
+   distinguishable without dimming anything behind it. */
 .b-scrim {
   position: fixed;
   inset: 0;
   z-index: 90;
-  background: rgba(15, 23, 42, 0.35);
-  animation: b-fade-in var(--dur-2) var(--ease) both;
+  background: transparent;
   border: 0;
   padding: 0;
-}
-
-.dark .b-scrim,
-html.dark .b-scrim {
-  background: rgba(0, 0, 0, 0.55);
 }
 
 /* Menu / popover */
@@ -2042,7 +2043,7 @@ html.dark .b-scrim {
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border: 1px solid var(--border);
+  border: 1px solid var(--border-strong);
   border-radius: var(--r-xl);
   box-shadow: var(--shadow-lg);
   animation: b-dialog-in var(--dur-2) var(--ease) both;
@@ -2117,7 +2118,7 @@ html.dark .b-scrim {
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border-left: 1px solid var(--border);
+  border-left: 1px solid var(--border-strong);
   box-shadow: var(--shadow-lg);
   animation: b-drawer-in var(--dur-3) var(--ease) both;
 }
@@ -2155,7 +2156,7 @@ html.dark .b-scrim {
   display: flex;
   flex-direction: column;
   background: var(--surface);
-  border-top: 1px solid var(--border);
+  border-top: 1px solid var(--border-strong);
   border-radius: var(--r-xl) var(--r-xl) 0 0;
   box-shadow: var(--shadow-lg);
   animation: b-sheet-up var(--dur-3) var(--ease) both;
@@ -2218,6 +2219,175 @@ html.dark .b-scrim {
 .b-sheet-item[aria-current="page"] {
   color: var(--primary);
   font-weight: 550;
+}
+
+/* Lab row "View in original" — a visible text action, not icon-only, that
+   still fits inside a normal table row without making it taller. */
+.b-source-action {
+  height: 22px;
+  padding: 0 8px;
+  font-size: var(--fs-micro);
+  gap: 4px;
+  white-space: nowrap;
+}
+
+/* Shared Bragi source viewer — Analize/charts/Reader/Timeline/Documents
+   "View in original" all render through this one surface. Desktop: a
+   real split-view sibling of the main content (no backdrop, since it's
+   not an overlay at all — see the root layout's flex split). Mobile/
+   tablet: a full-screen local surface (nothing left to dim behind it). */
+.b-source-viewer {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 0;
+  background: var(--surface);
+}
+
+.b-source-viewer-split {
+  border-left: 1px solid var(--border-strong);
+}
+
+.b-source-viewer-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  animation: b-fade-in var(--dur-2) var(--ease) both;
+}
+
+.b-source-viewer-head {
+  display: flex;
+  align-items: center;
+  gap: var(--s3);
+  padding: var(--s3) var(--s4);
+  border-bottom: 1px solid var(--border);
+  min-height: 52px;
+  flex-shrink: 0;
+}
+
+.b-source-viewer-title {
+  font-size: var(--fs-sm);
+  font-weight: 600;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.b-source-viewer-controls {
+  display: flex;
+  align-items: center;
+  gap: 2px;
+  flex-shrink: 0;
+}
+
+.b-source-viewer-sep {
+  width: 1px;
+  height: 20px;
+  margin: 0 var(--s1);
+  background: var(--border);
+  flex-shrink: 0;
+}
+
+.b-source-viewer-notice {
+  padding: 6px var(--s4);
+  font-size: var(--fs-micro);
+  color: var(--muted);
+  background: var(--surface-2);
+  border-bottom: 1px solid var(--border);
+}
+
+.b-source-viewer-body {
+  flex: 1;
+  min-height: 0;
+  overflow: auto;
+  background: var(--surface-2);
+}
+
+.b-source-viewer-canvas-scroll {
+  display: flex;
+  justify-content: center;
+  padding: var(--s4);
+}
+
+.b-source-viewer-canvas-wrap {
+  position: relative;
+  flex-shrink: 0;
+  box-shadow: var(--shadow-md);
+}
+
+.b-source-viewer-canvas-wrap canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+
+/* Highlight: visible but professional — no neon, no flashing/pulsing.
+   One gentle fade-in on first appearance; respects reduced motion. */
+.b-source-highlight {
+  position: absolute;
+  border: 2px solid var(--primary);
+  background: color-mix(in srgb, var(--primary) 18%, transparent);
+  border-radius: 3px;
+  pointer-events: none;
+  animation: b-highlight-in var(--dur-3) var(--ease) both;
+}
+
+@keyframes b-highlight-in {
+  from { opacity: 0; }
+  to { opacity: 1; }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .b-source-highlight { animation: none; }
+}
+
+.b-source-viewer-page-loading {
+  position: absolute;
+  inset: 0;
+  background: color-mix(in srgb, var(--surface) 55%, transparent);
+}
+
+.b-source-viewer-state {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: var(--s3);
+  height: 100%;
+  padding: var(--s6);
+  text-align: center;
+  color: var(--muted);
+  font-size: var(--fs-sm);
+}
+
+/* Root layout desktop split: main content + source viewer side by side. */
+.b-app-split {
+  display: flex;
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.b-app-split-main {
+  flex: 1;
+  min-width: 0;
+  overflow-y: auto;
+  height: 100dvh;
+}
+
+.b-app-split-viewer {
+  flex: 0 0 45%;
+  max-width: 720px;
+  min-width: 360px;
+  height: 100dvh;
+}
+
+@media (max-width: 1024px) {
+  /* Tablet: too narrow for a comfortable 55/45 split of real content —
+     the viewer takes over as a full-screen local surface instead
+     (spec §54: choose split vs dedicated surface based on actual room). */
+  .b-app-split-viewer {
+    display: none;
+  }
 }
 
 /* Toast */
@@ -3709,16 +3879,18 @@ html.dark .b-scrim {
   }
 
   .sidebar-overlay {
+    /* Invisible click-outside-to-close catcher, not a visual backdrop —
+       see the global Bragi popup rule at .b-scrim. The sidebar itself
+       already carries shadow-lg, which is enough separation. */
     display: block;
     position: fixed;
     inset: 0;
     z-index: 90;
     border: 0;
     padding: 0;
-    background: rgba(15, 23, 42, 0.35);
+    background: transparent;
     opacity: 0;
     pointer-events: none;
-    transition: opacity var(--dur-3) var(--ease);
   }
 
   .sidebar-overlay.open {

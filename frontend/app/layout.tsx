@@ -1,5 +1,6 @@
 import "./globals.css";
 import { UploadManagerProvider } from "@/components/upload-provider";
+import { AppShellWithSourceViewer } from "@/components/source-viewer/app-shell-with-source-viewer";
 
 export const metadata = {
   title: "Bragi Health",
@@ -47,7 +48,9 @@ export default function RootLayout({
     <html lang="en" suppressHydrationWarning>
       <body suppressHydrationWarning>
         <script id="bragi-theme" dangerouslySetInnerHTML={{ __html: THEME_BOOTSTRAP }} />
-        <UploadManagerProvider>{children}</UploadManagerProvider>
+        <UploadManagerProvider>
+          <AppShellWithSourceViewer>{children}</AppShellWithSourceViewer>
+        </UploadManagerProvider>
       </body>
     </html>
   );

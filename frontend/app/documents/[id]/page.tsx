@@ -6,8 +6,9 @@ import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
-import { Dialog, LabValue, Status } from "@/components/ui";
+import { LabValue, Status } from "@/components/ui";
 import { IconExternal } from "@/components/ui/icon";
+import { useSourceViewer } from "@/components/source-viewer/source-viewer-context";
 import {
   ReaderDocumentType,
   isReaderDocumentType,
@@ -261,136 +262,81 @@ type LabSourceEvidence = {
 };
 
 /**
- * Row-level "View original" (Phase 3 — see BRAGI_REDUCTO_PLAN.md). No
- * bbox/page-highlight exists yet without a real Reducto Parse
- * integration, so this shows the exact raw text Bragi extracted for this
- * value — an honest, verifiable stand-in — plus a button to open the
- * full source file (reusing the parent page's existing openOriginal
- * blob-fetch, passed in rather than duplicated).
+ * Row-level "View in original" — opens the shared Bragi source viewer
+ * (see components/source-viewer) in-app, navigated to the exact page and
+ * highlighting the exact bbox, instead of the old small icon that opened
+ * a dialog with just the raw extracted text. A visible text action, not
+ * icon-only, on every viewport (see BRAGI_REDUCTO_PLAN.md's source-viewer
+ * section).
  */
 function LabSourceAction({
   labId,
-  onOpenOriginal,
   autoOpen,
 }: {
   labId: number;
-  onOpenOriginal: () => void;
   /** Set when this row is the target of a chart-point "View original" deep
    * link (?lab={id} — see the Trends chart's onPointClick and
-   * BRAGI_REDUCTO_PLAN.md Phase 6). Opens the dialog once on mount. */
+   * BRAGI_REDUCTO_PLAN.md Phase 6). Opens the viewer once on mount. */
   autoOpen?: boolean;
 }) {
   const { language } = useLanguage();
-  const [open, setOpen] = useState(Boolean(autoOpen));
+  const { openSourceEvidence } = useSourceViewer();
   const [loading, setLoading] = useState(false);
-  const [evidence, setEvidence] = useState<LabSourceEvidence[]>([]);
-  const [fetchError, setFetchError] = useState("");
+  const [noEvidence, setNoEvidence] = useState(false);
   const rowRef = useRef<HTMLSpanElement>(null);
 
   const labels =
     language === "ro"
-      ? {
-          action: "Sursă",
-          title: "Sursă originală",
-          desc: "Textul exact extras de Bragi pentru această valoare.",
-          openOriginal: "Deschide documentul original",
-          noEvidence: "Nu există încă text sursă salvat pentru acest rând.",
-          loading: "Se încarcă...",
-        }
-      : {
-          action: "Source",
-          title: "Original source",
-          desc: "The exact text Bragi extracted for this value.",
-          openOriginal: "Open original document",
-          noEvidence: "No source text has been saved for this row yet.",
-          loading: "Loading...",
-        };
+      ? { action: "Vezi în original", noEvidence: "Sursă indisponibilă" }
+      : { action: "View in original", noEvidence: "Source unavailable" };
 
-  async function loadEvidence() {
-    if (evidence.length || loading) return;
-
+  async function handleOpen() {
+    if (loading) return;
     setLoading(true);
-    setFetchError("");
 
     try {
       const response = await api.get<{ evidence: LabSourceEvidence[] }>(`/lab-results/${labId}/source`);
-      setEvidence(response.data.evidence || []);
-    } catch (err) {
-      setFetchError(getErrorMessage(err, "Could not load source."));
+      const firstEvidence = (response.data.evidence || [])[0];
+      if (firstEvidence) {
+        openSourceEvidence(firstEvidence.id);
+      } else {
+        setNoEvidence(true);
+      }
+    } catch {
+      setNoEvidence(true);
     } finally {
       setLoading(false);
     }
   }
 
-  function handleOpen() {
-    setOpen(true);
-    loadEvidence();
-  }
-
   useEffect(() => {
-    // `open`'s initial state already accounts for autoOpen (no setState
-    // here) — this effect only handles the two side effects that actually
-    // belong in one: scrolling the row into view and fetching its evidence.
     if (!autoOpen) return;
     rowRef.current?.scrollIntoView({ behavior: "smooth", block: "center" });
-    // Fetching on mount for a deep-linked row — the standard data-fetch-in-
-    // effect pattern already used elsewhere in this file (e.g. the page's
-    // own init() effect); `open`'s initial state (not this effect) is what
-    // shows the dialog, so this only ever kicks off the network request.
     // eslint-disable-next-line react-hooks/set-state-in-effect
-    loadEvidence();
+    handleOpen();
     // Only ever fire once, when this specific row is the deep-link target.
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [autoOpen]);
+
+  if (noEvidence) {
+    return (
+      <span ref={rowRef} className="b-meta">
+        {labels.noEvidence}
+      </span>
+    );
+  }
 
   return (
     <span ref={rowRef}>
       <button
         type="button"
-        className="b-btn b-btn-ghost b-btn-icon b-btn-sm"
+        className="b-btn b-btn-ghost b-btn-sm b-source-action"
         onClick={handleOpen}
-        aria-label={labels.action}
-        title={labels.action}
+        disabled={loading}
       >
-        <IconExternal size={13} />
+        {loading ? <span className="b-spinner" /> : <IconExternal size={12} />}
+        {labels.action}
       </button>
-
-      <Dialog open={open} onClose={() => setOpen(false)} title={labels.title} description={labels.desc}>
-        <div className="b-stack" style={{ gap: "var(--s3)" }}>
-          {loading ? (
-            <span className="muted-text">{labels.loading}</span>
-          ) : fetchError ? (
-            <span style={{ color: "var(--danger)" }}>{fetchError}</span>
-          ) : evidence.length ? (
-            evidence.map((row) => (
-              <div key={row.id} className="soft-card-tight" style={{ padding: 12 }}>
-                <div style={{ fontFamily: "var(--font-mono, monospace)", fontSize: "var(--fs-sm)" }}>
-                  {row.source_text}
-                </div>
-                {row.page_number ? (
-                  <div className="b-meta" style={{ marginTop: 6 }}>
-                    Page {row.page_number}
-                  </div>
-                ) : null}
-              </div>
-            ))
-          ) : (
-            <span className="muted-text">{labels.noEvidence}</span>
-          )}
-
-          <button
-            type="button"
-            className="b-btn b-btn-secondary"
-            onClick={() => {
-              setOpen(false);
-              onOpenOriginal();
-            }}
-          >
-            <IconExternal size={13} />
-            {labels.openOriginal}
-          </button>
-        </div>
-      </Dialog>
     </span>
   );
 }
@@ -1184,23 +1130,27 @@ export default function DocumentStructuredPage() {
 
       {confirmDeleteOpen && (
         <div
+          role="presentation"
+          onClick={() => !deleting && setConfirmDeleteOpen(false)}
           style={{
             position: "fixed",
             inset: 0,
             zIndex: 1000,
-            background: "rgba(15, 23, 42, 0.42)",
             display: "grid",
             placeItems: "center",
             padding: 20,
-            backdropFilter: "blur(10px)",
           }}
         >
           <div
             className="soft-card"
+            role="alertdialog"
+            aria-modal="true"
+            onClick={(e) => e.stopPropagation()}
             style={{
               width: "min(520px, 100%)",
               padding: 24,
-              boxShadow: "0 30px 90px rgba(15, 23, 42, 0.32)",
+              border: "1px solid var(--border-strong)",
+              boxShadow: "var(--shadow-lg)",
             }}
           >
             <div style={{ fontSize: 24, fontWeight: 600, letterSpacing: "-0.05em" }}>{t("deleteThisReport")}</div>
@@ -1895,7 +1845,6 @@ export default function DocumentStructuredPage() {
                                     )}
                                     <LabSourceAction
                                       labId={lab.id}
-                                      onOpenOriginal={openOriginal}
                                       autoOpen={deepLinkedLabId === lab.id}
                                     />
                                   </span>

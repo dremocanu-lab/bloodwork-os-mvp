@@ -213,6 +213,32 @@ export const IconPlus = (p: IconProps) => (
   </Svg>
 );
 
+export const IconMinus = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M5 12h14" />
+  </Svg>
+);
+
+export const IconZoomIn = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="M15.5 15.5 21 21M10.5 7.5v6M7.5 10.5h6" />
+  </Svg>
+);
+
+export const IconZoomOut = (p: IconProps) => (
+  <Svg {...p}>
+    <circle cx="10.5" cy="10.5" r="6.5" />
+    <path d="M15.5 15.5 21 21M7.5 10.5h6" />
+  </Svg>
+);
+
+export const IconFitWidth = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M3 8V6a1 1 0 0 1 1-1h2M21 8V6a1 1 0 0 1-1-1h-2M3 16v2a1 1 0 0 0 1 1h2M21 16v2a1 1 0 0 1-1 1h-2M7 12h10M7 12l2.5-2.5M7 12l2.5 2.5M17 12l-2.5-2.5M17 12l-2.5 2.5" />
+  </Svg>
+);
+
 export const IconCheck = (p: IconProps) => (
   <Svg {...p}>
     <path d="m4.5 12.5 5 5 10-11" />

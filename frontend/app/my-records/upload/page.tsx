@@ -3,7 +3,7 @@
 import { DragEvent, useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
-import { Dialog, EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
+import { EmptyState, ErrorNote, SectionHead, Status } from "@/components/ui";
 import { IconClose, IconUpload } from "@/components/ui/icon";
 import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
@@ -539,7 +539,55 @@ export default function MyRecordsUploadPage() {
                         flexShrink: 0,
                       }}
                     >
-                      {row.status === "needs_confirmation" ? (
+                      {row.status === "needs_confirmation" && confirmTarget?.id === row.id ? (
+                        // Inline, anchored right at this file's own row —
+                        // only THIS ambiguous file asks for input; every
+                        // other row keeps processing independently, and
+                        // the picker appears exactly where the user is
+                        // already looking, not as a centered dialog that
+                        // dims the rest of the upload queue.
+                        <span
+                          className="b-inline-confirm"
+                          style={{ display: "flex", alignItems: "center", gap: "var(--s1)", flexWrap: "wrap" }}
+                        >
+                          <select
+                            className="b-input"
+                            style={{ height: 28, fontSize: "var(--fs-micro)", padding: "0 6px" }}
+                            value={confirmChoice}
+                            onChange={(event) => setConfirmChoice(event.target.value)}
+                            disabled={confirmBusy}
+                            autoFocus
+                          >
+                            {documentTypes.map((choice) => (
+                              <option key={choice.value} value={choice.value}>
+                                {language === "ro" ? choice.label_ro : choice.label_en}
+                              </option>
+                            ))}
+                          </select>
+                          <button
+                            type="button"
+                            className="b-btn b-btn-primary b-btn-sm"
+                            onClick={submitConfirm}
+                            disabled={confirmBusy || !confirmChoice}
+                          >
+                            {confirmBusy ? <Spinner size={12} /> : null}
+                            {labels.confirmAction}
+                          </button>
+                          <button
+                            type="button"
+                            className="b-btn b-btn-ghost b-btn-sm"
+                            onClick={closeConfirm}
+                            disabled={confirmBusy}
+                          >
+                            {labels.cancel}
+                          </button>
+                          {confirmError ? (
+                            <span style={{ width: "100%", color: "var(--danger)", fontSize: "var(--fs-micro)" }}>
+                              {confirmError}
+                            </span>
+                          ) : null}
+                        </span>
+                      ) : row.status === "needs_confirmation" ? (
                         <button
                           type="button"
                           className="b-btn b-btn-secondary b-btn-sm"
@@ -641,49 +689,6 @@ export default function MyRecordsUploadPage() {
         </section>
       </div>
 
-      <Dialog
-        open={Boolean(confirmTarget)}
-        onClose={closeConfirm}
-        title={labels.confirmModalTitle}
-        description={confirmTarget ? `${confirmTarget.filename} — ${labels.confirmModalDesc}` : undefined}
-        footer={
-          <>
-            <button type="button" className="b-btn b-btn-secondary" onClick={closeConfirm} disabled={confirmBusy}>
-              {labels.cancel}
-            </button>
-            <button
-              type="button"
-              className="b-btn b-btn-primary"
-              onClick={submitConfirm}
-              disabled={confirmBusy || !confirmChoice}
-            >
-              {confirmBusy ? <Spinner size={14} /> : null}
-              {labels.confirmAction}
-            </button>
-          </>
-        }
-      >
-        <div className="b-stack" style={{ gap: "var(--s3)" }}>
-          {confirmError ? <ErrorNote>{confirmError}</ErrorNote> : null}
-
-          <label style={{ display: "block" }}>
-            <span className="b-meta" style={{ display: "block", marginBottom: 6 }}>
-              {labels.bestGuess}
-            </span>
-            <select
-              className="b-input"
-              value={confirmChoice}
-              onChange={(event) => setConfirmChoice(event.target.value)}
-            >
-              {documentTypes.map((choice) => (
-                <option key={choice.value} value={choice.value}>
-                  {language === "ro" ? choice.label_ro : choice.label_en}
-                </option>
-              ))}
-            </select>
-          </label>
-        </div>
-      </Dialog>
     </AppShell>
   );
 }

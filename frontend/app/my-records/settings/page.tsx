@@ -638,10 +638,10 @@ export default function PatientSettingsPage() {
       {/* Regenerate Code Modal */}
       {showRegenerateModal && (
         <div
+          role="presentation"
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -652,7 +652,9 @@ export default function PatientSettingsPage() {
         >
           <div
             className="soft-card"
-            style={{ padding: 28, maxWidth: 440, width: "100%" }}
+            role="alertdialog"
+            aria-modal="true"
+            style={{ padding: 28, maxWidth: 440, width: "100%", border: "1px solid var(--border-strong)", boxShadow: "var(--shadow-lg)" }}
             onClick={(e) => e.stopPropagation()}
           >
             <div style={{ fontWeight: 600, fontSize: 18, marginBottom: 10 }}>
@@ -683,13 +685,16 @@ export default function PatientSettingsPage() {
         </div>
       )}
 
-      {/* Delete Account Modal */}
+      {/* Delete Account Modal — significant destructive action: a larger
+          confirmation surface is warranted, but the rest of the page
+          stays visible (no dark backdrop) and a strong border/shadow
+          keeps it clearly distinguished. */}
       {showDeleteModal && (
         <div
+          role="presentation"
           style={{
             position: "fixed",
             inset: 0,
-            background: "rgba(0,0,0,0.45)",
             display: "flex",
             alignItems: "center",
             justifyContent: "center",
@@ -700,11 +705,14 @@ export default function PatientSettingsPage() {
         >
           <div
             className="soft-card"
+            role="alertdialog"
+            aria-modal="true"
             style={{
               padding: 28,
               maxWidth: 460,
               width: "100%",
               borderColor: "var(--danger-border)",
+              boxShadow: "var(--shadow-lg)",
             }}
             onClick={(e) => e.stopPropagation()}
           >

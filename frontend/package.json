@@ -13,6 +13,7 @@
     "echarts": "^6.1.0",
     "echarts-for-react": "^3.0.6",
     "next": "16.2.4",
+    "pdfjs-dist": "^6.3.289",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },

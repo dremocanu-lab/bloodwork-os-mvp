@@ -96,22 +96,25 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
 
   return (
     <div
+      role="presentation"
       style={{
         position: "fixed",
         inset: 0,
         zIndex: 1000,
-        background: "rgba(0,0,0,0.55)",
         display: "flex",
         justifyContent: "flex-end",
       }}
       onClick={onClose}
     >
       <div
+        role="dialog"
+        aria-modal="true"
         style={{
           width: "min(400px, 100vw)",
           height: "100%",
           background: "var(--panel)",
-          borderLeft: "1px solid var(--border)",
+          borderLeft: "1px solid var(--border-strong)",
+          boxShadow: "var(--shadow-lg)",
           padding: 24,
           overflowY: "auto",
           display: "flex",
