@@ -1,77 +1,108 @@
 # Claude Handoff — Bragi + Reducto
 
-See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale. This file is
-status only.
+See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f for the
+final verification detail. This file is status only.
 
 ## CURRENT PHASE
-Phase 7 — Full integration / responsive QA: starting (final phase).
+None — all 7 phases from the original spec are implemented, tested, and
+merged to `main`. See plan §2f for exactly what "done" means here and
+what's honestly still deferred.
 
 ## COMPLETED PHASES
-1. Reducto foundation + multi-file classification.
+1. Reducto foundation + multi-file classification (rule-based
+   "legacy_rules" classifier; Reducto itself never connected — no MCP/key
+   available).
 2. Identity / duplicates / canonical data / provenance.
-3. Row-level source verification.
-4. Conservative clinical readers (6 new document types).
-5. Longitudinal timeline / document organization labeling.
+3. Row-level source verification ("View original" per lab row).
+4. Conservative clinical readers (6 document types with no prior
+   pipeline).
+5. Longitudinal timeline / document-organization labeling.
 6. Chart system: reference-band honesty fix + chart-point → exact-row
    source deep link.
+7. Full integration verification: `next build`, real `uvicorn` boot +
+   OpenAPI route check, full-project `eslint`, full backend test suite,
+   full cumulative diff review. See plan §2f.
 
-## NEXT PHASE
-Phase 7 — final pass: run full test suite, tsc/eslint across the whole
-frontend (not just changed files), re-review the full cumulative diff
-for secrets/PHI, verify migrations one more time, then merge this
-branch to `main` and push (per explicit instruction).
+## NEXT STEPS (not a "phase" — your call on priority)
+- Get a Reducto account/API key and current API docs, then implement
+  `ReductoExtractionProvider` for real (see plan §3) — nothing Reducto-
+  shaped has been tested against the live API yet.
+- Run the repo's own Playwright QA (`qa/flows.mjs`, `qa/a11y.mjs`)
+  locally against the new upload/reader/chart flows at the responsive
+  breakpoints the original spec named — this session couldn't safely
+  generate the `BRAGI_TOKENS` file it needs.
+- Try a real end-to-end upload through live Google Document AI/OpenAI
+  (classification + structured reader extraction) — every phase avoided
+  spending real API quota; this is the one class of test only you can
+  run cheaply.
+- Pick up any of the explicitly-deferred items in each phase's plan
+  section (outline/search/30-second-read/conflicts UI, Level-2 semantic
+  duplicate matching, prescription → `PatientMedication` linkage, a full
+  ECharts consistency pass on the analytics dashboard, top-level
+  document-organization restructuring) whenever they become the
+  priority.
 
-## Architecture decisions
-- Phase 6 found the chart system already close to spec (restrained
-  ECharts theme, honest per-point data) — fixed the one real honesty
-  gap (single-band-across-differing-ranges) rather than rebuilding.
-- Chart-point → source now carries `lab_result_id` end-to-end
-  (backend trend endpoint → `TrendPoint` → `onPointClick` → query param
-  → auto-opened source dialog), reusing Phase 2/3's `SourceEvidence`
-  work rather than a new data path.
-
-## Important files (new/changed this phase)
-- `backend/app/main.py` — `lab_result_id` in trend points
-- `frontend/components/ui/trend.tsx` — reference-band agreement check,
-  `onPointClick` second arg
-- `frontend/lib/analytes/types.ts` — `TrendPoint.lab_result_id`
-- `frontend/app/my-records/page.tsx`, `patients/[id]/page.tsx` — deep-link
-  navigation on point click
-- `frontend/app/documents/[id]/page.tsx` — `?lab=` query param handling,
-  auto-open + scroll-into-view
+## Architecture decisions (cumulative — see plan for full detail per phase)
+- `document_type` rides alongside the existing `section` column
+  everywhere; nothing that filtered on `section` was changed.
+- Migrations follow the repo's pre-existing `run_migrations()`
+  convention (idempotent `ADD COLUMN IF NOT EXISTS`) — no Alembic
+  introduced.
+- Quarantine (identity mismatch) uses `patient_id = NULL` +
+  `intended_patient_id` rather than touching 9 existing query sites.
+- Canonical/provenance fields went onto the existing `LabResult`/
+  `Document` tables, not new parallel tables, except `SourceEvidence`
+  (genuinely new: no analogous data existed before).
+- Two pre-existing bugs were found via testing and fixed as part of this
+  work: `Document.is_verified` Integer/Boolean schema drift (Phase 2),
+  and `openai_discharge_service.py`'s eager `OpenAI()` client
+  construction at import time (Phase 4).
 
 ## Migrations
-None this phase.
+All additive (`ADD COLUMN IF NOT EXISTS` / `CREATE TABLE IF NOT EXISTS`)
+via `run_migrations()` in `backend/app/main.py` — applies automatically
+on the next backend start in any environment, including production, on
+deploy. Verified repeatedly against the local dev DB across every phase
+(20 pre-existing `documents` rows untouched throughout).
 
 ## Environment variables
-Unchanged.
+Added (all default to current behavior — no action needed):
+```
+DOCUMENT_EXTRACTION_PROVIDER=legacy   # only "legacy" actually works right now
+DOCUMENT_EXTRACTION_FALLBACK=legacy
+REDUCTO_API_KEY=                      # backend-only; never NEXT_PUBLIC_*
+REDUCTO_ENABLED=false                 # leave false until Reducto is really wired up
+```
+No other new env vars — structured reader extraction (Phase 4) reuses
+the existing `OPENAI_API_KEY`.
 
-## Tests / status
-- `cd backend && pytest -q` → **42 passed** (unchanged — this phase
-  touched serialization/frontend, no new backend logic needing a unit
-  test beyond what's already covered).
-- Full `app.main` import succeeded against the local dev DB.
-- `pyflakes`: same 4 pre-existing warnings, nothing new.
-- Frontend: `tsc --noEmit` clean on all changed files. `eslint`: one new
-  `react-hooks/set-state-in-effect` finding on the deep-link auto-open
-  effect was fixed properly (moved the dialog-open state into `useState`
-  initial value instead of setting it inside the effect) rather than
-  suppressed; the one remaining disable-comment is for the effect's
-  data-fetch call, matching the standard fetch-on-mount pattern already
-  used elsewhere in this same file. All other findings across touched
-  files confirmed pre-existing via `git diff --unified=0`.
+## Tests / status (final)
+- Backend: `cd backend && pip install -r requirements-dev.txt && pytest -q`
+  → **42 passed**, unit-only (no DB fixtures convention exists yet).
+- Frontend: `next build` succeeds (all 33 routes); `tsc --noEmit` clean;
+  full-project `eslint .` shows only pre-existing findings unrelated to
+  this work (see plan §2f).
+- Live checks this session actually ran (not just described): a real
+  SHA-256-duplicate functional test against the dev DB (temp rows
+  cleaned up after), a real `uvicorn` boot with an OpenAPI route check,
+  and `run_migrations()` applied cleanly against the dev DB after every
+  phase.
+- Not run: live OCR/AI calls (real API cost), the repo's Playwright QA
+  suite (needs live tokens this session couldn't generate), Reducto
+  itself (no key/MCP available).
 
 ## Known issues
-- The large ECharts analytics dashboard (~2400 lines) has at least one
-  hardcoded, non-theme color; a full consistency pass was not attempted
-  this phase (see plan §2e).
-- Everything else carried over from Phases 1-5 (see their sections in
-  the plan) is still outstanding: no Reducto integration tested against
-  the real API, no outline/search/30-second-read/conflicts UI, no
-  prescription → PatientMedication linkage, no top-level document-
-  organization restructure beyond label improvements.
+See each phase's section in `BRAGI_REDUCTO_PLAN.md` for the full list;
+the headline items are in this file's "Next steps" above.
 
 ## Manual configuration/authentication required
-- None to keep everything working as-is.
-- Reducto: unchanged — still need your own account/API key + current
-  docs before any Reducto phase work can start for real.
+- **None** to keep the app working exactly as it did before this work —
+  every new feature defaults to safe/off or additive/backward-compatible
+  behavior.
+- **Reducto**: get your own account + API key, then implement
+  `ReductoExtractionProvider.classify()` (and later `split`/`parse`/
+  `extract`) against current Reducto docs before ever setting
+  `REDUCTO_ENABLED=true` anywhere.
+- **Playwright QA**: generate a `BRAGI_TOKENS` file (see `qa/flows.mjs`
+  for the expected shape) if you want to run the existing QA harness
+  against this work.

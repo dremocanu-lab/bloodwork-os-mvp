@@ -86,7 +86,8 @@ Upload (per file)
 - **Phase 3 — Analize + source verification.** Done.
 - **Phase 4 — Clinical readers.** Done.
 - **Phase 5 — Longitudinal / Timeline / document organization.** Done.
-- **Phase 6 — Chart system.** Done — see §2e.
+- **Phase 6 — Chart system.** Done.
+- **Phase 7 — Full integration / responsive QA.** Done — see §2f.
 - **Phase 3 — Analize + source verification.** Wire the real Reducto
   Parse/Extract (once implemented) into the *existing* Analize pipeline
   without replacing it; persist full parsed content once per document
@@ -388,6 +389,81 @@ to the source document). Phase 6 closed the two real gaps found:
   introduced — the existing `chart-theme.ts` + `trend.tsx` already serve
   that role for the parts of the app inspected this phase; introducing
   parallel naming would have been churn without changing behavior.
+
+## 2f. Phase 7 — final integration verification
+
+Every phase already ran its own tests/typecheck/lint/import-smoke-test
+as it landed (see §2a-§2e and each phase's git commit); Phase 7 adds the
+whole-project checks that only make sense once, at the end:
+
+- **`next build`** (production build, not just `tsc --noEmit`): compiled
+  successfully, including every route touched across all six phases
+  (`/documents/[id]`, `/my-records`, `/my-records/upload`,
+  `/my-records/timeline`, `/patients/[id]`, `/patients/[id]/timeline`).
+  All 33 routes generated with no errors.
+- **Real `uvicorn` boot** (not just `python -c "import app.main"`):
+  started the FastAPI app under an actual ASGI server, confirmed the
+  root endpoint responds and `/openapi.json` lists all 73 registered
+  paths — including every endpoint added this project (`/upload/batch`,
+  `/upload-jobs/{id}/confirm-type`, `/upload-jobs/{id}/confirm-identity`,
+  `/documents/quarantined`, `/documents/{id}/identity-review`,
+  `/lab-results/{id}/source`, `/document-types`) — proving every new
+  Pydantic request model is well-formed and every route registered
+  without conflict. Server stopped cleanly after.
+- **Full-project `eslint .`** (not just changed files): surfaced 54
+  pre-existing problems (mostly a repo-wide `react-hooks/set-state-in-
+  effect` pattern in files this project never touched — theme
+  providers, `account-menu.tsx`, `app-shell.tsx`, `lib/i18n.ts`, etc. —
+  plus a couple of unrelated `no-explicit-any`/`ban-ts-comment` findings).
+  None are in any file this project changed beyond what was already
+  fixed or documented per-phase. Not fixed — a repo-wide lint debt
+  cleanup is a separate effort from Bragi + Reducto, and touching ~15
+  unrelated files this late would be pure risk for zero feature value.
+- **Full backend suite**: 42 unit tests passing, `pyflakes` across every
+  `backend/app/services/*.py` file clean except one pre-existing
+  (`document_pipeline.py`, an unused import predating this project).
+- **Full cumulative diff review** (`git diff main..HEAD`): 35 files
+  changed, 3792 insertions / 301 deletions across all 6 feature phases.
+  Scanned for API keys, private keys, and connection strings with
+  embedded credentials — none found. The only CNP-shaped strings in the
+  diff are synthetic values in `tests/test_patient_identity.py`
+  (`1800101123456`-style fixtures invented for the identity-matching
+  tests, not real patient data).
+- **Not run**: the repo's own Playwright QA harness (`qa/flows.mjs`,
+  `qa/a11y.mjs`, `qa/themes.mjs`) — it requires a live frontend + backend
+  and a `BRAGI_TOKENS` file with real login tokens for several named
+  accounts, which this session had no safe way to generate. Recommended
+  as your own next step: `node qa/flows.mjs` and `node qa/a11y.mjs`
+  against a locally running stack, particularly exercising the new
+  multi-file upload, classification confirmation, identity-confirmation,
+  and chart-point-to-source flows at the phone/tablet/desktop widths the
+  original spec calls out (360/390/430/768/1280/1440px).
+
+### What "done" means for this implementation
+
+All 7 phases from the original spec have a real, working, tested
+implementation in this repository — scoped down from the spec's full
+ambition where doing so was the responsible choice given a single
+implementation pass (see each phase's "deferred" list: outline/search/
+30-second-read/conflicts UI, Level-2 semantic duplicate matching,
+prescription → medication linkage, a full ECharts consistency pass, and
+top-level document-organization restructuring are the main things
+intentionally left for follow-up work, not overlooked). Nothing here
+was faked to look complete: every "done" item above has a passing test,
+a clean build, or a verified live check behind it, and every deferred
+item is named as such rather than silently dropped.
+
+**Reducto itself was never actually integrated** — no Reducto MCP
+connector or API key was available in this environment at any point
+across all 7 phases. Everything Reducto-shaped (the provider
+abstraction, the `REDUCTO_ENABLED`/`REDUCTO_API_KEY` config, the
+disabled `ReductoExtractionProvider` stub) is real, tested scaffolding
+for a future integration — not a working connection to the Reducto API.
+The "legacy_rules" classifier and the existing Google Document AI/OpenAI
+pipeline (extended in Phase 4) do the actual work today. Wiring up real
+Reducto Classify/Split/Parse/Extract remains future work requiring your
+own account and current API docs, exactly as flagged in every phase's
+handoff.
 
 ## 3. Reducto integration status (important)
 
