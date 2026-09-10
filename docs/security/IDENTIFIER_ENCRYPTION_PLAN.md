@@ -10,11 +10,13 @@ keys alongside ciphertext.
 
 `patients.cnp` and `documents.cnp` are stored as plaintext `String`
 columns (`backend/app/models.py`). CNP (Romania's national ID number)
-is used as a real, active search/lookup key — `patients.cnp` is
-indexed, and `/emergency/search?type=cnp&q=...` and `/patients/search`
-both query against it directly. Protection today is access control
-(every route that returns it requires authentication + authorization)
-and TLS in transit, not encryption at rest.
+is used as a real, active search/lookup key on
+`GET /emergency/search?type=cnp&q=...` (`patients.cnp` is indexed for
+exactly this query); `/patients/search` and `/admin/patients/search`
+search by name/identifier/code, not CNP, but both return the unmasked
+`cnp` field on every matched patient. Protection today is access
+control (every route that returns it requires authentication +
+authorization) and TLS in transit, not encryption at rest.
 
 ## Why this isn't just "add pgcrypto and go"
 

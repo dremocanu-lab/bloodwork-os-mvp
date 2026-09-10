@@ -49,9 +49,12 @@ data itself but privacy-relevant as an access record).
    PHI to the browser; the JWT (no PHI inside it — carries only user id/
    role, confirmed by reading `create_access_token`) authorizes each
    request. No PHI is ever embedded in a URL path (path params are
-   integer IDs), but CNP is embedded in **query strings** on
-   `/emergency/search` and `/patients/search` — see
-   `BRAGI_SECURITY_GDPR_PLAN.md` §8.
+   integer IDs), and CNP is embedded in a **query string** on
+   `GET /emergency/search?type=cnp&q=<CNP>` specifically (confirmed the
+   only route that accepts/echoes CNP as a query parameter —
+   `/patients/search` and `/admin/patients/search` both return the
+   unmasked `cnp` field in their JSON response but never accept it as
+   a search term) — see `BRAGI_SECURITY_GDPR_PLAN.md` §8.
 3. **File storage.** Uploaded files are written to local disk
    (`UPLOAD_DIR`) under randomized filenames, served back only through
    authenticated, per-request-authorized routes (`/documents/{id}/file`,

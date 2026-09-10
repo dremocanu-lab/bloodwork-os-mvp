@@ -39,7 +39,7 @@ launch checklist."
 | 25 | Static analysis (Bandit/Semgrep) | `[UNKNOWN]` | Not run this round |
 | 26 | Rate limiting | `[FAIL]` | No rate-limiting library/middleware exists anywhere |
 | 27 | Malware/AV scanning of uploads | `[FAIL]` | No scanner integrated; design only (`docs/security/MALWARE_SCANNING_PLAN.md`) |
-| 28 | CNP minimization in responses/URLs | `[FAIL]` | Full CNP in most responses; appears in 2 URL query strings |
+| 28 | CNP minimization in responses/URLs | `[FAIL]` | Full CNP in most responses (including `/patients/search`, `/admin/patients/search`); appears in a URL query string on 1 route (`GET /emergency/search?type=cnp&q=...`) |
 | 29 | CNP/identifier encryption at rest | `[FAIL]` | Plaintext columns; design only, deliberately not migrated (`docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`) |
 | 30 | Row-Level Security (RLS) | `[FAIL]` for "enabled"; design exists | Not implemented — `docs/security/RLS_PLAN.md`; absence assessed as defense-in-depth gap, not a currently-exploitable hole, since app-layer authorization is independently verified working |
 | 31 | Token revocation / session denylist | `[FAIL]` | No mechanism exists; logout is client-side only |

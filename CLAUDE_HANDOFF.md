@@ -389,7 +389,9 @@ Render (`dep-daheeitckfvc73bq8bug`, commit `7142646`): `live`. Vercel
 
 No rate limiting anywhere in the backend; no malware/AV scanning of
 uploads; CNP (Romanian national ID) not comprehensively minimized
-(full value in most responses, appears in 2 URL query strings); no
+(full value in most responses, including `/patients/search` and
+`/admin/patients/search`; appears in a URL query string on
+`GET /emergency/search?type=cnp&q=...` specifically); no
 encryption-at-rest for CNP (design-only, deliberately not migrated —
 `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md`); no RLS (design-only,
 deliberately not enabled — `docs/security/RLS_PLAN.md` explains exactly

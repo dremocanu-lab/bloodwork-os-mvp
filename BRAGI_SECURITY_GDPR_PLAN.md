@@ -169,16 +169,24 @@ only; no RLS policy has been written or applied to any table.
 
 Found, not fixed this round (see `docs/security/THREAT_MODEL.md` §4.11
 for full detail): CNP appears in full in most authenticated JSON
-responses, is masked in only 3 of the frontend's list views, and
-appears in a URL query string on `GET /emergency/search?type=cnp&q=...`
-and `GET /patients/search?q=...`. `[FAIL]`.
+responses — including `GET /patients/search` and `GET /admin/patients/
+search`, both of which return the unmasked `cnp` field, though neither
+accepts CNP as a search term (both search by name/identifier/code
+only, confirmed by reading both route bodies) — and is masked in only
+3 of the frontend's list views. Separately, `GET /emergency/search?
+type=cnp&q=<CNP>` puts the full CNP value in a URL query string (this
+IS a real search-by-CNP endpoint) — confirmed the only route that does
+so; no other route accepts or echoes CNP as a query parameter.
+`[FAIL]` for response-body minimization; `[FAIL]`, narrower in scope
+than earlier assumed, for URL exposure specifically (one route, not
+two).
 
 Planned fix (not yet implemented — needs its own careful pass, not a
 rushed one, given CNP is used as a real search/lookup key in emergency
 workflows where breaking search would itself be a patient-safety
-regression): convert CNP search endpoints to POST-with-body (removing
-it from URLs/logs), and apply the existing `_mask_cnp()` helper
-consistently to every response that doesn't require CNP for form-
+regression): convert `/emergency/search`'s CNP lookup to POST-with-body
+(removing it from URLs/logs), and apply the existing `_mask_cnp()`
+helper consistently to every response that doesn't require CNP for form-
 prefill (edit forms genuinely need the real value; list/search views do
 not). See `docs/security/IDENTIFIER_ENCRYPTION_PLAN.md` for the
 separate, larger question of encrypting CNP at rest — explicitly NOT
