@@ -16,7 +16,7 @@
  * background-upload refresh.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { useUploadManager } from "@/components/upload-provider";
@@ -30,7 +30,6 @@ import {
   CellPrimary,
   Column,
   DataTable,
-  Dialog,
   EmptyState,
   ErrorNote,
   FilterChip,
@@ -40,6 +39,7 @@ import {
   Metric,
   Metrics,
   Notice,
+  Popover,
   SectionHead,
   Status,
   TableSkeleton,
@@ -397,6 +397,7 @@ export default function MyRecordsPage() {
   const [pinnedTrendKeys, setPinnedTrendKeys] = useState<string[]>([]);
   const [pinsLoaded, setPinsLoaded] = useState(false);
   const [featuredPickerOpen, setFeaturedPickerOpen] = useState(false);
+  const featuredPickerAnchorRef = useRef<HTMLButtonElement>(null);
   const [featuredOverride, setFeaturedOverride] = useState<string | null>(null);
 
   const [loading, setLoading] = useState(true);
@@ -949,14 +950,57 @@ export default function MyRecordsPage() {
         description={t("featuredLabTrendLabel")}
         actions={
           <>
-            <button
-              type="button"
-              className="b-btn b-btn-secondary b-btn-sm"
-              onClick={() => setFeaturedPickerOpen(true)}
-            >
-              {t("navChange")}
-              <IconChevronDown size={12} />
-            </button>
+            <span style={{ position: "relative", display: "inline-block" }}>
+              <button
+                type="button"
+                ref={featuredPickerAnchorRef}
+                className="b-btn b-btn-secondary b-btn-sm"
+                onClick={() => setFeaturedPickerOpen((v) => !v)}
+              >
+                {t("navChange")}
+                <IconChevronDown size={12} />
+              </button>
+
+              <Popover
+                open={featuredPickerOpen}
+                onClose={() => setFeaturedPickerOpen(false)}
+                anchorRef={featuredPickerAnchorRef}
+                align="end"
+                width={320}
+              >
+                <div className="b-label" style={{ marginBottom: "var(--s2)" }}>
+                  {t("featuredLabTrendLabel")}
+                </div>
+                <div className="b-list">
+                  {sortedTrends.map((trend) => (
+                    <button
+                      key={trend.test_key}
+                      type="button"
+                      className="b-list-row"
+                      aria-current={trend.test_key === featuredTrend?.test_key ? "page" : undefined}
+                      onClick={() => {
+                        setFeaturedOverride(trend.test_key);
+                        setFeaturedPickerOpen(false);
+                      }}
+                    >
+                      <span className="b-list-main">
+                        <span className="b-list-title">{trend.display_name}</span>
+                        <span className="b-list-sub">
+                          {valueOrDash(trend.category)}
+                          {trend.unit ? ` · ${trend.unit}` : ""}
+                        </span>
+                      </span>
+                      <span className="b-list-trail">
+                        <LabValue
+                          value={valueOrDash(trend.latest?.value_display)}
+                          flag={trend.latest?.flag}
+                        />
+                      </span>
+                    </button>
+                  ))}
+                </div>
+              </Popover>
+            </span>
             <button
               type="button"
               className="b-btn b-btn-secondary b-btn-sm"
@@ -1685,40 +1729,6 @@ export default function MyRecordsPage() {
         ) : null}
       </div>
 
-      <Dialog
-        open={featuredPickerOpen}
-        onClose={() => setFeaturedPickerOpen(false)}
-        title={t("featuredLabTrendLabel")}
-      >
-        <div className="b-list">
-          {sortedTrends.map((trend) => (
-            <button
-              key={trend.test_key}
-              type="button"
-              className="b-list-row"
-              aria-current={trend.test_key === featuredTrend?.test_key ? "page" : undefined}
-              onClick={() => {
-                setFeaturedOverride(trend.test_key);
-                setFeaturedPickerOpen(false);
-              }}
-            >
-              <span className="b-list-main">
-                <span className="b-list-title">{trend.display_name}</span>
-                <span className="b-list-sub">
-                  {valueOrDash(trend.category)}
-                  {trend.unit ? ` · ${trend.unit}` : ""}
-                </span>
-              </span>
-              <span className="b-list-trail">
-                <LabValue
-                  value={valueOrDash(trend.latest?.value_display)}
-                  flag={trend.latest?.flag}
-                />
-              </span>
-            </button>
-          ))}
-        </div>
-      </Dialog>
     </AppShell>
   );
 }

@@ -13,7 +13,7 @@
  *     an administrator can actually audit a caseload.
  */
 
-import { useEffect, useMemo, useState } from "react";
+import { useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage } from "@/lib/api";
@@ -21,17 +21,17 @@ import { useLanguage } from "@/lib/i18n";
 import {
   CellPrimary,
   Column,
-  ConfirmDialog,
   DataTable,
   EmptyState,
   ErrorNote,
   Metric,
   Metrics,
+  Popover,
   Status,
   TableSkeleton,
   Tabs,
 } from "@/components/ui";
-import { IconUsers } from "@/components/ui/icon";
+import { IconAlert, IconUsers } from "@/components/ui/icon";
 import type { NavUser } from "@/lib/navigation";
 
 type DoctorDetail = {
@@ -83,6 +83,84 @@ function initials(name: string) {
   );
 }
 
+/**
+ * Row-anchored "End assignment" action — a DataTable `render` cell isn't
+ * itself a component (can't use hooks there), so the trigger ref +
+ * confirmation popover live in this small dedicated component instead of
+ * a page-level centered dialog. Access revocation is sensitive, so the
+ * popover still names both parties and exactly what's lost.
+ */
+function EndAssignmentAction({
+  row,
+  doctorName,
+  busy,
+  onConfirm,
+  t,
+}: {
+  row: CurrentPatient;
+  doctorName: string;
+  busy: boolean;
+  onConfirm: (assignmentId: number) => void;
+  t: (key: string) => string;
+}) {
+  const [open, setOpen] = useState(false);
+  const anchorRef = useRef<HTMLButtonElement>(null);
+
+  return (
+    <span style={{ position: "relative", display: "inline-block" }}>
+      <button
+        type="button"
+        ref={anchorRef}
+        className="b-btn b-btn-danger-quiet b-btn-sm"
+        onClick={(event) => {
+          event.stopPropagation();
+          setOpen(true);
+        }}
+        disabled={busy}
+      >
+        {t("endAssignment")}
+      </button>
+
+      <Popover open={open} onClose={() => !busy && setOpen(false)} anchorRef={anchorRef} align="end" width={280}>
+        <div className="b-danger-note" style={{ marginBottom: "var(--s3)" }}>
+          <IconAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+          <span>
+            <strong style={{ fontWeight: 600 }}>{doctorName}</strong> will immediately lose access to{" "}
+            <strong style={{ fontWeight: 600 }}>{row.full_name}</strong>&apos;s record. The assignment
+            stays in the history log and can be re-created from Assign Patients.
+          </span>
+        </div>
+        <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--s2)" }}>
+          <button
+            type="button"
+            className="b-btn b-btn-secondary b-btn-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              setOpen(false);
+            }}
+            disabled={busy}
+          >
+            {t("cancel")}
+          </button>
+          <button
+            type="button"
+            className="b-btn b-btn-danger b-btn-sm"
+            onClick={(event) => {
+              event.stopPropagation();
+              onConfirm(row.assignment_id);
+              setOpen(false);
+            }}
+            disabled={busy}
+          >
+            {busy ? <span className="b-spinner" /> : null}
+            {busy ? t("endingAssignment") : t("endAssignment")}
+          </button>
+        </div>
+      </Popover>
+    </span>
+  );
+}
+
 export default function DoctorDetailPage() {
   const router = useRouter();
   const params = useParams();
@@ -98,7 +176,6 @@ export default function DoctorDetailPage() {
   const [activeTab, setActiveTab] = useState<"current" | "history">("current");
   const [endingId, setEndingId] = useState<number | null>(null);
   const [endError, setEndError] = useState("");
-  const [pendingEnd, setPendingEnd] = useState<CurrentPatient | null>(null);
 
   useEffect(() => {
     async function init() {
@@ -143,7 +220,6 @@ export default function DoctorDetailPage() {
       if (doctor) {
         setDoctor({ ...doctor, current_patient_count: doctor.current_patient_count - 1 });
       }
-      setPendingEnd(null);
     } catch (err) {
       setEndError(getErrorMessage(err, "Could not end assignment."));
     } finally {
@@ -200,22 +276,18 @@ export default function DoctorDetailPage() {
             >
               Open record
             </button>
-            <button
-              type="button"
-              className="b-btn b-btn-danger-quiet b-btn-sm"
-              onClick={(event) => {
-                event.stopPropagation();
-                setPendingEnd(row);
-              }}
-              disabled={endingId === row.assignment_id}
-            >
-              {t("endAssignment")}
-            </button>
+            <EndAssignmentAction
+              row={row}
+              doctorName={doctor?.full_name || ""}
+              busy={endingId === row.assignment_id}
+              onConfirm={endAssignment}
+              t={t}
+            />
           </div>
         ),
       },
     ],
-    [endingId, router, t]
+    [endingId, router, t, doctor]
   );
 
   const historyColumns: Column<HistoryEntry>[] = useMemo(
@@ -405,28 +477,6 @@ export default function DoctorDetailPage() {
         </section>
       </div>
 
-      {/* Access revocation is irreversible from this screen, so it names both
-          parties and what the doctor loses before it happens. */}
-      <ConfirmDialog
-        open={pendingEnd !== null}
-        onClose={() => setPendingEnd(null)}
-        onConfirm={() => pendingEnd && endAssignment(pendingEnd.assignment_id)}
-        title={t("endAssignment")}
-        confirmLabel={
-          endingId !== null ? t("endingAssignment") : t("endAssignment")
-        }
-        busy={endingId !== null}
-        consequence={
-          pendingEnd ? (
-            <>
-              <strong style={{ fontWeight: 600 }}>{doctor.full_name}</strong> will immediately lose
-              access to <strong style={{ fontWeight: 600 }}>{pendingEnd.full_name}</strong>&apos;s
-              record. The assignment stays in the history log and can be re-created from Assign
-              Patients.
-            </>
-          ) : null
-        }
-      />
     </AppShell>
   );
 }

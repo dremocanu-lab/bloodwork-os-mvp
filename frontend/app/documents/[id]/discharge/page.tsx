@@ -822,7 +822,16 @@ export default function DischargeStructuredPage() {
         </div>
       }
     >
-      {/* Delete confirm modal */}
+      {/* Delete confirm modal.
+          DELIBERATE EXCEPTION to the "no centered dialogs" rule (see
+          BRAGI_REDUCTO_PLAN.md §12): deleting a discharge summary is
+          irreversible and removes something from the patient's medical
+          record permanently — a genuine destructive/critical action, not a
+          routine one, so it gets the same weight as account deletion rather
+          than the lighter anchored-popover treatment used for reversible
+          actions like revoking doctor access or regenerating a share code.
+          No dark backdrop (the overlay below is fully transparent), but the
+          confirmation surface itself stays centered. */}
       {confirmDeleteOpen && (
         <div
           role="presentation"

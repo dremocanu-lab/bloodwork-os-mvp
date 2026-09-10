@@ -250,9 +250,14 @@ export default function EmergencySearchPage() {
         ) : null}
       </div>
 
-      {/* Starting a session grants read access to a real patient record and is
-          written to the audit log, so it is a confirmation that states the
-          patient, requires a reason, and says the access is recorded. */}
+      {/* DELIBERATE EXCEPTION to the "no centered dialogs" rule (see
+          BRAGI_REDUCTO_PLAN.md §12): starting a session grants read access
+          to a real patient's record and is written to the audit log — a
+          genuine blocking/critical workflow, not routine, and the trigger
+          can be any row in a search result list (no single stable anchor
+          point). No dark backdrop (the shared Dialog no longer has one),
+          but the surface itself stays centered so the reason/note form has
+          a stable, predictable location during a time-pressured workflow. */}
       <Dialog
         open={confirm !== null}
         onClose={() => {

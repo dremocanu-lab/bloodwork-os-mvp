@@ -571,6 +571,13 @@ type SearchResult = {
   masked_identifier: string | null;
 };
 
+// DELIBERATE EXCEPTION to the "no centered dialogs" rule (see
+// BRAGI_REDUCTO_PLAN.md §12): identical reasoning to emergency/search's
+// start-session confirmation — starting a session grants read access to a
+// real patient's record and is written to the audit log, a genuine
+// blocking/critical workflow. It can be opened from either the "+" tab
+// button or the empty-workspace state, so there is no single stable anchor
+// point either. No dark backdrop, but the surface stays centered.
 function AddPatientModal({
   onCreated,
   onClose,

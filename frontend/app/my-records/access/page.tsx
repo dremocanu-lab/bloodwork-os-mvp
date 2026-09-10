@@ -1,19 +1,19 @@
 "use client";
 
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import {
-  ConfirmDialog,
   EmptyState,
   ErrorNote,
+  Popover,
   SectionHead,
   Skeleton,
   Status,
 } from "@/components/ui";
-import { IconCheck, IconHeart, IconShield } from "@/components/ui/icon";
+import { IconAlert, IconCheck, IconHeart, IconShield } from "@/components/ui/icon";
 
 type CurrentUser = {
   id: number;
@@ -85,11 +85,16 @@ export default function MyAccessPage() {
 
   const [revokeTarget, setRevokeTarget] = useState<DoctorAccess | null>(null);
   const [revoking, setRevoking] = useState(false);
+  // One shared ref, reassigned to whichever row's "Revoke access" button
+  // was clicked — only one row can be the active revoke target at a
+  // time, so the popover always anchors to the right one.
+  const revokeAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   const [respondingId, setRespondingId] = useState<number | null>(null);
   const [regenerating, setRegenerating] = useState(false);
   const [codeCopied, setCodeCopied] = useState(false);
   const [regenerateOpen, setRegenerateOpen] = useState(false);
+  const regenerateAnchorRef = useRef<HTMLButtonElement | null>(null);
 
   async function load() {
     const meResponse = await api.get<CurrentUser>("/auth/me");
@@ -278,13 +283,60 @@ export default function MyAccessPage() {
                   </span>
                   <span className="b-list-trail" style={{ flexDirection: "row", gap: "var(--s2)" }}>
                     <Status tone="ok">{t("activeAccess")}</Status>
-                    <button
-                      type="button"
-                      className="b-btn b-btn-danger-quiet b-btn-sm"
-                      onClick={() => setRevokeTarget(doctor)}
-                    >
-                      {t("revokeAccess")}
-                    </button>
+                    <span style={{ position: "relative", display: "inline-block" }}>
+                      <button
+                        type="button"
+                        ref={revokeTarget?.doctor_user_id === doctor.doctor_user_id ? revokeAnchorRef : undefined}
+                        className="b-btn b-btn-danger-quiet b-btn-sm"
+                        onClick={(event) => {
+                          revokeAnchorRef.current = event.currentTarget;
+                          setRevokeTarget(doctor);
+                        }}
+                      >
+                        {t("revokeAccess")}
+                      </button>
+
+                      {/* Revoking clinician access is sensitive, so the
+                          popover names the doctor and states exactly what
+                          they lose — anchored right at the row it applies
+                          to, not a page-center dialog. */}
+                      {revokeTarget?.doctor_user_id === doctor.doctor_user_id ? (
+                        <Popover
+                          open
+                          onClose={() => !revoking && setRevokeTarget(null)}
+                          anchorRef={revokeAnchorRef}
+                          align="end"
+                          width={280}
+                        >
+                          <div className="b-danger-note" style={{ marginBottom: "var(--s3)" }}>
+                            <IconAlert size={15} style={{ flexShrink: 0, marginTop: 1 }} />
+                            <span>
+                              <strong style={{ fontWeight: 600 }}>{doctor.doctor_name}</strong> (
+                              {doctor.doctor_email}) {t("revokeAccessConfirmDesc")}
+                            </span>
+                          </div>
+                          <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--s2)" }}>
+                            <button
+                              type="button"
+                              className="b-btn b-btn-secondary b-btn-sm"
+                              onClick={() => setRevokeTarget(null)}
+                              disabled={revoking}
+                            >
+                              {t("cancel")}
+                            </button>
+                            <button
+                              type="button"
+                              className="b-btn b-btn-danger b-btn-sm"
+                              onClick={confirmRevoke}
+                              disabled={revoking}
+                            >
+                              {revoking ? <span className="b-spinner" /> : null}
+                              {revoking ? t("revoking") : t("confirmRevoke")}
+                            </button>
+                          </div>
+                        </Popover>
+                      ) : null}
+                    </span>
                   </span>
                 </div>
               ))
@@ -368,15 +420,54 @@ export default function MyAccessPage() {
                   {codeCopied ? t("copied") : t("copyCode")}
                 </button>
 
-                <button
-                  type="button"
-                  className="b-btn b-btn-ghost b-btn-sm"
-                  onClick={() => setRegenerateOpen(true)}
-                  disabled={regenerating}
-                >
-                  {regenerating ? <span className="b-spinner" /> : null}
-                  {t("regenerateCode")}
-                </button>
+                <span style={{ position: "relative", display: "inline-block" }}>
+                  <button
+                    type="button"
+                    ref={regenerateAnchorRef}
+                    className="b-btn b-btn-ghost b-btn-sm"
+                    onClick={() => setRegenerateOpen(true)}
+                    disabled={regenerating}
+                  >
+                    {regenerating ? <span className="b-spinner" /> : null}
+                    {t("regenerateCode")}
+                  </button>
+
+                  <Popover
+                    open={regenerateOpen}
+                    onClose={() => !regenerating && setRegenerateOpen(false)}
+                    anchorRef={regenerateAnchorRef}
+                    width={260}
+                  >
+                    <div className="b-label" style={{ marginBottom: 4 }}>
+                      {t("regenerateCode")}
+                    </div>
+                    <p className="muted-text" style={{ fontSize: "var(--fs-sm)", marginBottom: "var(--s3)" }}>
+                      {t("regenerateCodeWarning")}
+                    </p>
+                    <div style={{ display: "flex", justifyContent: "flex-end", gap: "var(--s2)" }}>
+                      <button
+                        type="button"
+                        className="b-btn b-btn-secondary b-btn-sm"
+                        onClick={() => setRegenerateOpen(false)}
+                        disabled={regenerating}
+                      >
+                        {t("cancel")}
+                      </button>
+                      <button
+                        type="button"
+                        className="b-btn b-btn-primary b-btn-sm"
+                        onClick={async () => {
+                          await regenerateCode();
+                          setRegenerateOpen(false);
+                        }}
+                        disabled={regenerating}
+                      >
+                        {regenerating ? <span className="b-spinner" /> : null}
+                        {t("regenerateCode")}
+                      </button>
+                    </div>
+                  </Popover>
+                </span>
 
                 <span className="b-range">
                   {t("codeGeneratedAt")} {formatDate(carePartnerCode.created_at)}
@@ -389,40 +480,6 @@ export default function MyAccessPage() {
         </section>
       </div>
 
-      {/* Revoking clinician access is sensitive, so the dialog names the
-          doctor and states exactly what they lose. */}
-      <ConfirmDialog
-        open={revokeTarget !== null}
-        onClose={() => setRevokeTarget(null)}
-        onConfirm={confirmRevoke}
-        busy={revoking}
-        title={t("revokeAccessConfirmTitle")}
-        confirmLabel={revoking ? t("revoking") : t("confirmRevoke")}
-        consequence={
-          revokeTarget ? (
-            <>
-              <strong style={{ fontWeight: 600 }}>{revokeTarget.doctor_name}</strong> (
-              {revokeTarget.doctor_email}) will immediately lose access to your record.{" "}
-              {t("revokeAccessConfirmDesc")}
-            </>
-          ) : null
-        }
-      />
-
-      {/* Regenerating the code invalidates the old one, which was previously
-          one click of an unstyled button away - so it is confirmed too. */}
-      <ConfirmDialog
-        open={regenerateOpen}
-        onClose={() => setRegenerateOpen(false)}
-        onConfirm={async () => {
-          await regenerateCode();
-          setRegenerateOpen(false);
-        }}
-        busy={regenerating}
-        title={t("regenerateCode")}
-        confirmLabel={t("regenerateCode")}
-        consequence={t("regenerateCodeWarning")}
-      />
     </AppShell>
   );
 }

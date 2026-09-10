@@ -685,10 +685,13 @@ export default function PatientSettingsPage() {
         </div>
       )}
 
-      {/* Delete Account Modal — significant destructive action: a larger
-          confirmation surface is warranted, but the rest of the page
-          stays visible (no dark backdrop) and a strong border/shadow
-          keeps it clearly distinguished. */}
+      {/* DELIBERATE EXCEPTION to the "no centered dialogs" rule (see
+          BRAGI_REDUCTO_PLAN.md §12): account deletion is irreversible and
+          removes the user's access and data entirely — a genuine
+          blocking/critical workflow, not routine, so a larger centered
+          confirmation surface is warranted. No dark backdrop (the rest of
+          the page stays visible); a strong border/shadow keeps the modal
+          clearly distinguished instead. */}
       {showDeleteModal && (
         <div
           role="presentation"

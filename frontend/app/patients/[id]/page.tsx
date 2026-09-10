@@ -22,7 +22,7 @@
  * figure. That is what makes a long record reviewable.
  */
 
-import { useCallback, useEffect, useMemo, useState } from "react";
+import { useCallback, useEffect, useMemo, useRef, useState } from "react";
 import { useParams, useRouter, useSearchParams } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import PatientContext from "@/components/patient-context";
@@ -38,7 +38,6 @@ import {
   Chip,
   Column,
   DataTable,
-  Dialog,
   EmptyState,
   ErrorNote,
   FilterChip,
@@ -48,6 +47,7 @@ import {
   Metric,
   Metrics,
   Notice,
+  Popover,
   SectionHead,
   Status,
   TableSkeleton,
@@ -414,6 +414,7 @@ export default function PatientChartPage() {
   const [pinsLoaded, setPinsLoaded] = useState(false);
   const [featuredTrendKey, setFeaturedTrendKey] = useState<string | null>(null);
   const [featuredPickerOpen, setFeaturedPickerOpen] = useState(false);
+  const featuredPickerAnchorRef = useRef<HTMLButtonElement>(null);
 
   const [loading, setLoading] = useState(true);
   const [openingId, setOpeningId] = useState<number | null>(null);
@@ -1012,14 +1013,56 @@ export default function PatientChartPage() {
         actions={
           <>
             {sortedTrends.length > 1 ? (
-              <button
-                type="button"
-                className="b-btn b-btn-secondary b-btn-sm"
-                onClick={() => setFeaturedPickerOpen(true)}
-              >
-                Change
-                <IconChevronDown size={12} />
-              </button>
+              <span style={{ position: "relative", display: "inline-block" }}>
+                <button
+                  type="button"
+                  ref={featuredPickerAnchorRef}
+                  className="b-btn b-btn-secondary b-btn-sm"
+                  onClick={() => setFeaturedPickerOpen((v) => !v)}
+                >
+                  Change
+                  <IconChevronDown size={12} />
+                </button>
+
+                {/* Featured-analyte picker: anchored to the trigger instead
+                    of a page-center dialog holding a long option list. */}
+                <Popover
+                  open={featuredPickerOpen}
+                  onClose={() => setFeaturedPickerOpen(false)}
+                  anchorRef={featuredPickerAnchorRef}
+                  align="end"
+                  width={320}
+                >
+                  <div className="b-label" style={{ marginBottom: "var(--s2)" }}>
+                    Featured analyte
+                  </div>
+                  <div className="b-list">
+                    {sortedTrends.map((trend) => (
+                      <button
+                        key={trend.test_key}
+                        type="button"
+                        className="b-list-row"
+                        aria-current={trend.test_key === featuredTrend?.test_key ? "page" : undefined}
+                        onClick={() => {
+                          setFeaturedTrendKey(trend.test_key);
+                          setFeaturedPickerOpen(false);
+                        }}
+                      >
+                        <span className="b-list-main">
+                          <span className="b-list-title">{trend.display_name}</span>
+                          <span className="b-list-sub">
+                            {trend.category || "Lab result"}
+                            {trend.unit ? ` · ${trend.unit}` : ""}
+                          </span>
+                        </span>
+                        <span className="b-list-trail">
+                          <LabValue value={trend.latest?.value_display ?? "—"} flag={trend.latest?.flag} />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                </Popover>
+              </span>
             ) : null}
             <button
               type="button"
@@ -1886,43 +1929,6 @@ export default function PatientChartPage() {
         ) : null}
       </div>
 
-      {/* Featured-analyte picker: a searchable dialog instead of a native
-          <select> holding fifty options. */}
-      <Dialog
-        open={featuredPickerOpen}
-        onClose={() => setFeaturedPickerOpen(false)}
-        title="Featured analyte"
-        description="Choose which trend appears at the top of Labs and Overview."
-      >
-        <div className="b-list">
-          {sortedTrends.map((trend) => (
-            <button
-              key={trend.test_key}
-              type="button"
-              className="b-list-row"
-              aria-current={trend.test_key === featuredTrend?.test_key ? "page" : undefined}
-              onClick={() => {
-                setFeaturedTrendKey(trend.test_key);
-                setFeaturedPickerOpen(false);
-              }}
-            >
-              <span className="b-list-main">
-                <span className="b-list-title">{trend.display_name}</span>
-                <span className="b-list-sub">
-                  {trend.category || "Lab result"}
-                  {trend.unit ? ` · ${trend.unit}` : ""}
-                </span>
-              </span>
-              <span className="b-list-trail">
-                <LabValue
-                  value={trend.latest?.value_display ?? "—"}
-                  flag={trend.latest?.flag}
-                />
-              </span>
-            </button>
-          ))}
-        </div>
-      </Dialog>
     </AppShell>
   );
 }

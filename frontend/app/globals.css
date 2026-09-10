@@ -2023,6 +2023,45 @@ tr:focus-within .b-row-actions {
   color: var(--faint);
 }
 
+/* Popover: anchored contextual surface for arbitrary content (forms,
+   pickers, confirmations) — same visual language as .b-menu, no
+   backdrop, positioned relative to its trigger. */
+.b-popover {
+  position: absolute;
+  z-index: 100;
+  max-width: calc(100vw - 24px);
+  max-height: min(420px, calc(100dvh - 96px));
+  overflow-y: auto;
+  padding: var(--s3);
+  background: var(--surface);
+  border: 1px solid var(--border-strong);
+  border-radius: var(--r-md);
+  box-shadow: var(--shadow-lg);
+  animation: b-pop var(--dur-2) var(--ease) both;
+  transform-origin: top;
+}
+
+@media (max-width: 640px) {
+  /* Too little room to reliably keep a fixed-width popover on-screen at
+     the trigger's position — fall back to a bottom sheet, same pattern
+     used elsewhere for mobile (see .b-sheet). */
+  .b-popover {
+    position: fixed;
+    left: 0;
+    right: 0;
+    bottom: 0;
+    top: auto !important;
+    width: auto !important;
+    max-width: none;
+    max-height: 80dvh;
+    border-radius: var(--r-xl) var(--r-xl) 0 0;
+    border-left: 0;
+    border-right: 0;
+    border-bottom: 0;
+    animation: b-sheet-up var(--dur-3) var(--ease) both;
+  }
+}
+
 /* Dialog */
 .b-dialog-wrap {
   position: fixed;

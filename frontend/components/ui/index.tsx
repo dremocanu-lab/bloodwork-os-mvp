@@ -11,6 +11,7 @@
 
 import {
   ReactNode,
+  RefObject,
   useEffect,
   useId,
   useMemo,
@@ -928,6 +929,84 @@ export function MenuItem({
       {icon}
       {children}
     </button>
+  );
+}
+
+/**
+ * Anchored popover for arbitrary contextual content (a form, a picker
+ * list, a confirmation) — the general-purpose version of `Menu`'s
+ * anchoring behavior, for content that isn't a simple MenuItem list and
+ * needs controlled open state (e.g. one shared "which row is this open
+ * for" flag in a list). No backdrop, positions relative to `anchorRef`,
+ * flips to stay inside the viewport, closes on outside click/Escape.
+ *
+ * Caller wraps the trigger element in `position: relative` (or any
+ * positioned ancestor) and passes a ref to it:
+ *
+ *   <span style={{ position: "relative", display: "inline-block" }}>
+ *     <button ref={triggerRef} onClick={() => setOpen(true)}>...</button>
+ *     <Popover open={open} onClose={() => setOpen(false)} anchorRef={triggerRef}>
+ *       ...arbitrary content...
+ *     </Popover>
+ *   </span>
+ */
+export function Popover({
+  open,
+  onClose,
+  anchorRef,
+  children,
+  align = "start",
+  side = "bottom",
+  width = 280,
+  labelledBy,
+}: {
+  open: boolean;
+  onClose: () => void;
+  anchorRef: RefObject<HTMLElement | null>;
+  children: ReactNode;
+  align?: "start" | "end";
+  side?: "bottom" | "top";
+  width?: number;
+  labelledBy?: string;
+}) {
+  const popRef = useRef<HTMLDivElement>(null);
+
+  useEffect(() => {
+    if (!open) return;
+
+    function onPointerDown(event: MouseEvent) {
+      const target = event.target as Node;
+      if (popRef.current?.contains(target)) return;
+      if (anchorRef.current?.contains(target)) return;
+      onClose();
+    }
+    function onKeyDown(event: KeyboardEvent) {
+      if (event.key === "Escape") onClose();
+    }
+    document.addEventListener("mousedown", onPointerDown);
+    document.addEventListener("keydown", onKeyDown);
+    return () => {
+      document.removeEventListener("mousedown", onPointerDown);
+      document.removeEventListener("keydown", onKeyDown);
+    };
+  }, [open, onClose, anchorRef]);
+
+  if (!open) return null;
+
+  return (
+    <div
+      ref={popRef}
+      className={`b-popover ${side === "top" ? "b-menu-up" : ""}`}
+      role="dialog"
+      aria-labelledby={labelledBy}
+      style={{
+        [side === "top" ? "bottom" : "top"]: "calc(100% + 6px)",
+        [align === "end" ? "right" : "left"]: 0,
+        width,
+      }}
+    >
+      {children}
+    </div>
   );
 }
 
