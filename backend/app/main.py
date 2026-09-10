@@ -430,6 +430,21 @@ def run_migrations():
                 END IF;
             END $$;
         """))
+
+        # Priority 8 (role deletion completeness, BRAGI_SECURITY_GDPR_PLAN.md
+        # §19): doctor/admin self-deletion is a soft-delete (row persists,
+        # deleted_at is set) rather than a hard row delete — a real hard
+        # delete would need ON DELETE SET NULL/CASCADE across ~8 tables
+        # (doctor_patient_access, doctor_patient_access_requests,
+        # patient_events, documents.uploaded_by_user_id,
+        # doctor_document_reviews, patient_medications, admin_action_logs,
+        # upload_jobs) that hold NOT NULL clinical/audit references to a
+        # doctor or admin's user id — several of those rows are part of a
+        # PATIENT's own clinical record (who treated them, who uploaded a
+        # document), which must not disappear or go anonymous just because
+        # the clinician later deletes their own account. See
+        # get_current_user()/login() for where deleted_at is enforced.
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at VARCHAR"))
         conn.commit()
 
 run_migrations()
@@ -639,6 +654,15 @@ def get_current_user(
     user = db.query(models.User).filter(models.User.id == user_id_int).first()
 
     if not user:
+        raise HTTPException(status_code=401, detail="User not found")
+
+    if user.deleted_at:
+        # Soft-deleted (doctor/admin self-deletion — see
+        # BRAGI_SECURITY_GDPR_PLAN.md §19/Priority 8): the row still
+        # exists (clinical/audit records reference it) but the account
+        # itself must behave as gone for every authorization purpose —
+        # including a JWT issued before the deletion that hasn't expired
+        # yet, which is exactly what this check catches.
         raise HTTPException(status_code=401, detail="User not found")
 
     return user
@@ -2320,6 +2344,12 @@ def login(
     if not verify_password_timing_safe(payload.password, user.password_hash if user else None):
         raise HTTPException(status_code=401, detail="Invalid email or password")
 
+    if user.deleted_at:
+        # Soft-deleted account (doctor/admin self-deletion) — same generic
+        # message as any other failed login, deliberately not
+        # distinguished (no new enumeration signal).
+        raise HTTPException(status_code=401, detail="Invalid email or password")
+
     if user.role == "patient":
         ensure_patient_for_user(db, user)
 
@@ -3115,11 +3145,80 @@ def get_patient_profile(
     return build_patient_profile_response(db, patient, current_user)
 
 
+def _delete_care_partner_account(db: Session, current_user) -> None:
+    """Real row delete — a care_partner's only rows are their own access
+    grants (CarePartnerPatientLink) and document shares
+    (SharedStructuredPage), neither of which is part of any patient's
+    clinical record or another party's audit trail, unlike a doctor's or
+    admin's. Safe to remove outright, same spirit as patient deletion."""
+    db.query(models.CarePartnerPatientLink).filter(
+        models.CarePartnerPatientLink.care_partner_user_id == current_user.id
+    ).delete(synchronize_session=False)
+    db.query(models.SharedStructuredPage).filter(
+        models.SharedStructuredPage.care_partner_user_id == current_user.id
+    ).delete(synchronize_session=False)
+    db.flush()
+    db.delete(current_user)
+
+
+def _soft_delete_clinical_or_admin_account(db: Session, current_user) -> None:
+    """Deactivate rather than delete the row — see run_migrations()'s
+    comment on `users.deleted_at` for exactly why a real delete isn't
+    offered for doctor/admin: too many NOT NULL clinical/audit references
+    across other patients' own records would either block the delete
+    (FK violation -> 500) or have to be silently orphaned/anonymized,
+    which would itself corrupt those patients' care history. This still
+    satisfies "no orphaned PHI" and "no 500s": the account becomes
+    unusable (get_current_user()/login() both reject it), its own login
+    credential (email/password) is irreversibly replaced, and every
+    active patient-access grant is explicitly ended — nothing about the
+    ACCOUNT's own login-identifying PHI survives; what survives is other
+    people's clinical records that legitimately reference this person's
+    professional involvement, which erasure does not override (GDPR
+    Art.17(3)(b) — see docs/privacy/RETENTION_POLICY.md).
+
+    `[LEGAL REVIEW]`: whether this is the correct final policy (vs. e.g.
+    a longer grace period, or a different anonymization depth) is a
+    legal/product decision, not an engineering one — documented
+    separately in docs/privacy/DSAR_RUNBOOK.md rather than assumed here.
+    """
+    if current_user.role == "doctor":
+        db.query(models.DoctorPatientAccess).filter(
+            models.DoctorPatientAccess.doctor_user_id == current_user.id,
+            models.DoctorPatientAccess.is_active == 1,
+        ).update(
+            {"is_active": 0, "ended_at": now_iso()},
+            synchronize_session=False,
+        )
+
+    current_user.email = f"deleted-user-{current_user.id}-{uuid.uuid4().hex[:10]}@deleted.bragi.invalid"
+    current_user.password_hash = hash_password(secrets.token_urlsafe(32))
+    current_user.deleted_at = now_iso()
+    db.add(current_user)
+
+
 @app.delete("/my/account")
 def delete_my_account(
     db: Session = Depends(get_db),
-    current_user=Depends(require_role("patient")),
+    current_user=Depends(require_role("patient", "doctor", "admin", "care_partner")),
 ):
+    # Deletion semantics are NOT identical across roles — see
+    # BRAGI_SECURITY_GDPR_PLAN.md §19/Priority 8. Patient (below) and
+    # care_partner are real row deletes. Doctor/admin are a soft-delete
+    # (row persists, login disabled) — see
+    # _soft_delete_clinical_or_admin_account's docstring for exactly why.
+    # emergency_worker is deliberately not offered self-deletion yet
+    # (product/legal decision required — see docs/privacy/DSAR_RUNBOOK.md).
+    if current_user.role == "care_partner":
+        _delete_care_partner_account(db, current_user)
+        db.commit()
+        return {"deleted": True}
+
+    if current_user.role in ("doctor", "admin"):
+        _soft_delete_clinical_or_admin_account(db, current_user)
+        db.commit()
+        return {"deleted": True}
+
     patient = get_patient_for_user(db, current_user.id)
 
     if patient:

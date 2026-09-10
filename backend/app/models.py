@@ -15,6 +15,15 @@ class User(Base):
     department = Column(String, nullable=True)
     hospital_name = Column(String, nullable=True)
     doctor_type = Column(String, nullable=True)  # "pcp" | "specialist" | null
+    # Soft-deletion marker for roles whose row must survive their own
+    # account deletion (doctor/admin — clinical/audit records reference
+    # them by id across many tables; see Priority 8 in
+    # BRAGI_SECURITY_GDPR_PLAN.md). Null means active. get_current_user()
+    # and login() both reject any user with this set, so a soft-deleted
+    # account is functionally gone even though the row persists. Patient
+    # and care_partner deletion remain real row deletes — see
+    # DELETE /my/account.
+    deleted_at = Column(String, nullable=True)
 
     uploaded_documents = relationship("Document", back_populates="uploaded_by_user")
     linked_patient = relationship("Patient", back_populates="linked_user", uselist=False)

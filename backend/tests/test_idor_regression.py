@@ -79,9 +79,12 @@ def patient_b():
 def doctor_a():
     account = _signup("doctor")
     yield account
-    # No self-deletion endpoint exists for non-patient roles (see plan doc
-    # "known gap") — nothing to tear down here beyond the process exiting;
-    # these rows are synthetic/non-PHI and clearly labeled.
+    # DELETE /my/account now exists for doctors (see
+    # test_deletion_completeness.py) — it's a soft-delete (row persists,
+    # deactivated) rather than a hard delete, so this just anonymizes the
+    # synthetic account's email/password rather than removing the row;
+    # still synthetic/non-PHI and clearly labeled either way.
+    _delete_account(account["token"])
 
 
 def _patient_id_for(token: str) -> int:

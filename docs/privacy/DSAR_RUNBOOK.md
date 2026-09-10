@@ -50,14 +50,54 @@ dependency this round).
 
 ## Right to erasure (Art.17)
 
-`DELETE /my/account` — `[PASS]` for patients (this round's FK-cascade
-fixes directly improved this; see `BRAGI_SECURITY_GDPR_PLAN.md` §3
-item 6 and §19). **Doctors, admins, care partners, and
-emergency_worker accounts have no self-deletion endpoint at all** —
-`[FAIL]`, a real gap. Manual fallback: an admin/engineer can delete
-these rows directly, but there is no audited, self-service path today.
-Flagged as a follow-up (a `DELETE /my/account` equivalent generalized
-across roles, or role-specific deletion routes).
+`DELETE /my/account` now handles every role except `emergency_worker` —
+`[PASS]` for patient, doctor, admin, care_partner, evidence:
+`backend/tests/test_deletion_completeness.py` (6 tests, real DB).
+Deletion semantics deliberately differ by role rather than being forced
+identical (see `BRAGI_SECURITY_GDPR_PLAN.md` Priority 8):
+
+- **Patient**: real row delete (unchanged from the prior round's
+  FK-cascade fixes — §3 item 6).
+- **care_partner**: real row delete — their only rows
+  (`CarePartnerPatientLink`, `SharedStructuredPage`) are access grants
+  with no independent clinical/audit value to anyone else, so removing
+  them outright is safe.
+- **doctor / admin**: a **soft delete** (`users.deleted_at` set; the row
+  itself persists) rather than a hard delete. `[LEGAL REVIEW]`: a real
+  hard delete would need `ON DELETE SET NULL`/`CASCADE` across ~8 tables
+  that hold NOT-NULL clinical/audit references to a clinician or admin's
+  user id (`doctor_patient_access`, `patient_events`,
+  `documents.uploaded_by_user_id`, `doctor_document_reviews`,
+  `patient_medications`, `admin_action_logs`, and others) — several of
+  those rows are part of a DIFFERENT PATIENT's own clinical record (who
+  treated them, who uploaded a document), which must not disappear or go
+  anonymous just because the clinician later deletes their own account.
+  What DOES happen: every active `DoctorPatientAccess` grant is
+  immediately ended (`is_active=0`, `ended_at` set); the account's own
+  login-identifying data (email, password) is irreversibly replaced with
+  an anonymized/unusable value; `get_current_user()` and `login()` both
+  reject the account outright (a JWT issued before deletion stops
+  working immediately, not just at its natural expiry). What survives is
+  other patients' own clinical records that legitimately reference this
+  person's professional involvement — erasure does not override that
+  (GDPR Art.17(3)(b), same reasoning as `docs/privacy/RETENTION_POLICY.
+  md`). Whether this is the *correct final policy* (vs. e.g. a longer
+  grace period, or deeper anonymization) is itself a legal/product
+  decision this document flags rather than assumes — `[LEGAL REVIEW]`.
+- **emergency_worker**: **not offered this round** — `require_role()`
+  returns a clean 403 (verified:
+  `test_emergency_worker_self_deletion_not_offered`), not a 500 or a
+  silent no-op. `[PRODUCT/LEGAL DECISION REQUIRED]`: emergency-access
+  accounts are commonly tied to institutional/break-glass provisioning
+  rather than ordinary self-service accounts, and this repo has no
+  visibility into whatever offboarding process a hospital/ambulance
+  service already has for them — implementing self-deletion unilaterally
+  risked guessing wrong about that process. Manual fallback unchanged:
+  an admin/engineer can act on these rows directly.
+
+Manual fallback for anything the above doesn't cover: an admin/engineer
+can act on rows directly per `docs/privacy/BRAGI_DATA_MAP.md`, with the
+same care as any other live PHI access.
 
 Note: erasure requests may still be subject to the same legal-minimum-
 retention question as `docs/privacy/RETENTION_POLICY.md` raises —
@@ -103,7 +143,9 @@ contact channel (`docs/security/PRODUCTION_ACCESS_POLICY.md`).
 |---|---|
 | Access | `[PASS]` — full UI visibility plus `POST /my/export` for portable export (patient role) |
 | Erasure (patient) | `[PASS]` post this round's fixes |
-| Erasure (other roles) | `[FAIL]` — no endpoint |
+| Erasure (care_partner) | `[PASS]` — real row delete |
+| Erasure (doctor/admin) | `[PASS]` for account deactivation; soft-delete (row persists) is a deliberate `[LEGAL REVIEW]`ed design, not a full erasure |
+| Erasure (emergency_worker) | `[FAIL]`/`[PRODUCT DECISION REQUIRED]` — not offered this round |
 | Rectification | `[PASS]` in substance, `[FAIL]` for change-history |
 | Restriction/objection | `[FAIL]`/`[UNKNOWN]` |
 | Non-app-channel identity verification | `[UNKNOWN]` — no documented process |
