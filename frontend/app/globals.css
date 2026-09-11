@@ -2603,22 +2603,20 @@ tr:focus-within .b-row-actions {
   height: 100%;
 }
 
-/* Highlight: frames the evidence rather than painting over it. The border
-   sits AT the (already padded, for lab rows) region edge; `outline` adds a
-   few more pixels of breathing room outside that without changing the
-   element's own box (so it never eats into the fill), and the fill itself
-   stays extremely light — enough to read as "this region" at a glance,
-   never enough to compete with the printed text underneath it. No neon,
-   no flashing/pulsing — one gentle fade-in on first appearance, respects
-   reduced motion. */
+/* Highlight: frames the evidence, exactly ONE visible ring — no inner
+   border/capsule plus a separate outer outline (that combination used to
+   render as a dark inner ring sitting directly on top of the printed
+   characters, which was a real, reported visual defect). A single
+   `outline`, offset outward from the region's own tight edge, is the
+   ONLY frame; the element's own box has no border and no fill, so the
+   interior stays fully transparent and the original PDF text underneath
+   is completely unobscured. No neon, no flashing/pulsing — one gentle
+   fade-in on first appearance, respects reduced motion. */
 .b-source-highlight {
   position: absolute;
-  border: 1.5px solid var(--primary);
-  outline: 2px solid color-mix(in srgb, var(--primary) 55%, transparent);
+  outline: 1.5px solid var(--primary);
   outline-offset: 3px;
-  background: color-mix(in srgb, var(--primary) 6%, transparent);
   border-radius: 4px;
-  box-shadow: 0 1px 6px -1px color-mix(in srgb, var(--primary) 35%, transparent);
   pointer-events: none;
   animation: b-highlight-in var(--dur-3) var(--ease) both;
 }
