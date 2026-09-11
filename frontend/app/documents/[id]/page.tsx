@@ -14,6 +14,26 @@ import {
   isReaderDocumentType,
   sectionLabel,
 } from "@/lib/reader-sections";
+import { AskBragiSideTab } from "@/components/ask-bragi/ask-bragi-side-tab";
+
+/** Scope defaults to "document" for every reader type on this page (see
+ * BRAGI_ASK_BRAGI_PLAN.md's per-surface scope defaults) — only the
+ * suggested questions vary by document type. */
+function askBragiSuggestionsFor(documentType?: string | null): string[] {
+  switch (documentType) {
+    case "discharge_summary":
+      return ["Why was I admitted?", "What follow-up was recommended?", "What medications were mentioned?"];
+    case "laboratory_results":
+      return ["Which values were outside the reference range?", "What does this test measure?"];
+    case "imaging_report":
+    case "pathology_report":
+      return ["What did this report find?"];
+    case "specialist_consultation":
+      return ["What was recommended?"];
+    default:
+      return ["Summarize this document."];
+  }
+}
 
 type CurrentUser = {
   id: number;
@@ -1023,9 +1043,22 @@ export default function DocumentStructuredPage() {
         parsed.report_type
       )} · ${t(parsed.is_verified ? "verified" : "unverified")}`}
       rightContent={
-        <button className="secondary-btn" onClick={() => router.back()}>
-          {t("back")}
-        </button>
+        <div style={{ display: "flex", gap: 8, alignItems: "center" }}>
+          {currentUser.role !== "care_partner" ? (
+            <AskBragiSideTab
+              target={{
+                audience: currentUser.role === "patient" ? "patient" : "doctor",
+                patientId: currentUser.role === "patient" ? undefined : documentData.patient_id,
+                documentId: Number(documentId),
+                initialScope: "document",
+                suggestions: askBragiSuggestionsFor(documentData.document_type),
+              }}
+            />
+          ) : null}
+          <button className="secondary-btn" onClick={() => router.back()}>
+            {t("back")}
+          </button>
+        </div>
       }
     >
       <style jsx global>{`

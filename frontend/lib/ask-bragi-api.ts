@@ -21,6 +21,8 @@ export type AskBragiChart = {
   points: AskBragiChartPoint[];
 };
 
+export type AskBragiScope = "patient_record" | "document";
+
 export type AskBragiMessage = {
   id: number;
   role: "user" | "assistant";
@@ -29,6 +31,11 @@ export type AskBragiMessage = {
   chart: AskBragiChart | null;
   follow_ups: string[];
   status: string | null;
+  /** The scope THIS TURN actually used — can be "patient_record" even in
+   * a document-scoped conversation when the turn was visibly broadened
+   * (see BRAGI_ASK_BRAGI_PLAN.md's scope-broadening section). Null on
+   * optimistic (not-yet-server-confirmed) user messages. */
+  scope_used?: AskBragiScope | null;
   created_at: string;
 };
 
@@ -36,7 +43,7 @@ export type AskBragiConversation = {
   id: number;
   public_id: string | null;
   patient_id: number;
-  scope: "patient_record" | "document";
+  scope: AskBragiScope;
   document_id: number | null;
   title: string | null;
   created_at: string;
@@ -53,6 +60,9 @@ export const askBragiApi = {
     api.post<AskBragiConversation>("/ask-bragi/conversations", payload),
   getConversation: (id: number) => api.get<AskBragiConversationDetail>(`/ask-bragi/conversations/${id}`),
   deleteConversation: (id: number) => api.delete(`/ask-bragi/conversations/${id}`),
-  sendMessage: (id: number, message: string) =>
-    api.post<AskBragiMessage>(`/ask-bragi/conversations/${id}/messages`, { message }),
+  sendMessage: (id: number, message: string, requestedScope?: AskBragiScope) =>
+    api.post<AskBragiMessage>(`/ask-bragi/conversations/${id}/messages`, {
+      message,
+      requested_scope: requestedScope,
+    }),
 };

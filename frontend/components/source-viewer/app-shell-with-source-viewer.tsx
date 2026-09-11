@@ -1,22 +1,40 @@
 "use client";
 
 /**
- * Composes the root layout with the shared source viewer: desktop gets a
- * real split view (main content + viewer, side by side, no overlay/no
- * backdrop — see .b-app-split in globals.css); tablet/mobile get a
- * full-screen local viewer surface (nothing left to dim behind it, since
- * it covers the screen itself). One SourceViewerPanel instance either
- * way — never two PDF renders at once.
+ * Composes the root layout with the shared source viewer AND the Ask
+ * Bragi contextual panel: desktop gets a real split view (main content +
+ * a right-hand workspace, side by side, no overlay/no backdrop — see
+ * .b-app-split in globals.css); tablet/mobile get a full-screen local
+ * viewer surface (nothing left to dim behind it, since it covers the
+ * screen itself). The right-hand workspace shows the PDF source viewer,
+ * the Ask Bragi panel, or — when both happen to be open at once — a
+ * small tab switcher between the two (see RightWorkspace below); each is
+ * still exactly one mounted instance, never rendered twice.
+ *
+ * This file is deliberately a thin composition layer: the scroll/anchor
+ * preservation math below is unchanged from before Ask Bragi existed
+ * (see BRAGI_REDUCTO_PLAN.md §14/§15 for how hard-won it was) — it only
+ * ever cares about a single `showSplit` boolean and a single "what to
+ * anchor to" value, which now can come from either panel's own context
+ * instead of only the source viewer's.
  */
 
 import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { SourceViewerProvider, useSourceViewer } from "./source-viewer-context";
-import { SourceViewerPanel } from "./source-viewer-panel";
+import { AskBragiPanelProvider, useAskBragiPanelOptional } from "@/components/ask-bragi/ask-bragi-panel-context";
+import { RightWorkspace } from "@/components/ask-bragi/right-workspace";
 
 const DESKTOP_BREAKPOINT = "(min-width: 1025px)";
 
 function Shell({ children }: { children: React.ReactNode }) {
-  const { isOpen, visualAnchorRef } = useSourceViewer();
+  const { isOpen: sourceOpen, visualAnchorRef: sourceAnchorRef } = useSourceViewer();
+  // Optional: this provider is always mounted (see AppShellWithSourceViewer
+  // below), but the hook stays defensive/optional to match this file's
+  // existing convention for anything outside the guaranteed root tree.
+  const askBragiPanel = useAskBragiPanelOptional();
+  const askBragiOpen = askBragiPanel?.isOpen ?? false;
+  const askBragiAnchorRef = askBragiPanel?.visualAnchorRef;
+
   const [isDesktop, setIsDesktop] = useState(false);
   const mainRef = useRef<HTMLDivElement>(null);
   // Tracks whether the split layout was active on the PREVIOUS render, so
@@ -25,6 +43,11 @@ function Shell({ children }: { children: React.ReactNode }) {
   // (which can each change independently, e.g. a window resize while the
   // viewer is already open).
   const wasSplitRef = useRef(false);
+  // Remembers which panel was actually open at the moment the split was
+  // last active, so a CLOSING transition (where, by the time this effect
+  // reruns, both isOpen flags may already read false) still knows which
+  // context's anchor to read — see the closing branch below.
+  const wasSourceOpenRef = useRef(false);
 
   useEffect(() => {
     const mql = window.matchMedia(DESKTOP_BREAKPOINT);
@@ -38,8 +61,9 @@ function Shell({ children }: { children: React.ReactNode }) {
     return () => mql.removeEventListener("change", onChange);
   }, []);
 
-  const showSplit = isOpen && isDesktop;
-  const showSheet = isOpen && !isDesktop;
+  const anyOpen = sourceOpen || askBragiOpen;
+  const showSplit = anyOpen && isDesktop;
+  const showSheet = anyOpen && !isDesktop;
 
   // Continuously mirrors mainRef's scrollTop while it's the active scroll
   // container. This exists because by the time the closing branch of the
@@ -110,7 +134,9 @@ function Shell({ children }: { children: React.ReactNode }) {
       if (mainRef.current) mainRef.current.scrollTop = y;
       window.scrollTo(0, 0);
 
-      const anchor = visualAnchorRef.current;
+      // Whichever panel is newly open this render owns the anchor — see
+      // this file's top docstring for why this can now be either context.
+      const anchor = sourceOpen ? sourceAnchorRef.current : askBragiAnchorRef?.current ?? null;
       if (anchor?.el.isConnected && mainRef.current) {
         const newTop = anchor.el.getBoundingClientRect().top;
         const delta = newTop - anchor.top;
@@ -125,12 +151,16 @@ function Shell({ children }: { children: React.ReactNode }) {
       // reading a stale/zeroed one directly off the element.
       window.scrollTo(0, lastMainScrollTopRef.current);
 
-      // close() (source-viewer-context.tsx) re-measures anchor.top right
-      // before this fires, against the split layout that's just about to
-      // go away — so this is comparing that "last known split-layout
+      // Both contexts' own isOpen flags may already read false by now (the
+      // close that triggered this already flipped them) — wasSourceOpenRef
+      // (captured at the end of the PREVIOUS run, i.e. while still open)
+      // is what tells us which context's anchor is the relevant one.
+      // Each context's own close() re-measures anchor.top right before
+      // this fires, against the split layout that's just about to go
+      // away — so this is comparing that "last known split-layout
       // position" against the same element's position in the new,
       // full-width layout now committed.
-      const anchor = visualAnchorRef.current;
+      const anchor = wasSourceOpenRef.current ? sourceAnchorRef.current : askBragiAnchorRef?.current ?? null;
       if (anchor?.el.isConnected) {
         const newTop = anchor.el.getBoundingClientRect().top;
         const delta = newTop - anchor.top;
@@ -140,7 +170,8 @@ function Shell({ children }: { children: React.ReactNode }) {
       }
     }
     wasSplitRef.current = showSplit;
-  }, [showSplit, visualAnchorRef]);
+    wasSourceOpenRef.current = sourceOpen;
+  }, [showSplit, sourceOpen, sourceAnchorRef, askBragiAnchorRef]);
 
   return (
     <>
@@ -150,19 +181,21 @@ function Shell({ children }: { children: React.ReactNode }) {
         </div>
         {showSplit ? (
           <div className="b-app-split-viewer">
-            <SourceViewerPanel variant="split" />
+            <RightWorkspace sourceOpen={sourceOpen} askBragiOpen={askBragiOpen} variant="split" />
           </div>
         ) : null}
       </div>
-      {showSheet ? <SourceViewerPanel variant="sheet" /> : null}
+      {showSheet ? <RightWorkspace sourceOpen={sourceOpen} askBragiOpen={askBragiOpen} variant="sheet" /> : null}
     </>
   );
 }
 
 export function AppShellWithSourceViewer({ children }: { children: React.ReactNode }) {
   return (
-    <SourceViewerProvider>
-      <Shell>{children}</Shell>
-    </SourceViewerProvider>
+    <AskBragiPanelProvider>
+      <SourceViewerProvider>
+        <Shell>{children}</Shell>
+      </SourceViewerProvider>
+    </AskBragiPanelProvider>
   );
 }

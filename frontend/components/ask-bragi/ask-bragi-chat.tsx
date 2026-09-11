@@ -20,9 +20,11 @@ import { getErrorMessage } from "@/lib/api";
 import {
   AskBragiConversation,
   AskBragiMessage,
+  AskBragiScope,
   askBragiApi,
 } from "@/lib/ask-bragi-api";
 import { AskBragiChartView } from "./ask-bragi-chart";
+import { AskBragiThinkingIndicator } from "./ask-bragi-thinking-indicator";
 
 type Props = {
   /** Doctor mode: which patient this conversation is about. Omit for a
@@ -34,9 +36,23 @@ type Props = {
   documentId?: number;
   audience: "patient" | "doctor";
   suggestions?: string[];
+  /** Compact mode for the contextual side panel (narrower max-width,
+   * denser padding) — see ask-bragi-panel.tsx. */
+  compact?: boolean;
+  /** Which scope pill starts selected — see BRAGI_ASK_BRAGI_PLAN.md's
+   * per-surface scope defaults (a document reader defaults to "document";
+   * Analize/Timeline/Overview default to "patient_record" even when a
+   * documentId happens to be available for reference). Defaults to
+   * "document" when a documentId is present, "patient_record" otherwise. */
+  initialScope?: AskBragiScope;
 };
 
-export default function AskBragiChat({ patientId, documentId, audience, suggestions }: Props) {
+const THINKING_LABEL: Record<"patient" | "doctor", string> = {
+  patient: "Bragi is reviewing your record…",
+  doctor: "Reviewing the record…",
+};
+
+export default function AskBragiChat({ patientId, documentId, audience, suggestions, compact, initialScope }: Props) {
   const sourceViewer = useSourceViewerOptional();
   const [conversation, setConversation] = useState<AskBragiConversation | null>(null);
   const [messages, setMessages] = useState<AskBragiMessage[]>([]);
@@ -52,6 +68,25 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   // this a pure, predictable component.
   const localIdRef = useRef(0);
 
+  // Scope UI — only meaningful when this conversation actually has a
+  // document to be scoped to. `userSetScope` is undefined until the user
+  // explicitly clicks a pill; while undefined, requested_scope is never
+  // sent, leaving the server's own keyword-based intent detection free
+  // to broaden a turn on its own (see BRAGI_ASK_BRAGI_PLAN.md). Once the
+  // user (or a broadened server response) settles on a scope, the pill
+  // reflects it — this is the visible "scope transition" the product
+  // spec requires; the server decision is never silent.
+  const hasDocumentScope = documentId !== undefined;
+  const defaultScope: AskBragiScope = initialScope ?? (hasDocumentScope ? "document" : "patient_record");
+  const [displayedScope, setDisplayedScope] = useState<AskBragiScope>(defaultScope);
+  // Pre-seeded (not null) when a caller explicitly names a non-default
+  // initial scope (e.g. a Timeline entry point tied to a document but
+  // defaulting to "patient_record") — the very first message should
+  // already carry that as requested_scope, not rely on keyword detection.
+  const [userSetScope, setUserSetScope] = useState<AskBragiScope | null>(
+    initialScope && hasDocumentScope && initialScope !== "document" ? initialScope : null
+  );
+
   useEffect(() => {
     let cancelled = false;
     async function start() {
@@ -64,6 +99,11 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
         });
         if (cancelled) return;
         setConversation(res.data);
+        setDisplayedScope(defaultScope);
+        setUserSetScope(
+          initialScope && res.data.scope === "document" && initialScope !== "document" ? initialScope : null
+        );
+        setMessages([]);
       } catch (err) {
         if (!cancelled) setError(getErrorMessage(err, "Ask Bragi is unavailable right now."));
       } finally {
@@ -78,7 +118,7 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     return () => {
       cancelled = true;
     };
-  }, [patientId, documentId]);
+  }, [patientId, documentId, initialScope, defaultScope]);
 
   useEffect(() => {
     listEndRef.current?.scrollIntoView({ behavior: "smooth" });
@@ -103,8 +143,9 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     setMessages((prev) => [...prev, userMessage]);
     setInput("");
     try {
-      const res = await askBragiApi.sendMessage(conversation.id, trimmed);
+      const res = await askBragiApi.sendMessage(conversation.id, trimmed, userSetScope ?? undefined);
       setMessages((prev) => [...prev, res.data]);
+      if (res.data.scope_used) setDisplayedScope(res.data.scope_used);
     } catch (err) {
       setError(getErrorMessage(err, "Ask Bragi could not answer that. Please try again."));
     } finally {
@@ -117,11 +158,17 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     sourceViewer?.openSourceEvidence(sourceEvidenceId, anchor);
   }
 
+  function selectScope(scope: AskBragiScope) {
+    setUserSetScope(scope);
+    setDisplayedScope(scope);
+  }
+
+  const maxWidth = compact ? undefined : 760;
+
   if (starting) {
     return (
       <div className="b-surface" style={{ padding: "var(--s5)", textAlign: "center" }}>
-        <span className="b-spinner" />
-        <p className="muted-text" style={{ marginTop: "var(--s2)" }}>Starting Ask Bragi…</p>
+        <AskBragiThinkingIndicator label="Starting Ask Bragi…" showLabel />
       </div>
     );
   }
@@ -135,10 +182,15 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   }
 
   return (
-    <div className="b-stack" style={{ maxWidth: 760, margin: "0 auto", minWidth: 0 }}>
-      {documentId ? (
-        <div className="b-chip" style={{ alignSelf: "flex-start" }}>
-          Scoped to this document
+    <div className="b-stack" style={{ maxWidth, margin: compact ? undefined : "0 auto", minWidth: 0 }}>
+      {hasDocumentScope ? (
+        <div role="group" aria-label="Ask Bragi scope" style={{ display: "flex", gap: 6, alignSelf: "flex-start" }}>
+          <ScopePill active={displayedScope === "document"} onClick={() => selectScope("document")}>
+            This document
+          </ScopePill>
+          <ScopePill active={displayedScope === "patient_record"} onClick={() => selectScope("patient_record")}>
+            Full record
+          </ScopePill>
         </div>
       ) : null}
 
@@ -148,8 +200,8 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
           display: "flex",
           flexDirection: "column",
           gap: "var(--s3)",
-          minHeight: 320,
-          maxHeight: "60vh",
+          minHeight: compact ? 220 : 320,
+          maxHeight: compact ? "calc(100vh - 320px)" : "60vh",
           overflowY: "auto",
           padding: "var(--s4)",
         }}
@@ -165,13 +217,25 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
             }
           />
         ) : (
-          messages.map((m) => (
-            <AskBragiMessageBubble key={m.id} message={m} onCitationClick={handleCitationClick} />
-          ))
+          messages.map((m, i) => {
+            const prevScope = i > 0 ? messages[i - 1].scope_used : conversation?.scope;
+            const scopeChanged =
+              m.role === "assistant" && m.scope_used && prevScope && m.scope_used !== prevScope;
+            return (
+              <div key={m.id}>
+                {scopeChanged ? (
+                  <p className="muted-text" style={{ fontSize: 12, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 6 }}>
+                    <IconAlert size={12} /> Searching full record
+                  </p>
+                ) : null}
+                <AskBragiMessageBubble message={m} onCitationClick={handleCitationClick} />
+              </div>
+            );
+          })
         )}
         {sending ? (
           <div className="b-list-row" style={{ alignSelf: "flex-start" }}>
-            <span className="b-spinner" />
+            <AskBragiThinkingIndicator label={THINKING_LABEL[audience]} />
           </div>
         ) : null}
         <div ref={listEndRef} />
@@ -222,6 +286,28 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
         </button>
       </form>
     </div>
+  );
+}
+
+function ScopePill({
+  active,
+  onClick,
+  children,
+}: {
+  active: boolean;
+  onClick: () => void;
+  children: React.ReactNode;
+}) {
+  return (
+    <button
+      type="button"
+      className={active ? "b-chip b-chip-brand" : "b-chip"}
+      style={{ cursor: "pointer" }}
+      aria-pressed={active}
+      onClick={onClick}
+    >
+      {children}
+    </button>
   );
 }
 
