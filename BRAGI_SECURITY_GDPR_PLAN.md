@@ -519,11 +519,20 @@ Vendor DPA/ZDR terms remain not knowable from this codebase alone —
 `[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for the actual contract terms with
 OpenAI/Reducto/Google, unchanged this round.
 
-Ask Bragi (AI chat): **implemented this round, `[IMPLEMENTED — NOT
-DEPLOYED]`** — see `BRAGI_ASK_BRAGI_PLAN.md` for the full architecture
-and evidence. `ASK_BRAGI_ENABLED`/`NEXT_PUBLIC_ASK_BRAGI_ENABLED` both
-default false; nothing changes for any real user until explicitly
-activated. Every §2.1–2.7 forward-looking requirement in
+Ask Bragi (AI chat): **implemented, `[IMPLEMENTED — PARTIALLY
+ACTIVATED]`** — see `BRAGI_ASK_BRAGI_PLAN.md` for the full architecture
+and evidence, including its "Phase 4" section for the Overview rebuild,
+contextual side tab, and scope-broadening work added after the entry
+below was first written. `NEXT_PUBLIC_ASK_BRAGI_ENABLED` is now `true`
+in Vercel production (confirmed via `vercel env pull`) — the nav
+entry/UI is visible. `ASK_BRAGI_ENABLED` and a real `OPENAI_API_KEY`
+have NOT been set on the Render backend (the `render` CLI has no
+env-var subcommand, and this environment correctly refused to let its
+own stored auth token be extracted for a workaround) — until that
+manual dashboard step happens, every request gets a safe, worded
+"unavailable" error rather than a working answer, so no real user has
+actually been exposed to a live answer yet despite the frontend flag
+being on. Every §2.1–2.7 forward-looking requirement in
 `docs/ai/AI_GOVERNANCE.md` Part 2 is now a concrete, tested control
 rather than a design note — patient-context injection is server-side
 only (no tool accepts a `patient_id` parameter, verified directly

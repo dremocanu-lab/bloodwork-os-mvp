@@ -12,8 +12,9 @@ view of that record. The original uploaded document always remains the
 authoritative source; structured data is a derived, verifiable layer on
 top of it, not a replacement for it.
 
-**Ask Bragi (AI chat over a patient's record) is planned, not yet
-implemented.** See [Ask Bragi (planned)](#ask-bragi-planned) below.
+**Ask Bragi (AI chat over a patient's record) is implemented and
+feature-flagged.** See [Ask Bragi](#ask-bragi) below for what's built,
+and what's still required before it's live for real users.
 
 ---
 
@@ -486,7 +487,7 @@ docs/
   privacy/                  — data map, DSAR runbook, retention policy,
                               vendor/transfer registers, DPIA/ROPA drafts
   vendors/                  — Reducto/OpenAI production-requirements docs
-  ai/                       — AI governance (forward-looking, for Ask Bragi)
+  ai/                       — AI governance for Ask Bragi
   regulatory/               — MDR/EU AI Act boundary statement
 ```
 
@@ -515,23 +516,32 @@ longitudinal Timeline; medications; trend charts; source
 provenance/`View in original`; the security/GDPR hardening round
 (rate limiting, malware-scan boundary, CNP minimization, DSAR export,
 deletion completeness, CI security pipeline, secret/dependency
-scanning — see [Security & privacy](#security--privacy)).
+scanning — see [Security & privacy](#security--privacy)); Ask Bragi
+(see below) — code-complete, tested, feature-flagged, and activated in
+Vercel production, but **not yet live for real users** pending a
+Render-side configuration step (below) that requires dashboard access
+this environment doesn't have.
 
-**Next**: Ask Bragi (see below); remaining UX/QA polish (a full
-Playwright QA pass, per-section source evidence for Reader sections,
-prescription→medication linkage, and other items tracked in
-`BRAGI_REDUCTO_PLAN.md`'s per-phase "deferred" notes); production/
-vendor/legal closure and independent security validation (see
+**Next**: setting `ASK_BRAGI_ENABLED=true` + a real `OPENAI_API_KEY` on
+the Render backend (the one remaining step before Ask Bragi actually
+answers in production); the imaging/medication-conflict/reverse-language
+eval categories and a latency benchmark for Ask Bragi (both need that
+same OpenAI credential); remaining UX/QA polish (a full Playwright QA
+pass, per-section source evidence for Reader sections, prescription→
+medication linkage, and other items tracked in `BRAGI_REDUCTO_PLAN.md`'s
+per-phase "deferred" notes); production/vendor/legal closure and
+independent security validation (see
 `docs/EXTERNAL_COMPLIANCE_ACTIONS.md`).
 
 ---
 
-## Ask Bragi (planned)
+## Ask Bragi
 
 Ask Bragi — a conversational AI interface over a patient's own record —
-is **planned, not yet implemented**. No chat/conversation code exists in
-this repository today. When built, it's required to reuse Bragi's
-existing controls rather than introduce parallel ones:
+is **implemented, tested, and feature-flagged** (`ASK_BRAGI_ENABLED` /
+`NEXT_PUBLIC_ASK_BRAGI_ENABLED`, both required for it to appear/respond).
+It reuses Bragi's existing controls rather than introducing parallel
+ones:
 
 ```
 user
@@ -550,13 +560,33 @@ the model — answering with citations back to real SourceEvidence,
   via the existing openSourceEvidence resolution path
 ```
 
-It must reuse, not duplicate: existing authorization, the AI-provider
-data-minimization boundary already built in
-`app/services/ai_minimization.py`, `SourceEvidence`/`openSourceEvidence`
-for verifiable citations, audit logging, rate limiting, and the rest of
-this repository's security/GDPR controls. See `docs/ai/AI_GOVERNANCE.md`
-for the forward-looking governance document already written for this
-feature.
+It reuses, rather than duplicates: existing authorization (every tool
+call is resolved against a server-owned patient context — no tool
+accepts a caller-suppliable patient/document id), the AI-provider
+data-minimization boundary in `app/services/ai_minimization.py`,
+`SourceEvidence`/`openSourceEvidence` for verifiable citations, audit
+logging, rate limiting, and the rest of this repository's security/GDPR
+controls. Scope (a single document vs. the whole record) is
+server-authoritative — a document-scoped conversation can widen for one
+turn via an explicit UI toggle or server-side keyword detection over the
+user's own message, never the model's own unconstrained judgment, and
+any broadening is always shown in the UI, never silent. Every response
+is grounded in real, validated citations; an unvalidated/hallucinated
+citation is dropped before the response ever reaches the user. See
+`docs/ai/AI_GOVERNANCE.md` for the governance document and
+`BRAGI_ASK_BRAGI_PLAN.md` for full architecture, test evidence, and
+current limitations (notably: real per-turn latency and three eval
+categories — imaging, a two-source medication conflict, reverse
+language — are not yet exercised against a real OpenAI key from this
+environment; a `docs/ai/AI_GOVERNANCE.md`-governed rollout to real
+patients is a business decision, not one this repository makes on its
+own).
+
+**Status**: `ASK_BRAGI_ENABLED` and `OPENAI_API_KEY` still need to be
+set on the Render backend before this is live for real users — the
+Vercel-side flag alone only reveals the nav entry/UI; without the
+backend flag+key, users see the nav item and a safe, worded
+"unavailable" error rather than a working answer.
 
 ---
 

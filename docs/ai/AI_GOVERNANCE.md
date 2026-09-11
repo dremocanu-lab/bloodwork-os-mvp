@@ -1,12 +1,15 @@
 # AI Governance
 
 Covers two distinct things: (1) the AI/OCR document-processing pipeline
-that exists today (Reducto, OpenAI, Google Document AI), and (2) a
-forward-looking governance framework for "Ask Bragi," an AI chat
-feature that **does not exist in this codebase** (confirmed by
-exhaustive grep for conversation/chat/ask_bragi identifiers across
-`backend/app` this round) but that this document prepares for, per the
-original task's explicit forward-looking requirement.
+that exists today (Reducto, OpenAI, Google Document AI), and (2) the
+governance framework for "Ask Bragi," an AI chat feature over a
+patient's own record. **Ask Bragi is now implemented, tested, and
+feature-flagged** — this section originally described a forward-looking
+design for a feature that didn't exist yet; it now describes what was
+actually built and verified. See `BRAGI_ASK_BRAGI_PLAN.md` for full
+architecture/evidence and current status (frontend flag on in
+production, backend flag/key not yet set — see
+`BRAGI_SECURITY_GDPR_PLAN.md` §21).
 
 ## Part 1: Existing AI processing (document extraction)
 
@@ -50,14 +53,17 @@ not rely on the outer conversation's authorization having been checked
 once — a compromised or manipulated conversation should not be able to
 pivot a tool call to a different patient's data via prompt injection.
 
-### 2.3 Prompt-injection testing (design, not yet implemented)
+### 2.3 Prompt-injection testing (implemented, live-verified)
 
-Before launch, a permanent adversarial test suite should attempt:
-document content that tries to instruct the model to ignore its system
-prompt, reveal other patients' data, or execute an unauthorized tool
-call. This mirrors the existing "conservative clinical reader" design
-philosophy — the model should treat document content as *data to
-report on*, never as *instructions to follow*.
+A synthetic document containing text instructing the model to leak
+secrets and access other patients' data was retrieved during a real
+conversation and its instructions were completely ignored — live-
+verified against the real OpenAI API, not just designed for (see
+`BRAGI_ASK_BRAGI_PLAN.md`'s "Real OpenAI testing" section). This
+mirrors the existing "conservative clinical reader" design philosophy —
+the model treats document content as *data to report on*, never as
+*instructions to follow*. A permanent, repeatable adversarial suite
+(beyond that one live run) remains a good next step, not yet built.
 
 ### 2.4 Missing / conflicting data handling
 
@@ -91,10 +97,15 @@ XSS-safety review given to the rest of the frontend
 surface for chat responses would need explicit sanitization, unlike the
 current frontend, which has none of that surface today.
 
-## Part 3: Permanent AI evaluation suite (forward-looking)
+## Part 3: Permanent AI evaluation suite
 
-Not built — nothing to evaluate yet. When Ask Bragi exists, this
-governance document's §2.3/2.4/2.5 items should become concrete,
+A one-off live evaluation has run against the real OpenAI API across
+11 of ~16 planned categories (see `BRAGI_ASK_BRAGI_PLAN.md`); imaging,
+a two-source medication conflict, and reverse-language cases remain,
+blocked on having a configured `OPENAI_API_KEY` available to run
+against. A PERMANENT, repeatable/automated suite (rather than one-off
+manual runs) is still not built. This governance document's §2.3/2.4/2.5
+items should become concrete,
 automated test cases (mirroring how the existing 20-test security
 regression suite was built this round), run in CI (§18 of
 `BRAGI_SECURITY_GDPR_PLAN.md`) rather than left as manual review.

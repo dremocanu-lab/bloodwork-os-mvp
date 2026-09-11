@@ -495,31 +495,111 @@ visual/breakpoint QA is not.
 ## Remaining limitations
 
 1. No real SSE streaming (see above).
-2. Document-scoped chat has no in-page entry point yet (`documents/[id]/
-   page.tsx` wasn't touched this round — the route/backend enforcement
-   both work, just not linked from that UI).
-3. Narrative documents (discharge summaries, imaging reports, etc.)
-   have no per-section `SourceEvidence` rows today (a pre-existing gap,
-   not introduced by this feature — `SourceEvidence.lab_result_id` is
-   nullable specifically because this was already planned as future
-   work in `BRAGI_REDUCTO_PLAN.md` Phase 2) — so answers grounded in
-   narrative content currently carry 0 citations even when the answer
-   is accurate (see eval case D). `get_document_sources` will return
-   real citations once/if narrative-section evidence rows exist.
-4. Live browser/responsive/accessibility verification not performed
-   (see above).
+2. ~~Document-scoped chat has no in-page entry point yet~~ — **resolved
+   in Phase 4** (below): `documents/[id]/page.tsx` now has a contextual
+   `AskBragiSideTab` opening the same chat, defaulted to document scope.
+3. Narrative documents (discharge summaries, imaging reports, etc.) now
+   get a real, honestly-labeled document-level `SourceEvidence` row on
+   demand (Phase 4, `_ensure_document_level_evidence` in
+   `app/services/ask_bragi/tools.py`) instead of 0 citations — reported
+   at `page_only` precision (page 1, no bounding box), never claimed as
+   `exact_bbox`. Per-section narrative evidence (finer than
+   document-level) remains a `BRAGI_REDUCTO_PLAN.md` Phase 2 item, not
+   done here.
+4. Live browser/responsive/accessibility verification **was performed
+   in Phase 4** for the new Overview/contextual-panel/thinking-indicator
+   UI specifically (see Phase 4 section) — the ORIGINAL Ask Bragi chat
+   UI predating Phase 4 (this section's own text above) still wasn't
+   independently re-verified at every breakpoint this round.
 5. Per-turn latency not aggregated/reported (captured per-call in code,
-   not yet surfaced).
+   not yet surfaced) — still true; no OpenAI credentials were available
+   in this environment during Phase 4 either, so this remains open.
 6. Live eval covered 11 of the ~16 named categories in the build spec;
-   3 more (F, a two-source medication conflict, K) exercise
-   already-verified code paths and are a cheap follow-up, not a known
-   gap — see "Real OpenAI testing."
-7. `docs/privacy/BRAGI_DATA_MAP.md`/`RETENTION_POLICY.md` don't yet
-   list the two new tables as an explicit line item.
+   imaging, a two-source medication conflict, and reverse-language cases
+   remain open — still true after Phase 4 for the same reason as #5 (no
+   OpenAI key configured in this environment).
+7. ~~`docs/privacy/BRAGI_DATA_MAP.md`/`RETENTION_POLICY.md` don't yet
+   list the two new tables~~ — **resolved in Phase 4**: both now cover
+   `ask_bragi_conversations`/`ask_bragi_messages` (data categories,
+   ownership, retention, export, processor exposure).
 8. Clinician workflows beyond basic Q&A (§48's "summarize recent
    changes," "locate imaging/pathology" as one-click actions rather than
    a typed question) are reachable today only by asking — no dedicated
    quick-action buttons were built this round.
+
+## Phase 4 — activation, Overview rebuild, contextual panel, scope broadening
+
+Everything below was added on top of the V1 this document otherwise
+describes; V1's own architecture (server-owned context, tool-call
+citation validation, `store=False`) is unchanged.
+
+**Activation.** `NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` is set in Vercel
+production (confirmed via `vercel env pull`). Render's `ASK_BRAGI_ENABLED`
+and `OPENAI_API_KEY` could **not** be set or verified from this
+environment — the `render` CLI (v2.27.0) has no subcommand for managing
+a service's environment variables (confirmed via `--help` on the root
+command, `blueprints`, and `services update`), and extracting the
+CLI's own stored auth token to call Render's REST API directly was
+correctly blocked by this environment's own tooling safeguards, not
+attempted around. **This remains a manual action for whoever has
+Render dashboard access**: set `ASK_BRAGI_ENABLED=true` and confirm a
+real `OPENAI_API_KEY` (+ `ASK_BRAGI_MODEL` if not using the default) are
+present on the backend service before Ask Bragi will actually respond
+in production — the frontend flag alone only reveals the nav entry/UI;
+without the backend flag+key, users would see the nav item and a safe,
+worded "Ask Bragi is unavailable" error, not a broken experience, but
+not a working one either.
+
+**Server-authoritative scope broadening.** A document-scoped
+conversation now has a per-turn `turn_scope` (`context.py`) that can
+widen to the full record for that turn only, driven by: (a) an explicit
+UI toggle (`requested_scope` on the send request), or (b) server-side
+regex keyword detection over the user's own message ("over time",
+"ever", "history of", etc. — `_detect_full_record_intent` in
+`service.py`) — never the model's own unconstrained judgment. Any tool
+that is inherently patient-wide (trend, compare, medications, timeline)
+also marks the turn as broadened even if the user never said a
+broadening phrase, since the tool call itself proves the model looked
+beyond the document. Broadening is always visible: the response carries
+`scope_used`, the UI shows a "Searching full record" note, and the
+scope pill updates — never silent.
+
+**Overview rebuild.** `frontend/app/my-records/page.tsx`'s Overview tab
+is reordered to greeting → Ask Bragi (full-record scope) → quick actions
+→ record snapshot (Metrics + pinned trends, unchanged) → Recently added
+→ My Timeline preview (unchanged) → Needs your attention (deterministic:
+stalled/failed upload jobs + pending access requests, no AI judgment) →
+Who can see my record (unchanged). The Featured Lab Trend graph and the
+My Medications widget are removed from Overview only — both still exist
+on their own dedicated pages/Analize.
+
+**Contextual side tab + PDF coexistence.** A new, independent
+`AskBragiPanelProvider` (`ask-bragi-panel-context.tsx`) mirrors
+`source-viewer-context.tsx`'s open/close/anchor shape without modifying
+that file, so the root shell's existing split-view/scroll-preservation
+math can drive either panel (or both). `RightWorkspace` renders
+whichever is open, or a small tab switcher when both are, keeping both
+mounted (CSS `hidden`, never unmount) so switching tabs loses neither
+the PDF's page/zoom nor the Ask Bragi conversation. Real Playwright
+testing against a local build found and fixed three defects this
+mechanism would otherwise have shipped with: a scroll-anchor bug
+(anchoring on a sticky header button produced a spurious large delta
+that snapped scroll to the top on close), a missing mobile full-screen
+sheet style on `AskBragiPanel` (it rendered inline instead of as a
+real overlay), and a missing route-change auto-close (a stale
+conversation could otherwise survive a navigation to another
+patient/document) — see `CLAUDE_HANDOFF.md`'s Phase 4 entry for the
+full list and how each was verified.
+
+**Thinking indicator.** One shared, purple, slowly-morphing-shape
+component (`ask-bragi-thinking-indicator.tsx`) used identically for
+patient and doctor UIs, `prefers-reduced-motion`-aware, shape
+`aria-hidden` with adjacent status text carrying the actual meaning.
+
+**Not done this phase** (see "Remaining limitations" above, and
+`CLAUDE_HANDOFF.md`): imaging/medication-conflict/reverse-language eval
+categories and a latency benchmark, both blocked on not having a
+configured OpenAI key in this environment.
 
 ## Rollout
 

@@ -588,3 +588,83 @@ the full external/legal/product list): a real antivirus engine behind
 the now-ready `CLAMAV_HOST` integration; `RATE_LIMIT_REDIS_URL` in
 Render once/if horizontal scaling is planned; a rectification/change-
 history mechanism; DSAR export for non-patient roles.
+
+## Ask Bragi Phase 4 — activation, Overview rebuild, contextual panel (2026-09-11)
+
+Full detail: `BRAGI_ASK_BRAGI_PLAN.md`'s "Phase 4" section (this is a
+pointer, not a duplicate). Frontend flag (`NEXT_PUBLIC_ASK_BRAGI_ENABLED`)
+is set `true` in Vercel production (confirmed via `vercel env pull`).
+**Render's `ASK_BRAGI_ENABLED`/`OPENAI_API_KEY` were NOT set or verified
+this round** — the `render` CLI has no env-var subcommand, and this
+environment correctly refused to let its own stored auth token be
+extracted for a raw API call as a workaround. **Whoever has Render
+dashboard access needs to set `ASK_BRAGI_ENABLED=true` and confirm a
+real `OPENAI_API_KEY` is present before Ask Bragi will actually answer
+in production** — until then, the nav entry is visible (frontend flag
+on) but every request gets a safe, worded error, not a working answer.
+
+What shipped: server-authoritative per-turn scope broadening (keyword
+detection + explicit UI toggle, never silent — `scope_used` on every
+response); a real document-level `SourceEvidence` fallback for
+narrative documents (previously 0 citations even when accurate, now a
+correctly-labeled `page_only`-precision citation); a rebuilt patient
+Overview (Ask Bragi at the top, quick actions, Recently added, a
+deterministic "Needs your attention," Featured Lab Trend graph and My
+Medications widget removed from Overview only); a shared purple
+thinking indicator (`ask-bragi-thinking-indicator.tsx`, reduced-motion
+aware) used identically for patient and doctor UIs; a contextual
+`AskBragiSideTab` on document reader pages (defaults to document scope,
+full-record for Analize/Timeline/Overview) coexisting with the PDF
+source viewer via a new `RightWorkspace` tab switcher when both are
+open, keeping both mounted so neither loses state.
+
+171 backend tests passing (was 165) — 5 new: scope-broadening (explicit
+toggle, keyword intent, no-signal-stays-narrow, an inherently-wide tool
+call still marks broadening, `patient_record`-scope conversations are
+unaffected) and the narrative-citation fallback.
+
+Real Playwright testing against a local production build (not just
+tsc/eslint/build) found and fixed three defects before they reached
+production: a scroll-anchor bug (the new side-tab button lives in a
+sticky page header, not flowing content — anchoring scroll-restoration
+math on it produced a large spurious delta that snapped the page to the
+top on close), a missing mobile full-screen sheet style on the new
+`AskBragiPanel` (rendered inline instead of as a real overlay — found by
+actually loading the page at 390px wide, not by inspecting code), and a
+missing route-change safety net on the new `AskBragiPanelProvider`
+(mirrored `source-viewer-context.tsx`'s open/close shape but not its
+pathname-based auto-close, so a stale conversation could survive a
+navigation to another patient/document) plus a stale-response guard in
+`ask-bragi-chat.tsx`'s `send()` (a slow response arriving after the user
+switched patients could otherwise land in the wrong patient's message
+list). Also verified: doctor-side mirroring (same contextual system,
+same thinking indicator, on `/patients/[id]/ask-bragi` and a doctor's
+view of `documents/[id]/page.tsx`, which is genuinely the same
+component patients use, gated by role — not a separate implementation)
+and safe patient-switching (no stale content, no stuck thinking
+indicator, confirmed with two synthetic patients under one doctor).
+
+**Not independently re-tested this round, and why**: the "both PDF and
+Ask Bragi open on a phone-width viewport" tab-switcher case specifically
+— reaching it organically requires clicking a citation link inside a
+real Ask Bragi answer, which requires a working OpenAI key (not
+available in this environment). The fix for it is a standard, well-
+understood CSS stacking-context technique (documented in
+`right-workspace.tsx`'s own comment), reasoned through and typechecked/
+linted/built, but not pixel-verified end-to-end the way everything else
+above was. GDPR docs (`BRAGI_DATA_MAP.md`, `RETENTION_POLICY.md`,
+`DSAR_RUNBOOK.md`) now cover the two new Ask Bragi tables — see the
+separate commit for that. Imaging/medication-conflict/reverse-language
+eval categories and a latency benchmark were not attempted this round —
+both need a configured OpenAI key this environment doesn't have.
+
+### If you continue this work
+
+Read `BRAGI_ASK_BRAGI_PLAN.md`'s "Phase 4" section first. Before
+enabling Ask Bragi for real users, get Render's `OPENAI_API_KEY`/
+`ASK_BRAGI_ENABLED` set (see above) and re-run the live eval script
+(or a successor covering imaging/medication-conflict/reverse-language)
+against real vendor credentials. If you touch `right-workspace.tsx`'s
+sheet-variant stacking fix, verify it with a real citation click on a
+phone-width viewport rather than trusting the CSS reasoning alone — that
+specific path was not pixel-tested this round for the reason above.
