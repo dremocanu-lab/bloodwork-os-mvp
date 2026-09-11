@@ -33,6 +33,8 @@ data itself but privacy-relevant as an access record).
 | `shared_structured_pages` | document/care-partner share grants | Indirect ID |
 | `emergency_access_sessions` | `reason`, `reason_note` (free text), `ip_address`, `user_agent` | Audit/meta + special-category-adjacent (`reason_note` could describe the patient's condition) |
 | `emergency_audit_logs` | `details` (free text), `ip_address`, `user_agent` | Audit/meta |
+| `ask_bragi_conversations` | `patient_id` (whose record the conversation is about), `owner_user_id` (who asked — the patient themselves, or the doctor asking about a patient), `title` | Special category (a conversation about a specific patient's record) + Indirect ID | `owner_user_id` and `patient_id` are the SAME person for a patient's own conversation but DIFFERENT people for a doctor's (the doctor is the data subject for "who asked," the patient for "what was discussed") — both are personal data, of different subjects. `patient_id`/`scope`/`document_id` are set once at creation from a server-validated authorization check and never change (`app/services/ask_bragi/context.py`) |
+| `ask_bragi_messages` | `content` (the free-text question or answer — either can name or describe the patient), `citations_json` (references `source_evidence`/`lab_result` ids, not raw text itself), `chart_json`, `tool_categories_json` (which tool NAMES ran, not their inputs/outputs) | Special category | `content` is the one Ask Bragi table where a HUMAN (not extraction) freely types text — a doctor's question can itself contain PHI they choose to type (e.g. "does this match her diagnosis of X"), independent of what the patient's own record contains |
 
 ## Data flows (where personal data leaves the database)
 
@@ -61,9 +63,22 @@ data itself but privacy-relevant as an access record).
    never a static/public path).
 4. **No outbound flow to analytics/monitoring** — confirmed no such SDK
    exists in the codebase (`BRAGI_SECURITY_GDPR_PLAN.md` §17).
-5. **No AI chat feature** — so no outbound "ask a question about my
-   records" flow exists yet; see `docs/ai/AI_GOVERNANCE.md` for what
-   will need to be true before one is built.
+5. **Ask Bragi → OpenAI, per turn, feature-flagged.** When
+   `ASK_BRAGI_ENABLED=true`, each conversation turn
+   (`app/services/ask_bragi/service.py`) sends the user's own message
+   text plus whatever record data the server-authorized tool calls
+   fetch (labs, medications, timeline entries, document text — all
+   already scoped to what that specific conversation is authorized to
+   see, per `app/services/ask_bragi/context.py`) to OpenAI's Responses
+   API (`api.openai.com`) with `store=False` (OpenAI does not retain the
+   conversation server-side beyond its own standard abuse-monitoring
+   window — see `docs/ai/AI_GOVERNANCE.md` for the full vendor posture).
+   Bragi's own database is the only place a full conversation transcript
+   persists (`ask_bragi_conversations`/`ask_bragi_messages`). This is a
+   NEW category of outbound flow relative to the upload-time OCR/
+   extraction flow in item 1: here, a human (patient or doctor) is
+   typing free text that itself may contain PHI, not just record content
+   already stored in the database.
 
 ## Data NOT yet minimized (real gaps, not paperwork)
 
@@ -99,3 +114,8 @@ data itself but privacy-relevant as an access record).
   for their own `users` row (email, name) and for their own activity
   records (`audit_logs.actor`, `emergency_access_sessions`,
   `admin_action_logs`), but not for the patient data they merely access.
+  A doctor's own Ask Bragi questions (`ask_bragi_messages.content` where
+  `owner_user_id` is the doctor) are an exception to "not for the patient
+  data they merely access" — the doctor is a data subject for what they
+  themselves typed, even though the conversation is filed under the
+  patient (`patient_id`) whose record it concerns.

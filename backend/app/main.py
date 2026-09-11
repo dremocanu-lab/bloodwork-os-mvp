@@ -3460,10 +3460,11 @@ def export_my_data(
 
     Returns a zip: profile.json, lab_results.json, medications.json,
     events.json, access_relationships.json, emergency_contacts.json,
-    documents_manifest.json, ai_conversations.json (present but empty —
-    no AI chat feature exists yet), README.txt, and documents/ (the
-    patient's own original uploaded files, up to
-    DSAR_EXPORT_MAX_FILE_BYTES total).
+    documents_manifest.json, ai_conversations.json (the patient's own Ask
+    Bragi conversations — full message content/citations, whether the
+    patient or a doctor asked; empty list if there are none or the
+    feature is disabled), README.txt, and documents/ (the patient's own
+    original uploaded files, up to DSAR_EXPORT_MAX_FILE_BYTES total).
 
     Deliberately excludes: any other patient's data (every query below is
     scoped to `patient.id`, never a caller-supplied id); quarantined

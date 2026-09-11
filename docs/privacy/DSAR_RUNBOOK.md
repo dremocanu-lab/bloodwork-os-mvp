@@ -6,10 +6,12 @@ programmatically with manual fallback steps for what it doesn't.
 ## Right of access (Art.15) / data portability (Art.20)
 
 **Implemented this round**: `POST /my/export` (patient role only) —
-`[PASS]`, evidence: `backend/tests/test_dsar_export.py` (8 tests,
+`[PASS]`, evidence: `backend/tests/test_dsar_export.py` (9 tests,
 real DB, real synthetic accounts) covering auth requirement, role
 restriction (non-patients get 403), expected file presence, own-data
-correctness, cross-patient isolation, and real original-file embedding.
+correctness, cross-patient isolation, real original-file embedding, and
+(added alongside Ask Bragi) that a patient's own Ask Bragi conversations
+are included with full content.
 
 Returns a zip containing: `profile.json`, `lab_results.json`,
 `medications.json`, `events.json`, `access_relationships.json`
@@ -19,8 +21,12 @@ json`, `documents_manifest.json` (metadata for every uploaded document),
 `documents/` (the original files themselves, up to a 500MB per-export
 cap — see `DSAR_EXPORT_MAX_FILE_BYTES` in `backend/app/main.py`; beyond
 the cap, a document is still fully described in the manifest with a note
-that its raw file was omitted), `ai_conversations.json` (present but
-empty — no AI chat feature exists yet), and `README.txt` explaining the
+that its raw file was omitted), `ai_conversations.json` (the patient's
+own Ask Bragi conversations — full message content and citations,
+whether the patient or a doctor asked about their record; empty list if
+there are none or the feature is disabled — see
+`test_export_includes_own_ask_bragi_conversation` in
+`test_dsar_export.py`), and `README.txt` explaining the
 contents. Authorization reuses the existing pattern exactly (`require_
 role("patient")` + `get_patient_for_user`, which only ever resolves to
 the caller's own linked `Patient` row — there is no separate "which
