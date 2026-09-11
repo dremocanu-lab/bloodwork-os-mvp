@@ -7,21 +7,27 @@
  * parallel visual language or a second PDF/citation viewer. See
  * BRAGI_ASK_BRAGI_PLAN.md's "UI architecture" section.
  *
- * V1 is synchronous (request -> full response), not streamed — see the
- * plan doc's "Streaming" section for why that's an honest, deliberate
- * V1 scope decision rather than an oversight.
+ * Real streaming: the answer grows progressively as the model writes it
+ * (see lib/ask-bragi-api.ts's streamAskBragiMessage) instead of waiting
+ * for a complete response. The final citations/chart/follow_ups/status
+ * are ALWAYS taken from the server's "completed" event, never inferred
+ * from the streamed text — streaming only changes how the answer is
+ * shown while it's in progress, never what gets validated.
  */
 
 import { useEffect, useRef, useState } from "react";
 import { EmptyState, ErrorNote } from "@/components/ui";
-import { IconAlert, IconArrowUp, IconInbox } from "@/components/ui/icon";
+import { IconAlert, IconArrowUp, IconChevronRight, IconInbox, IconStop } from "@/components/ui/icon";
 import { useSourceViewerOptional, captureVisualAnchor } from "@/components/source-viewer/source-viewer-context";
 import { getErrorMessage } from "@/lib/api";
 import {
+  AskBragiChart,
+  AskBragiCitation,
   AskBragiConversation,
   AskBragiMessage,
   AskBragiScope,
   askBragiApi,
+  streamAskBragiMessage,
 } from "@/lib/ask-bragi-api";
 import { AskBragiChartView } from "./ask-bragi-chart";
 import { AskBragiThinkingIndicator } from "./ask-bragi-thinking-indicator";
@@ -36,8 +42,8 @@ type Props = {
   documentId?: number;
   audience: "patient" | "doctor";
   suggestions?: string[];
-  /** Compact mode for the contextual side panel (narrower max-width,
-   * denser padding) — see ask-bragi-panel.tsx. */
+  /** Compact mode for the contextual side panel / Overview card (narrower
+   * max-width, denser padding, capped height) — see ask-bragi-panel.tsx. */
   compact?: boolean;
   /** Which scope pill starts selected — see BRAGI_ASK_BRAGI_PLAN.md's
    * per-surface scope defaults (a document reader defaults to "document";
@@ -45,27 +51,74 @@ type Props = {
    * documentId happens to be available for reference). Defaults to
    * "document" when a documentId is present, "patient_record" otherwise. */
   initialScope?: AskBragiScope;
+  /** Resume an existing conversation (its full message history is loaded)
+   * instead of starting a new one — how a history sidebar's "continue"
+   * action and Overview's "Continue in Ask Bragi" escalation both work.
+   * Takes precedence over patientId/documentId/initialScope for THIS
+   * mount; changing it (like changing patientId/documentId) starts a
+   * fresh load, same patient/document-switch safety as before. */
+  conversationId?: number;
+  /** Fired once a conversation is available — newly created OR resumed —
+   * so a parent (history sidebar, Overview) learns its id without owning
+   * conversation-creation/loading itself. */
+  onConversationStarted?: (conversation: AskBragiConversation) => void;
+  /** Cap how many messages render inline before showing a "Continue in
+   * Ask Bragi" link instead of the rest — Overview's compact card uses
+   * this so it can never grow into a full conversation-history surface.
+   * Omit for the full, uncapped experience. */
+  maxVisibleMessages?: number;
+  /** Where the "Continue in Ask Bragi" link goes — only rendered when
+   * maxVisibleMessages is set and exceeded, or the latest message has a
+   * chart (BRAGI product spec: prefer the full workspace for charts). */
+  onEscalate?: () => void;
 };
+
+function isScrolledNearBottom(container: HTMLElement): boolean {
+  return container.scrollHeight - container.scrollTop - container.clientHeight < 48;
+}
+
+function scrollToBottom(container: HTMLElement | null | undefined): void {
+  if (!container) return;
+  container.scrollTop = container.scrollHeight;
+}
 
 const THINKING_LABEL: Record<"patient" | "doctor", string> = {
-  patient: "Bragi is reviewing your record…",
-  doctor: "Reviewing the record…",
+  patient: "Checking your record…",
+  doctor: "Checking the record…",
 };
 
-export default function AskBragiChat({ patientId, documentId, audience, suggestions, compact, initialScope }: Props) {
+export default function AskBragiChat({
+  patientId,
+  documentId,
+  audience,
+  suggestions,
+  compact,
+  initialScope,
+  conversationId,
+  onConversationStarted,
+  maxVisibleMessages,
+  onEscalate,
+}: Props) {
   const sourceViewer = useSourceViewerOptional();
   const [conversation, setConversation] = useState<AskBragiConversation | null>(null);
   const [messages, setMessages] = useState<AskBragiMessage[]>([]);
   const [input, setInput] = useState("");
   const [starting, setStarting] = useState(true);
-  const [sending, setSending] = useState(false);
+  const [generating, setGenerating] = useState(false);
   const [error, setError] = useState("");
+  // The in-progress assistant turn's own state, shown as a separate
+  // "still generating" bubble below the settled `messages` list —
+  // folded into `messages` (with real citations/chart/follow_ups) only
+  // once the server's "completed" event validates it.
+  const [streamingAnswer, setStreamingAnswer] = useState("");
+  const [streamingStatus, setStreamingStatus] = useState("");
+  const [liveAnnouncement, setLiveAnnouncement] = useState("");
   const listEndRef = useRef<HTMLDivElement>(null);
   // Stable, monotonically-decreasing ids for optimistic (not-yet-
-  // server-confirmed) user messages — real assistant/user rows always
-  // carry the server's own positive id. A ref counter (not Date.now(),
-  // which react-hooks/purity flags as an impure render-path call) keeps
-  // this a pure, predictable component.
+  // server-confirmed) messages — real assistant/user rows always carry
+  // the server's own positive id. A ref counter (not Date.now(), which
+  // react-hooks/purity flags as an impure render-path call) keeps this a
+  // pure, predictable component.
   const localIdRef = useRef(0);
   // Bumped every time a new conversation starts (see the effect below) so
   // an in-flight send() from a conversation the user has since navigated
@@ -74,6 +127,7 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   // B's message list after a doctor switches patients mid-request. See
   // BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section.
   const conversationTokenRef = useRef(0);
+  const abortControllerRef = useRef<AbortController | null>(null);
 
   // Scope UI — only meaningful when this conversation actually has a
   // document to be scoped to. `userSetScope` is undefined until the user
@@ -83,13 +137,9 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   // user (or a broadened server response) settles on a scope, the pill
   // reflects it — this is the visible "scope transition" the product
   // spec requires; the server decision is never silent.
-  const hasDocumentScope = documentId !== undefined;
+  const hasDocumentScope = documentId !== undefined || conversation?.document_id != null;
   const defaultScope: AskBragiScope = initialScope ?? (hasDocumentScope ? "document" : "patient_record");
   const [displayedScope, setDisplayedScope] = useState<AskBragiScope>(defaultScope);
-  // Pre-seeded (not null) when a caller explicitly names a non-default
-  // initial scope (e.g. a Timeline entry point tied to a document but
-  // defaulting to "patient_record") — the very first message should
-  // already carry that as requested_scope, not rely on keyword detection.
   const [userSetScope, setUserSetScope] = useState<AskBragiScope | null>(
     initialScope && hasDocumentScope && initialScope !== "document" ? initialScope : null
   );
@@ -97,28 +147,41 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   useEffect(() => {
     let cancelled = false;
     async function start() {
-      // Invalidates any send() already in flight for the PREVIOUS
+      // Invalidates any send()/stream already in flight for the PREVIOUS
       // conversation (see conversationTokenRef's own comment) and clears
-      // whatever leftover "sending" state that request left behind — both
-      // must happen here, not only inside send()'s own guard, or a
+      // whatever leftover generating state that request left behind —
+      // both must happen here, not only inside send()'s own guard, or a
       // preempted request could leave the new conversation stuck showing
       // a thinking indicator that will never resolve.
       conversationTokenRef.current += 1;
-      setSending(false);
+      abortControllerRef.current?.abort();
+      abortControllerRef.current = null;
+      setGenerating(false);
+      setStreamingAnswer("");
+      setStreamingStatus("");
       setStarting(true);
       setError("");
       try {
-        const res = await askBragiApi.createConversation({
-          patient_id: patientId,
-          document_id: documentId,
-        });
-        if (cancelled) return;
-        setConversation(res.data);
-        setDisplayedScope(defaultScope);
+        let convData: AskBragiConversation;
+        let loadedMessages: AskBragiMessage[] = [];
+        if (conversationId != null) {
+          const res = await askBragiApi.getConversation(conversationId);
+          if (cancelled) return;
+          convData = res.data;
+          loadedMessages = res.data.messages;
+        } else {
+          const res = await askBragiApi.createConversation({ patient_id: patientId, document_id: documentId });
+          if (cancelled) return;
+          convData = res.data;
+        }
+        setConversation(convData);
+        onConversationStarted?.(convData);
+        const lastScopeUsed = [...loadedMessages].reverse().find((m) => m.scope_used)?.scope_used;
+        setDisplayedScope(lastScopeUsed ?? (initialScope ?? (convData.document_id ? "document" : "patient_record")));
         setUserSetScope(
-          initialScope && res.data.scope === "document" && initialScope !== "document" ? initialScope : null
+          initialScope && convData.scope === "document" && initialScope !== "document" ? initialScope : null
         );
-        setMessages([]);
+        setMessages(loadedMessages);
       } catch (err) {
         if (!cancelled) setError(getErrorMessage(err, "Ask Bragi is unavailable right now."));
       } finally {
@@ -126,42 +189,57 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
       }
     }
     start();
-    // Patient-switch / document-switch safety: starting a brand new
-    // conversation whenever the scope changes means an old patient's
-    // answer can never linger under a new patient's context — see
-    // BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section.
+    // Patient-switch / document-switch / conversation-switch safety:
+    // starting fresh whenever any of these change means an old patient's
+    // (or old conversation's) content can never linger under a new one —
+    // see BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section.
     return () => {
       cancelled = true;
     };
-  }, [patientId, documentId, initialScope, defaultScope]);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [patientId, documentId, initialScope, defaultScope, conversationId]);
 
   // Auto-follow the conversation's OWN scrollable container as new
-  // messages arrive — never `scrollIntoView()`, which can escape this
+  // content arrives — never `scrollIntoView()`, which can escape this
   // container and drag an ANCESTOR (the whole page, on Overview) into
   // view instead. That was a real, reproduced bug: a fresh conversation
   // starts with `messages = []`, which still changes this effect's own
   // dependency (a new empty-array reference) once `start()` resolves,
   // and `scrollIntoView()`'s default `block: "start"` alignment then
   // pulled the ENTIRE PAGE down to align the (empty, near-the-top)
-  // message list with the viewport top — landing Overview scrolled
-  // "under" Ask Bragi a couple seconds after every load. Setting the
-  // immediate parent's own `scrollTop` instead can only ever affect that
-  // one element, never anything outside it. Skipped entirely while there
-  // are no messages yet — nothing to follow, and no reason to touch
-  // scroll position at all on a fresh/empty conversation.
+  // message list with the viewport top. Setting the immediate parent's
+  // own `scrollTop` instead can only ever affect that one element.
+  // Only auto-follows while already scrolled near the bottom (or on new
+  // messages/generation start) — never yanks the view back down if the
+  // user has deliberately scrolled up to reread something while a long
+  // answer is still streaming in.
+  const wasNearBottomRef = useRef(true);
   useEffect(() => {
-    if (messages.length === 0) return;
     const container = listEndRef.current?.parentElement;
     if (!container) return;
-    container.scrollTop = container.scrollHeight;
-  }, [messages, sending]);
+    function onScroll() {
+      wasNearBottomRef.current = isScrolledNearBottom(container!);
+    }
+    container.addEventListener("scroll", onScroll, { passive: true });
+    return () => container.removeEventListener("scroll", onScroll);
+  }, []);
+  useEffect(() => {
+    if (messages.length === 0 && !streamingAnswer) return;
+    if (!wasNearBottomRef.current) return;
+    scrollToBottom(listEndRef.current?.parentElement);
+  }, [messages, streamingAnswer, generating]);
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || !conversation || sending) return;
+    if (!trimmed || !conversation || generating) return;
     const tokenAtSend = conversationTokenRef.current;
-    setSending(true);
+    setGenerating(true);
     setError("");
+    setStreamingAnswer("");
+    setStreamingStatus(THINKING_LABEL[audience]);
+    setLiveAnnouncement("Bragi is responding.");
+    wasNearBottomRef.current = true;
+
     localIdRef.current -= 1;
     const userMessage: AskBragiMessage = {
       id: localIdRef.current,
@@ -174,21 +252,110 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
       created_at: new Date().toISOString(),
     };
     setMessages((prev) => [...prev, userMessage]);
-    setInput("");
+    // Only the message actually submitted is cleared — anything the user
+    // types WHILE Bragi answers accumulates in `input` untouched and is
+    // never wiped out from under them when the response completes.
+    setInput((prev) => (prev.trim() === trimmed ? "" : prev));
+
+    const controller = new AbortController();
+    abortControllerRef.current = controller;
+    let liveAnswer = "";
+
     try {
-      const res = await askBragiApi.sendMessage(conversation.id, trimmed, userSetScope ?? undefined);
-      // Stale if the user has since switched patient/document/conversation
-      // — the response belongs to a context this component no longer
-      // shows. See conversationTokenRef's own comment.
-      if (tokenAtSend !== conversationTokenRef.current) return;
-      setMessages((prev) => [...prev, res.data]);
-      if (res.data.scope_used) setDisplayedScope(res.data.scope_used);
+      await streamAskBragiMessage(
+        conversation.id,
+        trimmed,
+        userSetScope ?? undefined,
+        (evt) => {
+          if (tokenAtSend !== conversationTokenRef.current) return; // stale — conversation switched mid-stream
+          if (evt.event === "status") {
+            setStreamingStatus((evt.data.label as string) || THINKING_LABEL[audience]);
+          } else if (evt.event === "text_delta") {
+            liveAnswer += (evt.data.delta as string) || "";
+            setStreamingAnswer(liveAnswer);
+          } else if (evt.event === "completed") {
+            const data = evt.data as {
+              answer: string;
+              citations: AskBragiCitation[];
+              chart: AskBragiChart | null;
+              follow_ups: string[];
+              status: string;
+              scope_used: AskBragiScope;
+            };
+            localIdRef.current -= 1;
+            setMessages((prev) => [
+              ...prev,
+              {
+                id: localIdRef.current,
+                role: "assistant",
+                content: data.answer,
+                citations: data.citations,
+                chart: data.chart,
+                follow_ups: data.follow_ups,
+                status: data.status,
+                scope_used: data.scope_used,
+                created_at: new Date().toISOString(),
+              },
+            ]);
+            if (data.scope_used) setDisplayedScope(data.scope_used);
+            setLiveAnnouncement("Bragi's response is ready.");
+          } else if (evt.event === "saved") {
+            // Reconcile the just-added assistant message with its real,
+            // persisted id (citation clicks/React keys want the real one).
+            const saved = evt.data.message as AskBragiMessage;
+            setMessages((prev) => {
+              const next = [...prev];
+              for (let i = next.length - 1; i >= 0; i--) {
+                if (next[i].role === "assistant" && next[i].id < 0) {
+                  next[i] = saved;
+                  break;
+                }
+              }
+              return next;
+            });
+          } else if (evt.event === "error") {
+            setError((evt.data.message as string) || "Ask Bragi could not answer that. Please try again.");
+          }
+        },
+        controller.signal
+      );
     } catch (err) {
       if (tokenAtSend !== conversationTokenRef.current) return;
-      setError(getErrorMessage(err, "Ask Bragi could not answer that. Please try again."));
+      if (err instanceof DOMException && err.name === "AbortError") {
+        // User-initiated Stop: keep whatever text had already arrived,
+        // clearly marked incomplete — never silently discarded, never
+        // treated as a validated/citable answer (see stopGenerating).
+        if (liveAnswer.trim()) {
+          localIdRef.current -= 1;
+          setMessages((prev) => [
+            ...prev,
+            {
+              id: localIdRef.current,
+              role: "assistant",
+              content: liveAnswer,
+              citations: [],
+              chart: null,
+              follow_ups: [],
+              status: "stopped",
+              created_at: new Date().toISOString(),
+            },
+          ]);
+        }
+      } else {
+        setError(getErrorMessage(err, "Ask Bragi could not answer that. Please try again."));
+      }
     } finally {
-      if (tokenAtSend === conversationTokenRef.current) setSending(false);
+      if (tokenAtSend === conversationTokenRef.current) {
+        setGenerating(false);
+        setStreamingAnswer("");
+        setStreamingStatus("");
+        abortControllerRef.current = null;
+      }
     }
+  }
+
+  function stopGenerating() {
+    abortControllerRef.current?.abort();
   }
 
   function handleCitationClick(sourceEvidenceId: number) {
@@ -219,6 +386,12 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     );
   }
 
+  const capped = maxVisibleMessages != null && messages.length > maxVisibleMessages;
+  const visibleMessages = capped ? messages.slice(-maxVisibleMessages) : messages;
+  const hiddenCount = messages.length - visibleMessages.length;
+  const latestHasChart = messages.length > 0 && messages[messages.length - 1].chart != null;
+  const showEscalateLink = Boolean(onEscalate) && (hiddenCount > 0 || (latestHasChart && compact));
+
   return (
     <div className="b-stack" style={{ maxWidth, margin: compact ? undefined : "0 auto", minWidth: 0 }}>
       {hasDocumentScope ? (
@@ -232,19 +405,35 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
         </div>
       ) : null}
 
+      <span className="sr-only" aria-live="polite">
+        {liveAnnouncement}
+      </span>
+
+      {hiddenCount > 0 ? (
+        <button
+          type="button"
+          className="b-btn b-btn-ghost b-btn-sm"
+          onClick={onEscalate}
+          style={{ alignSelf: "flex-start" }}
+        >
+          {hiddenCount} earlier message{hiddenCount === 1 ? "" : "s"} in this conversation
+          <IconChevronRight size={12} />
+        </button>
+      ) : null}
+
       <div
-        className="b-surface"
+        className="b-surface ask-bragi-messages ask-bragi-surface"
         style={{
           display: "flex",
           flexDirection: "column",
           gap: "var(--s3)",
-          minHeight: compact ? 220 : 320,
-          maxHeight: compact ? "calc(100vh - 320px)" : "60vh",
+          minHeight: compact ? 180 : 320,
+          maxHeight: compact ? 320 : "60vh",
           overflowY: "auto",
           padding: "var(--s4)",
         }}
       >
-        {messages.length === 0 ? (
+        {visibleMessages.length === 0 && !generating ? (
           <EmptyState
             icon={<IconInbox size={18} />}
             title="Ask Bragi about this record"
@@ -255,43 +444,54 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
             }
           />
         ) : (
-          messages.map((m, i) => {
-            const prevScope = i > 0 ? messages[i - 1].scope_used : conversation?.scope;
-            const scopeChanged =
-              m.role === "assistant" && m.scope_used && prevScope && m.scope_used !== prevScope;
+          visibleMessages.map((m, i) => {
+            const prevScope = i > 0 ? visibleMessages[i - 1].scope_used : conversation?.scope;
+            const scopeChanged = m.role === "assistant" && m.scope_used && prevScope && m.scope_used !== prevScope;
             return (
               <div key={m.id}>
                 {scopeChanged ? (
-                  <p className="muted-text" style={{ fontSize: 12, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 6 }}>
+                  <p
+                    className="muted-text"
+                    style={{ fontSize: 12, margin: "0 0 6px", display: "flex", alignItems: "center", gap: 6 }}
+                  >
                     <IconAlert size={12} /> Searching full record
                   </p>
                 ) : null}
-                <AskBragiMessageBubble message={m} onCitationClick={handleCitationClick} />
+                <AskBragiMessageBubble message={m} onCitationClick={handleCitationClick} onFollowUpClick={send} />
               </div>
             );
           })
         )}
-        {sending ? (
-          <div className="b-list-row" style={{ alignSelf: "flex-start" }}>
-            <AskBragiThinkingIndicator label={THINKING_LABEL[audience]} />
+        {generating ? (
+          <div className="ask-bragi-bubble ask-bragi-bubble-assistant" style={{ alignSelf: "flex-start" }}>
+            {streamingAnswer ? (
+              <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{streamingAnswer}</p>
+            ) : (
+              <AskBragiThinkingIndicator label={streamingStatus || THINKING_LABEL[audience]} />
+            )}
           </div>
         ) : null}
         <div ref={listEndRef} />
       </div>
 
+      {showEscalateLink && !hiddenCount ? (
+        <button
+          type="button"
+          className="b-btn b-btn-ghost b-btn-sm"
+          onClick={onEscalate}
+          style={{ alignSelf: "flex-start" }}
+        >
+          Continue in Ask Bragi
+          <IconChevronRight size={12} />
+        </button>
+      ) : null}
+
       {error && conversation ? <ErrorNote>{error}</ErrorNote> : null}
 
-      {messages.length === 0 && suggestions && suggestions.length > 0 ? (
+      {messages.length === 0 && !generating && suggestions && suggestions.length > 0 ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)" }}>
           {suggestions.map((s) => (
-            <button
-              key={s}
-              type="button"
-              className="b-chip b-chip-brand"
-              style={{ cursor: "pointer" }}
-              onClick={() => send(s)}
-              disabled={sending}
-            >
+            <button key={s} type="button" className="b-chip b-chip-brand ask-bragi-chip" style={{ cursor: "pointer" }} onClick={() => send(s)}>
               {s}
             </button>
           ))}
@@ -306,22 +506,23 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
         style={{ display: "flex", gap: "var(--s2)" }}
       >
         <input
-          className="b-input"
+          className="b-input ask-bragi-composer"
           style={{ flex: 1, fontSize: 16 }}
           placeholder={audience === "patient" ? "Ask about your record…" : "Ask about this patient…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          disabled={sending || !conversation}
+          disabled={!conversation}
           autoComplete="off"
         />
-        <button
-          type="submit"
-          className="b-btn b-btn-primary"
-          disabled={sending || !input.trim() || !conversation}
-          aria-label="Send"
-        >
-          <IconArrowUp size={16} />
-        </button>
+        {generating ? (
+          <button type="button" className="b-btn b-btn-secondary ask-bragi-send-btn" onClick={stopGenerating} aria-label="Stop generating">
+            <IconStop size={14} />
+          </button>
+        ) : (
+          <button type="submit" className="b-btn b-btn-primary ask-bragi-send-btn" disabled={!input.trim() || !conversation} aria-label="Send">
+            <IconArrowUp size={16} />
+          </button>
+        )}
       </form>
     </div>
   );
@@ -339,7 +540,7 @@ function ScopePill({
   return (
     <button
       type="button"
-      className={active ? "b-chip b-chip-brand" : "b-chip"}
+      className={active ? "b-chip b-chip-brand ask-bragi-chip" : "b-chip ask-bragi-chip"}
       style={{ cursor: "pointer" }}
       aria-pressed={active}
       onClick={onClick}
@@ -352,21 +553,17 @@ function ScopePill({
 function AskBragiMessageBubble({
   message,
   onCitationClick,
+  onFollowUpClick,
 }: {
   message: AskBragiMessage;
   onCitationClick: (sourceEvidenceId: number) => void;
+  onFollowUpClick: (text: string) => void;
 }) {
   const isUser = message.role === "user";
   return (
     <div
-      className={isUser ? "b-list-row" : "b-surface"}
-      style={{
-        alignSelf: isUser ? "flex-end" : "flex-start",
-        maxWidth: "88%",
-        background: isUser ? "var(--primary-soft)" : undefined,
-        border: isUser ? "1px solid var(--primary-soft-border)" : undefined,
-        padding: "var(--s3)",
-      }}
+      className={`ask-bragi-bubble ${isUser ? "ask-bragi-bubble-user" : "ask-bragi-bubble-assistant"}`}
+      style={{ alignSelf: isUser ? "flex-end" : "flex-start", maxWidth: "88%" }}
     >
       <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{message.content}</p>
 
@@ -376,13 +573,19 @@ function AskBragiMessageBubble({
         </p>
       ) : null}
 
+      {message.status === "stopped" ? (
+        <p className="muted-text" style={{ display: "flex", gap: 6, alignItems: "center", marginTop: "var(--s2)" }}>
+          <IconAlert size={13} /> Stopped — this answer may be incomplete.
+        </p>
+      ) : null}
+
       {message.citations.length > 0 ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)", marginTop: "var(--s3)" }}>
           {message.citations.map((c) => (
             <button
               key={c.source_evidence_id}
               type="button"
-              className="b-chip"
+              className="b-chip ask-bragi-chip"
               style={{ cursor: "pointer" }}
               onClick={() => onCitationClick(c.source_evidence_id)}
             >
@@ -401,9 +604,15 @@ function AskBragiMessageBubble({
       {message.follow_ups.length > 0 ? (
         <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)", marginTop: "var(--s3)" }}>
           {message.follow_ups.map((f) => (
-            <span key={f} className="b-chip" style={{ opacity: 0.75 }}>
+            <button
+              key={f}
+              type="button"
+              className="b-chip ask-bragi-chip"
+              style={{ cursor: "pointer" }}
+              onClick={() => onFollowUpClick(f)}
+            >
               {f}
-            </span>
+            </button>
           ))}
         </div>
       ) : null}

@@ -262,6 +262,58 @@ def test_revoked_doctor_access_denies_the_next_message(patient_a, doctor_a):
     assert response.status_code == 403
 
 
+# --- Doctor conversation history is per-patient, never mixed -----------------
+
+
+def test_conversation_list_filtered_by_patient_id_excludes_other_patients(patient_a, patient_b, doctor_a):
+    patient_a_id = _patient_id_for(patient_a["token"])
+    patient_b_id = _patient_id_for(patient_b["token"])
+    doctor_user_id = doctor_a["user"]["id"]
+    _grant_doctor_access(patient_a_id, doctor_user_id)
+    _grant_doctor_access(patient_b_id, doctor_user_id)
+
+    conv_a = client.post(
+        "/ask-bragi/conversations", json={"patient_id": patient_a_id}, headers=_auth(doctor_a["token"])
+    ).json()
+    conv_b = client.post(
+        "/ask-bragi/conversations", json={"patient_id": patient_b_id}, headers=_auth(doctor_a["token"])
+    ).json()
+
+    # Unfiltered: the doctor's own full history, both patients.
+    all_ids = {c["id"] for c in client.get("/ask-bragi/conversations", headers=_auth(doctor_a["token"])).json()}
+    assert conv_a["id"] in all_ids and conv_b["id"] in all_ids
+
+    # Filtered to patient A: patient B's conversation must NOT leak in —
+    # this is the exact guarantee the doctor's per-patient history
+    # sidebar depends on (BRAGI product spec: never cross-patient).
+    filtered = client.get(
+        "/ask-bragi/conversations", params={"patient_id": patient_a_id}, headers=_auth(doctor_a["token"])
+    ).json()
+    filtered_ids = {c["id"] for c in filtered}
+    assert conv_a["id"] in filtered_ids
+    assert conv_b["id"] not in filtered_ids
+
+
+def test_conversation_list_filtered_by_patient_id_denies_unauthorized_patient(patient_a, doctor_a):
+    patient_a_id = _patient_id_for(patient_a["token"])
+    _grant_doctor_access(patient_a_id, doctor_a["user"]["id"])
+    client.post("/ask-bragi/conversations", json={"patient_id": patient_a_id}, headers=_auth(doctor_a["token"]))
+
+    # A patient this doctor has no grant for at all — degrades to an
+    # empty list, the same "no existence/authorization signal leaked"
+    # convention every other list-scoped-to-what-I-can-see endpoint uses.
+    unrelated = _signup("patient", cnp="6000101999949")
+    try:
+        unrelated_id = _patient_id_for(unrelated["token"])
+        response = client.get(
+            "/ask-bragi/conversations", params={"patient_id": unrelated_id}, headers=_auth(doctor_a["token"])
+        )
+        assert response.status_code == 200
+        assert response.json() == []
+    finally:
+        client.delete("/my/account", headers=_auth(unrelated["token"]))
+
+
 # --- Tool-level re-authorization (defense in depth even past the route gate) -
 
 

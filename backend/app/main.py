@@ -24,7 +24,7 @@ def generate_public_id(prefix: str) -> str:
 
 from fastapi import BackgroundTasks, Depends, FastAPI, File, Form, Header, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
-from fastapi.responses import FileResponse
+from fastapi.responses import FileResponse, StreamingResponse
 from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, or_, text
 from sqlalchemy.exc import SQLAlchemyError
@@ -63,7 +63,7 @@ from app.services.ask_bragi.context import (
     resolve_document_scope,
     resolve_patient_id_for_new_conversation,
 )
-from app.services.ask_bragi.service import ASK_BRAGI_ENABLED, AskBragiError, run_turn
+from app.services.ask_bragi.service import ASK_BRAGI_ENABLED, AskBragiError, run_turn, run_turn_streaming
 from app.rate_limit import RateLimiter
 from app.services.patient_identity import (
     MISMATCH,
@@ -6902,19 +6902,38 @@ def create_ask_bragi_conversation(
 
 @app.get("/ask-bragi/conversations")
 def list_ask_bragi_conversations(
+    patient_id: int | None = Query(default=None),
     db: Session = Depends(get_db),
     current_user=Depends(require_role("patient", "doctor")),
     _flag=Depends(require_ask_bragi_enabled),
 ):
-    conversations = (
-        db.query(models.AskBragiConversation)
-        .filter(
-            models.AskBragiConversation.owner_user_id == current_user.id,
-            models.AskBragiConversation.archived_at.is_(None),
-        )
-        .order_by(models.AskBragiConversation.id.desc())
-        .all()
+    """Without `patient_id`: every conversation this user owns, across
+    every patient — used by the patient's own /ask-bragi history and (for
+    a doctor) as a fallback. With `patient_id`: only that patient's
+    conversations — how a doctor's per-patient history sidebar stays
+    scoped to the patient they're actually looking at (BRAGI product
+    spec: doctor history must be PATIENT-SCOPED, never a mixed list
+    across every patient they've ever asked about). Authorization is
+    re-checked here independently of `owner_user_id`, same convention as
+    _load_ask_bragi_conversation_for_owner — a doctor whose access to
+    this patient has since been revoked gets an empty list, not a 403,
+    matching how every other "list what I can currently see" endpoint in
+    this app degrades (no existence/authorization signal leaked either
+    way)."""
+    query = db.query(models.AskBragiConversation).filter(
+        models.AskBragiConversation.owner_user_id == current_user.id,
+        models.AskBragiConversation.archived_at.is_(None),
     )
+    if patient_id is not None:
+        if not recheck_access(
+            db,
+            requester_user_id=current_user.id,
+            requester_role=current_user.role,
+            patient_id=patient_id,
+        ):
+            return []
+        query = query.filter(models.AskBragiConversation.patient_id == patient_id)
+    conversations = query.order_by(models.AskBragiConversation.id.desc()).all()
     return [_serialize_ask_bragi_conversation(c) for c in conversations]
 
 
@@ -7027,4 +7046,134 @@ def send_ask_bragi_message(
     )
 
     return _serialize_ask_bragi_message(assistant_row)
+
+
+def _sse(event: str, data: dict) -> str:
+    """One Server-Sent Event frame. `data` is always a JSON object — never
+    raw text — so the frontend has one parsing path for every event type."""
+    return f"event: {event}\ndata: {json.dumps(data)}\n\n"
+
+
+@app.post("/ask-bragi/conversations/{conversation_id}/messages/stream")
+async def stream_ask_bragi_message(
+    conversation_id: int,
+    payload: AskBragiMessageRequest,
+    request: Request,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+    _rl=Depends(RateLimiter(limit=20, window_seconds=3600, key_prefix="ask_bragi_message")),
+):
+    """Streaming counterpart to POST .../messages — same authorization,
+    same persistence, same validated final content; the only difference
+    is the answer text reaches the browser progressively (Server-Sent
+    Events) instead of all at once. See run_turn_streaming's own
+    docstring for the trust-boundary argument (unchanged from the
+    non-streaming route: only the FINAL, fully-validated JSON is ever
+    parsed for citations/chart/follow_ups/status).
+
+    Real cancellation: `should_stop` is checked between provider events
+    and between tool-call rounds inside run_turn_streaming — a client
+    that aborts its fetch (Stop button, navigating away, switching
+    patients) closes this connection, `request.is_disconnected()` starts
+    returning True, and the provider stream is closed from our side
+    (stream.close()) rather than left running unread. A stopped turn is
+    NOT persisted — its text never passed citation/chart validation, so
+    nothing about it is trustworthy enough to store; the conversation
+    simply has no assistant reply for that turn, exactly as if the
+    request had never been made.
+    """
+    conversation = _load_ask_bragi_conversation_for_owner(db, conversation_id, current_user)
+    prior_messages = list(conversation.messages)
+    prior_turns = [(m.role, m.content) for m in prior_messages]
+
+    ctx = AskBragiContext(
+        db=db,
+        patient_id=conversation.patient_id,
+        requester_user_id=current_user.id,
+        requester_role=current_user.role,
+        scope=conversation.scope,
+        document_id=conversation.document_id,
+    )
+    audience = "patient" if current_user.role == "patient" else "doctor"
+
+    async def should_stop() -> bool:
+        return await request.is_disconnected()
+
+    async def event_stream():
+        completed_payload: dict | None = None
+        try:
+            async for event_name, data in run_turn_streaming(
+                ctx=ctx,
+                audience=audience,
+                user_message=payload.message,
+                prior_turns=prior_turns,
+                requested_scope=payload.requested_scope,
+                should_stop=should_stop,
+            ):
+                if event_name == "completed":
+                    completed_payload = data
+                yield _sse(event_name, data)
+        except Exception as exc:  # provider SDK exceptions (auth/429/timeout/500/etc.)
+            print(f"ASK BRAGI STREAM: unexpected error for conversation {conversation_id}: {type(exc).__name__}")
+            yield _sse("error", {"message": "Ask Bragi could not process this message. Please try again."})
+            return
+
+        if completed_payload is None:
+            return  # stopped or errored — nothing to persist, see docstring above
+
+        now = now_iso()
+        user_row = models.AskBragiMessage(
+            conversation_id=conversation.id,
+            role="user",
+            content=payload.message,
+            created_at=now,
+        )
+        assistant_row = models.AskBragiMessage(
+            conversation_id=conversation.id,
+            role="assistant",
+            content=completed_payload["answer"],
+            citations_json=json.dumps(completed_payload["citations"]),
+            chart_json=json.dumps(completed_payload["chart"]) if completed_payload["chart"] else None,
+            follow_ups_json=json.dumps(completed_payload["follow_ups"]),
+            status=completed_payload["status"],
+            scope_used=completed_payload["scope_used"],
+            tool_categories_json=json.dumps(completed_payload["tool_categories"]),
+            prompt_version=completed_payload["prompt_version"],
+            tool_schema_version=completed_payload["tool_schema_version"],
+            model=completed_payload["model"],
+            created_at=now_iso(),
+        )
+        db.add(user_row)
+        db.add(assistant_row)
+        conversation.updated_at = now_iso()
+        if not conversation.title:
+            conversation.title = payload.message[:80]
+        db.add(conversation)
+        db.commit()
+
+        # Same PHI-free audit/metrics line as the non-streaming route.
+        print(
+            f"ASK BRAGI: conversation={conversation.id} user_id={current_user.id} "
+            f"tool_rounds={completed_payload.get('tool_rounds')} tools={completed_payload['tool_categories']} "
+            f"citations={len(completed_payload['citations'])} "
+            f"dropped_citations={completed_payload['dropped_citation_count']} "
+            f"input_tokens={completed_payload.get('input_tokens')} output_tokens={completed_payload.get('output_tokens')} "
+            f"model={completed_payload['model']}"
+        )
+        # The message's own real id/created_at only exist after this
+        # commit — tell the frontend so it can reconcile its optimistic,
+        # in-progress bubble with the persisted row (citation click-
+        # through, React key, etc. all key off the real id).
+        yield _sse("saved", {"message": _serialize_ask_bragi_message(assistant_row)})
+
+    return StreamingResponse(
+        event_stream(),
+        media_type="text/event-stream",
+        headers={
+            "Cache-Control": "no-cache, no-transform",
+            "X-Accel-Buffering": "no",  # disable proxy buffering (nginx and similar) so deltas flush immediately
+            "Connection": "keep-alive",
+        },
+    )
 

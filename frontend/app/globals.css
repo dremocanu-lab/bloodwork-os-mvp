@@ -110,6 +110,9 @@
   --r-md: 8px;
   --r-lg: 10px;
   --r-xl: 14px;
+  /* Major workspace/card containers only (Ask Bragi's own surfaces) —
+   * see the .ask-bragi-* rules for where this is actually used. */
+  --r-2xl: 16px;
   --r-full: 999px;
 
   /* --- Elevation: hairline first, shadow only when floating ----------- */
@@ -285,11 +288,31 @@ body {
   -webkit-font-smoothing: antialiased;
   -moz-osx-font-smoothing: grayscale;
   font-feature-settings: "cv05" 1;
-  /* Never let a page scroll sideways. */
-  overflow-x: hidden;
 }
 
 body {
+  /* Never let a page scroll sideways — deliberately on <body> ONLY, not
+   * <html>. Real, reproduced bug this fixed: with an explicit overflow
+   * on <html> too, the HTML/BODY overflow-propagation rule (CSS2.1
+   * §11.1.1 — body's own overflow behavior normally propagates up to
+   * become the true viewport's scrolling behavior, and body itself
+   * stays "visible") never kicks in, because that propagation only
+   * happens when <html> has NO authored overflow of its own. Both
+   * elements ended up as their own (non-propagating) scroll containers,
+   * and the app shell's sticky sidebar (position: sticky — see
+   * .app-sidebar) anchored to the wrong one: <body>, which itself never
+   * actually scrolls (it just grows to content height), so from the
+   * sidebar's perspective nothing was "scrolling" to stick against, and
+   * it moved in lockstep with the real (html-level) page scroll instead
+   * of staying put — on every page whose content exceeds one viewport
+   * (Overview, Ask Bragi, Settings, and any other page long enough to
+   * scroll — confirmed via real-browser testing, not something a type
+   * check or build could ever catch). Authoring the rule on <body> only
+   * lets it propagate to the viewport as intended: horizontal scroll is
+   * still fully blocked (verified), and <html> is once again the
+   * single, unambiguous scrolling element sticky computes against.
+   */
+  overflow-x: hidden;
   transition: background var(--dur-2) var(--ease), color var(--dur-2) var(--ease);
 }
 
@@ -2321,6 +2344,176 @@ tr:focus-within .b-row-actions {
   inset: 0;
   z-index: 100;
   animation: b-fade-in var(--dur-2) var(--ease) both;
+}
+
+/* Ask Bragi's own, slightly-softer radius hierarchy. Scoped to these
+ * classes rather than changing .b-surface/.b-input/.b-chip themselves —
+ * those are shared by the entire rest of the app, and this refinement
+ * was asked for on Ask Bragi surfaces specifically, not a global
+ * redesign. Reuses existing tokens (--r-xl already existed; only
+ * --r-2xl below is new) rather than introducing scattered magic
+ * numbers: workspace/cards 14-18px, composer 12-16px, buttons 9-12px,
+ * small controls 8-10px — softer than the rest of the app's slightly
+ * squarer default, without going bubbly/all-pills. */
+.ask-bragi-surface {
+  border-radius: var(--r-2xl);
+}
+
+.ask-bragi-composer {
+  border-radius: var(--r-xl) !important;
+}
+
+.ask-bragi-send-btn {
+  border-radius: var(--r-lg) !important;
+}
+
+.ask-bragi-chip {
+  border-radius: var(--r-md) !important;
+}
+
+.ask-bragi-bubble {
+  border-radius: var(--r-lg);
+  padding: var(--s3);
+}
+
+.ask-bragi-bubble-user {
+  background: var(--primary-soft);
+  border: 1px solid var(--primary-soft-border);
+}
+
+.ask-bragi-bubble-assistant {
+  background: var(--surface);
+  border: 1px solid var(--border);
+}
+
+/* Conversation-history sidebar (dedicated Ask Bragi pages). Narrower
+ * than the main conversation column — see .ask-bragi-workspace below. */
+.ask-bragi-history {
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+}
+
+.ask-bragi-history-desktop-only {
+  position: sticky;
+  top: var(--s4);
+  max-height: calc(100dvh - 96px);
+  overflow-y: auto;
+  display: flex;
+  flex-direction: column;
+  gap: var(--s3);
+}
+
+.ask-bragi-patient-card {
+  padding: var(--s3);
+  flex-shrink: 0;
+}
+
+.ask-bragi-history-group-label {
+  font-size: var(--fs-caption, 11px);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin: 0 0 var(--s2);
+}
+
+.ask-bragi-history-row {
+  padding: 0;
+  gap: 4px;
+}
+
+.ask-bragi-history-row-select {
+  flex: 1;
+  min-width: 0;
+  text-align: left;
+  background: none;
+  border: none;
+  cursor: pointer;
+  padding: var(--s2) var(--s2);
+  border-radius: var(--r-md);
+  color: inherit;
+  font: inherit;
+}
+
+.ask-bragi-history-row-select .b-list-title {
+  display: block;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.ask-bragi-history-row-select:hover {
+  background: var(--surface-2);
+}
+
+.ask-bragi-history-row-active .ask-bragi-history-row-select {
+  background: var(--primary-soft);
+  color: var(--primary);
+  font-weight: 600;
+}
+
+/* Desktop/tablet: global sidebar | Ask Bragi history | conversation. */
+.ask-bragi-workspace {
+  display: grid;
+  grid-template-columns: 220px minmax(0, 1fr);
+  gap: var(--s5);
+  align-items: start;
+}
+
+.ask-bragi-history-toggle {
+  display: none;
+}
+
+@media (max-width: 900px) {
+  .ask-bragi-workspace {
+    display: block;
+  }
+
+  .ask-bragi-history-desktop-only {
+    display: none;
+  }
+
+  .ask-bragi-history-toggle {
+    display: inline-flex;
+  }
+}
+
+/* Mobile history drawer: an off-canvas panel with an INVISIBLE click-
+ * catcher, never a dark backdrop — same convention as the global
+ * sidebar's own mobile drawer (.sidebar-overlay above): the drawer's own
+ * shadow provides the separation, nothing dims the rest of the page. */
+.ask-bragi-history-drawer-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  background: transparent;
+}
+
+.ask-bragi-history-drawer {
+  position: fixed;
+  top: 0;
+  right: 0;
+  width: min(82vw, 320px);
+  height: 100dvh;
+  border-radius: 0;
+  box-shadow: var(--shadow-lg);
+  padding: var(--s4);
+  overflow-y: auto;
+  animation: ask-bragi-drawer-in var(--dur-2) var(--ease) both;
+}
+
+@keyframes ask-bragi-drawer-in {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: translateX(0);
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  .ask-bragi-history-drawer {
+    animation: none;
+  }
 }
 
 .b-source-viewer-head {
