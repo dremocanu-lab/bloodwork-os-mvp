@@ -17,7 +17,8 @@
  * alongside it is lower-risk than modifying it.
  */
 
-import { createContext, ReactNode, useCallback, useContext, useRef, useState } from "react";
+import { createContext, ReactNode, useCallback, useContext, useEffect, useRef, useState } from "react";
+import { usePathname } from "next/navigation";
 import { captureVisualAnchor, VisualAnchor } from "@/components/source-viewer/source-viewer-context";
 
 export type AskBragiPanelScope = "patient_record" | "document";
@@ -76,6 +77,24 @@ export function AskBragiPanelProvider({ children }: { children: ReactNode }) {
     }
     setIsOpen(false);
   }, []);
+
+  // Same safety net as source-viewer-context.tsx's own pathname effect,
+  // for the same reason: this panel belongs to whatever page/patient
+  // opened it and must not silently keep showing a stale patient's
+  // conversation after the user navigates to another top-level route
+  // (in particular, another patient's document/timeline/overview) — see
+  // BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section. Skips the
+  // first render so mounting the provider doesn't immediately close a
+  // panel nothing has opened yet.
+  const pathname = usePathname();
+  const previousPathnameRef = useRef(pathname);
+  useEffect(() => {
+    if (previousPathnameRef.current === pathname) return;
+    previousPathnameRef.current = pathname;
+    setIsOpen(false);
+    setTarget(null);
+    visualAnchorRef.current = null;
+  }, [pathname]);
 
   return (
     <AskBragiPanelContext.Provider value={{ isOpen, target, open, close, visualAnchorRef }}>

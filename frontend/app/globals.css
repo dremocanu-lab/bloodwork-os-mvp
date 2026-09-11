@@ -2305,6 +2305,24 @@ tr:focus-within .b-row-actions {
   animation: b-fade-in var(--dur-2) var(--ease) both;
 }
 
+/* Ask Bragi's own workspace-panel positioning — duplicated rather than
+ * sharing .b-source-viewer-*'s selectors (same values) so the two panels'
+ * CSS stay independent, matching ask-bragi-panel-context.tsx's own
+ * "mirror the shape, don't touch the original" approach. Without this,
+ * the mobile/tablet "sheet" variant rendered inline in normal page flow
+ * instead of as a full-screen surface — found via real-device-width
+ * browser testing, not something tsc/eslint/build would ever catch. */
+.b-ask-bragi-split {
+  border-left: 1px solid var(--border-strong);
+}
+
+.b-ask-bragi-sheet {
+  position: fixed;
+  inset: 0;
+  z-index: 100;
+  animation: b-fade-in var(--dur-2) var(--ease) both;
+}
+
 .b-source-viewer-head {
   display: flex;
   align-items: center;

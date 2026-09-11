@@ -20,11 +20,16 @@ export function AskBragiPanel({ variant }: { variant: "split" | "sheet" }) {
 
   return (
     <div
+      className={`b-ask-bragi-${variant}`}
+      role="dialog"
+      aria-modal={variant === "sheet" ? true : undefined}
+      aria-label="Ask Bragi"
       style={{
         display: "flex",
         flexDirection: "column",
         height: "100%",
         minHeight: 0,
+        background: "var(--surface)",
       }}
     >
       <div

@@ -67,6 +67,13 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   // which react-hooks/purity flags as an impure render-path call) keeps
   // this a pure, predictable component.
   const localIdRef = useRef(0);
+  // Bumped every time a new conversation starts (see the effect below) so
+  // an in-flight send() from a conversation the user has since navigated
+  // away from can recognize its own response as stale and discard it —
+  // otherwise a slow response about Patient A could still land in Patient
+  // B's message list after a doctor switches patients mid-request. See
+  // BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section.
+  const conversationTokenRef = useRef(0);
 
   // Scope UI — only meaningful when this conversation actually has a
   // document to be scoped to. `userSetScope` is undefined until the user
@@ -90,6 +97,14 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   useEffect(() => {
     let cancelled = false;
     async function start() {
+      // Invalidates any send() already in flight for the PREVIOUS
+      // conversation (see conversationTokenRef's own comment) and clears
+      // whatever leftover "sending" state that request left behind — both
+      // must happen here, not only inside send()'s own guard, or a
+      // preempted request could leave the new conversation stuck showing
+      // a thinking indicator that will never resolve.
+      conversationTokenRef.current += 1;
+      setSending(false);
       setStarting(true);
       setError("");
       try {
@@ -127,6 +142,7 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
   async function send(text: string) {
     const trimmed = text.trim();
     if (!trimmed || !conversation || sending) return;
+    const tokenAtSend = conversationTokenRef.current;
     setSending(true);
     setError("");
     localIdRef.current -= 1;
@@ -144,12 +160,17 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     setInput("");
     try {
       const res = await askBragiApi.sendMessage(conversation.id, trimmed, userSetScope ?? undefined);
+      // Stale if the user has since switched patient/document/conversation
+      // — the response belongs to a context this component no longer
+      // shows. See conversationTokenRef's own comment.
+      if (tokenAtSend !== conversationTokenRef.current) return;
       setMessages((prev) => [...prev, res.data]);
       if (res.data.scope_used) setDisplayedScope(res.data.scope_used);
     } catch (err) {
+      if (tokenAtSend !== conversationTokenRef.current) return;
       setError(getErrorMessage(err, "Ask Bragi could not answer that. Please try again."));
     } finally {
-      setSending(false);
+      if (tokenAtSend === conversationTokenRef.current) setSending(false);
     }
   }
 

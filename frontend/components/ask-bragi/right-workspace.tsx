@@ -15,6 +15,7 @@
  * into that component.
  */
 
+import type { CSSProperties } from "react";
 import { useState } from "react";
 import { SourceViewerPanel } from "@/components/source-viewer/source-viewer-panel";
 import { AskBragiPanel } from "./ask-bragi-panel";
@@ -52,14 +53,43 @@ export function RightWorkspace({
 
   const showTabs = sourceOpen && askBragiOpen;
 
+  // Sheet variant only: SourceViewerPanel and AskBragiPanel each apply
+  // their OWN `position: fixed; inset: 0` full-viewport styling (see
+  // .b-source-viewer-sheet / .b-ask-bragi-sheet) — correct when only one
+  // is ever open, which is all either panel was ever built to expect on
+  // its own. With both open, that fixed styling would cover this tab bar
+  // too (a `position: fixed` descendant paints above in-flow siblings
+  // regardless of DOM order, per normal CSS stacking rules), leaving no
+  // way to switch back. `transform` here doesn't move anything (identity
+  // transform) — it exists purely to make THIS div a new containing block
+  // for `position: fixed` descendants, so their `inset: 0` resolves
+  // against this wrapper (already the full viewport) instead of the true
+  // viewport, and a higher z-index on the tab bar can then out-rank them
+  // within that same local stacking context.
+  const sheetBothOpenStyle: CSSProperties = showTabs
+    ? { position: "fixed", inset: 0, zIndex: 100, transform: "translateZ(0)" }
+    : {};
+
   return (
-    <div style={{ display: "flex", flexDirection: "column", height: "100%", minHeight: 0 }}>
+    <div
+      style={{
+        display: "flex",
+        flexDirection: "column",
+        height: "100%",
+        minHeight: 0,
+        ...(variant === "sheet" ? sheetBothOpenStyle : {}),
+      }}
+    >
       {showTabs ? (
         <div
           className="b-segmented"
           role="tablist"
           aria-label="Workspace panel"
-          style={{ flexShrink: 0, margin: "var(--s2) var(--s2) 0" }}
+          style={{
+            flexShrink: 0,
+            margin: "var(--s2) var(--s2) 0",
+            ...(variant === "sheet" ? { position: "relative", zIndex: 101 } : {}),
+          }}
         >
           <button type="button" role="tab" aria-selected={activeTab === "source"} onClick={() => setActiveTab("source")}>
             Original
