@@ -36,8 +36,6 @@ import {
   LabValue,
   Menu,
   MenuItem,
-  Metric,
-  Metrics,
   Notice,
   Popover,
   SectionHead,
@@ -55,8 +53,6 @@ import {
   IconExternal,
   IconInbox,
   IconLab,
-  IconShield,
-  IconTimeline,
   IconUpload,
 } from "@/components/ui/icon";
 import type { NavUser } from "@/lib/navigation";
@@ -1266,35 +1262,6 @@ export default function MyRecordsPage() {
               </div>
               <AskBragiChat audience="patient" suggestions={overviewAskBragiSuggestions} compact />
             </section>
-
-            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)" }}>
-              <button type="button" className="b-btn b-btn-secondary" onClick={() => router.push("/my-records/upload")}>
-                <IconUpload size={14} />
-                {t("uploadDocuments")}
-              </button>
-              <button type="button" className="b-btn b-btn-secondary" onClick={() => setTab("timeline")}>
-                <IconTimeline size={14} />
-                {t("myTimeline")}
-              </button>
-              <button type="button" className="b-btn b-btn-secondary" onClick={() => router.push("/my-records/access")}>
-                <IconShield size={14} />
-                {t("myAccess")}
-              </button>
-            </div>
-
-            <Metrics>
-              <Metric label={t("records")} value={allDocuments.length} />
-              <Metric label={t("bloodwork")} value={profile.sections.bloodwork.length} />
-              <Metric
-                label="Results outside range"
-                value={abnormalCount}
-                tone={abnormalCount > 0 ? "alert" : undefined}
-              />
-              <Metric label="Hospital stays" value={profile.sections.discharge_summary.length} />
-              <Metric label={t("myMedications")} value={activeMeds.length} />
-            </Metrics>
-
-            {pinnedStrip}
 
             <section className="b-surface">
               <SectionHead
