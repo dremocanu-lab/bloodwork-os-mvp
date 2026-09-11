@@ -14,6 +14,7 @@
 import type { ComponentType, SVGProps } from "react";
 import {
   IconChart,
+  IconChat,
   IconClipboard,
   IconDocument,
   IconHeart,
@@ -31,6 +32,13 @@ import {
   IconUpload,
   IconUsers,
 } from "@/components/ui/icon";
+
+// Ask Bragi is feature-flagged off in production (ASK_BRAGI_ENABLED,
+// backend-side) — this nav entry mirrors that with its own explicit
+// opt-in so it never appears as a dead link for real users before the
+// feature is actually turned on. See BRAGI_ASK_BRAGI_PLAN.md's "Feature
+// flags" section.
+const ASK_BRAGI_NAV_ENABLED = process.env.NEXT_PUBLIC_ASK_BRAGI_ENABLED === "true";
 
 export type Role = "patient" | "doctor" | "admin" | "care_partner";
 
@@ -159,6 +167,16 @@ export function getNavGroups(user: NavUser, t: T): NavGroup[] {
             icon: IconPill,
             primary: true,
           },
+          ...(ASK_BRAGI_NAV_ENABLED
+            ? [
+                {
+                  key: "ask-bragi",
+                  label: "Ask Bragi",
+                  href: "/ask-bragi",
+                  icon: IconChat,
+                },
+              ]
+            : []),
           {
             key: "upload",
             label: t("uploadDocuments"),

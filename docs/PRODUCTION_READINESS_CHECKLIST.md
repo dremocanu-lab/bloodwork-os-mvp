@@ -68,7 +68,7 @@ launch checklist."
 | 49 | Incident response plan | `[PASS]` (documented procedure); detection tooling `[FAIL]` (none exists) — `docs/security/INCIDENT_RESPONSE.md` |
 | 50 | Production access policy | `[UNKNOWN]` for current enforcement; policy documented — `docs/security/PRODUCTION_ACCESS_POLICY.md` |
 | 51 | Key rotation runbook | `[PASS]` (documented procedure); `SECRET_KEY` rotation has no graceful dual-key window (real gap, noted) — `docs/security/KEY_ROTATION_RUNBOOK.md` |
-| 52 | AI governance (forward-looking) | `[NOT APPLICABLE — FORWARD-LOOKING REQUIREMENT DOCUMENTED]` — Ask Bragi doesn't exist — `docs/ai/AI_GOVERNANCE.md` |
+| 52 | AI governance / Ask Bragi | `[IMPLEMENTED — NOT DEPLOYED]` — Ask Bragi built this round (feature-flagged off); every forward-looking §2 item in `docs/ai/AI_GOVERNANCE.md` is now a tested control — `BRAGI_ASK_BRAGI_PLAN.md` |
 | 53 | AI vendor data-minimization (existing pipeline) | `[PASS]` for the reusable boundary + this round's audit (every existing call sends only the document itself, no separate patient-context object — nothing to strip); `[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for vendor DPA/ZDR terms, unchanged — `app/services/ai_minimization.py`, `docs/vendors/OPENAI_PRODUCTION_REQUIREMENTS.md` |
 | 54 | MDR/EU AI Act boundary statement | `[LEGAL REVIEW]`, conservative language, no certification claimed — `docs/regulatory/INTENDED_PURPOSE_DRAFT.md` |
 

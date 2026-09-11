@@ -519,11 +519,24 @@ Vendor DPA/ZDR terms remain not knowable from this codebase alone —
 `[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for the actual contract terms with
 OpenAI/Reducto/Google, unchanged this round.
 
-Ask Bragi (AI chat): does not exist in this codebase (confirmed via
-exhaustive grep for conversation/chat/ask_bragi identifiers across
-`backend/app`). All AI-chat-related items in this plan are forward-
-looking design work, marked `[NOT APPLICABLE — FORWARD-LOOKING
-REQUIREMENT DOCUMENTED]`, not `[FAIL]` (there's nothing to fail yet).
+Ask Bragi (AI chat): **implemented this round, `[IMPLEMENTED — NOT
+DEPLOYED]`** — see `BRAGI_ASK_BRAGI_PLAN.md` for the full architecture
+and evidence. `ASK_BRAGI_ENABLED`/`NEXT_PUBLIC_ASK_BRAGI_ENABLED` both
+default false; nothing changes for any real user until explicitly
+activated. Every §2.1–2.7 forward-looking requirement in
+`docs/ai/AI_GOVERNANCE.md` Part 2 is now a concrete, tested control
+rather than a design note — patient-context injection is server-side
+only (no tool accepts a `patient_id` parameter, verified directly
+against the tool schemas), every tool call independently re-
+authorizes, a real adversarial prompt-injection document was retrieved
+and its instructions ignored (live-verified, not just designed for),
+missing/conflicting-data handling is real and tested, chart data is
+always server-resolved never model-generated, and conversation storage
+is integrated into DSAR export and account deletion (the latter closing
+a real FK-cascade bug this feature's own tests found before merging).
+`docs/ai/AI_GOVERNANCE.md` itself has not yet been rewritten to drop its
+now-stale "does not exist" framing — flagged as a follow-up doc update,
+not a technical gap.
 
 ## 22. Backups & disaster recovery
 

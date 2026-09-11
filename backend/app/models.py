@@ -538,6 +538,74 @@ class EmergencyAccessSession(Base):
     patient = relationship("Patient")
 
 
+class AskBragiConversation(Base):
+    """Ask Bragi conversation — a scoped, authorized chat over a single
+    patient's Bragi record (or a single document within it). Bragi owns
+    this row as the authoritative conversation record; OpenAI is never
+    relied on to retain conversation state (see
+    app/services/ask_bragi/service.py, `store=False`).
+
+    `patient_id` is set once at creation time from a SERVER-validated
+    authorization check (see app/services/ask_bragi/context.py) and never
+    changes — it is never taken from a tool argument the model can
+    influence. `scope`/`document_id` narrow a conversation to a single
+    document ("document" scope) instead of the whole record
+    ("patient_record" scope, the default) — see main.py's
+    `POST /ask-bragi/conversations`.
+    """
+
+    __tablename__ = "ask_bragi_conversations"
+
+    id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String, nullable=True, unique=True, index=True)
+    owner_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    scope = Column(String, nullable=False, default="patient_record")  # "patient_record" | "document"
+    document_id = Column(Integer, ForeignKey("documents.id"), nullable=True, index=True)
+    owner_role = Column(String, nullable=False)  # role at creation time (patient | doctor)
+    title = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=True)
+    archived_at = Column(String, nullable=True)
+
+    owner_user = relationship("User", foreign_keys=[owner_user_id])
+    patient = relationship("Patient")
+    document = relationship("Document")
+    messages = relationship(
+        "AskBragiMessage",
+        back_populates="conversation",
+        cascade="all, delete-orphan",
+        order_by="AskBragiMessage.id",
+    )
+
+
+class AskBragiMessage(Base):
+    """One turn in an Ask Bragi conversation. `citations_json`/`chart_json`
+    are the server-VALIDATED final response (never the model's raw,
+    unchecked output — see `service.py`'s citation-validation step).
+    `tool_categories_json` is a short audit trail (which tool NAMES were
+    invoked, not their inputs/outputs/PHI) — see main.py's audit-logging
+    convention discussion in BRAGI_ASK_BRAGI_PLAN.md."""
+
+    __tablename__ = "ask_bragi_messages"
+
+    id = Column(Integer, primary_key=True, index=True)
+    conversation_id = Column(Integer, ForeignKey("ask_bragi_conversations.id"), nullable=False, index=True)
+    role = Column(String, nullable=False)  # "user" | "assistant"
+    content = Column(Text, nullable=False)
+    citations_json = Column(Text, nullable=True)
+    chart_json = Column(Text, nullable=True)
+    follow_ups_json = Column(Text, nullable=True)
+    status = Column(String, nullable=True)
+    tool_categories_json = Column(Text, nullable=True)
+    prompt_version = Column(String, nullable=True)
+    tool_schema_version = Column(String, nullable=True)
+    model = Column(String, nullable=True)
+    created_at = Column(String, nullable=False)
+
+    conversation = relationship("AskBragiConversation", back_populates="messages")
+
+
 class EmergencyAuditLog(Base):
     __tablename__ = "emergency_audit_logs"
 

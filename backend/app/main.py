@@ -56,6 +56,14 @@ from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
 from app.services.file_hash import compute_sha256
 from app.services.security_scan import run_security_scan
+from app.services.ask_bragi.context import (
+    AskBragiAccessDenied,
+    AskBragiContext,
+    recheck_access,
+    resolve_document_scope,
+    resolve_patient_id_for_new_conversation,
+)
+from app.services.ask_bragi.service import ASK_BRAGI_ENABLED, AskBragiError, run_turn
 from app.rate_limit import RateLimiter
 from app.services.patient_identity import (
     MISMATCH,
@@ -446,6 +454,46 @@ def run_migrations():
         # the clinician later deletes their own account. See
         # get_current_user()/login() for where deleted_at is enforced.
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS deleted_at VARCHAR"))
+
+        # Ask Bragi (see BRAGI_ASK_BRAGI_PLAN.md, models.py's docstrings on
+        # both tables). Additive, brand-new tables — no data migration
+        # concern. Feature-flagged off by default (ASK_BRAGI_ENABLED) so
+        # these tables existing has zero effect until explicitly enabled.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ask_bragi_conversations (
+                id SERIAL PRIMARY KEY,
+                public_id VARCHAR UNIQUE,
+                owner_user_id INTEGER NOT NULL REFERENCES users(id),
+                patient_id INTEGER NOT NULL REFERENCES patients(id),
+                scope VARCHAR NOT NULL DEFAULT 'patient_record',
+                document_id INTEGER REFERENCES documents(id) ON DELETE SET NULL,
+                owner_role VARCHAR NOT NULL,
+                title VARCHAR,
+                created_at VARCHAR NOT NULL,
+                updated_at VARCHAR,
+                archived_at VARCHAR
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ask_bragi_conversations_owner_user_id ON ask_bragi_conversations (owner_user_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ask_bragi_conversations_patient_id ON ask_bragi_conversations (patient_id)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS ask_bragi_messages (
+                id SERIAL PRIMARY KEY,
+                conversation_id INTEGER NOT NULL REFERENCES ask_bragi_conversations(id) ON DELETE CASCADE,
+                role VARCHAR NOT NULL,
+                content TEXT NOT NULL,
+                citations_json TEXT,
+                chart_json TEXT,
+                follow_ups_json TEXT,
+                status VARCHAR,
+                tool_categories_json TEXT,
+                prompt_version VARCHAR,
+                tool_schema_version VARCHAR,
+                model VARCHAR,
+                created_at VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ask_bragi_messages_conversation_id ON ask_bragi_messages (conversation_id)"))
         conn.commit()
 
 run_migrations()
@@ -3319,6 +3367,26 @@ def delete_my_account(
             models.EmergencyContact.patient_id == patient.id
         ).delete(synchronize_session=False)
 
+        # Ask Bragi conversations/messages (found by this feature's own
+        # test suite before it ever shipped — the same class of
+        # FK-cascade gap §3 item 6 fixed for other tables). A bulk
+        # .delete(synchronize_session=False) doesn't trigger the ORM
+        # relationship's cascade, so messages must be cleared explicitly
+        # before the conversations that reference patient.id.
+        conversation_ids = [
+            c.id
+            for c in db.query(models.AskBragiConversation.id).filter(
+                models.AskBragiConversation.patient_id == patient.id
+            )
+        ]
+        if conversation_ids:
+            db.query(models.AskBragiMessage).filter(
+                models.AskBragiMessage.conversation_id.in_(conversation_ids)
+            ).delete(synchronize_session=False)
+            db.query(models.AskBragiConversation).filter(
+                models.AskBragiConversation.id.in_(conversation_ids)
+            ).delete(synchronize_session=False)
+
         db.delete(patient)
         db.flush()
 
@@ -3574,6 +3642,36 @@ def export_my_data(
         for c in emergency_contacts
     ]
 
+    # Ask Bragi conversations (feature-flagged; empty list wherever the
+    # feature doesn't exist/hasn't been used — this is the patient's own
+    # data being exported to themselves, so full question/answer text is
+    # included here even though it's deliberately excluded from server
+    # audit logs (see main.py's Ask Bragi section / BRAGI_ASK_BRAGI_PLAN.md).
+    ask_bragi_conversations = (
+        db.query(models.AskBragiConversation)
+        .filter(models.AskBragiConversation.patient_id == patient.id)
+        .order_by(models.AskBragiConversation.id.asc())
+        .all()
+    )
+    ask_bragi_payload = [
+        {
+            "conversation_id": conv.id,
+            "scope": conv.scope,
+            "document_id": conv.document_id,
+            "created_at": conv.created_at,
+            "messages": [
+                {
+                    "role": m.role,
+                    "content": m.content,
+                    "citations": json.loads(m.citations_json) if m.citations_json else [],
+                    "created_at": m.created_at,
+                }
+                for m in conv.messages
+            ],
+        }
+        for conv in ask_bragi_conversations
+    ]
+
     documents_manifest: list[dict] = []
     embedded_bytes = 0
     tmp_fd, tmp_path_str = tempfile.mkstemp(suffix=".zip", prefix="bragi-dsar-export-")
@@ -3636,8 +3734,8 @@ Contents:
 - documents/ — the original uploaded files themselves, where the export
   size cap allowed inclusion (see documents_manifest.json's
   "included_in_documents_folder"/"note" fields for any that were left out)
-- ai_conversations.json — present for completeness; empty, because Bragi
-  does not have an AI chat feature yet
+- ai_conversations.json — your Ask Bragi conversations, if any (empty
+  list if you have none, or if this feature is not enabled)
 
 Not included: any other patient's data; documents uploaded under your
 identity but not yet confirmed as belonging to your record (an identity
@@ -3652,7 +3750,7 @@ security metadata (password hash, auth tokens).
             zf.writestr("access_relationships.json", json.dumps(access_payload, indent=2))
             zf.writestr("emergency_contacts.json", json.dumps(emergency_contacts_payload, indent=2))
             zf.writestr("documents_manifest.json", json.dumps(documents_manifest, indent=2))
-            zf.writestr("ai_conversations.json", json.dumps([], indent=2))
+            zf.writestr("ai_conversations.json", json.dumps(ask_bragi_payload, indent=2))
 
         db.commit()
     except Exception:
@@ -6672,4 +6770,242 @@ def emergency_get_document(
     if payload.get("parsed_data"):
         payload["parsed_data"].pop("cnp", None)
     return payload
+
+
+# ── Ask Bragi ──────────────────────────────────────────────────────────────
+# See BRAGI_ASK_BRAGI_PLAN.md for the full architecture. Feature-flagged
+# (ASK_BRAGI_ENABLED, default false) — merging this code does not enable
+# it in production; see docs/security/RATE_LIMITING.md's identical
+# "activation is a config change, not a deploy" pattern.
+
+def require_ask_bragi_enabled():
+    if not ASK_BRAGI_ENABLED:
+        raise HTTPException(status_code=404, detail="Ask Bragi is not enabled in this environment.")
+
+
+class AskBragiConversationCreateRequest(BaseModel):
+    # Patients never supply this — their own patient_id is always
+    # resolved server-side (see resolve_patient_id_for_new_conversation).
+    # Doctors must supply it, validated against a real active
+    # DoctorPatientAccess grant, identically to every other doctor-facing
+    # patient route in this app.
+    patient_id: int | None = None
+    # Optional: scope this conversation to one document instead of the
+    # full record (see BRAGI_ASK_BRAGI_PLAN.md's scope model).
+    document_id: int | None = None
+
+
+class AskBragiMessageRequest(BaseModel):
+    message: str = Field(min_length=1, max_length=4000)
+
+
+def _serialize_ask_bragi_conversation(conversation) -> dict:
+    return {
+        "id": conversation.id,
+        "public_id": conversation.public_id,
+        "patient_id": conversation.patient_id,
+        "scope": conversation.scope,
+        "document_id": conversation.document_id,
+        "title": conversation.title,
+        "created_at": conversation.created_at,
+        "updated_at": conversation.updated_at,
+    }
+
+
+def _serialize_ask_bragi_message(message) -> dict:
+    return {
+        "id": message.id,
+        "role": message.role,
+        "content": message.content,
+        "citations": json.loads(message.citations_json) if message.citations_json else [],
+        "chart": json.loads(message.chart_json) if message.chart_json else None,
+        "follow_ups": json.loads(message.follow_ups_json) if message.follow_ups_json else [],
+        "status": message.status,
+        "created_at": message.created_at,
+    }
+
+
+def _load_ask_bragi_conversation_for_owner(db: Session, conversation_id: int, current_user):
+    conversation = (
+        db.query(models.AskBragiConversation)
+        .filter(models.AskBragiConversation.id == conversation_id)
+        .first()
+    )
+    if not conversation or conversation.owner_user_id != current_user.id or conversation.archived_at:
+        # Same non-existence-leaking shape as every other resource lookup
+        # in this app (test_idor_regression.py's convention) — a
+        # conversation ID that exists but isn't yours reads identically
+        # to one that doesn't exist at all.
+        raise HTTPException(status_code=404, detail="Conversation not found.")
+    # Conversation ownership is NOT the same as current patient access —
+    # re-check both independently every time (Priority: "conversation ID
+    # is not authorization").
+    if not recheck_access(
+        db,
+        requester_user_id=current_user.id,
+        requester_role=current_user.role,
+        patient_id=conversation.patient_id,
+    ):
+        raise HTTPException(status_code=403, detail="Access to this patient's record is no longer authorized.")
+    return conversation
+
+
+@app.post("/ask-bragi/conversations")
+def create_ask_bragi_conversation(
+    payload: AskBragiConversationCreateRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+    _rl=Depends(RateLimiter(limit=30, window_seconds=3600, key_prefix="ask_bragi_conversation")),
+):
+    try:
+        patient_id = resolve_patient_id_for_new_conversation(
+            db, current_user=current_user, requested_patient_id=payload.patient_id
+        )
+    except AskBragiAccessDenied as exc:
+        raise HTTPException(status_code=403, detail=str(exc))
+
+    scope = "patient_record"
+    document_id = None
+    if payload.document_id is not None:
+        try:
+            document_id = resolve_document_scope(db, patient_id=patient_id, document_id=payload.document_id)
+        except AskBragiAccessDenied as exc:
+            raise HTTPException(status_code=404, detail=str(exc))
+        scope = "document"
+
+    conversation = models.AskBragiConversation(
+        public_id=generate_public_id("brg-chat"),
+        owner_user_id=current_user.id,
+        patient_id=patient_id,
+        scope=scope,
+        document_id=document_id,
+        owner_role=current_user.role,
+        created_at=now_iso(),
+    )
+    db.add(conversation)
+    db.commit()
+    return _serialize_ask_bragi_conversation(conversation)
+
+
+@app.get("/ask-bragi/conversations")
+def list_ask_bragi_conversations(
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+):
+    conversations = (
+        db.query(models.AskBragiConversation)
+        .filter(
+            models.AskBragiConversation.owner_user_id == current_user.id,
+            models.AskBragiConversation.archived_at.is_(None),
+        )
+        .order_by(models.AskBragiConversation.id.desc())
+        .all()
+    )
+    return [_serialize_ask_bragi_conversation(c) for c in conversations]
+
+
+@app.get("/ask-bragi/conversations/{conversation_id}")
+def get_ask_bragi_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+):
+    conversation = _load_ask_bragi_conversation_for_owner(db, conversation_id, current_user)
+    return {
+        **_serialize_ask_bragi_conversation(conversation),
+        "messages": [_serialize_ask_bragi_message(m) for m in conversation.messages],
+    }
+
+
+@app.delete("/ask-bragi/conversations/{conversation_id}")
+def delete_ask_bragi_conversation(
+    conversation_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+):
+    conversation = _load_ask_bragi_conversation_for_owner(db, conversation_id, current_user)
+    db.delete(conversation)  # cascades to messages — see models.py relationship
+    db.commit()
+    return {"deleted": True}
+
+
+@app.post("/ask-bragi/conversations/{conversation_id}/messages")
+def send_ask_bragi_message(
+    conversation_id: int,
+    payload: AskBragiMessageRequest,
+    db: Session = Depends(get_db),
+    current_user=Depends(require_role("patient", "doctor")),
+    _flag=Depends(require_ask_bragi_enabled),
+    _rl=Depends(RateLimiter(limit=20, window_seconds=3600, key_prefix="ask_bragi_message")),
+):
+    conversation = _load_ask_bragi_conversation_for_owner(db, conversation_id, current_user)
+
+    prior_messages = list(conversation.messages)
+    prior_turns = [(m.role, m.content) for m in prior_messages]
+
+    ctx = AskBragiContext(
+        db=db,
+        patient_id=conversation.patient_id,
+        requester_user_id=current_user.id,
+        requester_role=current_user.role,
+        scope=conversation.scope,
+        document_id=conversation.document_id,
+    )
+    audience = "patient" if current_user.role == "patient" else "doctor"
+
+    try:
+        result = run_turn(ctx=ctx, audience=audience, user_message=payload.message, prior_turns=prior_turns)
+    except AskBragiError as exc:
+        # Never the raw provider error/secret — a generic, safe message.
+        print(f"ASK BRAGI: turn failed for conversation {conversation_id}: {exc}")
+        raise HTTPException(status_code=502, detail="Ask Bragi could not process this message. Please try again.")
+    except Exception as exc:  # provider SDK exceptions (auth/429/timeout/500/etc.)
+        print(f"ASK BRAGI: unexpected error for conversation {conversation_id}: {type(exc).__name__}")
+        raise HTTPException(status_code=502, detail="Ask Bragi could not process this message. Please try again.")
+
+    now = now_iso()
+    user_row = models.AskBragiMessage(
+        conversation_id=conversation.id,
+        role="user",
+        content=payload.message,
+        created_at=now,
+    )
+    assistant_row = models.AskBragiMessage(
+        conversation_id=conversation.id,
+        role="assistant",
+        content=result.response.answer,
+        citations_json=json.dumps([c.model_dump() for c in result.response.citations]),
+        chart_json=json.dumps(result.response.chart.model_dump()) if result.response.chart else None,
+        follow_ups_json=json.dumps(result.response.follow_ups),
+        status=result.response.status,
+        tool_categories_json=json.dumps(result.tool_categories),
+        prompt_version=result.prompt_version,
+        tool_schema_version=result.tool_schema_version,
+        model=result.model,
+        created_at=now_iso(),
+    )
+    db.add(user_row)
+    db.add(assistant_row)
+    conversation.updated_at = now_iso()
+    if not conversation.title:
+        conversation.title = payload.message[:80]
+    db.add(conversation)
+    db.commit()
+
+    # PHI-free audit/metrics line (counts and categories only — never the
+    # question/answer text or raw tool output, per Priority "audit"/"cost
+    # controls"). The durable, queryable audit trail is
+    # tool_categories_json on the message row itself.
+    print(
+        f"ASK BRAGI: conversation={conversation.id} user_id={current_user.id} "
+        f"tool_rounds={result.tool_rounds} tools={result.tool_categories} "
+        f"citations={len(result.response.citations)} dropped_citations={result.response.dropped_citation_count} "
+        f"input_tokens={result.input_tokens} output_tokens={result.output_tokens} model={result.model}"
+    )
+
+    return _serialize_ask_bragi_message(assistant_row)
 

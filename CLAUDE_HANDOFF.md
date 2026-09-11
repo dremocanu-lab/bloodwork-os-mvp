@@ -3,6 +3,68 @@
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## Ask Bragi — first production-quality version (2026-09-11)
+
+Full architecture/status: `BRAGI_ASK_BRAGI_PLAN.md` (read that first —
+this is a pointer, not a duplicate). **Status: `[IMPLEMENTED — NOT
+DEPLOYED]`** — feature-flagged off (`ASK_BRAGI_ENABLED`/`NEXT_PUBLIC_
+ASK_BRAGI_ENABLED`, both default false); merging this code changes
+nothing for any real user until explicitly activated.
+
+What shipped: `app/services/ask_bragi/` (context/tools/prompts/schemas/
+service), two new additive tables (`AskBragiConversation`/
+`AskBragiMessage`), 5 new backend routes
+(`/ask-bragi/conversations[...]`), a shared frontend chat component
+(`components/ask-bragi/ask-bragi-chat.tsx`) plus a small dedicated chart
+(`ask-bragi-chart.tsx`, deliberately not the shared `<TrendChart>` —
+contract mismatch, see its docstring), two new pages (`/ask-bragi` for
+patients, `/patients/[id]/ask-bragi` for doctors), and a flag-gated nav
+entry. Real OpenAI Responses API tool-calling (not JSON-in-prose),
+server-owned patient context (no tool has a `patient_id` parameter —
+verified directly against the schemas sent to the model), citation
+validation against a server-tracked authorized-evidence set (a
+hallucinated/guessed citation is dropped, verified live and in a mocked
+test), and a real, live-verified prompt-injection resistance result (a
+synthetic document instructing the model to leak secrets and access
+other patients was actually retrieved and completely ignored).
+
+26 new backend tests (13 security/IDOR, 7 tool-scoping, 6 mocked-model),
+full suite now 165 passed (was 138). A real bug this feature's own
+tests found before merging: `DELETE /my/account` broke with a
+`ForeignKeyViolation` once a patient had an `AskBragiConversation` row —
+fixed in the same commit (the same FK-cascade class of bug
+`BRAGI_SECURITY_GDPR_PLAN.md` §3 item 6 fixed for other tables).
+
+A one-off live evaluation script (not committed) ran 11 real query
+categories against the real OpenAI API (`gpt-4.1`) with a temporary
+development key, against a fully synthetic patient, then deleted every
+synthetic row it created. The temporary key was never written to any
+file, never printed, and confirmed absent from every output this round
+produced — see `BRAGI_ASK_BRAGI_PLAN.md`'s "Real OpenAI testing" section
+for the actual results table.
+
+**Architecture inconsistency found while building this**: none beyond
+what's already tracked in `BRAGI_ASK_BRAGI_PLAN.md`'s "Remaining
+limitations" (narrative documents have no per-section `SourceEvidence`
+rows yet — a pre-existing gap from `BRAGI_REDUCTO_PLAN.md` Phase 2, not
+introduced here; it just means a narrative-grounded Ask Bragi answer
+currently carries 0 citations even when accurate).
+
+Not done this round (see the plan doc's "Remaining limitations" for the
+full, honest list): real SSE streaming (V1 is synchronous, a deliberate
+scope decision); a document-chat entry point inside `documents/[id]/
+page.tsx`; live browser/responsive/accessibility verification (same
+`BRAGI_TOKENS` blocker every prior round has had); 3 of the ~16 named
+eval categories (all exercising already-verified code paths).
+
+**If you continue this work**: read `BRAGI_ASK_BRAGI_PLAN.md` in full.
+Do not remove the `patient_id`-parameter restriction from any tool
+schema, do not add a tool that accepts a caller-supplied patient/
+document id without going through `context.py`'s resolution functions,
+and do not enable either feature flag in production without confirming
+`RATE_LIMIT_REDIS_URL` is configured if Render is running more than one
+instance by then.
+
 ## README refresh (2026-09-11)
 
 `README.md` was rewritten (commit `012082e`) to reflect the actual

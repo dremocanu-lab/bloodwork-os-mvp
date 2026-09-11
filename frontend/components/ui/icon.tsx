@@ -305,3 +305,10 @@ export const IconKey = (p: IconProps) => (
     <path d="m11 11 8 8M16.5 16.5 15 18M19 14l-1.6 1.6" />
   </Svg>
 );
+
+export const IconChat = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 5.5h16v11H9l-4 3.5v-3.5H4z" />
+    <path d="M8 9.5h8M8 13h5" />
+  </Svg>
+);

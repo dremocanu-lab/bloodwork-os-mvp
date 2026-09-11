@@ -192,3 +192,47 @@ def test_export_includes_own_document_file_and_manifest(patient_a, tmp_path):
             db2.commit()
         finally:
             db2.close()
+
+
+def test_export_includes_own_ask_bragi_conversation(patient_a):
+    profile_resp = client.get("/my/profile", headers=_auth(patient_a["token"]))
+    patient_id = profile_resp.json()["patient"]["id"]
+
+    db = SessionLocal()
+    try:
+        conv = models.AskBragiConversation(
+            public_id=f"brg-chat-dsar-{uuid.uuid4().hex[:8]}",
+            owner_user_id=patient_a["user"]["id"],
+            patient_id=patient_id,
+            scope="patient_record",
+            owner_role="patient",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        db.add(conv)
+        db.flush()
+        msg = models.AskBragiMessage(
+            conversation_id=conv.id,
+            role="user",
+            content="What was my latest creatinine?",
+            created_at="2026-01-01T00:00:01Z",
+        )
+        db.add(msg)
+        db.commit()
+        conv_id = conv.id
+    finally:
+        db.close()
+
+    try:
+        zf = _export_zip(patient_a["token"])
+        conversations = json.loads(zf.read("ai_conversations.json"))
+        entry = next((c for c in conversations if c["conversation_id"] == conv_id), None)
+        assert entry is not None, f"conversation {conv_id} missing from export: {conversations}"
+        assert entry["messages"][0]["content"] == "What was my latest creatinine?"
+    finally:
+        db2 = SessionLocal()
+        try:
+            db2.query(models.AskBragiMessage).filter(models.AskBragiMessage.conversation_id == conv_id).delete()
+            db2.query(models.AskBragiConversation).filter(models.AskBragiConversation.id == conv_id).delete()
+            db2.commit()
+        finally:
+            db2.close()
