@@ -629,7 +629,12 @@ TOOL_SCHEMAS: list[dict] = [
     ),
     _schema(
         "get_medications",
-        "Get the patient's recorded medications, optionally filtered by status.",
+        "Get the patient's recorded medications, optionally filtered by "
+        "status. For a 'is X currently active/being taken' question, call "
+        "this WITHOUT a status filter first — two entries for the SAME "
+        "medication with different recorded statuses is a genuine "
+        "conflict (see CONFLICTING DATA in your instructions) that a "
+        "status filter would silently hide by excluding one side of it.",
         {"status": {"type": ["string", "null"]}},
     ),
     _schema(

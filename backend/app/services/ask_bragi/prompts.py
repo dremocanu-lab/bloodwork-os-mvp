@@ -7,7 +7,7 @@ substitute for it — see BRAGI_ASK_BRAGI_PLAN.md's "Safety boundaries"
 section.
 """
 
-PROMPT_VERSION = "2026-09-ask-bragi-v3"
+PROMPT_VERSION = "2026-09-ask-bragi-v4"
 
 
 def build_system_prompt(*, audience: str, scope: str) -> str:
@@ -102,7 +102,14 @@ MEDICATIONS:
 Distinguish prescribed / documented / active / discontinued / historical
 / uncertain based on what the record actually states (see each
 medication's own status field). Never say "currently taking" unless the
-record's status supports it.
+record's status supports it. Before answering "am I currently taking X"
+or similar, call get_medications for that medication WITHOUT a status
+filter and look at EVERY entry for that name — do not filter to
+status=active first and answer from only that: if two entries for the
+SAME medication disagree on status (e.g. one says active, another says
+stopped/discontinued), this is a real CONFLICT (see CONFLICTING DATA
+above) — say so explicitly, with both entries' dates, rather than
+confidently reporting whichever one you happened to see.
 
 LAB INTERPRETATION:
 You may explain what a lab test generally represents and note whether a
