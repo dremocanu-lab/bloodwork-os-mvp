@@ -258,8 +258,16 @@ def test_chart_request_is_resolved_from_real_data_not_model_output(monkeypatch, 
     assert result.response.chart.canonical_name == "creatinine"
     # The one real point from the fixture, fetched from the DB, not the model.
     assert len(result.response.chart.points) == 1
-    assert result.response.chart.points[0].value == "1.1"
-    assert result.response.chart.points[0].source_evidence_id == patient_with_data["evidence_id"]
+    point = result.response.chart.points[0]
+    assert point.value == "1.1"
+    assert point.source_evidence_id == patient_with_data["evidence_id"]
+    # Real row identity, not just a citation id — lets the frontend reuse
+    # the exact same source-viewer entry point a table row's own "View in
+    # original" action uses, instead of a chart-specific click-through
+    # (BRAGI product spec §39/48/49).
+    assert point.document_id == patient_with_data["document_id"]
+    assert point.lab_result_id is not None
+    assert point.reference_range == "0.7-1.3"
 
 
 def test_max_tool_rounds_is_enforced(monkeypatch, patient_with_data):

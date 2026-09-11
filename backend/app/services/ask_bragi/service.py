@@ -285,6 +285,9 @@ def _validate_and_resolve(ctx: AskBragiContext, model_output: ModelOutput) -> As
                 value=p.get("value"),
                 unit=p.get("unit"),
                 flag=p.get("flag"),
+                reference_range=p.get("reference_range"),
+                document_id=p.get("document_id"),
+                lab_result_id=p.get("lab_result_id"),
                 source_evidence_id=p.get("source_evidence_id"),
             )
             for p in trend.get("points", [])

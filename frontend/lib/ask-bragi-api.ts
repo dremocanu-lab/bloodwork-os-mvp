@@ -13,6 +13,12 @@ export type AskBragiChartPoint = {
   value: string | null;
   unit: string | null;
   flag: string | null;
+  reference_range: string | null;
+  /** Real row identity (not just a citation id) — lets the chart reuse
+   * the exact same source-viewer entry point a lab table row's own
+   * "View in original" action uses. */
+  document_id: number | null;
+  lab_result_id: number | null;
   source_evidence_id: number | null;
 };
 

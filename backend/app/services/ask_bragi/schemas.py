@@ -86,6 +86,13 @@ class ChartPoint(BaseModel):
     value: str | None
     unit: str | None
     flag: str | None
+    reference_range: str | None = None
+    # Real row identity, not just a citation id — lets the frontend reuse
+    # the exact same source-viewer entry point a table row's own "View in
+    # original" action uses (see BRAGI product spec §39/48/49), rather
+    # than inventing a chart-specific click-through.
+    document_id: int | None = None
+    lab_result_id: int | None = None
     source_evidence_id: int | None = None
 
 

@@ -1360,16 +1360,17 @@ export default function DocumentStructuredPage() {
 
             {canDelete && (
               <button
+                type="button"
+                // Was raw inline styles with its own padding/height, which
+                // didn't share this row's --ctl-h with its siblings
+                // (Open Original/Verify/Edit all use .b-btn/.secondary-btn,
+                // both driven by the same token) — a real, visible height/
+                // baseline mismatch in this action row, not just a naming
+                // inconsistency. b-btn-danger-quiet is the same destructive-
+                // but-not-shouting treatment the settings page's own
+                // account-deletion button already uses.
+                className="b-btn b-btn-danger-quiet"
                 onClick={() => setConfirmDeleteOpen(true)}
-                style={{
-                  border: "1px solid var(--danger-border)",
-                  background: "var(--danger-bg)",
-                  color: "var(--danger-text)",
-                  borderRadius: "var(--r-md)",
-                  padding: "11px 15px",
-                  fontWeight: 600,
-                  cursor: "pointer",
-                }}
               >
                 {t("delete")}
               </button>

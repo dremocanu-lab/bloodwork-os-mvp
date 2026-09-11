@@ -356,6 +356,13 @@ def _tool_get_lab_trend(ctx: AskBragiContext, args: dict) -> dict:
                 "flag": lr.flag,
                 "reference_range": lr.reference_range,
                 "source_evidence_id": evidence_id,
+                # Real chart-point provenance (BRAGI product spec §39/49):
+                # already-authorized (this query is scoped to
+                # ctx.patient_id) — carried through so the frontend can
+                # reuse the exact same click-through-to-source affordance
+                # a table row gets, not a chart-specific one.
+                "document_id": lr.document_id,
+                "lab_result_id": lr.id,
             }
         )
     return {"canonical_name": canonical_name, "points": points}

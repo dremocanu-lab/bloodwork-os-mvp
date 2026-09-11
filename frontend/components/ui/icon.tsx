@@ -312,3 +312,24 @@ export const IconChat = (p: IconProps) => (
     <path d="M8 9.5h8M8 13h5" />
   </Svg>
 );
+
+export const IconStop = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="6" y="6" width="12" height="12" rx="2.5" fill="currentColor" stroke="none" />
+  </Svg>
+);
+
+export const IconEdit = (p: IconProps) => (
+  <Svg {...p}>
+    <path d="M4 20 4.6 16.2 15.5 5.3a1.7 1.7 0 0 1 2.4 0l0.8 0.8a1.7 1.7 0 0 1 0 2.4L7.8 19.4 4 20Z" />
+    <path d="m13.8 6.9 3.3 3.3" />
+  </Svg>
+);
+
+export const IconArchive = (p: IconProps) => (
+  <Svg {...p}>
+    <rect x="3.5" y="5" width="17" height="4" rx="1" />
+    <path d="M5 9v9.5A1.5 1.5 0 0 0 6.5 20h11a1.5 1.5 0 0 0 1.5-1.5V9" />
+    <path d="M10 13h4" />
+  </Svg>
+);

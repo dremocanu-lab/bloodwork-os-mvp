@@ -311,8 +311,17 @@ export function TrendChart({
         {layout.coords.map((c, index) => {
           const abnormal = isAbnormal(c.point.flag);
           const isActive = active?.point.document_id === c.point.document_id;
+          const pointLabel = `${fmt(c.point.date)}: ${c.point.value_display}${unit ? ` ${unit}` : ""}${
+            abnormal ? ` (${c.point.flag})` : ""
+          }`;
           return (
             <g key={`${c.point.document_id}-${index}`}>
+              {/* Abnormal points get a visible ring in addition to the
+                  colour change — flag status must not be colour-only
+                  (accessibility). */}
+              {abnormal ? (
+                <circle cx={c.x} cy={c.y} r={isActive ? 7 : 5.5} fill="none" stroke="var(--danger)" strokeWidth={1} opacity={0.5} />
+              ) : null}
               <circle
                 cx={c.x}
                 cy={c.y}
@@ -321,16 +330,31 @@ export function TrendChart({
                 stroke="var(--surface)"
                 strokeWidth={1.5}
               />
-              {/* Generous invisible hit area - 3px dots are not a target. */}
+              {/* Generous invisible hit area - 3px dots are not a target.
+                  Pointer events (not just mouse) so the readout also
+                  appears on a tap, not only desktop hover; keyboard-
+                  focusable with the same Enter/Space activation as a
+                  click, so the source link works without a pointer. */}
               <circle
                 cx={c.x}
                 cy={c.y}
                 r={14}
                 fill="transparent"
                 style={{ cursor: onPointClick ? "pointer" : "default" }}
-                onMouseEnter={() => setHover(index)}
-                onMouseLeave={() => setHover(null)}
+                tabIndex={onPointClick ? 0 : undefined}
+                role={onPointClick ? "button" : undefined}
+                aria-label={onPointClick ? `${pointLabel}. View original source.` : pointLabel}
+                onPointerEnter={() => setHover(index)}
+                onPointerLeave={() => setHover(null)}
+                onFocus={() => setHover(index)}
+                onBlur={() => setHover(null)}
                 onClick={() => onPointClick?.(c.point.document_id, c.point.lab_result_id)}
+                onKeyDown={(e) => {
+                  if (e.key === "Enter" || e.key === " ") {
+                    e.preventDefault();
+                    onPointClick?.(c.point.document_id, c.point.lab_result_id);
+                  }
+                }}
               />
             </g>
           );
@@ -376,6 +400,12 @@ export function TrendChart({
           {unit ? <span className="b-unit">{unit}</span> : null} · {fmt(active.point.date)}
           {active.point.reference_range ? (
             <span className="b-range"> · ref {active.point.reference_range}</span>
+          ) : null}
+          {/* Flag as TEXT, not colour alone — the marker ring above is the
+              visual channel, this is the accessible one (screen readers,
+              colour-blind users). */}
+          {isAbnormal(active.point.flag) ? (
+            <span style={{ color: "var(--danger)", fontWeight: 600 }}> · {active.point.flag}</span>
           ) : null}
         </div>
       ) : null}
