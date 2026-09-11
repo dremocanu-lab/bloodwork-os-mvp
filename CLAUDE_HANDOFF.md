@@ -3,6 +3,32 @@
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## README refresh (2026-09-11)
+
+`README.md` was rewritten (commit `012082e`) to reflect the actual
+current repository — it previously described a much earlier state (no
+Reducto, no classification/splitting, no structured labs/Timeline/
+Readers/charts/source-viewer, no security/GDPR hardening) and was
+seriously stale. Documentation-only change, verified against the real
+codebase (models/routes/services/env vars/CI workflows/package.json)
+before writing, not against assumptions; markdown anchors sanity-checked,
+secret-scanned (0 findings). Pushed and confirmed green in CI.
+
+No architecture inconsistencies were discovered while documenting beyond
+what's already tracked here and in `BRAGI_REDUCTO_PLAN.md`'s own
+per-phase "deferred" notes (e.g. `.env.example` is itself incomplete
+relative to the env vars the code actually reads — the README's env-var
+section was built from a full `os.getenv`/`os.environ.get` grep across
+`backend/app`, not from `.env.example` alone; worth reconciling
+`.env.example` itself at some point, not done here since this was a
+docs-only, README-scoped task).
+
+Ask Bragi remains the next major development phase — not started, and
+explicitly labeled "planned, not yet implemented" in the refreshed
+README, with the intended authorization → minimum-necessary-retrieval →
+`app/services/ai_minimization.py` → provider → cited-`SourceEvidence`
+architecture documented at a high level (not built).
+
 ## CURRENT PHASE
 None — all 7 phases from the original spec, a real Reducto integration
 (§8), a full DB-backed production-readiness round (§9), a real
