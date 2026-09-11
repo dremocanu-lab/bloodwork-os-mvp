@@ -8,10 +8,14 @@ summary, `BRAGI_SECURITY_GDPR_PLAN.md` the broader security/GDPR
 program this feature must integrate with (rate limiting, CNP
 minimization, DSAR export/deletion, AI-provider minimization, audit).
 
-**Status: `[IMPLEMENTED — NOT DEPLOYED]`.** Feature-flagged off by
-default (`ASK_BRAGI_ENABLED=false`, backend; `NEXT_PUBLIC_ASK_BRAGI_
-ENABLED=false`, frontend nav visibility). Merging this code does not
-enable it in production. See "Feature flags" below.
+**Status: `[IMPLEMENTED — ACTIVE]`.** `ASK_BRAGI_ENABLED=true` on the
+Render backend (with a real `OPENAI_API_KEY`) and
+`NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` in Vercel production — confirmed
+live via a real synthetic-account smoke test and, in Phase 5, real
+streaming/stop/conversation-history/reverse-language verification
+directly against production. See "Feature flags" below for what each
+flag still controls, and "Phase 4"/"Phase 5" further down for
+everything built after this V1.
 
 ## Product intent
 
@@ -597,23 +601,121 @@ patient and doctor UIs, `prefers-reduced-motion`-aware, shape
 `aria-hidden` with adjacent status text carrying the actual meaning.
 
 **Not done this phase** (see "Remaining limitations" above, and
-`CLAUDE_HANDOFF.md`): imaging/medication-conflict/reverse-language eval
-categories and a latency benchmark, both blocked on not having a
-configured OpenAI key in this environment.
+`CLAUDE_HANDOFF.md`): imaging/medication-conflict eval categories and a
+large-sample latency benchmark, both needing more synthetic-document
+setup than this phase's time allowed. The reverse-language case WAS
+verified in Phase 5 (below) once a real key became available.
+
+## Phase 5 — real streaming, conversation history, activation confirmed
+
+Everything below builds on Phase 4; nothing in Phases 1-4 was reverted.
+
+**Activation, confirmed live.** The user configured a real
+`OPENAI_API_KEY` on Render and `ASK_BRAGI_ENABLED=true`. Verified (not
+assumed): a real synthetic-account smoke test against production
+(`POST /ask-bragi/conversations` → 200, then a real message → a real,
+grounded answer) round-tripped the full pipeline before this phase's
+work began, and every real-browser test in this phase ran against
+production successfully. `NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` remains
+set in Vercel production from Phase 4. Ask Bragi is now genuinely live,
+not just code-complete.
+
+**Real streaming.** `run_turn_streaming` (service.py) mirrors
+`run_turn`'s exact scope/prompt/tool-loop/validation, differing only in
+HOW the answer reaches the browser: SSE events (`started`/`status`/
+`text_delta`/`citations`/`chart`/`completed`/`stopped`/`error`/`saved`)
+instead of one blocking response. Verified with a frame-by-frame trace
+against real production output: 72 distinct growth steps over ~900ms
+for a several-hundred-character answer — genuine token-by-token
+streaming, not a fast full-answer plop that merely looked instant at
+coarse sampling (confirmed by first testing at 700ms intervals, seeing
+what looked like one jump, then re-testing at ~16ms/frame and finding
+the real progressive growth in between). Stop is a real
+`AbortController` the backend detects via `request.is_disconnected()`
+between provider events; verified on production: stopping after real
+text had streamed preserved that text with a "Stopped — this answer
+may be incomplete" note, while stopping before any text arrived
+correctly showed nothing (there was nothing yet to preserve). Composer
+stays editable throughout; a draft typed while Bragi answers survives
+completion (verified on production).
+
+**Conversation history.** The backend list/get/delete/auto-title
+routes already existed; this phase added a `patient_id` filter to
+`GET /ask-bragi/conversations` (2 new security tests) and built the
+frontend: `AskBragiChat` can resume an existing conversation via a new
+`conversationId` prop instead of always creating one, and a new
+`AskBragiHistorySidebar` (grouped Today/Previous 7 days/Older, "+ New
+chat", inline delete — no dark modal) is used by both `/ask-bragi`
+(patient) and `/patients/[id]/ask-bragi` (doctor, patient-scoped, with
+a compact "Asking about {patient}" card and an active-conversation
+reset the instant the URL's patient id changes). Mobile: an off-canvas
+drawer, invisible click-catcher, matching the existing global sidebar's
+own convention — not a second one. Verified on both local (synthetic
+DB-inserted chart conversation) and production (real doctor + two real
+patients, confirmed no cross-patient leakage) and mobile (390px width).
+
+**Chart overhaul.** The old inline chart (3 unlabeled points, no axis)
+now reuses `<TrendChart>` (the same component Analize/Overview already
+use for one analyte) — real x/y axes, a reference band (correctly
+omitted when points disagree on range), a hover/tap/keyboard readout
+with value/unit/date/reference-range/abnormal-flag, mixed-unit
+detection (refuses to plot incompatible units on one axis), and
+click-through to the real source-viewer entry point via
+document_id/lab_result_id (added to the backend's chart-point payload
+this phase). Verified with real chart data (synthetic DB-inserted and,
+separately, a real model-generated chart on production).
+
+**A real, pre-existing bug found and fixed: the sticky global sidebar.**
+Not something this phase set out to touch — found via the explicit
+"static sidebar" requirement's own real-browser test. `position:
+sticky` on `.app-sidebar` silently stopped working on any page taller
+than one viewport (confirmed via a scrollY trace: Overview/Ask Bragi/
+Settings all failed; Timeline/Medications/Upload/My Access only
+"passed" by coincidence — their content in the test dataset happened
+to fit in one viewport, so scrolling never actually challenged
+stickiness there either). Root cause: `html, body { overflow-x: hidden
+}` gave BOTH elements an explicit overflow, which blocks the CSS2.1
+HTML/BODY overflow-propagation rule (body's overflow normally becomes
+the viewport's own scroll behavior when html has none of its own) —
+both elements ended up as independent, non-propagating scroll
+containers, and the sticky sidebar anchored to `<body>`, which itself
+never scrolls (it just grows to content height), so it moved in
+lockstep with the real page scroll instead of staying put. Fix: the
+rule now lives on `<body>` only, restoring propagation — re-verified
+across all 7 nav routes (sub-pixel-stable) and horizontal-scroll
+prevention (still fully blocked).
+
+**Design refinement.** New `.ask-bragi-*` radius classes, scoped to
+Ask Bragi's own surfaces (not a global redesign) — reuses existing
+`--r-lg`/`--r-xl` tokens plus one new `--r-2xl` (16px) for the
+outermost workspace/card level.
+
+**Reverse-language eval, completed.** A real Romanian-language question
+against production ("Ce analize de sânge am în dosarul meu medical?")
+produced a fully Romanian, correctly-grounded response ("no lab results
+available") AND Romanian follow-up suggestions — no explicit
+language-handling code exists; this is the model's own behavior, now
+confirmed rather than assumed.
+
+**Not done this phase**: imaging and two-source-medication-conflict
+eval categories (both need more synthetic-document setup — an imaging
+report, two conflicting-source medication documents — than this
+phase's remaining time allowed); a large-sample latency benchmark
+(only a handful of real production timings were captured incidentally
+during UI verification, not a proper N-sample study).
 
 ## Rollout
 
-1. Keep both flags off in production (current state after this round's
-   commits).
-2. When ready: set `ASK_BRAGI_ENABLED=true` + a real `OPENAI_API_KEY` +
-   `ASK_BRAGI_MODEL` in Render; set `NEXT_PUBLIC_ASK_BRAGI_ENABLED=true`
-   in Vercel to surface the nav entry.
-3. Confirm `RATE_LIMIT_REDIS_URL` is configured if Render is running
-   more than one instance by that point (see
-   `docs/security/RATE_LIMITING.md`) — the in-memory fallback would
-   otherwise silently under-protect a multi-instance deployment.
-4. Re-run the live eval script (or a successor covering the remaining
-   categories from "Remaining limitations" #6) against real vendor
-   credentials before any real-patient pilot.
-5. Real-patient pilot remains a business/clinical-operations decision,
+1. **Done, this round**: `ASK_BRAGI_ENABLED=true` + a real
+   `OPENAI_API_KEY` are configured on Render (by the user); the nav
+   entry is live in Vercel production. Ask Bragi is genuinely answering
+   real (synthetic, in this phase's own testing) users now.
+2. Confirm `RATE_LIMIT_REDIS_URL` is configured if Render is running
+   more than one instance — the in-memory fallback would otherwise
+   silently under-protect a multi-instance deployment (unchanged from
+   Phase 4; not independently re-verified this round).
+3. Complete the remaining eval categories (imaging, medication
+   conflict) and a proper latency benchmark before any real-patient
+   pilot.
+4. Real-patient pilot remains a business/clinical-operations decision,
    not an engineering conclusion this document can make.

@@ -519,20 +519,18 @@ Vendor DPA/ZDR terms remain not knowable from this codebase alone —
 `[EXTERNAL ACTION]`/`[LEGAL REVIEW]` for the actual contract terms with
 OpenAI/Reducto/Google, unchanged this round.
 
-Ask Bragi (AI chat): **implemented, `[IMPLEMENTED — PARTIALLY
-ACTIVATED]`** — see `BRAGI_ASK_BRAGI_PLAN.md` for the full architecture
-and evidence, including its "Phase 4" section for the Overview rebuild,
-contextual side tab, and scope-broadening work added after the entry
-below was first written. `NEXT_PUBLIC_ASK_BRAGI_ENABLED` is now `true`
-in Vercel production (confirmed via `vercel env pull`) — the nav
-entry/UI is visible. `ASK_BRAGI_ENABLED` and a real `OPENAI_API_KEY`
-have NOT been set on the Render backend (the `render` CLI has no
-env-var subcommand, and this environment correctly refused to let its
-own stored auth token be extracted for a workaround) — until that
-manual dashboard step happens, every request gets a safe, worded
-"unavailable" error rather than a working answer, so no real user has
-actually been exposed to a live answer yet despite the frontend flag
-being on. Every §2.1–2.7 forward-looking requirement in
+Ask Bragi (AI chat): **implemented and LIVE, `[IMPLEMENTED — ACTIVE]`**
+— see `BRAGI_ASK_BRAGI_PLAN.md` for the full architecture and evidence,
+including its "Phase 4"/"Phase 5" sections for the Overview rebuild,
+contextual side tab, scope-broadening, streaming, and conversation-
+history work added after the entry below was first written.
+`NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` in Vercel production and
+`ASK_BRAGI_ENABLED=true` + a real `OPENAI_API_KEY` on the Render
+backend (the user configured both this round) — confirmed via a real
+synthetic-account smoke test (signup → create conversation → real
+grounded answer) and, separately, real streaming/stop/conversation-
+history/reverse-language verification directly against production.
+Every §2.1–2.7 forward-looking requirement in
 `docs/ai/AI_GOVERNANCE.md` Part 2 is now a concrete, tested control
 rather than a design note — patient-context injection is server-side
 only (no tool accepts a `patient_id` parameter, verified directly
@@ -543,9 +541,9 @@ missing/conflicting-data handling is real and tested, chart data is
 always server-resolved never model-generated, and conversation storage
 is integrated into DSAR export and account deletion (the latter closing
 a real FK-cascade bug this feature's own tests found before merging).
-`docs/ai/AI_GOVERNANCE.md` itself has not yet been rewritten to drop its
-now-stale "does not exist" framing — flagged as a follow-up doc update,
-not a technical gap.
+`docs/ai/AI_GOVERNANCE.md` has since been updated to drop its previously
+stale "does not exist" framing and now describes the implemented,
+tested, live control set instead.
 
 ## 22. Backups & disaster recovery
 

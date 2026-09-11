@@ -63,22 +63,30 @@ data itself but privacy-relevant as an access record).
    never a static/public path).
 4. **No outbound flow to analytics/monitoring** — confirmed no such SDK
    exists in the codebase (`BRAGI_SECURITY_GDPR_PLAN.md` §17).
-5. **Ask Bragi → OpenAI, per turn, feature-flagged.** When
-   `ASK_BRAGI_ENABLED=true`, each conversation turn
-   (`app/services/ask_bragi/service.py`) sends the user's own message
-   text plus whatever record data the server-authorized tool calls
-   fetch (labs, medications, timeline entries, document text — all
-   already scoped to what that specific conversation is authorized to
-   see, per `app/services/ask_bragi/context.py`) to OpenAI's Responses
-   API (`api.openai.com`) with `store=False` (OpenAI does not retain the
-   conversation server-side beyond its own standard abuse-monitoring
-   window — see `docs/ai/AI_GOVERNANCE.md` for the full vendor posture).
-   Bragi's own database is the only place a full conversation transcript
-   persists (`ask_bragi_conversations`/`ask_bragi_messages`). This is a
-   NEW category of outbound flow relative to the upload-time OCR/
-   extraction flow in item 1: here, a human (patient or doctor) is
-   typing free text that itself may contain PHI, not just record content
-   already stored in the database.
+5. **Ask Bragi → OpenAI, per turn — LIVE in production**, not merely
+   feature-flagged-and-off: `ASK_BRAGI_ENABLED=true` and a real
+   `OPENAI_API_KEY` are both configured on the production backend as of
+   this round (confirmed via a real synthetic-account smoke test, never
+   by reading the key's value). Each conversation turn
+   (`app/services/ask_bragi/service.py`, streamed or not — streaming,
+   added this round, changes only how the answer reaches the browser,
+   never what's sent to or received from the vendor) sends the user's
+   own message text plus whatever record data the server-authorized
+   tool calls fetch (labs, medications, timeline entries, document
+   text — all already scoped to what that specific conversation is
+   authorized to see, per `app/services/ask_bragi/context.py`) to
+   OpenAI's Responses API (`api.openai.com`) with `store=False` (OpenAI
+   does not retain the conversation server-side beyond its own standard
+   abuse-monitoring window — see `docs/ai/AI_GOVERNANCE.md` for the full
+   vendor posture). Bragi's own database is the only place a full
+   conversation transcript persists (`ask_bragi_conversations`/
+   `ask_bragi_messages`) — a turn the user stops mid-stream is the one
+   exception: it never passed citation/chart validation, so it is never
+   written to either table, even partially. This is a NEW category of
+   outbound flow relative to the upload-time OCR/extraction flow in
+   item 1: here, a human (patient or doctor) is typing free text that
+   itself may contain PHI, not just record content already stored in
+   the database.
 
 ## Data NOT yet minimized (real gaps, not paperwork)
 

@@ -517,16 +517,16 @@ provenance/`View in original`; the security/GDPR hardening round
 (rate limiting, malware-scan boundary, CNP minimization, DSAR export,
 deletion completeness, CI security pipeline, secret/dependency
 scanning — see [Security & privacy](#security--privacy)); Ask Bragi
-(see below) — code-complete, tested, feature-flagged, and activated in
-Vercel production, but **not yet live for real users** pending a
-Render-side configuration step (below) that requires dashboard access
-this environment doesn't have.
+(see below) — **live in production**: `ASK_BRAGI_ENABLED`/
+`OPENAI_API_KEY` are configured on Render and
+`NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` in Vercel, confirmed by a real
+synthetic-account round trip and, this round, real streaming/stop/
+conversation-history/reverse-language verification directly against
+production.
 
-**Next**: setting `ASK_BRAGI_ENABLED=true` + a real `OPENAI_API_KEY` on
-the Render backend (the one remaining step before Ask Bragi actually
-answers in production); the imaging/medication-conflict/reverse-language
-eval categories and a latency benchmark for Ask Bragi (both need that
-same OpenAI credential); remaining UX/QA polish (a full Playwright QA
+**Next**: the imaging/medication-conflict eval categories and a
+proper large-sample latency benchmark for Ask Bragi (the reverse-
+language case is done); remaining UX/QA polish (a full Playwright QA
 pass, per-section source evidence for Reader sections, prescription→
 medication linkage, and other items tracked in `BRAGI_REDUCTO_PLAN.md`'s
 per-phase "deferred" notes); production/vendor/legal closure and
@@ -575,18 +575,18 @@ is grounded in real, validated citations; an unvalidated/hallucinated
 citation is dropped before the response ever reaches the user. See
 `docs/ai/AI_GOVERNANCE.md` for the governance document and
 `BRAGI_ASK_BRAGI_PLAN.md` for full architecture, test evidence, and
-current limitations (notably: real per-turn latency and three eval
-categories — imaging, a two-source medication conflict, reverse
-language — are not yet exercised against a real OpenAI key from this
-environment; a `docs/ai/AI_GOVERNANCE.md`-governed rollout to real
-patients is a business decision, not one this repository makes on its
-own).
+current limitations (notably: a proper large-sample latency benchmark
+and two eval categories — imaging, a two-source medication conflict —
+remain open; the reverse-language case has been verified against real
+production output. A `docs/ai/AI_GOVERNANCE.md`-governed rollout to
+real patients is a business decision, not one this repository makes on
+its own).
 
-**Status**: `ASK_BRAGI_ENABLED` and `OPENAI_API_KEY` still need to be
-set on the Render backend before this is live for real users — the
-Vercel-side flag alone only reveals the nav entry/UI; without the
-backend flag+key, users see the nav item and a safe, worded
-"unavailable" error rather than a working answer.
+**Status**: live. `ASK_BRAGI_ENABLED` and a real `OPENAI_API_KEY` are
+configured on the Render backend and `NEXT_PUBLIC_ASK_BRAGI_ENABLED=true`
+in Vercel — confirmed via a real synthetic-account smoke test and,
+this round, real streaming/stop/conversation-history verification
+directly against production, not just a code-complete claim.
 
 ---
 

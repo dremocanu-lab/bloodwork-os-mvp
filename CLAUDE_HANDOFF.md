@@ -668,3 +668,73 @@ against real vendor credentials. If you touch `right-workspace.tsx`'s
 sheet-variant stacking fix, verify it with a real citation click on a
 phone-width viewport rather than trusting the CSS reasoning alone — that
 specific path was not pixel-tested this round for the reason above.
+
+## Ask Bragi Phase 5 — real streaming, conversation history, activation confirmed (2026-09-11)
+
+Full detail: `BRAGI_ASK_BRAGI_PLAN.md`'s "Phase 5" section (pointer,
+not a duplicate). Headline: **Ask Bragi is now genuinely live** — the
+user configured a real `OPENAI_API_KEY` + `ASK_BRAGI_ENABLED=true` on
+Render this round, and a real synthetic-account smoke test against
+production round-tripped the full pipeline (signup → create
+conversation → real grounded answer) before this phase's own work
+began.
+
+What shipped, all verified via real browser testing (local for
+anything not needing a live model call, real production for streaming/
+stop/history/language, per the task's own "do not mark UX done from
+tsc/build alone" instruction):
+
+- Real SSE streaming (new `run_turn_streaming` in service.py, new
+  `POST .../messages/stream` route) — a frame-by-frame trace against
+  real production output showed 72 distinct incremental growth steps
+  for one answer, confirming genuine token-by-token streaming, not a
+  fast plop that merely looked instant under coarse polling. Stop is a
+  real `AbortController` the backend detects via
+  `request.is_disconnected()`; a stopped turn is never persisted (it
+  never passed citation/chart validation). Composer stays editable and
+  a draft survives completion — both confirmed on production.
+- Conversation history: `AskBragiChat` can resume a conversation by id;
+  a new `AskBragiHistorySidebar` (grouped by recency, inline delete, no
+  dark modal) is used by both the patient's `/ask-bragi` and the
+  doctor's `/patients/[id]/ask-bragi` (patient-scoped via a new
+  `patient_id` filter on `GET /ask-bragi/conversations`, 2 new security
+  tests) — verified with two real patients under one doctor, no
+  cross-patient leakage. Mobile: an off-canvas drawer, no dark backdrop.
+- Chart overhaul: the old 3-point unlabeled SVG now reuses `<TrendChart>`
+  (same component Analize/Overview already use) — real axes, reference
+  band, hover/tap/keyboard readout, mixed-unit safety, real click-
+  through to the source viewer.
+- **A real, pre-existing bug found and fixed**: the global sidebar's
+  `position: sticky` silently broke on any page taller than one
+  viewport (root cause: `overflow-x: hidden` on BOTH `html` and `body`
+  blocks the CSS2.1 overflow-propagation rule that would otherwise make
+  `body`'s overflow become the viewport's own — both ended up as
+  independent, non-scrolling scroll containers, and sticky anchored to
+  the wrong one). Moving the rule to `body` only fixed it — re-verified
+  across all 7 nav routes.
+- Reverse-language eval completed for real: a Romanian question against
+  production got a fully Romanian, correctly-grounded answer AND
+  Romanian follow-up chips, with zero explicit language-handling code.
+
+185 backend tests passing (was 171 after Phase 4) — 14 new (12 for
+streaming: 8 pure extraction-helper tests, 4 against a fake async
+OpenAI client exercising the real route/DB/auth/persistence; 2 for the
+new patient-scoped conversation list).
+
+**Not done this round**: imaging and two-source-medication-conflict
+eval categories (need more synthetic-document setup than time allowed);
+a proper N-sample latency benchmark (only a handful of real timings
+captured incidentally during UI verification).
+
+### If you continue this work
+
+Read `BRAGI_ASK_BRAGI_PLAN.md`'s "Phase 5" section first. Ask Bragi is
+LIVE — any further change to `service.py`/`tools.py`/the streaming
+route is now a change to a real, answering feature, not a flagged-off
+one; re-run the full backend suite (`pytest`, 185 tests) and the
+security suite specifically before touching authorization/citation code.
+If you touch the html/body CSS rule this round's sidebar fix relies on,
+re-run the sticky-sidebar scroll trace across all 7 nav routes before
+assuming a change is safe — the failure mode is silent (no error, no
+test catches it, only real scrolling on a genuinely tall page reveals
+it).
