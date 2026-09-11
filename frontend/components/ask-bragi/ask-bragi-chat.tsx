@@ -135,8 +135,25 @@ export default function AskBragiChat({ patientId, documentId, audience, suggesti
     };
   }, [patientId, documentId, initialScope, defaultScope]);
 
+  // Auto-follow the conversation's OWN scrollable container as new
+  // messages arrive — never `scrollIntoView()`, which can escape this
+  // container and drag an ANCESTOR (the whole page, on Overview) into
+  // view instead. That was a real, reproduced bug: a fresh conversation
+  // starts with `messages = []`, which still changes this effect's own
+  // dependency (a new empty-array reference) once `start()` resolves,
+  // and `scrollIntoView()`'s default `block: "start"` alignment then
+  // pulled the ENTIRE PAGE down to align the (empty, near-the-top)
+  // message list with the viewport top — landing Overview scrolled
+  // "under" Ask Bragi a couple seconds after every load. Setting the
+  // immediate parent's own `scrollTop` instead can only ever affect that
+  // one element, never anything outside it. Skipped entirely while there
+  // are no messages yet — nothing to follow, and no reason to touch
+  // scroll position at all on a fresh/empty conversation.
   useEffect(() => {
-    listEndRef.current?.scrollIntoView({ behavior: "smooth" });
+    if (messages.length === 0) return;
+    const container = listEndRef.current?.parentElement;
+    if (!container) return;
+    container.scrollTop = container.scrollHeight;
   }, [messages, sending]);
 
   async function send(text: string) {
