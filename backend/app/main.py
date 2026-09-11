@@ -75,6 +75,18 @@ from app.services.structured_reader_service import (
     SECTION_KEYS as READER_SECTION_KEYS,
     extract_structured_sections,
 )
+from app.services.interop.flags import INTEROP_FHIR_ENABLED, IS_PRODUCTION
+from app.services.interop import (
+    auth_providers as interop_auth_providers,
+    capability as interop_capability,
+    fhir_connector,
+    identity as interop_identity,
+    jwks as interop_jwks,
+    reports as interop_reports,
+    templates as interop_templates,
+)
+from app.services.interop.crypto import encrypt_secret as interop_encrypt_secret
+from app.services.interop.mapping import MappingError, parse_mapping_rule
 
 app = FastAPI()
 
@@ -516,6 +528,127 @@ def run_migrations():
                 WHERE ask_bragi_messages.conversation_id = ask_bragi_conversations.id
             )
         """))
+
+        # Interoperability (BRAGI_INTEROP_PLAN.md — Phase 1: FHIR connector).
+        # Additive: nothing above this point changes. See app/models.py's
+        # "Interoperability" section for what each table is for.
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_secrets (
+                id SERIAL PRIMARY KEY,
+                ref VARCHAR NOT NULL UNIQUE,
+                ciphertext TEXT NOT NULL,
+                created_at VARCHAR NOT NULL,
+                created_by_user_id INTEGER REFERENCES users(id),
+                rotated_at VARCHAR
+            )
+        """))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_connections (
+                id SERIAL PRIMARY KEY,
+                public_id VARCHAR UNIQUE,
+                name VARCHAR NOT NULL,
+                connector_type VARCHAR NOT NULL DEFAULT 'fhir',
+                status VARCHAR NOT NULL DEFAULT 'draft',
+                base_url VARCHAR NOT NULL,
+                fhir_version VARCHAR,
+                allow_private_network BOOLEAN NOT NULL DEFAULT false,
+                auth_type VARCHAR NOT NULL DEFAULT 'none',
+                auth_config_json TEXT,
+                secret_ref VARCHAR REFERENCES interop_secrets(ref),
+                patient_identity_json TEXT,
+                capabilities_json TEXT,
+                capabilities_discovered_at VARCHAR,
+                terminology_overrides_json TEXT,
+                sync_config_json TEXT,
+                version INTEGER NOT NULL DEFAULT 1,
+                created_by_user_id INTEGER REFERENCES users(id),
+                created_at VARCHAR NOT NULL,
+                updated_at VARCHAR NOT NULL,
+                change_reason VARCHAR
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_interop_connections_status ON interop_connections(status)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_sync_runs (
+                id SERIAL PRIMARY KEY,
+                connection_id INTEGER NOT NULL REFERENCES interop_connections(id) ON DELETE CASCADE,
+                run_type VARCHAR NOT NULL,
+                status VARCHAR NOT NULL DEFAULT 'running',
+                summary_json TEXT,
+                error_message TEXT,
+                started_at VARCHAR NOT NULL,
+                finished_at VARCHAR,
+                started_by_user_id INTEGER REFERENCES users(id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_interop_sync_runs_connection_id ON interop_sync_runs(connection_id)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_patient_identity_links (
+                id SERIAL PRIMARY KEY,
+                connection_id INTEGER NOT NULL REFERENCES interop_connections(id) ON DELETE CASCADE,
+                patient_id INTEGER NOT NULL REFERENCES patients(id),
+                identifier_system VARCHAR NOT NULL,
+                identifier_value VARCHAR NOT NULL,
+                status VARCHAR NOT NULL DEFAULT 'verified',
+                verification_method VARCHAR,
+                verified_at VARCHAR,
+                verified_by_user_id INTEGER REFERENCES users(id),
+                created_at VARCHAR NOT NULL
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_epil_connection_id ON interop_patient_identity_links(connection_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_epil_patient_id ON interop_patient_identity_links(patient_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_epil_identifier_system ON interop_patient_identity_links(identifier_system)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_epil_identifier_value ON interop_patient_identity_links(identifier_value)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_identity_conflicts (
+                id SERIAL PRIMARY KEY,
+                connection_id INTEGER NOT NULL REFERENCES interop_connections(id) ON DELETE CASCADE,
+                identifier_system VARCHAR NOT NULL,
+                identifier_value VARCHAR NOT NULL,
+                existing_link_id INTEGER REFERENCES interop_patient_identity_links(id),
+                attempted_patient_id INTEGER REFERENCES patients(id),
+                detected_at VARCHAR NOT NULL,
+                resolved BOOLEAN NOT NULL DEFAULT false,
+                resolved_at VARCHAR,
+                resolved_by_user_id INTEGER REFERENCES users(id),
+                resolution_note TEXT
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_iic_connection_id ON interop_identity_conflicts(connection_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_iic_resolved ON interop_identity_conflicts(resolved)"))
+        conn.execute(text("""
+            CREATE TABLE IF NOT EXISTS interop_terminology_mappings (
+                id SERIAL PRIMARY KEY,
+                connection_id INTEGER NOT NULL REFERENCES interop_connections(id) ON DELETE CASCADE,
+                source_system VARCHAR,
+                source_code VARCHAR,
+                source_display VARCHAR,
+                target_canonical_name VARCHAR,
+                target_display_name VARCHAR,
+                target_category VARCHAR,
+                target_unit VARCHAR,
+                mapping_type VARCHAR NOT NULL DEFAULT 'pending_review',
+                status VARCHAR NOT NULL DEFAULT 'pending',
+                frequency_seen INTEGER NOT NULL DEFAULT 1,
+                example_json TEXT,
+                created_at VARCHAR NOT NULL,
+                approved_at VARCHAR,
+                approved_by_user_id INTEGER REFERENCES users(id)
+            )
+        """))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_itm_connection_id ON interop_terminology_mappings(connection_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_itm_source_code ON interop_terminology_mappings(source_code)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_itm_status ON interop_terminology_mappings(status)"))
+        # Additive columns on the pre-existing documents/lab_results tables —
+        # both null for every upload; only interop's own sync path sets them.
+        conn.execute(text("ALTER TABLE documents ADD COLUMN IF NOT EXISTS source_connection_id INTEGER REFERENCES interop_connections(id) ON DELETE SET NULL"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_documents_source_connection_id ON documents(source_connection_id)"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS source_connection_id INTEGER REFERENCES interop_connections(id) ON DELETE SET NULL"))
+        conn.execute(text("ALTER TABLE lab_results ADD COLUMN IF NOT EXISTS external_observation_id VARCHAR"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_results_source_connection_id ON lab_results(source_connection_id)"))
+        conn.execute(text("CREATE INDEX IF NOT EXISTS ix_lab_results_external_observation_id ON lab_results(external_observation_id)"))
+
         conn.commit()
 
 run_migrations()
@@ -3424,6 +3557,43 @@ def delete_my_account(
             db.query(models.AskBragiConversation).filter(
                 models.AskBragiConversation.id.in_(conversation_ids)
             ).delete(synchronize_session=False)
+
+        # Interoperability (BRAGI_INTEROP_PLAN.md) — same FK-cascade class
+        # of gap as Ask Bragi above, found the same way (this feature's own
+        # test suite, before shipping). ExternalPatientIdentityLink.patient_id
+        # is a required FK with no DB-level cascade; InteropIdentityConflict.
+        # attempted_patient_id is nullable and only ever a historical
+        # reference, so it's detached (SET NULL) rather than deleted — the
+        # conflict record itself is an audit trail, not this patient's data.
+        identity_link_ids = [
+            link_id
+            for (link_id,) in db.query(models.ExternalPatientIdentityLink.id).filter(
+                models.ExternalPatientIdentityLink.patient_id == patient.id
+            )
+        ]
+        if identity_link_ids:
+            # InteropIdentityConflict.existing_link_id points back at a link
+            # row — detach (SET NULL) rather than delete the conflict itself,
+            # since the conflict is an audit record, not this patient's data.
+            for conflict in db.query(models.InteropIdentityConflict).filter(
+                models.InteropIdentityConflict.existing_link_id.in_(identity_link_ids)
+            ):
+                conflict.existing_link_id = None
+            # SessionLocal is autoflush=False (see app/db.py) — the ORM
+            # UPDATEs above are only pending in memory until flushed, but the
+            # next statement is a bulk `.delete(synchronize_session=False)`,
+            # which issues a raw DELETE directly and does NOT trigger
+            # autoflush. Without this explicit flush, the DB still sees the
+            # OLD existing_link_id value and the DELETE fails its FK check
+            # (reproduced for real against Neon before this fix).
+            db.flush()
+            db.query(models.ExternalPatientIdentityLink).filter(
+                models.ExternalPatientIdentityLink.id.in_(identity_link_ids)
+            ).delete(synchronize_session=False)
+        for conflict in db.query(models.InteropIdentityConflict).filter(
+            models.InteropIdentityConflict.attempted_patient_id == patient.id
+        ):
+            conflict.attempted_patient_id = None
 
         db.delete(patient)
         db.flush()
@@ -7221,3 +7391,572 @@ async def stream_ask_bragi_message(
         },
     )
 
+
+
+# ============================================================================
+# Interoperability — /admin/interop/* (BRAGI_INTEROP_PLAN.md, Phase 1)
+#
+# Feature-flagged off by default (INTEROP_FHIR_ENABLED, same pattern as
+# ASK_BRAGI_ENABLED above) — merging this code changes nothing for any real
+# user until explicitly activated. Every route below is admin-only AND
+# checks the flag first. Business logic lives in app/services/interop/;
+# these routes are thin — resolve the connection, call the service, shape
+# the response, same division of responsibility as the Ask Bragi routes.
+# ============================================================================
+
+
+def _require_interop_enabled():
+    if not INTEROP_FHIR_ENABLED:
+        raise HTTPException(status_code=404, detail="Interoperability is not enabled on this deployment.")
+
+
+def _get_interop_connection_or_404(db: Session, connection_id: int) -> models.InteropConnection:
+    connection = db.query(models.InteropConnection).filter(models.InteropConnection.id == connection_id).first()
+    if not connection:
+        raise HTTPException(status_code=404, detail="Connection not found")
+    return connection
+
+
+def _serialize_interop_connection(connection: models.InteropConnection) -> dict:
+    """Never includes secret_ref's ciphertext (secret_ref itself is just an
+    opaque pointer, not the secret) — safe to return to any admin caller."""
+    return {
+        "id": connection.id,
+        "public_id": connection.public_id,
+        "name": connection.name,
+        "connector_type": connection.connector_type,
+        "status": connection.status,
+        "base_url": connection.base_url,
+        "fhir_version": connection.fhir_version,
+        "allow_private_network": connection.allow_private_network,
+        "auth_type": connection.auth_type,
+        "auth_config": json.loads(connection.auth_config_json or "{}"),
+        "has_secret": bool(connection.secret_ref),
+        "patient_identity": json.loads(connection.patient_identity_json or "{}"),
+        "capabilities": json.loads(connection.capabilities_json or "{}"),
+        "capabilities_discovered_at": connection.capabilities_discovered_at,
+        "terminology_overrides": json.loads(connection.terminology_overrides_json or "{}"),
+        "sync_config": json.loads(connection.sync_config_json or "{}"),
+        "version": connection.version,
+        "created_at": connection.created_at,
+        "updated_at": connection.updated_at,
+    }
+
+
+class InteropConnectionCreateRequest(BaseModel):
+    name: str
+    base_url: str
+    connector_type: str = "fhir"
+    allow_private_network: bool = False
+    patient_identity_primary_system: str | None = None
+
+
+class InteropConnectionUpdateRequest(BaseModel):
+    name: str | None = None
+    base_url: str | None = None
+    auth_type: str | None = None
+    auth_config: dict | None = None
+    patient_identity: dict | None = None
+    terminology_overrides: dict | None = None
+    sync_config: dict | None = None
+    change_reason: str | None = None
+
+
+class InteropSecretSetRequest(BaseModel):
+    secret_plaintext: str
+
+
+class InteropIdentityLinkRequest(BaseModel):
+    patient_id: int
+    identifier_system: str
+    identifier_value: str
+
+
+class InteropTerminologyApproveRequest(BaseModel):
+    target_canonical_name: str
+    target_display_name: str
+    target_category: str | None = None
+    target_unit: str | None = None
+
+
+class InteropProfileImportRequest(BaseModel):
+    profile: dict
+
+
+@app.get("/admin/interop/templates")
+def list_interop_templates(current_user=Depends(require_role("admin"))):
+    _require_interop_enabled()
+    return {
+        "templates": interop_templates.CONNECTOR_TEMPLATES,
+        "unimplemented_connection_types": interop_templates.UNIMPLEMENTED_CONNECTION_TYPES,
+    }
+
+
+@app.post("/admin/interop/connections")
+def create_interop_connection(
+    payload: InteropConnectionCreateRequest,
+    current_user=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    _require_interop_enabled()
+    if payload.allow_private_network and IS_PRODUCTION:
+        raise HTTPException(
+            status_code=400,
+            detail="allow_private_network cannot be set in production — this is reserved for local sandbox/test connections.",
+        )
+    identity_json = json.dumps(
+        {"primary_system": payload.patient_identity_primary_system} if payload.patient_identity_primary_system else {}
+    )
+    connection = models.InteropConnection(
+        public_id=generate_public_id("interop"),
+        name=payload.name,
+        connector_type=payload.connector_type,
+        status="draft",
+        base_url=payload.base_url,
+        allow_private_network=payload.allow_private_network,
+        auth_type="none",
+        patient_identity_json=identity_json,
+        created_by_user_id=current_user.id,
+        created_at=now_iso(),
+        updated_at=now_iso(),
+    )
+    db.add(connection)
+    db.commit()
+    db.refresh(connection)
+    return _serialize_interop_connection(connection)
+
+
+@app.get("/admin/interop/connections")
+def list_interop_connections(current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    connections = db.query(models.InteropConnection).order_by(models.InteropConnection.id.desc()).all()
+    return {"connections": [_serialize_interop_connection(c) for c in connections]}
+
+
+@app.get("/admin/interop/connections/{connection_id}")
+def get_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    return _serialize_interop_connection(_get_interop_connection_or_404(db, connection_id))
+
+
+@app.patch("/admin/interop/connections/{connection_id}")
+def update_interop_connection(
+    connection_id: int,
+    payload: InteropConnectionUpdateRequest,
+    current_user=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """P64 — configuration versioning: every update bumps `version` and can
+    record a change_reason; nothing here mutates an ACTIVE connection's
+    behavior mid-sync (a running sync reads its own connection row once at
+    the start)."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+
+    if payload.name is not None:
+        connection.name = payload.name
+    if payload.base_url is not None:
+        connection.base_url = payload.base_url
+    if payload.auth_type is not None:
+        if payload.auth_type not in interop_auth_providers.SUPPORTED_AUTH_TYPES:
+            raise HTTPException(status_code=400, detail=f"Unknown auth_type. Supported: {interop_auth_providers.SUPPORTED_AUTH_TYPES}")
+        connection.auth_type = payload.auth_type
+    if payload.auth_config is not None:
+        connection.auth_config_json = json.dumps(payload.auth_config)
+    if payload.patient_identity is not None:
+        connection.patient_identity_json = json.dumps(payload.patient_identity)
+    if payload.terminology_overrides is not None:
+        # Validate every rule up front — a malformed/unknown-op rule is
+        # refused here rather than failing silently mid-sync.
+        for _key, rule in payload.terminology_overrides.items():
+            try:
+                parse_mapping_rule(rule)
+            except MappingError as exc:
+                raise HTTPException(status_code=400, detail=f"Invalid mapping rule for {_key!r}: {exc}") from exc
+        connection.terminology_overrides_json = json.dumps(payload.terminology_overrides)
+    if payload.sync_config is not None:
+        connection.sync_config_json = json.dumps(payload.sync_config)
+
+    connection.version += 1
+    connection.change_reason = payload.change_reason
+    connection.updated_at = now_iso()
+    db.commit()
+    db.refresh(connection)
+    return _serialize_interop_connection(connection)
+
+
+@app.post("/admin/interop/connections/{connection_id}/secret")
+def set_interop_connection_secret(
+    connection_id: int,
+    payload: InteropSecretSetRequest,
+    current_user=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """Stores the secret encrypted (see app/services/interop/crypto.py) and
+    points the connection at it by opaque reference. The plaintext is never
+    echoed back, never logged, and never included in any export."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+
+    ref = connection.secret_ref or f"interop-secret-{connection.public_id}"
+    ciphertext = interop_encrypt_secret(payload.secret_plaintext)
+    existing = db.query(models.InteropSecret).filter_by(ref=ref).first()
+    if existing:
+        existing.ciphertext = ciphertext
+        existing.rotated_at = now_iso()
+    else:
+        db.add(
+            models.InteropSecret(
+                ref=ref,
+                ciphertext=ciphertext,
+                created_at=now_iso(),
+                created_by_user_id=current_user.id,
+            )
+        )
+    connection.secret_ref = ref
+    connection.updated_at = now_iso()
+    db.commit()
+    interop_auth_providers.clear_token_cache(connection.id)
+    return {"ok": True, "has_secret": True}
+
+
+@app.post("/admin/interop/connections/{connection_id}/generate-signing-key")
+def generate_interop_signing_key(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """For smart_backend_services: generates an RSA keypair, stores the
+    private key as this connection's secret, and returns the PUBLIC JWK for
+    the admin to register with the partner (or host at a JWKS URL) — see
+    app/services/interop/jwks.py."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+
+    private_pem, public_jwk = interop_jwks.generate_keypair()
+    ref = connection.secret_ref or f"interop-secret-{connection.public_id}"
+    ciphertext = interop_encrypt_secret(private_pem)
+    existing = db.query(models.InteropSecret).filter_by(ref=ref).first()
+    if existing:
+        existing.ciphertext = ciphertext
+        existing.rotated_at = now_iso()
+    else:
+        db.add(models.InteropSecret(ref=ref, ciphertext=ciphertext, created_at=now_iso(), created_by_user_id=current_user.id))
+    connection.secret_ref = ref
+    auth_config = json.loads(connection.auth_config_json or "{}")
+    auth_config["jwks"] = {"keys": [public_jwk]}
+    connection.auth_config_json = json.dumps(auth_config)
+    connection.updated_at = now_iso()
+    db.commit()
+    interop_auth_providers.clear_token_cache(connection.id)
+    return {"public_jwk": public_jwk}
+
+
+def _record_sync_run(db: Session, connection: models.InteropConnection, run_type: str, current_user) -> models.InteropSyncRun:
+    run = models.InteropSyncRun(
+        connection_id=connection.id,
+        run_type=run_type,
+        status="running",
+        started_at=now_iso(),
+        started_by_user_id=current_user.id if current_user else None,
+    )
+    db.add(run)
+    db.commit()
+    db.refresh(run)
+    return run
+
+
+def _finish_sync_run(db: Session, run: models.InteropSyncRun, *, status: str, summary: dict | None = None, error: str | None = None):
+    run.status = status
+    run.finished_at = now_iso()
+    if summary is not None:
+        run.summary_json = json.dumps(summary)
+    if error is not None:
+        run.error_message = error
+    db.commit()
+
+
+@app.post("/admin/interop/connections/{connection_id}/discover")
+def discover_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    run = _record_sync_run(db, connection, "discover", current_user)
+    try:
+        result = fhir_connector.run_discovery(connection)
+    except fhir_connector.ConnectorError as exc:
+        _finish_sync_run(db, run, status="failed", error=str(exc))
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+    connection.capabilities_json = json.dumps(result)
+    connection.capabilities_discovered_at = result["discovered_at"]
+    connection.fhir_version = result["capability"].get("fhir_version")
+    if connection.status == "draft":
+        connection.status = "discovered"
+    if result.get("recommended_auth_type") and connection.auth_type == "none":
+        # Recommend only — never silently activate real auth (P8). The
+        # admin still has to call PATCH .../secret to supply credentials.
+        auth_config = json.loads(connection.auth_config_json or "{}")
+        auth_config.setdefault("_recommended_auth_type", result["recommended_auth_type"])
+        connection.auth_config_json = json.dumps(auth_config)
+    connection.updated_at = now_iso()
+    db.commit()
+
+    _finish_sync_run(db, run, status="succeeded", summary={"resources_found": len(result["capability"].get("resources", {}))})
+    return {"capability": result, "compatibility_report": result["compatibility_report"]}
+
+
+@app.post("/admin/interop/connections/{connection_id}/test")
+def test_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    run = _record_sync_run(db, connection, "test", current_user)
+    stages = fhir_connector.run_connection_test(connection)
+    all_passed = all(s.passed for s in stages)
+    if all_passed and connection.status == "discovered":
+        connection.status = "validated"
+        connection.updated_at = now_iso()
+        db.commit()
+    _finish_sync_run(
+        db,
+        run,
+        status="succeeded" if all_passed else "failed",
+        summary={"stages": [{"stage": s.stage, "passed": s.passed, "message": s.message} for s in stages]},
+    )
+    return {"passed": all_passed, "stages": [{"stage": s.stage, "passed": s.passed, "message": s.message} for s in stages]}
+
+
+@app.post("/admin/interop/connections/{connection_id}/preview")
+def preview_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """P66/P67 — shadow sync. Commits no clinical data — see
+    fhir_connector.preview_sync's own docstring for exactly what it does
+    persist (terminology-review bookkeeping only)."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    run = _record_sync_run(db, connection, "preview", current_user)
+    try:
+        result = fhir_connector.preview_sync(db, connection)
+    except fhir_connector.ConnectorError as exc:
+        _finish_sync_run(db, run, status="failed", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    if connection.status == "validated":
+        connection.status = "shadow"
+        connection.updated_at = now_iso()
+        db.commit()
+    _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    return result
+
+
+@app.post("/admin/interop/connections/{connection_id}/connect")
+def connect_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """The real activation step (spec STEP 8) — only reachable after a
+    connection has been discovered, tested, and shadow-previewed at least
+    once (status == "shadow"). Runs one real, idempotent commit sync."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    if connection.status not in ("shadow", "active", "paused"):
+        raise HTTPException(
+            status_code=400,
+            detail=f"Connection must be shadow-previewed before connecting (current status: {connection.status}).",
+        )
+    run = _record_sync_run(db, connection, "sync", current_user)
+    try:
+        result = fhir_connector.run_sync(db, connection, user_id=current_user.id)
+    except fhir_connector.ConnectorError as exc:
+        _finish_sync_run(db, run, status="failed", error=str(exc))
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    connection.status = "active"
+    connection.updated_at = now_iso()
+    db.commit()
+    _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    return result
+
+
+@app.post("/admin/interop/connections/{connection_id}/pause")
+def pause_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """P69/P70 — stops future sync/token use immediately; never deletes
+    already-imported clinical history."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    connection.status = "paused"
+    connection.updated_at = now_iso()
+    db.commit()
+    interop_auth_providers.clear_token_cache(connection.id)
+    return _serialize_interop_connection(connection)
+
+
+@app.get("/admin/interop/connections/{connection_id}/export")
+def export_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    return interop_reports.export_connection_profile(connection)
+
+
+@app.post("/admin/interop/connections/import")
+def import_interop_connection(
+    payload: InteropProfileImportRequest, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)
+):
+    _require_interop_enabled()
+    try:
+        draft_fields = interop_reports.import_connection_profile(payload.profile)
+    except ValueError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+    connection = models.InteropConnection(
+        public_id=generate_public_id("interop"),
+        status="draft",
+        created_by_user_id=current_user.id,
+        created_at=now_iso(),
+        updated_at=now_iso(),
+        **draft_fields,
+    )
+    db.add(connection)
+    db.commit()
+    db.refresh(connection)
+    return _serialize_interop_connection(connection)
+
+
+@app.get("/admin/interop/connections/{connection_id}/report")
+def get_interop_partner_report(
+    connection_id: int, format: str = "json", current_user=Depends(require_role("admin")), db: Session = Depends(get_db)
+):
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    cached = json.loads(connection.capabilities_json or "{}")
+    compatibility_report = cached.get("compatibility_report")
+    if not compatibility_report:
+        raise HTTPException(status_code=400, detail="Run discovery before requesting a partner readiness report.")
+    report = interop_reports.build_partner_readiness_report(connection, compatibility_report)
+    if format == "markdown":
+        from fastapi.responses import PlainTextResponse
+
+        return PlainTextResponse(interop_reports.render_partner_readiness_markdown(report))
+    return report
+
+
+@app.get("/admin/interop/connections/{connection_id}/diagnostic-bundle")
+def get_interop_diagnostic_bundle(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """P74 — sanitized, PHI-free, secret-free troubleshooting bundle."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    recent_runs = (
+        db.query(models.InteropSyncRun)
+        .filter(models.InteropSyncRun.connection_id == connection_id)
+        .order_by(models.InteropSyncRun.id.desc())
+        .limit(20)
+        .all()
+    )
+    return interop_reports.build_diagnostic_bundle(connection, recent_runs)
+
+
+@app.get("/admin/interop/connections/{connection_id}/identity/conflicts")
+def list_interop_identity_conflicts(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    _require_interop_enabled()
+    _get_interop_connection_or_404(db, connection_id)
+    conflicts = (
+        db.query(models.InteropIdentityConflict)
+        .filter(models.InteropIdentityConflict.connection_id == connection_id, models.InteropIdentityConflict.resolved.is_(False))
+        .all()
+    )
+    return {
+        "conflicts": [
+            {
+                "id": c.id,
+                "identifier_system": c.identifier_system,
+                "identifier_value": c.identifier_value,
+                "existing_link_id": c.existing_link_id,
+                "attempted_patient_id": c.attempted_patient_id,
+                "detected_at": c.detected_at,
+            }
+            for c in conflicts
+        ]
+    }
+
+
+@app.post("/admin/interop/connections/{connection_id}/identity/links")
+def create_interop_identity_link(
+    connection_id: int,
+    payload: InteropIdentityLinkRequest,
+    current_user=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """P32/P33 — the only way an identity link is ever created: an explicit
+    admin action naming both sides. Refuses (400, with an IDENTITY CONFLICT
+    recorded for review) rather than silently overwriting a link that
+    already points at a different patient."""
+    _require_interop_enabled()
+    _get_interop_connection_or_404(db, connection_id)
+    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
+    if not patient:
+        raise HTTPException(status_code=404, detail="Patient not found")
+    try:
+        link = interop_identity.create_identity_link(
+            db,
+            connection_id=connection_id,
+            patient_id=payload.patient_id,
+            identifier_system=payload.identifier_system,
+            identifier_value=payload.identifier_value,
+            verified_by_user_id=current_user.id,
+        )
+    except ValueError as exc:
+        db.commit()  # persist the conflict row create_identity_link recorded before raising
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+    db.commit()
+    return {"id": link.id, "patient_id": link.patient_id, "status": link.status}
+
+
+@app.get("/admin/interop/connections/{connection_id}/terminology")
+def list_interop_terminology_mappings(
+    connection_id: int, status: str = "pending", current_user=Depends(require_role("admin")), db: Session = Depends(get_db)
+):
+    _require_interop_enabled()
+    _get_interop_connection_or_404(db, connection_id)
+    mappings = (
+        db.query(models.InteropTerminologyMapping)
+        .filter(models.InteropTerminologyMapping.connection_id == connection_id, models.InteropTerminologyMapping.status == status)
+        .order_by(models.InteropTerminologyMapping.frequency_seen.desc())
+        .all()
+    )
+    return {
+        "mappings": [
+            {
+                "id": m.id,
+                "source_system": m.source_system,
+                "source_code": m.source_code,
+                "source_display": m.source_display,
+                "frequency_seen": m.frequency_seen,
+                "status": m.status,
+                "example": json.loads(m.example_json) if m.example_json else None,
+            }
+            for m in mappings
+        ]
+    }
+
+
+@app.post("/admin/interop/connections/{connection_id}/terminology/{mapping_id}/approve")
+def approve_interop_terminology_mapping(
+    connection_id: int,
+    mapping_id: int,
+    payload: InteropTerminologyApproveRequest,
+    current_user=Depends(require_role("admin")),
+    db: Session = Depends(get_db),
+):
+    """P15/P19/P73 — a human-approved local-code override, reused
+    automatically by every future sync from this connection (never
+    re-guessed per import)."""
+    _require_interop_enabled()
+    _get_interop_connection_or_404(db, connection_id)
+    mapping = (
+        db.query(models.InteropTerminologyMapping)
+        .filter(models.InteropTerminologyMapping.id == mapping_id, models.InteropTerminologyMapping.connection_id == connection_id)
+        .first()
+    )
+    if not mapping:
+        raise HTTPException(status_code=404, detail="Mapping not found")
+    mapping.target_canonical_name = payload.target_canonical_name
+    mapping.target_display_name = payload.target_display_name
+    mapping.target_category = payload.target_category
+    mapping.target_unit = payload.target_unit
+    mapping.mapping_type = "local_override"
+    mapping.status = "approved"
+    mapping.approved_at = now_iso()
+    mapping.approved_by_user_id = current_user.id
+    db.commit()
+    return {"ok": True}

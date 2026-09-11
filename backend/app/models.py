@@ -3,6 +3,16 @@ from sqlalchemy.orm import relationship
 
 from app.db import Base
 
+# --- Additive columns for LabResult / Document -----------------------------
+# Interoperability (see BRAGI_INTEROP_PLAN.md): a lab result or document that
+# arrived via an external standards-based connector (FHIR, later HL7/CDA/
+# DICOMweb) rather than a patient/doctor upload carries a `source_connection_id`
+# pointing at the ConnectionProfile that produced it, and — for lab results —
+# an `external_observation_id` (the partner's own resource id) used for
+# idempotent re-sync (see app/services/interop/fhir_connector.py). Both are
+# null for every existing row and for every ordinary upload; nothing about
+# the upload pipeline changes.
+
 
 class User(Base):
     __tablename__ = "users"
@@ -205,6 +215,13 @@ class Document(Base):
     last_edited_at = Column(String, nullable=True)
     created_at = Column(String, nullable=True)
 
+    # Interoperability — null for every upload. Set only for the synthetic
+    # "sync batch" Document a FHIR (or later HL7/CDA/DICOMweb) connector
+    # creates to hang its LabResult rows off of; see
+    # app/services/interop/fhir_connector.py's commit path. Never set by the
+    # upload pipeline.
+    source_connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="SET NULL"), nullable=True, index=True)
+
     patient = relationship("Patient", back_populates="documents", foreign_keys=[patient_id])
     intended_patient = relationship("Patient", foreign_keys=[intended_patient_id])
     parent_document = relationship("Document", foreign_keys=[parent_document_id], remote_side=[id])
@@ -327,6 +344,14 @@ class LabResult(Base):
     # earlier one describing the same measurement instead of inserting a
     # second row for it (see process_upload_job).
     duplicate_of_lab_result_id = Column(Integer, ForeignKey("lab_results.id", ondelete="SET NULL"), nullable=True)
+
+    # Interoperability — both null for every existing/uploaded row. Set only
+    # by app/services/interop/fhir_connector.py's commit path; used for
+    # idempotent re-sync (the same partner Observation.id syncing twice
+    # updates this row instead of inserting a duplicate) and for tracing a
+    # value back to the connection that produced it.
+    source_connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="SET NULL"), nullable=True, index=True)
+    external_observation_id = Column(String, nullable=True, index=True)
 
     document = relationship("Document", back_populates="lab_results")
     source_evidence = relationship("SourceEvidence", back_populates="lab_result", cascade="all, delete-orphan")
@@ -626,3 +651,209 @@ class EmergencyAuditLog(Base):
 
     emergency_user = relationship("User", foreign_keys=[emergency_user_id])
     patient = relationship("Patient")
+
+
+# ============================================================================
+# Interoperability (BRAGI_INTEROP_PLAN.md -- Phase 1: FHIR R4 inbound connector)
+#
+# All rows below are additive and inert until a real ConnectionProfile is
+# created and INTEROP_FHIR_ENABLED=true; nothing here changes any existing
+# query, route, or upload path. See app/services/interop/ for the connector
+# implementation and app/main.py's `/admin/interop/*` routes for the API.
+# ============================================================================
+
+
+class InteropSecret(Base):
+    """A secret (bearer token, client secret, private key, etc.) belonging to
+    a ConnectionProfile, encrypted at rest (see app/services/interop/crypto.py)
+    and referenced from the profile only by opaque `ref` -- never by value.
+    Never returned by any API response; never included in profile export.
+    """
+
+    __tablename__ = "interop_secrets"
+
+    id = Column(Integer, primary_key=True, index=True)
+    ref = Column(String, nullable=False, unique=True, index=True)
+    ciphertext = Column(Text, nullable=False)
+    created_at = Column(String, nullable=False)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    rotated_at = Column(String, nullable=True)
+
+
+class InteropConnection(Base):
+    """A versioned, declarative description of how Bragi talks to one partner
+    (ConnectionProfile in the plan doc's vocabulary -- named InteropConnection
+    here since `Connection` alone collides conceptually with DB connections).
+    Every *_json column is a serialized JSON object, following this file's
+    existing convention (see AskBragiMessage.tool_categories_json etc.)
+    rather than introducing a new column type.
+    """
+
+    __tablename__ = "interop_connections"
+
+    id = Column(Integer, primary_key=True, index=True)
+    public_id = Column(String, nullable=True, unique=True, index=True)
+    name = Column(String, nullable=False)
+    connector_type = Column(String, nullable=False, default="fhir", index=True)  # "fhir" only in Phase 1
+
+    # Lifecycle -- see BRAGI_INTEROP_PLAN.md P68. Never a bare enabled/disabled
+    # boolean: draft -> discovered -> validated -> shadow -> active -> paused
+    # / degraded -> disabled.
+    status = Column(String, nullable=False, default="draft", index=True)
+
+    base_url = Column(String, nullable=False)
+    fhir_version = Column(String, nullable=True)
+
+    # Sandbox connections (see P22 / the synthetic dev fixture) are the only
+    # ones ever allowed to target a private/loopback address -- see
+    # app/services/interop/ssrf.py. Never true for a real partner in
+    # production; the admin route that sets it refuses outside
+    # ENVIRONMENT != "production".
+    allow_private_network = Column(Boolean, nullable=False, default=False)
+
+    auth_type = Column(String, nullable=False, default="none")
+    # Non-secret auth configuration only (issuer, audience, token_url, header
+    # name, scopes...). Secret material is never stored here -- see
+    # `secret_ref` below and app/services/interop/crypto.py.
+    auth_config_json = Column(Text, nullable=True)
+    secret_ref = Column(String, ForeignKey("interop_secrets.ref"), nullable=True)
+
+    # {"primary_system": "...", "secondary_system": "..."} -- the identifier
+    # system(s) this partner is trusted to assert identity through (P34).
+    # Never guessed from whichever identifier a resource happens to list
+    # first.
+    patient_identity_json = Column(Text, nullable=True)
+
+    # Cached CapabilityStatement-derived FhirCompatibilityReport (P11) plus
+    # SMART discovery metadata (P6), with a timestamp -- see
+    # app/services/interop/capability.py. Re-discoverable on demand; never
+    # silently re-fetched on a normal request.
+    capabilities_json = Column(Text, nullable=True)
+    capabilities_discovered_at = Column(String, nullable=True)
+
+    # Declarative mapping overrides (P15) -- schema-validated, non-executable;
+    # see app/services/interop/mapping.py.
+    terminology_overrides_json = Column(Text, nullable=True)
+
+    # {"mode": "incremental"|"full", "poll_interval_seconds": ...} -- Phase 1
+    # only records the config; the sync itself is admin-triggered, not a
+    # background poller yet (see BRAGI_INTEROP_PLAN.md "Deferred").
+    sync_config_json = Column(Text, nullable=True)
+
+    version = Column(Integer, nullable=False, default=1)
+    created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(String, nullable=False)
+    updated_at = Column(String, nullable=False)
+    change_reason = Column(String, nullable=True)
+
+    created_by_user = relationship("User", foreign_keys=[created_by_user_id])
+
+
+class InteropSyncRun(Base):
+    """One execution of discover / test / preview (shadow sync) / sync
+    against a connection -- the audit trail behind the sync-diff UI (P67) and
+    the data-quality dashboard (P72). `summary_json` holds the counts shown
+    to the admin (patients discovered, observations, mapped_automatically,
+    requires_mapping_review, unmapped_terminology, identity_conflicts,
+    duplicates_detected, created/updated/skipped). `preview`/`test`/`discover`
+    runs never write to any other table; only a `sync` run does.
+    """
+
+    __tablename__ = "interop_sync_runs"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="CASCADE"), nullable=False, index=True)
+    run_type = Column(String, nullable=False, index=True)  # discover | test | preview | sync
+    status = Column(String, nullable=False, default="running", index=True)  # running | succeeded | failed
+    summary_json = Column(Text, nullable=True)
+    error_message = Column(Text, nullable=True)
+    started_at = Column(String, nullable=False)
+    finished_at = Column(String, nullable=True)
+    started_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    connection = relationship("InteropConnection")
+    started_by_user = relationship("User", foreign_keys=[started_by_user_id])
+
+
+class ExternalPatientIdentityLink(Base):
+    """Explicit, admin-verified crosswalk between one external identifier
+    (system + value) seen through one connection and one Bragi patient
+    (P31/P32). No row here is ever created automatically from a fuzzy/name
+    match -- only from an explicit admin action, or a verified PIXm/PDQm
+    result in a later phase. A conflicting identifier (already linked to a
+    different patient) is recorded in InteropIdentityConflict instead of
+    overwriting this table.
+    """
+
+    __tablename__ = "interop_patient_identity_links"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="CASCADE"), nullable=False, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=False, index=True)
+    identifier_system = Column(String, nullable=False, index=True)
+    identifier_value = Column(String, nullable=False, index=True)
+    status = Column(String, nullable=False, default="verified", index=True)  # verified | pending | revoked
+    verification_method = Column(String, nullable=True)  # "admin_manual" in Phase 1
+    verified_at = Column(String, nullable=True)
+    verified_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    created_at = Column(String, nullable=False)
+
+    connection = relationship("InteropConnection")
+    patient = relationship("Patient")
+    verified_by_user = relationship("User", foreign_keys=[verified_by_user_id])
+
+
+class InteropIdentityConflict(Base):
+    """Recorded whenever a sync sees an external identifier already linked
+    (via ExternalPatientIdentityLink) to a DIFFERENT Bragi patient than the
+    one the current sync context expected. The sync stops for that identity
+    and imports nothing for it (P33) until an admin resolves this row.
+    """
+
+    __tablename__ = "interop_identity_conflicts"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="CASCADE"), nullable=False, index=True)
+    identifier_system = Column(String, nullable=False)
+    identifier_value = Column(String, nullable=False)
+    existing_link_id = Column(Integer, ForeignKey("interop_patient_identity_links.id"), nullable=True)
+    attempted_patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True)
+    detected_at = Column(String, nullable=False)
+    resolved = Column(Boolean, nullable=False, default=False, index=True)
+    resolved_at = Column(String, nullable=True)
+    resolved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+    resolution_note = Column(Text, nullable=True)
+
+    connection = relationship("InteropConnection")
+    existing_link = relationship("ExternalPatientIdentityLink")
+    attempted_patient = relationship("Patient")
+
+
+class InteropTerminologyMapping(Base):
+    """A local (partner-specific) code seen through one connection, mapped to
+    a Bragi canonical lab concept -- either an admin-approved override (P15)
+    or surfaced for review after `resolve_analyte()` couldn't confidently
+    resolve it (P73). Approval is never automatic from frequency alone.
+    """
+
+    __tablename__ = "interop_terminology_mappings"
+
+    id = Column(Integer, primary_key=True, index=True)
+    connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="CASCADE"), nullable=False, index=True)
+    source_system = Column(String, nullable=True)
+    source_code = Column(String, nullable=True, index=True)
+    source_display = Column(String, nullable=True)
+    target_canonical_name = Column(String, nullable=True)
+    target_display_name = Column(String, nullable=True)
+    target_category = Column(String, nullable=True)
+    target_unit = Column(String, nullable=True)
+    mapping_type = Column(String, nullable=False, default="pending_review")  # local_override | pending_review
+    status = Column(String, nullable=False, default="pending", index=True)  # pending | approved
+    frequency_seen = Column(Integer, nullable=False, default=1)
+    example_json = Column(Text, nullable=True)
+    created_at = Column(String, nullable=False)
+    approved_at = Column(String, nullable=True)
+    approved_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
+
+    connection = relationship("InteropConnection")
+    approved_by_user = relationship("User", foreign_keys=[approved_by_user_id])
