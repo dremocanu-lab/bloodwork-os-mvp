@@ -316,3 +316,168 @@ def test_disabled_flag_raises_before_any_client_call(monkeypatch, patient_with_d
             ask_bragi_service.run_turn(ctx=ctx, audience="patient", user_message="hi", prior_turns=[])
     finally:
         db.close()
+
+
+# --- Scope broadening (server-authoritative, never model-decided) ----------
+
+
+def test_explicit_scope_request_widens_document_conversation(monkeypatch, patient_with_data):
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_final_response(
+            {"answer": "ok", "citations": [], "chart_request": None, "follow_ups": [], "status": "complete"}
+        )
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="document",
+            document_id=patient_with_data["document_id"],
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx,
+            audience="patient",
+            user_message="anything",
+            prior_turns=[],
+            requested_scope="patient_record",
+        )
+    finally:
+        db.close()
+
+    assert ctx.turn_scope == "patient_record"
+    assert result.response.scope_used == "patient_record"
+
+
+def test_keyword_intent_widens_document_conversation_without_explicit_toggle(monkeypatch, patient_with_data):
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_final_response(
+            {"answer": "ok", "citations": [], "chart_request": None, "follow_ups": [], "status": "complete"}
+        )
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="document",
+            document_id=patient_with_data["document_id"],
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx,
+            audience="patient",
+            user_message="Has anything similar happened before?",
+            prior_turns=[],
+        )
+    finally:
+        db.close()
+
+    assert result.response.scope_used == "patient_record"
+
+
+def test_document_conversation_stays_narrow_without_broadening_signal(monkeypatch, patient_with_data):
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_final_response(
+            {"answer": "ok", "citations": [], "chart_request": None, "follow_ups": [], "status": "complete"}
+        )
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="document",
+            document_id=patient_with_data["document_id"],
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx, audience="patient", user_message="What does this say?", prior_turns=[]
+        )
+    finally:
+        db.close()
+
+    assert result.response.scope_used == "document"
+
+
+def test_calling_an_inherently_patient_wide_tool_marks_broadening_even_without_explicit_signal(
+    monkeypatch, patient_with_data
+):
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_tool_call_response("get_medications", {}),
+        _fake_final_response(
+            {"answer": "ok", "citations": [], "chart_request": None, "follow_ups": [], "status": "complete"}
+        ),
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="document",
+            document_id=patient_with_data["document_id"],
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx, audience="patient", user_message="what meds are recorded", prior_turns=[]
+        )
+    finally:
+        db.close()
+
+    # get_medications is inherently patient-wide — calling it at all while
+    # nominally document-scoped must surface as a real scope broadening,
+    # not a silent wider search presented as document-only.
+    assert result.response.scope_used == "patient_record"
+
+
+def test_patient_record_scope_is_unaffected_by_requested_scope(monkeypatch, patient_with_data):
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_final_response(
+            {"answer": "ok", "citations": [], "chart_request": None, "follow_ups": [], "status": "complete"}
+        )
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="patient_record",
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx,
+            audience="patient",
+            user_message="only in this report...",
+            prior_turns=[],
+            requested_scope="document",
+        )
+    finally:
+        db.close()
+
+    assert result.response.scope_used == "patient_record"

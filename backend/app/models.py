@@ -597,6 +597,11 @@ class AskBragiMessage(Base):
     chart_json = Column(Text, nullable=True)
     follow_ups_json = Column(Text, nullable=True)
     status = Column(String, nullable=True)
+    # "document" | "patient_record" — the scope this specific turn actually
+    # used, which can differ from the conversation's own stored `scope`
+    # (see AskBragiConversation) when a document-scoped turn was visibly
+    # broadened — see app/services/ask_bragi/context.py's `turn_scope`.
+    scope_used = Column(String, nullable=True)
     tool_categories_json = Column(Text, nullable=True)
     prompt_version = Column(String, nullable=True)
     tool_schema_version = Column(String, nullable=True)

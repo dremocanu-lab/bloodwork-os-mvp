@@ -26,6 +26,7 @@ from __future__ import annotations
 
 import json
 import os
+import re
 import time
 from dataclasses import dataclass
 
@@ -101,18 +102,62 @@ def _history_as_text(prior_turns: list[tuple[str, str]]) -> str:
     return "\n".join(lines)
 
 
+# Server-authoritative scope-intent detection (never delegated to the
+# model — see BRAGI_ASK_BRAGI_PLAN.md's "Scope broadening" section: "the
+# server remains authoritative"). Deliberately a plain keyword/phrase
+# match, not an LLM call — deterministic, free, and auditable. Only ever
+# WIDENS a document-scoped turn to patient_record; there is no reverse
+# ("only in this report") target to narrow to, since a patient_record
+# conversation carries no single document_id to narrow onto — documented
+# as a known limitation, not silently attempted.
+_FULL_RECORD_INTENT_PATTERNS = [
+    r"\bover time\b", r"\bever\b", r"\bhistory of\b", r"\bmedical history\b",
+    r"\bhas this happened before\b", r"\bsimilar before\b", r"\bhappened before\b",
+    r"\bpatient overall\b", r"\btrend\b", r"\bpreviously\b", r"\ball my (labs|results|records|documents)\b",
+    r"\b(my|the) (whole|entire|full) record\b", r"\bacross my (whole|entire) record\b",
+    r"\brepeatedly\b", r"\bin general\b",
+]
+
+
+def _detect_full_record_intent(message: str) -> bool:
+    lowered = message.lower()
+    return any(re.search(pattern, lowered) for pattern in _FULL_RECORD_INTENT_PATTERNS)
+
+
+def _resolve_turn_scope(ctx: AskBragiContext, user_message: str, requested_scope: str | None) -> None:
+    """Mutates ctx.turn_scope/ctx.broadened_this_turn BEFORE the model ever
+    sees the request — an explicit UI scope toggle (`requested_scope`)
+    always wins over keyword detection; both only ever apply when the
+    conversation's stored scope is "document" (a patient_record
+    conversation is already at its broadest)."""
+    if ctx.scope != "document":
+        return
+    if requested_scope == "patient_record":
+        ctx.turn_scope = "patient_record"
+        ctx.broadened_this_turn = True
+        return
+    if requested_scope == "document":
+        return  # explicit request to stay narrow — already the default
+    if _detect_full_record_intent(user_message):
+        ctx.turn_scope = "patient_record"
+        ctx.broadened_this_turn = True
+
+
 def run_turn(
     *,
     ctx: AskBragiContext,
     audience: str,
     user_message: str,
     prior_turns: list[tuple[str, str]],
+    requested_scope: str | None = None,
 ) -> AskBragiTurnResult:
     if not ASK_BRAGI_ENABLED:
         raise AskBragiError("Ask Bragi is not enabled in this environment.")
 
+    _resolve_turn_scope(ctx, user_message, requested_scope)
+
     client = _client()
-    system_prompt = build_system_prompt(audience=audience, scope=ctx.scope)
+    system_prompt = build_system_prompt(audience=audience, scope=ctx.turn_scope)
     history_text = _history_as_text(prior_turns[-ASK_BRAGI_HISTORY_TURNS:])
 
     input_items: list[dict] = [
@@ -246,7 +291,10 @@ def _validate_and_resolve(ctx: AskBragiContext, model_output: ModelOutput) -> As
         ]
         chart = Chart(canonical_name=model_output.chart_request.canonical_name, points=points)
 
+    scope_used = "patient_record" if ctx.broadened_this_turn else ctx.turn_scope
+
     return AskBragiResponse(
+        scope_used=scope_used,
         answer=model_output.answer,
         citations=valid_citations,
         chart=chart,

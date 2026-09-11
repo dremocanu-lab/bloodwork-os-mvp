@@ -78,10 +78,29 @@ class AskBragiContext:
     patient_id: int
     requester_user_id: int
     requester_role: str
-    scope: str  # "patient_record" | "document"
+    scope: str  # "patient_record" | "document" — the CONVERSATION's stored scope, immutable
     document_id: int | None = None
     authorized_evidence_ids: set[int] = field(default_factory=set)
     authorized_document_ids: set[int] = field(default_factory=set)
+    # Per-turn effective scope — starts equal to `scope`, may be widened to
+    # "patient_record" for THIS turn only (never persisted back onto the
+    # conversation row) by an explicit UI scope toggle or server-side
+    # keyword-detected intent — see service.py's `_resolve_turn_scope()`.
+    # Tools that respect document boundaries (search_documents/get_document)
+    # consult THIS field, not `scope`, so a widened turn actually searches
+    # more broadly rather than just relabeling the same restricted result.
+    turn_scope: str = ""
+    # Set true the moment a turn goes beyond the conversation's stored
+    # document scope — either because turn_scope was widened, or because
+    # an inherently patient-wide tool (labs/medications/timeline) was
+    # called at all while scope=="document". Drives the visible "Searching
+    # full record" indicator — see BRAGI_ASK_BRAGI_PLAN.md's "Scope
+    # broadening" section. The UI must never silently broaden without this.
+    broadened_this_turn: bool = False
+
+    def __post_init__(self) -> None:
+        if not self.turn_scope:
+            self.turn_scope = self.scope
 
     def require_current_access(self) -> None:
         """Call at the top of EVERY tool dispatch — see tools.py. Raises

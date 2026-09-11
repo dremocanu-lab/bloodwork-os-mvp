@@ -33,6 +33,7 @@ Hard security invariants, enforced here, not just documented:
 from __future__ import annotations
 
 import json
+from datetime import UTC, datetime
 from typing import Any, Callable
 
 from app import models
@@ -78,6 +79,56 @@ def _first_source_evidence_id(ctx: AskBragiContext, lab_result_id: int) -> int |
     return row.id if row else None
 
 
+def _ensure_document_level_evidence(ctx: AskBragiContext, document) -> int | None:
+    """Narrative documents (discharge summaries, imaging/pathology/
+    consultation reports, etc.) generally have no per-field
+    `SourceEvidence` rows — those only exist for structured lab rows
+    today (see BRAGI_REDUCTO_PLAN.md Phase 2/BRAGI_ASK_BRAGI_PLAN.md's
+    "Remaining limitations"). Without this, a narrative-grounded Ask
+    Bragi answer would carry 0 citations even when accurate.
+
+    This creates (once, idempotently — checked first) a DOCUMENT-LEVEL
+    evidence row: `lab_result_id=None`, `page_number=1` if the document's
+    own extraction reasonably implies page 1 is where its content
+    starts, `bbox_*` and `source_text` left null. The existing precision
+    hierarchy in `GET /source-evidence/{id}/view` (see main.py) already
+    reports this honestly as `"page_only"` — NEVER `"exact_bbox"` or
+    `"text_only"` — because those fields are genuinely absent, not
+    because anything here pretends otherwise. Precision hierarchy
+    preserved: exact bbox > page-level > document-level; this function
+    only ever produces the bottom two, never fakes the top one.
+    """
+    existing = (
+        ctx.db.query(models.SourceEvidence)
+        .filter(
+            models.SourceEvidence.document_id == document.id,
+            models.SourceEvidence.lab_result_id.is_(None),
+        )
+        .order_by(models.SourceEvidence.id.asc())
+        .first()
+    )
+    if existing:
+        return existing.id
+
+    # Any existing lab-result-linked evidence already proves this
+    # document has real page geometry — page 1 is a safe, honest
+    # default for a document-level (not field-level) citation on a
+    # narrative document; never asserted for a document Bragi never
+    # actually parsed into pages (nothing here invents a page count).
+    evidence = models.SourceEvidence(
+        document_id=document.id,
+        lab_result_id=None,
+        page_number=1,
+        source_text=None,
+        provider="ask_bragi_document_level",
+        created_at=datetime.now(UTC).isoformat(),
+    )
+    ctx.db.add(evidence)
+    ctx.db.commit()
+    ctx.db.refresh(evidence)
+    return evidence.id
+
+
 # ── Tool implementations ─────────────────────────────────────────────────────
 
 
@@ -104,10 +155,12 @@ def _tool_get_patient_context(ctx: AskBragiContext, args: dict) -> dict:
 
 
 def _tool_search_documents(ctx: AskBragiContext, args: dict) -> dict:
-    if ctx.scope == "document":
-        # Document-scoped conversation: never silently broaden to the
-        # full record — return only the one document this conversation
-        # is bound to (see BRAGI_ASK_BRAGI_PLAN.md's scope model).
+    if ctx.turn_scope == "document":
+        # Document-scoped THIS TURN (ctx.turn_scope, not the conversation's
+        # immutable ctx.scope): return only the one document this
+        # conversation is bound to. A turn that was explicitly/implicitly
+        # widened to "patient_record" (see service.py) searches broadly
+        # instead — see BRAGI_ASK_BRAGI_PLAN.md's scope model.
         doc = ctx.db.query(models.Document).filter(models.Document.id == ctx.document_id).first()
         docs = [doc] if doc else []
     else:
@@ -142,7 +195,7 @@ def _tool_search_documents(ctx: AskBragiContext, args: dict) -> dict:
 
 def _tool_get_document(ctx: AskBragiContext, args: dict) -> dict:
     document_id = args.get("document_id")
-    if ctx.scope == "document" and document_id != ctx.document_id:
+    if ctx.turn_scope == "document" and document_id != ctx.document_id:
         return {"error": "out_of_scope", "message": "This conversation is scoped to a single document."}
     document = ctx.db.query(models.Document).filter(models.Document.id == document_id).first()
     if not document or document.patient_id != ctx.patient_id:
@@ -177,7 +230,7 @@ def _tool_get_document(ctx: AskBragiContext, args: dict) -> dict:
 
 def _tool_get_document_sources(ctx: AskBragiContext, args: dict) -> dict:
     document_id = args.get("document_id")
-    if ctx.scope == "document" and document_id != ctx.document_id:
+    if ctx.turn_scope == "document" and document_id != ctx.document_id:
         return {"error": "out_of_scope"}
     document = ctx.db.query(models.Document).filter(models.Document.id == document_id).first()
     if not document or document.patient_id != ctx.patient_id:
@@ -201,6 +254,20 @@ def _tool_get_document_sources(ctx: AskBragiContext, args: dict) -> dict:
                 "source_text": (r.source_text or "")[:500],
             }
         )
+
+    if not out:
+        # No per-field evidence exists (a narrative document — discharge/
+        # imaging/pathology/consultation reports don't get per-field
+        # SourceEvidence today, see BRAGI_ASK_BRAGI_PLAN.md's "Remaining
+        # limitations"). Fall back to a real, honestly-labeled document-
+        # level citation rather than leaving the model with nothing to
+        # cite — see _ensure_document_level_evidence's docstring for
+        # exactly what precision this carries (page-level, never exact).
+        fallback_id = _ensure_document_level_evidence(ctx, document)
+        if fallback_id is not None:
+            ctx.register_evidence(fallback_id)
+            out.append({"source_evidence_id": fallback_id, "page": 1, "source_text": None})
+
     return {"sources": out}
 
 
@@ -210,7 +277,7 @@ def _tool_get_lab_results(ctx: AskBragiContext, args: dict) -> dict:
         .join(models.Document, models.Document.id == models.LabResult.document_id)
         .filter(models.Document.patient_id == ctx.patient_id)
     )
-    if ctx.scope == "document":
+    if ctx.turn_scope == "document":
         query = query.filter(models.Document.id == ctx.document_id)
     canonical_name = args.get("canonical_name")
     if canonical_name:
@@ -244,7 +311,19 @@ def _tool_get_lab_results(ctx: AskBragiContext, args: dict) -> dict:
     return {"results": out}
 
 
+def _mark_broadened_if_document_scoped(ctx: AskBragiContext) -> None:
+    """Called by tools that are inherently patient-wide (trend/compare/
+    medications/timeline — they never restrict by document). Calling one
+    of these AT ALL while the conversation's stored scope is "document"
+    means this turn went beyond that one document, regardless of whether
+    turn_scope was also explicitly widened — the UI's "Searching full
+    record" indicator must reflect that."""
+    if ctx.scope == "document":
+        ctx.broadened_this_turn = True
+
+
 def _tool_get_lab_trend(ctx: AskBragiContext, args: dict) -> dict:
+    _mark_broadened_if_document_scoped(ctx)
     canonical_name = args.get("canonical_name")
     if not canonical_name:
         return {"error": "canonical_name_required"}
@@ -283,6 +362,7 @@ def _tool_get_lab_trend(ctx: AskBragiContext, args: dict) -> dict:
 
 
 def _tool_compare_lab_results(ctx: AskBragiContext, args: dict) -> dict:
+    _mark_broadened_if_document_scoped(ctx)
     canonical_name = args.get("canonical_name")
     if not canonical_name:
         return {"error": "canonical_name_required"}
@@ -324,6 +404,7 @@ def _tool_compare_lab_results(ctx: AskBragiContext, args: dict) -> dict:
 
 
 def _tool_get_medications(ctx: AskBragiContext, args: dict) -> dict:
+    _mark_broadened_if_document_scoped(ctx)
     query = ctx.db.query(models.PatientMedication).filter(models.PatientMedication.patient_id == ctx.patient_id)
     status = args.get("status")
     if status:
@@ -351,6 +432,7 @@ def _tool_get_medications(ctx: AskBragiContext, args: dict) -> dict:
 
 
 def _tool_get_patient_timeline(ctx: AskBragiContext, args: dict) -> dict:
+    _mark_broadened_if_document_scoped(ctx)
     query = ctx.db.query(models.PatientEvent).filter(models.PatientEvent.patient_id == ctx.patient_id)
     date_from = args.get("date_from")
     date_to = args.get("date_to")

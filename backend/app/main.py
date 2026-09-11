@@ -494,6 +494,10 @@ def run_migrations():
             )
         """))
         conn.execute(text("CREATE INDEX IF NOT EXISTS ix_ask_bragi_messages_conversation_id ON ask_bragi_messages (conversation_id)"))
+        # Visible scope-broadening (see app/services/ask_bragi/context.py's
+        # turn_scope/broadened_this_turn) — added after the two tables
+        # above, additive.
+        conn.execute(text("ALTER TABLE ask_bragi_messages ADD COLUMN IF NOT EXISTS scope_used VARCHAR"))
         conn.commit()
 
 run_migrations()
@@ -6797,6 +6801,12 @@ class AskBragiConversationCreateRequest(BaseModel):
 
 class AskBragiMessageRequest(BaseModel):
     message: str = Field(min_length=1, max_length=4000)
+    # Explicit scope toggle from the contextual UI ("This document" /
+    # "Full record") — optional; when omitted, the server falls back to
+    # keyword-based intent detection (see service.py's
+    # _resolve_turn_scope). Only ever WIDENS a document-scoped
+    # conversation; has no effect on a patient_record-scoped one.
+    requested_scope: str | None = None
 
 
 def _serialize_ask_bragi_conversation(conversation) -> dict:
@@ -6821,6 +6831,7 @@ def _serialize_ask_bragi_message(message) -> dict:
         "chart": json.loads(message.chart_json) if message.chart_json else None,
         "follow_ups": json.loads(message.follow_ups_json) if message.follow_ups_json else [],
         "status": message.status,
+        "scope_used": message.scope_used,
         "created_at": message.created_at,
     }
 
@@ -6958,7 +6969,13 @@ def send_ask_bragi_message(
     audience = "patient" if current_user.role == "patient" else "doctor"
 
     try:
-        result = run_turn(ctx=ctx, audience=audience, user_message=payload.message, prior_turns=prior_turns)
+        result = run_turn(
+            ctx=ctx,
+            audience=audience,
+            user_message=payload.message,
+            prior_turns=prior_turns,
+            requested_scope=payload.requested_scope,
+        )
     except AskBragiError as exc:
         # Never the raw provider error/secret — a generic, safe message.
         print(f"ASK BRAGI: turn failed for conversation {conversation_id}: {exc}")
@@ -6982,6 +6999,7 @@ def send_ask_bragi_message(
         chart_json=json.dumps(result.response.chart.model_dump()) if result.response.chart else None,
         follow_ups_json=json.dumps(result.response.follow_ups),
         status=result.response.status,
+        scope_used=result.response.scope_used,
         tool_categories_json=json.dumps(result.tool_categories),
         prompt_version=result.prompt_version,
         tool_schema_version=result.tool_schema_version,

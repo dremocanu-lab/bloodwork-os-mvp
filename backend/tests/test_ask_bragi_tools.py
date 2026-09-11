@@ -219,3 +219,42 @@ def test_unknown_tool_name_fails_safely(two_document_patient):
         assert result == {"error": "unknown_tool"}
     finally:
         db.close()
+
+
+def test_narrative_document_gets_a_real_document_level_citation(two_document_patient):
+    """doc_b has no LabResult/SourceEvidence rows at all (a narrative
+    document, e.g. a discharge summary) — get_document_sources must not
+    return 0 citations; it must create a real, honestly-labeled
+    document-level SourceEvidence row rather than leaving nothing to
+    cite."""
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=two_document_patient["patient_id"],
+            requester_user_id=two_document_patient["account"]["user"]["id"],
+            requester_role="patient",
+            scope="patient_record",
+        )
+        result = run_tool(ctx, "get_document_sources", {"document_id": two_document_patient["doc_b"]})
+        assert len(result["sources"]) == 1
+        evidence_id = result["sources"][0]["source_evidence_id"]
+        assert evidence_id in ctx.authorized_evidence_ids
+
+        # Precision must be reported honestly — page-level, never
+        # pretended to be exact bbox/text-level evidence.
+        row = db.query(models.SourceEvidence).filter(models.SourceEvidence.id == evidence_id).first()
+        assert row.lab_result_id is None
+        assert row.bbox_x is None
+        assert row.source_text is None
+        assert row.page_number == 1
+        assert row.provider == "ask_bragi_document_level"
+
+        # Idempotent: a second call reuses the same row, doesn't create a duplicate.
+        result2 = run_tool(ctx, "get_document_sources", {"document_id": two_document_patient["doc_b"]})
+        assert result2["sources"][0]["source_evidence_id"] == evidence_id
+
+        db.query(models.SourceEvidence).filter(models.SourceEvidence.id == evidence_id).delete()
+        db.commit()
+    finally:
+        db.close()

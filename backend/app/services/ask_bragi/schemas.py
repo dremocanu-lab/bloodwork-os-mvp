@@ -103,3 +103,9 @@ class AskBragiResponse(BaseModel):
     follow_ups: list[str]
     status: str
     dropped_citation_count: int = 0
+    # "document" | "patient_record" — the scope THIS TURN ACTUALLY USED
+    # (see context.py's `turn_scope`/`broadened_this_turn` and service.py's
+    # `_resolve_turn_scope`). Always visible to the frontend so a document-
+    # scoped conversation that broadened for one turn shows that
+    # transition rather than silently searching wider than the UI implies.
+    scope_used: str = "document"
