@@ -199,6 +199,66 @@ def test_emergency_worker_self_deletion_not_offered():
     assert response.status_code == 403
 
 
+def test_patient_deletion_with_document_level_source_evidence_no_500():
+    """Reproduces a real, previously-shipped bug: SourceEvidence.document_id
+    is a required FK with no ON DELETE CASCADE, and Document only cascades
+    its *lab-linked* SourceEvidence (via LabResult.source_evidence) — a
+    document-level evidence row (lab_result_id IS NULL, the narrative-
+    document citation fallback used by Ask Bragi for discharge/imaging/
+    pathology reports, see _ensure_document_level_evidence) has no
+    LabResult to ride that cascade. Before the corresponding fix in
+    delete_my_account(), this scenario 500'd with a Postgres
+    ForeignKeyViolation on both a local reproduction and a real production
+    account — reproduced independently of Ask Bragi/OpenAI here via a
+    direct DB insert, so this test needs no network/model access.
+    """
+    patient = _signup("patient", cnp="6000101999923")
+    db = SessionLocal()
+    try:
+        patient_row = (
+            db.query(models.Patient)
+            .filter(models.Patient.linked_user_id == patient["user"]["id"])
+            .first()
+        )
+        patient_id = patient_row.id
+        doc = models.Document(
+            patient_id=patient_id,
+            section="scans",
+            filename="repro-imaging-report.pdf",
+            document_type="imaging_report",
+        )
+        db.add(doc)
+        db.flush()
+        evidence = models.SourceEvidence(
+            document_id=doc.id,
+            lab_result_id=None,
+            page_number=1,
+            provider="ask_bragi_document_level",
+            created_at="2026-01-01T00:00:00Z",
+        )
+        db.add(evidence)
+        db.commit()
+        doc_id = doc.id
+        evidence_id = evidence.id
+    finally:
+        db.close()
+
+    response = client.delete("/my/account", headers=_auth(patient["token"]))
+    assert response.status_code == 200, response.text
+    assert response.json() == {"deleted": True}
+
+    db = SessionLocal()
+    try:
+        assert db.query(models.Document).filter(models.Document.id == doc_id).first() is None
+        assert (
+            db.query(models.SourceEvidence).filter(models.SourceEvidence.id == evidence_id).first()
+            is None
+        ), "document-level SourceEvidence must be cleared, not left orphaned/blocking deletion"
+        assert db.query(models.Patient).filter(models.Patient.id == patient_id).first() is None
+    finally:
+        db.close()
+
+
 def test_doctor_double_deletion_is_idempotent_no_500():
     account = _signup("doctor")
     first = client.delete("/my/account", headers=_auth(account["token"]))

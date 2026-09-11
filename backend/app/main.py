@@ -3329,6 +3329,22 @@ def delete_my_account(
             db.query(models.UploadJob).filter(
                 models.UploadJob.document_id.in_(doc_ids)
             ).delete(synchronize_session=False)
+            # SourceEvidence.document_id is a required (NOT NULL) FK with no
+            # ON DELETE CASCADE at the DB level, and Document itself only
+            # declares an ORM cascade for its lab_results, not for
+            # source_evidence directly — LabResult.source_evidence *does*
+            # cascade (see LabResult model), so lab-linked evidence rows are
+            # already cleared when their LabResult is cascade-deleted below.
+            # But document-level evidence (lab_result_id IS NULL — the
+            # narrative-document citation fallback added for Ask Bragi, see
+            # _ensure_document_level_evidence) has no LabResult to ride that
+            # cascade, so it must be cleared here explicitly. Without this,
+            # deleting a patient who has ever had a document-level Ask Bragi
+            # citation fails with a ForeignKeyViolation (reproduced against
+            # both a local and a production account before this fix).
+            db.query(models.SourceEvidence).filter(
+                models.SourceEvidence.document_id.in_(doc_ids)
+            ).delete(synchronize_session=False)
             # Document.parent_document_id (Reducto Split) and LabResult.
             # duplicate_of_lab_result_id (Phase 2 Level-3 dedup linking)
             # are both self-references that would otherwise block
