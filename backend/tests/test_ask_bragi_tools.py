@@ -258,3 +258,54 @@ def test_narrative_document_gets_a_real_document_level_citation(two_document_pat
         db.commit()
     finally:
         db.close()
+
+
+def test_canonical_lab_matching_tolerates_alias_terms_not_in_stored_value(two_document_patient):
+    """Real, reproduced bug: LabResult.canonical_name is normalized at
+    ingest time to the lab catalog's own display form (e.g. "White Blood
+    Cell Count" — see app/services/lab_catalog.py), which does not
+    contain "WBC" as a literal substring. A naive
+    `canonical_name ILIKE '%<model's term>%'` filter — as get_lab_results/
+    get_lab_trend/compare_lab_results used to use — silently returns
+    nothing whenever the model's term (a common alias/abbreviation) isn't
+    a substring of that stored value, even though the exact same data is
+    trivially retrievable unfiltered. This asserts all three tools now
+    find it via find_lab_definition's alias resolution."""
+    db = SessionLocal()
+    try:
+        lr = models.LabResult(
+            document_id=two_document_patient["doc_a"],
+            raw_test_name="WBC",
+            canonical_name="White Blood Cell Count",
+            value="12.3",
+            unit="x10^9/L",
+            reference_range="4.5-11.0",
+            flag="high",
+            observation_datetime="2024-09-12",
+        )
+        db.add(lr)
+        db.commit()
+
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=two_document_patient["patient_id"],
+            requester_user_id=two_document_patient["account"]["user"]["id"],
+            requester_role="patient",
+            scope="patient_record",
+        )
+
+        for alias in ("WBC", "white blood cell count", "leucocite"):
+            results = run_tool(ctx, "get_lab_results", {"canonical_name": alias})["results"]
+            assert len(results) == 1, f"get_lab_results found nothing for alias {alias!r}"
+            assert results[0]["value"] == "12.3"
+
+            trend = run_tool(ctx, "get_lab_trend", {"canonical_name": alias})["points"]
+            assert len(trend) == 1, f"get_lab_trend found nothing for alias {alias!r}"
+
+            compare = run_tool(ctx, "compare_lab_results", {"canonical_name": alias})
+            assert compare["latest"] is not None, f"compare_lab_results found nothing for alias {alias!r}"
+
+        db.query(models.LabResult).filter(models.LabResult.id == lr.id).delete()
+        db.commit()
+    finally:
+        db.close()

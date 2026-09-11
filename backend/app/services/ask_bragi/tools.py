@@ -36,8 +36,11 @@ import json
 from datetime import UTC, datetime
 from typing import Any, Callable
 
+from sqlalchemy import or_
+
 from app import models
 from app.services.ai_minimization import minimize_patient_context
+from app.services.lab_catalog import find_lab_definition
 
 from .context import AskBragiAccessDenied, AskBragiContext
 
@@ -67,6 +70,38 @@ def _clamp_limit(value: Any, default: int, maximum: int) -> int:
     except (TypeError, ValueError):
         return default
     return max(1, min(n, maximum))
+
+
+def _canonical_lab_filter(canonical_name_arg: str):
+    """Build the SQLAlchemy filter for "does this LabResult match the
+    analyte the model asked for", tolerant of the model naming it
+    differently than what ended up stored.
+
+    A bare `canonical_name ILIKE '%<arg>%'` (the previous behavior) is
+    fragile: LabResult.canonical_name is normalized at ingest time to the
+    catalog's own display form (see app/services/lab_catalog.py — e.g.
+    "White Blood Cell Count"), which does not contain common synonyms
+    the model might reasonably use instead ("WBC", "white blood cell
+    count", "leukocytes") as a literal substring in either direction —
+    this was a real, reproduced retrieval failure (a longitudinal/
+    "ever high" WBC question found nothing, even though an unfiltered
+    date-range query proved the exact same WBC data was present and
+    correctly flagged). Reusing `find_lab_definition` — the SAME
+    alias/fuzzy resolver ingestion already uses to normalize raw lab
+    names into a canonical one — closes that gap by resolving the
+    model's term to the stored canonical form before filtering.
+    Falls back to (and still ALSO tries) the raw substring match against
+    both canonical_name and raw_test_name, so a rare analyte the catalog
+    doesn't recognize is never worse off than before this fix."""
+    definition = find_lab_definition(canonical_name_arg)
+    terms = {canonical_name_arg}
+    if definition is not None:
+        terms.add(definition.canonical_name)
+    clauses = []
+    for term in terms:
+        clauses.append(models.LabResult.canonical_name.ilike(f"%{term}%"))
+        clauses.append(models.LabResult.raw_test_name.ilike(f"%{term}%"))
+    return or_(*clauses)
 
 
 def _first_source_evidence_id(ctx: AskBragiContext, lab_result_id: int) -> int | None:
@@ -281,7 +316,7 @@ def _tool_get_lab_results(ctx: AskBragiContext, args: dict) -> dict:
         query = query.filter(models.Document.id == ctx.document_id)
     canonical_name = args.get("canonical_name")
     if canonical_name:
-        query = query.filter(models.LabResult.canonical_name.ilike(f"%{canonical_name}%"))
+        query = query.filter(_canonical_lab_filter(canonical_name))
     date_from = args.get("date_from")
     date_to = args.get("date_to")
     if date_from:
@@ -332,7 +367,7 @@ def _tool_get_lab_trend(ctx: AskBragiContext, args: dict) -> dict:
         .join(models.Document, models.Document.id == models.LabResult.document_id)
         .filter(
             models.Document.patient_id == ctx.patient_id,
-            models.LabResult.canonical_name.ilike(f"%{canonical_name}%"),
+            _canonical_lab_filter(canonical_name),
             models.LabResult.duplicate_of_lab_result_id.is_(None),
         )
     )
@@ -378,7 +413,7 @@ def _tool_compare_lab_results(ctx: AskBragiContext, args: dict) -> dict:
         .join(models.Document, models.Document.id == models.LabResult.document_id)
         .filter(
             models.Document.patient_id == ctx.patient_id,
-            models.LabResult.canonical_name.ilike(f"%{canonical_name}%"),
+            _canonical_lab_filter(canonical_name),
             models.LabResult.duplicate_of_lab_result_id.is_(None),
         )
         .order_by(models.LabResult.observation_datetime.desc())
