@@ -47,16 +47,20 @@ import {
   Toolbar,
 } from "@/components/ui";
 import {
+  IconAlert,
   IconChevronDown,
   IconChevronRight,
+  IconCheck,
   IconDocument,
   IconExternal,
+  IconInbox,
   IconLab,
-  IconPill,
-  IconPlus,
+  IconShield,
+  IconTimeline,
   IconUpload,
 } from "@/components/ui/icon";
 import type { NavUser } from "@/lib/navigation";
+import AskBragiChat from "@/components/ask-bragi/ask-bragi-chat";
 
 /* ── Types ──────────────────────────────────────────────────────────────── */
 
@@ -186,6 +190,15 @@ type Medication = {
   frequency?: string | null;
 };
 
+type AccessRequest = {
+  id: number;
+  doctor_name?: string | null;
+  doctor_department?: string | null;
+  doctor_hospital_name?: string | null;
+  status: string;
+  requested_at: string;
+};
+
 type RecordTab = "overview" | "timeline" | "labs" | "documents";
 
 const SECTION_ORDER: Array<keyof MyProfileResponse["sections"]> = [
@@ -313,6 +326,24 @@ function getEventDate(event: PatientEvent) {
   return event.discharged_at || event.admitted_at || "";
 }
 
+function greetingForHour(hour: number): string {
+  if (hour < 12) return "Good morning";
+  if (hour < 18) return "Good afternoon";
+  return "Good evening";
+}
+
+function formatDateTime(value?: string | null) {
+  if (!value) return null;
+  const time = parseDateTime(value);
+  if (!time) return null;
+  return new Date(time).toLocaleString(undefined, {
+    day: "2-digit",
+    month: "short",
+    hour: "2-digit",
+    minute: "2-digit",
+  });
+}
+
 function uploaderSubtitle(doc: DocumentCard) {
   const uploader = doc.uploaded_by;
   if (!uploader) return "Unknown source";
@@ -366,7 +397,7 @@ function recentPoints(points: TrendPoint[], limit = TREND_POINTS) {
 export default function MyRecordsPage() {
   const router = useRouter();
   const { t, language } = useLanguage();
-  const { activeCount, refreshUploadJobs } = useUploadManager();
+  const { activeCount, refreshUploadJobs, tasks: uploadTasks } = useUploadManager();
 
   const sectionLabels: Record<string, string> = {
     bloodwork: t("bloodwork"),
@@ -380,6 +411,7 @@ export default function MyRecordsPage() {
   const [profile, setProfile] = useState<MyProfileResponse | null>(null);
   const [trends, setTrends] = useState<BloodworkTrend[]>([]);
   const [medications, setMedications] = useState<Medication[]>([]);
+  const [accessRequests, setAccessRequests] = useState<AccessRequest[]>([]);
 
   const [tab, setTab] = useState<RecordTab>("overview");
 
@@ -429,10 +461,20 @@ export default function MyRecordsPage() {
     }
   }
 
+  async function fetchAccessRequestsSilently() {
+    try {
+      const response = await api.get<AccessRequest[]>("/my/access-requests");
+      setAccessRequests(response.data);
+    } catch {
+      // Non-critical for the Overview's "needs attention" section — the
+      // record still loads/refreshes without it.
+    }
+  }
+
   async function refreshRecordsSilently() {
     try {
       const profileResponse = await fetchProfile();
-      await Promise.all([fetchTrends(profileResponse.patient.id), refreshUploadJobs()]);
+      await Promise.all([fetchTrends(profileResponse.patient.id), refreshUploadJobs(), fetchAccessRequestsSilently()]);
     } catch {
       // A silent refresh must never break the page.
     }
@@ -466,6 +508,7 @@ export default function MyRecordsPage() {
         } catch {
           // Medications are non-critical - the record still loads.
         }
+        await fetchAccessRequestsSilently();
       } catch (err) {
         setError(getErrorMessage(err, t("failedLoadRecords")));
       } finally {
@@ -767,6 +810,48 @@ export default function MyRecordsPage() {
   const activeMeds = medications.filter(
     (med) => med.status === "active" || med.status === "as_needed"
   );
+
+  /* --- Overview: command-center sections -------------------------------- */
+
+  const recentlyAdded = useMemo(() => allDocuments.slice(0, 5), [allDocuments]);
+
+  const lastUpdatedLabel = useMemo(() => {
+    const latest = allDocuments.reduce<string | null>((acc, doc) => {
+      if (!doc.created_at) return acc;
+      if (!acc || doc.created_at > acc) return doc.created_at;
+      return acc;
+    }, null);
+    return formatDateTime(latest);
+  }, [allDocuments]);
+
+  // Suggestions reflect record types the patient actually has (never
+  // shown for data that clearly doesn't exist) — see BRAGI_ASK_BRAGI_
+  // PLAN.md's Overview integration notes.
+  const overviewAskBragiSuggestions = useMemo(() => {
+    const suggestions: string[] = [];
+    if (profile && profile.sections.bloodwork.length > 0) {
+      suggestions.push("What changed in my latest bloodwork?");
+    }
+    if (profile && profile.sections.bloodwork.length > 1) {
+      suggestions.push("Show a lab trend over time.");
+    }
+    if (profile && profile.sections.discharge_summary.length > 0) {
+      suggestions.push("What did my latest discharge summary say?");
+    }
+    if (activeMeds.length > 0) {
+      suggestions.push("What medications are documented in my record?");
+    }
+    return suggestions;
+  }, [profile, activeMeds]);
+
+  // Deterministic, workflow-oriented only — never an AI-generated
+  // clinical alert (see BRAGI spec: "Needs your attention" is operational,
+  // not a medical judgment).
+  const attentionUploadTasks = uploadTasks.filter((task) =>
+    ["needs_confirmation", "needs_identity_confirmation", "quarantined", "error"].includes(task.status)
+  );
+  const pendingAccessRequests = accessRequests.filter((r) => r.status === "pending");
+  const hasAttentionItems = attentionUploadTasks.length > 0 || pendingAccessRequests.length > 0;
 
   /* --- Actions --------------------------------------------------------- */
 
@@ -1159,6 +1244,44 @@ export default function MyRecordsPage() {
         {/* ── Overview ──────────────────────────────────────────────────── */}
         {tab === "overview" ? (
           <>
+            <div>
+              <h2 style={{ fontSize: "var(--fs-h2, 20px)", margin: "0 0 2px" }}>
+                {greetingForHour(new Date().getHours())}, {currentUser.full_name.split(" ")[0]}
+              </h2>
+              {lastUpdatedLabel ? (
+                <p className="muted-text" style={{ margin: 0 }}>
+                  Your record was last updated {lastUpdatedLabel}.
+                </p>
+              ) : null}
+            </div>
+
+            <section className="b-surface" style={{ padding: "var(--s4)" }}>
+              <div style={{ marginBottom: "var(--s3)" }}>
+                <div style={{ fontWeight: 600, display: "flex", alignItems: "center", gap: 6 }}>
+                  <IconInbox size={16} /> Ask Bragi
+                </div>
+                <p className="muted-text" style={{ margin: "2px 0 0" }}>
+                  Ask anything about the medical records in Bragi.
+                </p>
+              </div>
+              <AskBragiChat audience="patient" suggestions={overviewAskBragiSuggestions} compact />
+            </section>
+
+            <div style={{ display: "flex", flexWrap: "wrap", gap: "var(--s2)" }}>
+              <button type="button" className="b-btn b-btn-secondary" onClick={() => router.push("/my-records/upload")}>
+                <IconUpload size={14} />
+                {t("uploadDocuments")}
+              </button>
+              <button type="button" className="b-btn b-btn-secondary" onClick={() => setTab("timeline")}>
+                <IconTimeline size={14} />
+                {t("myTimeline")}
+              </button>
+              <button type="button" className="b-btn b-btn-secondary" onClick={() => router.push("/my-records/access")}>
+                <IconShield size={14} />
+                {t("myAccess")}
+              </button>
+            </div>
+
             <Metrics>
               <Metric label={t("records")} value={allDocuments.length} />
               <Metric label={t("bloodwork")} value={profile.sections.bloodwork.length} />
@@ -1173,88 +1296,51 @@ export default function MyRecordsPage() {
 
             {pinnedStrip}
 
-            {featuredPanel ?? (
-              <section className="b-surface">
-                <EmptyState
-                  icon={<IconLab size={17} />}
-                  title={t("noBloodworkDataYet")}
-                  description={t("featuredLabTrendEmpty")}
-                  actions={
-                    <button
-                      type="button"
-                      className="b-btn b-btn-primary"
-                      onClick={() => router.push("/my-records/upload")}
-                    >
-                      <IconUpload size={14} />
-                      {t("uploadFirstDocument")}
-                    </button>
-                  }
-                />
-              </section>
-            )}
-
             <section className="b-surface">
               <SectionHead
-                title={t("myMedications")}
-                count={activeMeds.length}
-                description={t("medCardSubtitle")}
+                title="Recently added"
+                count={allDocuments.length}
                 actions={
-                  <>
-                    <button
-                      type="button"
-                      className="b-btn b-btn-secondary b-btn-sm"
-                      onClick={() => router.push("/my-records/medications")}
-                    >
-                      {t("viewAll").replace(" →", "")}
-                    </button>
-                    <button
-                      type="button"
-                      className="b-btn b-btn-secondary b-btn-sm"
-                      onClick={() => router.push("/my-records/medications/new")}
-                    >
-                      <IconPlus size={13} />
-                      {t("add")}
-                    </button>
-                  </>
+                  <button type="button" className="b-btn b-btn-secondary b-btn-sm" onClick={() => setTab("documents")}>
+                    {t("viewAll").replace(" →", "")}
+                    <IconChevronRight size={12} />
+                  </button>
                 }
               />
               <div className="b-section-body b-section-body-flush">
-                {activeMeds.length ? (
+                {recentlyAdded.length ? (
                   <div className="b-list">
-                    {activeMeds.slice(0, 5).map((med) => (
+                    {recentlyAdded.map((doc) => (
                       <button
-                        key={med.id}
+                        key={doc.id}
                         type="button"
                         className="b-list-row"
-                        onClick={() => router.push(`/my-records/medications/${med.id}`)}
+                        onClick={() => router.push(`/documents/${doc.id}`)}
                       >
                         <span className="b-list-main">
-                          <span className="b-list-title">{med.name}</span>
+                          <span className="b-list-title">{valueOrDash(doc.report_name || doc.filename)}</span>
                           <span className="b-list-sub">
-                            {[med.dose_strength, med.frequency].filter(Boolean).join(" · ") ||
-                              t("medNoDoseFrequency")}
+                            {formatLongDate(getDocumentClinicalDate(doc))} · {uploaderSubtitle(doc)}
                           </span>
                         </span>
                         <span className="b-list-trail">
-                          <Status tone={med.status === "active" ? "ok" : "info"}>
-                            {med.status === "active" ? t("active") : t("medStatusAsNeeded")}
-                          </Status>
+                          <IconChevronRight size={14} />
                         </span>
                       </button>
                     ))}
                   </div>
                 ) : (
                   <EmptyState
-                    icon={<IconPill size={17} />}
-                    title={t("noMedicationsYet")}
+                    icon={<IconDocument size={17} />}
+                    title={t("noRecordsInSection")}
                     actions={
                       <button
                         type="button"
-                        className="b-btn b-btn-secondary"
-                        onClick={() => router.push("/my-records/medications/new")}
+                        className="b-btn b-btn-primary"
+                        onClick={() => router.push("/my-records/upload")}
                       >
-                        <IconPlus size={14} />
-                        {t("add")}
+                        <IconUpload size={14} />
+                        {t("uploadFirstDocument")}
                       </button>
                     }
                   />
@@ -1284,6 +1370,54 @@ export default function MyRecordsPage() {
                   onOpenDocument={openTimelineDocument}
                   emptyText={t("noTimelineActivity")}
                 />
+              </div>
+            </section>
+
+            <section className="b-surface">
+              <SectionHead title="Needs your attention" />
+              <div className="b-section-body b-section-body-flush">
+                {hasAttentionItems ? (
+                  <div className="b-list">
+                    {attentionUploadTasks.map((task) => (
+                      <button
+                        key={task.id}
+                        type="button"
+                        className="b-list-row"
+                        onClick={() => router.push("/my-records/upload")}
+                      >
+                        <span className="b-list-main">
+                          <span className="b-list-title">{task.filename}</span>
+                          <span className="b-list-sub">{task.message || "Needs review"}</span>
+                        </span>
+                        <span className="b-list-trail">
+                          <IconAlert size={14} />
+                        </span>
+                      </button>
+                    ))}
+                    {pendingAccessRequests.map((req) => (
+                      <button
+                        key={`access-${req.id}`}
+                        type="button"
+                        className="b-list-row"
+                        onClick={() => router.push("/my-records/access")}
+                      >
+                        <span className="b-list-main">
+                          <span className="b-list-title">
+                            {valueOrDash(req.doctor_name)} requested access
+                          </span>
+                          <span className="b-list-sub">
+                            {valueOrDash(req.doctor_department)} · {valueOrDash(req.doctor_hospital_name)}
+                          </span>
+                        </span>
+                        <span className="b-list-trail">
+                          <IconAlert size={14} />
+                        </span>
+                      </button>
+                    ))}
+                  </div>
+                ) : (
+                  <EmptyState icon={<IconCheck size={17} />} title="You're all caught up." />
+                )}
               </div>
             </section>
 

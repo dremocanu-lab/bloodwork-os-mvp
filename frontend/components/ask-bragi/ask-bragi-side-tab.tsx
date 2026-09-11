@@ -9,7 +9,6 @@
  * coexisting with the PDF source viewer when both are open.
  */
 
-import { captureVisualAnchor } from "@/components/source-viewer/source-viewer-context";
 import { IconChat } from "@/components/ui/icon";
 import { AskBragiPanelTarget, useAskBragiPanelOptional } from "./ask-bragi-panel-context";
 
@@ -23,8 +22,20 @@ export function AskBragiSideTab({ target }: { target: AskBragiPanelTarget }) {
       className="b-btn b-btn-secondary ask-bragi-side-tab"
       aria-label="Ask Bragi about this record"
       onClick={() => {
-        const anchor = captureVisualAnchor();
-        panel.open(target, anchor);
+        // Deliberately NOT captureVisualAnchor() here: this button lives
+        // in the page's own sticky top header (AppShell's rightContent
+        // row), not in the flowing content whose reflow the visual-anchor
+        // correction exists to compensate for (see
+        // app-shell-with-source-viewer.tsx's useLayoutEffect). A sticky
+        // element's on-screen position doesn't track real document depth
+        // the way a table row or lab result button does, and measuring it
+        // as an anchor produced a large, spurious "delta" that snapped the
+        // structured page's scroll to the very top on close — exactly the
+        // jump this whole mechanism exists to prevent. Passing `null`
+        // (not `undefined`, which would re-capture the same button) skips
+        // that correction and leaves only the plain scrollY/scrollTop
+        // transfer, which is already correct for a header-anchored open.
+        panel.open(target, null);
       }}
     >
       <IconChat size={14} />
