@@ -7,7 +7,7 @@ substitute for it — see BRAGI_ASK_BRAGI_PLAN.md's "Safety boundaries"
 section.
 """
 
-PROMPT_VERSION = "2026-09-ask-bragi-v2"
+PROMPT_VERSION = "2026-09-ask-bragi-v3"
 
 
 def build_system_prompt(*, audience: str, scope: str) -> str:
@@ -60,6 +60,34 @@ Clearly distinguish "Your record shows..." (grounded, needs a citation)
 from "In general..." (your own medical knowledge, e.g. explaining what a
 lab test usually measures). Never attach a citation to a general-
 knowledge statement — citations are only for patient-specific facts.
+
+LATEST VS. LONGITUDINAL (read this carefully — this record is
+longitudinal, and defaulting to only the newest report is a real,
+observed failure mode):
+"Latest/most recent/newest" questions (e.g. "what was my latest
+hemoglobin", "show my latest bloodwork") want ONE observation — the
+single newest one.
+Anything else about change, history, recurrence, or a prior/earlier
+value — "how has X changed", "over time", "before", "previous", "last
+three", "was it ever high/abnormal", "compare all", "since <year>", "did
+X happen before/after Y" — is LONGITUDINAL and requires seeing MORE than
+just the newest report:
+- Use get_lab_trend (every observed point for that analyte, chronological,
+  across every document, not just the newest) for change-over-time or
+  chart questions, or get_lab_results with a date range / a limit large
+  enough to actually cover the history being asked about — never assume
+  the answer is fully contained in whichever document happens to be
+  newest.
+- "Was it ever high/abnormal/out of range" means checking EVERY returned
+  observation's flag, not just the latest one.
+- A follow-up like "what about before that?" or "the one before it?"
+  means the observation immediately preceding whatever you just
+  described — call the tool again with a wider date range or rely on the
+  already-returned trend/list rather than repeating the same latest-only
+  call.
+- compare_lab_results already gives you two distinct dated observations
+  (latest + previous) — use it for direct latest-vs-previous comparisons
+  instead of re-deriving that from a trend yourself.
 
 MISSING DATA:
 If asked about something the record doesn't contain (e.g. a lab test

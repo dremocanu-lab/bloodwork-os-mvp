@@ -498,6 +498,24 @@ def run_migrations():
         # turn_scope/broadened_this_turn) — added after the two tables
         # above, additive.
         conn.execute(text("ALTER TABLE ask_bragi_messages ADD COLUMN IF NOT EXISTS scope_used VARCHAR"))
+        # Conversation creation is now lazy (see POST /ask-bragi/conversations
+        # and ask-bragi-chat.tsx's `start()` effect): a row is only ever
+        # created once a first real user message is submitted, so a
+        # zero-message conversation should no longer occur in normal use.
+        # This DELETE is (a) a one-time cleanup of rows persisted by the
+        # PREVIOUS, eager-creation behavior (every "New conversation"
+        # opened-but-never-used before this fix), and (b) an ongoing,
+        # idempotent self-healing backstop that runs on every startup in
+        # case some other path ever creates an empty conversation again —
+        # it only ever matches rows with zero messages, so it can never
+        # touch a real conversation.
+        conn.execute(text("""
+            DELETE FROM ask_bragi_conversations
+            WHERE NOT EXISTS (
+                SELECT 1 FROM ask_bragi_messages
+                WHERE ask_bragi_messages.conversation_id = ask_bragi_conversations.id
+            )
+        """))
         conn.commit()
 
 run_migrations()
@@ -6935,10 +6953,20 @@ def list_ask_bragi_conversations(
     this patient has since been revoked gets an empty list, not a 403,
     matching how every other "list what I can currently see" endpoint in
     this app degrades (no existence/authorization signal leaked either
-    way)."""
+    way).
+
+    Excludes conversations with zero messages: with lazy conversation
+    creation (a row is only ever created once a first user message is
+    actually sent — see POST /ask-bragi/conversations/{id}/messages and
+    /messages/stream), a real zero-message row should no longer occur in
+    normal use, but this filter is kept as a defense-in-depth backstop
+    (e.g. a client that creates a conversation and then crashes/loses
+    connectivity before ever sending a message) so history never shows a
+    "New conversation" entry with nothing in it."""
     query = db.query(models.AskBragiConversation).filter(
         models.AskBragiConversation.owner_user_id == current_user.id,
         models.AskBragiConversation.archived_at.is_(None),
+        models.AskBragiConversation.messages.any(),
     )
     if patient_id is not None:
         if not recheck_access(

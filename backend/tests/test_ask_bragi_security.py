@@ -109,6 +109,31 @@ def _grant_doctor_access(patient_id: int, doctor_user_id: int) -> None:
         db.close()
 
 
+def _add_user_message(conversation_id: int, content: str = "test message") -> None:
+    """Conversation history now excludes zero-message conversations (see
+    GET /ask-bragi/conversations' own docstring) — tests that only need a
+    real, non-empty conversation to exist (not real model behavior; see
+    test_ask_bragi_service.py for that) insert one directly rather than
+    making a real OpenAI call, same convention as _grant_doctor_access."""
+    from app import models
+    from app.db import SessionLocal
+    from datetime import datetime, timezone
+
+    db = SessionLocal()
+    try:
+        db.add(
+            models.AskBragiMessage(
+                conversation_id=conversation_id,
+                role="user",
+                content=content,
+                created_at=datetime.now(timezone.utc).isoformat(),
+            )
+        )
+        db.commit()
+    finally:
+        db.close()
+
+
 def _revoke_doctor_access(patient_id: int, doctor_user_id: int) -> None:
     from app import models
     from app.db import SessionLocal
@@ -262,6 +287,27 @@ def test_revoked_doctor_access_denies_the_next_message(patient_a, doctor_a):
     assert response.status_code == 403
 
 
+# --- Lazy conversation creation: history never shows empty rows -------------
+
+
+def test_conversation_list_excludes_zero_message_conversation(patient_a):
+    """Opening Ask Bragi (POST /ask-bragi/conversations) must never make a
+    conversation show up in history on its own — only a real submitted
+    first message does (BRAGI product spec: "no first user message = no
+    persisted conversation" is enforced client-side by lazy creation, but
+    history filtering is the server-side backstop that holds regardless
+    of what any client actually does)."""
+    empty_conv = client.post("/ask-bragi/conversations", json={}, headers=_auth(patient_a["token"])).json()
+
+    listed = client.get("/ask-bragi/conversations", headers=_auth(patient_a["token"])).json()
+    assert empty_conv["id"] not in {c["id"] for c in listed}
+
+    # Once it has a real message, it must appear.
+    _add_user_message(empty_conv["id"])
+    listed_after = client.get("/ask-bragi/conversations", headers=_auth(patient_a["token"])).json()
+    assert empty_conv["id"] in {c["id"] for c in listed_after}
+
+
 # --- Doctor conversation history is per-patient, never mixed -----------------
 
 
@@ -278,6 +324,11 @@ def test_conversation_list_filtered_by_patient_id_excludes_other_patients(patien
     conv_b = client.post(
         "/ask-bragi/conversations", json={"patient_id": patient_b_id}, headers=_auth(doctor_a["token"])
     ).json()
+    # History excludes zero-message conversations (lazy creation — see
+    # GET /ask-bragi/conversations' docstring), so both need a real
+    # message before they're expected to show up in any listing below.
+    _add_user_message(conv_a["id"])
+    _add_user_message(conv_b["id"])
 
     # Unfiltered: the doctor's own full history, both patients.
     all_ids = {c["id"] for c in client.get("/ask-bragi/conversations", headers=_auth(doctor_a["token"])).json()}
@@ -297,7 +348,10 @@ def test_conversation_list_filtered_by_patient_id_excludes_other_patients(patien
 def test_conversation_list_filtered_by_patient_id_denies_unauthorized_patient(patient_a, doctor_a):
     patient_a_id = _patient_id_for(patient_a["token"])
     _grant_doctor_access(patient_a_id, doctor_a["user"]["id"])
-    client.post("/ask-bragi/conversations", json={"patient_id": patient_a_id}, headers=_auth(doctor_a["token"]))
+    conv = client.post(
+        "/ask-bragi/conversations", json={"patient_id": patient_a_id}, headers=_auth(doctor_a["token"])
+    ).json()
+    _add_user_message(conv["id"])
 
     # A patient this doctor has no grant for at all — degrades to an
     # empty list, the same "no existence/authorization signal leaked"

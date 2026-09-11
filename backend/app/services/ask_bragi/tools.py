@@ -558,7 +558,11 @@ TOOL_SCHEMAS: list[dict] = [
     _schema(
         "get_lab_results",
         "Get structured lab results, optionally filtered by canonical test "
-        "name (e.g. 'creatinine', 'hemoglobin') and/or date range.",
+        "name (e.g. 'creatinine', 'hemoglobin') and/or date range, newest "
+        "first. Does NOT default to only the newest document — it returns "
+        "every matching observation up to `limit` (raise `limit` or set a "
+        "date range for a longitudinal/historical question; use the "
+        "default only for a genuine 'latest' question).",
         {
             "canonical_name": {"type": ["string", "null"]},
             "date_from": {"type": ["string", "null"]},
@@ -568,9 +572,12 @@ TOOL_SCHEMAS: list[dict] = [
     ),
     _schema(
         "get_lab_trend",
-        "Get every observed value over time for one canonical lab test — "
-        "use this for 'how has X changed' or chart requests. Never "
-        "interpolates; only real observed points are returned.",
+        "Get EVERY observed value over time for one canonical lab test, "
+        "across every document that contains one — not just the newest. "
+        "Use this for 'how has X changed', 'was X ever high/abnormal', "
+        "'show all X values', or chart requests. Never interpolates; only "
+        "real observed points are returned, each with its own date, value, "
+        "unit, and reference range.",
         {
             "canonical_name": {"type": "string"},
             "date_from": {"type": ["string", "null"]},
