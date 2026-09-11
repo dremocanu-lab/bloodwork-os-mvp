@@ -12,9 +12,10 @@ view of that record. The original uploaded document always remains the
 authoritative source; structured data is a derived, verifiable layer on
 top of it, not a replacement for it.
 
-**Ask Bragi (AI chat over a patient's record) is implemented and
-feature-flagged.** See [Ask Bragi](#ask-bragi) below for what's built,
-and what's still required before it's live for real users.
+**Ask Bragi — a source-grounded AI conversation over a patient's own
+record, with real streaming responses — is implemented and live.** See
+[Ask Bragi](#ask-bragi) below for how it works and what it reuses from
+the rest of Bragi rather than duplicating.
 
 ---
 
@@ -76,6 +77,10 @@ source evidence when that provenance exists; see
 - **Romanian and international documents** — built and tested against
   real Romanian medical-document formats (decimal-comma values, RO/EN
   bilingual labels) alongside general/private lab formats.
+- **Ask Bragi** — a source-grounded AI conversation over a patient's
+  own record, for both patients and their authorized clinicians, with
+  real streaming responses, persistent conversation history, and every
+  answer traceable back to a real source — see [Ask Bragi](#ask-bragi).
 - **Role-based access** — patient, doctor (including a dedicated
   PCP/family-doctor workspace), care partner, admin, and emergency
   (break-glass) roles, each authorized and audited server-side (see
@@ -106,7 +111,10 @@ source evidence when that provenance exists; see
 ```
 
 - **Frontend**: Next.js (App Router), React, ECharts for trend charts,
-  PDF.js for the in-app source viewer.
+  PDF.js for the in-app source viewer. A persistent navigation sidebar
+  (desktop/tablet) frames an independently-scrolling main workspace; a
+  contextual right-hand workspace hosts the source viewer and/or Ask
+  Bragi side by side with the structured page, never as an overlay.
 - **Backend**: FastAPI, SQLAlchemy, JWT bearer-token auth.
 - **Database**: PostgreSQL, hosted on Neon.
 - **Document processing**: Reducto for classification/splitting/parsing/
@@ -238,6 +246,16 @@ were already processed, and there is no automatic backfill (re-running
 an old document through extraction again would cost real API spend per
 document). Newer uploads get full per-field/per-row geometry; older ones
 fall back to page + quoted source text.
+
+Precision is reported honestly at whichever level actually exists —
+`exact_bbox` (page + highlighted region) down through `page_only` and
+`document_only` — and a coarser level is never presented as if it were
+exact. Ask Bragi's own citations and chart points open through this
+exact same viewer rather than a second one: a citation resolves to a
+real `SourceEvidence` row, and a lab-trend chart point carries the same
+row identity a table's own "View in original" action uses, so both land
+on the same page/region (or the same honest fallback) a person clicking
+the underlying data directly would see.
 
 ---
 
@@ -384,8 +402,13 @@ not via a separate deploy step.
 and correctness regression suite — cross-patient/cross-role
 authorization (IDOR), CNP/identifier minimization, upload validation,
 malware-scan quarantine, DSAR export, account-deletion completeness,
-rate limiting, and AI-provider data-minimization. DB-dependent tests
-skip gracefully (not silently pass) when `DATABASE_URL` isn't set.
+rate limiting, and AI-provider data-minimization. Ask Bragi has its own
+dedicated suites: conversation/tool authorization and cross-patient
+isolation, prompt-injection resistance, citation validation, and the
+streaming endpoint (mocked-model tests against the real route/DB/auth,
+including that a stopped generation is never persisted). DB-dependent
+tests skip gracefully (not silently pass) when `DATABASE_URL` isn't
+set.
 
 **Frontend**: `npx tsc --noEmit` (typecheck), `npx eslint .` (lint),
 `npm run build` (a real production build, not just a typecheck). A
@@ -430,6 +453,12 @@ verified controls include:
   list/search responses, full value only where a workflow genuinely
   needs it.
 - Private, authorization-checked source-document/evidence retrieval.
+- Ask Bragi: server-owned patient context on every conversation/tool
+  call (never a client-suppliable patient/document id), AI-provider
+  data minimization before anything reaches OpenAI, server-validated
+  citations and chart data (never trusted from the model as-is), and a
+  live-verified prompt-injection test (a document instructing the model
+  to ignore its role was retrieved and ignored).
 - Upload validation (extension/magic-byte/size) plus a security-scan
   pipeline boundary — a file explicitly identified as malicious cannot
   reach clinical processing.
@@ -517,12 +546,9 @@ provenance/`View in original`; the security/GDPR hardening round
 (rate limiting, malware-scan boundary, CNP minimization, DSAR export,
 deletion completeness, CI security pipeline, secret/dependency
 scanning — see [Security & privacy](#security--privacy)); Ask Bragi
-(see below) — **live in production**: `ASK_BRAGI_ENABLED`/
-`OPENAI_API_KEY` are configured on Render and
-`NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` in Vercel, confirmed by a real
-synthetic-account round trip and, this round, real streaming/stop/
-conversation-history/reverse-language verification directly against
-production.
+(see below) — **live in production**, with real streaming responses,
+Stop/cancellation, and persistent conversation history for both
+patients and clinicians, verified directly against production.
 
 **Next**: the imaging/medication-conflict eval categories and a
 proper large-sample latency benchmark for Ask Bragi (the reverse-
@@ -537,56 +563,113 @@ independent security validation (see
 
 ## Ask Bragi
 
-Ask Bragi — a conversational AI interface over a patient's own record —
-is **implemented, tested, and feature-flagged** (`ASK_BRAGI_ENABLED` /
-`NEXT_PUBLIC_ASK_BRAGI_ENABLED`, both required for it to appear/respond).
-It reuses Bragi's existing controls rather than introducing parallel
-ones:
+Ask Bragi is a source-grounded AI conversation over a patient's own
+longitudinal record — for the patient themselves, and separately for
+their authorized clinicians about one patient at a time. **Live in
+production**, not a design document: `ASK_BRAGI_ENABLED` and a real
+`OPENAI_API_KEY` are configured on the Render backend, and
+`NEXT_PUBLIC_ASK_BRAGI_ENABLED=true` in Vercel — confirmed by a real
+synthetic-account round trip and real streaming/stop/conversation-
+history/reverse-language verification directly against production, not
+assumed from configuration alone.
+
+It reuses Bragi's existing controls end to end rather than introducing
+a parallel system:
 
 ```
-user
+authenticated user (patient, or a clinician authorized for one patient)
   │
   ▼
-existing server-side authorization (the same checks every other route uses)
+server-owned patient context — resolved from the session server-side;
+  no tool accepts a caller-supplied patient or document id
   │
   ▼
-minimum-necessary retrieval (only what the query actually needs)
+restricted, authorized Bragi tools (labs, medications, timeline,
+  documents — each call independently re-checks authorization)
   │
   ▼
-identity stripping / data minimization (app/services/ai_minimization.py)
+OpenAI Responses API — real function/tool calling; the model requests
+  data and requests a chart's intent, never raw database access
   │
   ▼
-the model — answering with citations back to real SourceEvidence,
-  via the existing openSourceEvidence resolution path
+the same canonical patient record every other Bragi screen reads
+  (Analize, Timeline, Readers) — not a separate copy
+  │
+  ▼
+SourceEvidence — citations are validated against what the tools
+  actually returned this conversation; chart datapoints are always
+  server-resolved from real observations, never model-generated
+  │
+  ▼
+a validated response (answer + citations + chart) — nothing reaches
+  the browser until the server has checked it
+  │
+  ▼
+the existing in-app source viewer (openSourceEvidence) — the same
+  viewer every "View in original" action already uses, not a second one
 ```
 
-It reuses, rather than duplicates: existing authorization (every tool
-call is resolved against a server-owned patient context — no tool
-accepts a caller-suppliable patient/document id), the AI-provider
-data-minimization boundary in `app/services/ai_minimization.py`,
-`SourceEvidence`/`openSourceEvidence` for verifiable citations, audit
-logging, rate limiting, and the rest of this repository's security/GDPR
-controls. Scope (a single document vs. the whole record) is
-server-authoritative — a document-scoped conversation can widen for one
-turn via an explicit UI toggle or server-side keyword detection over the
-user's own message, never the model's own unconstrained judgment, and
-any broadening is always shown in the UI, never silent. Every response
-is grounded in real, validated citations; an unvalidated/hallucinated
-citation is dropped before the response ever reaches the user. See
+**Streaming.** Responses stream progressively (a real OpenAI Responses
+API stream, not a delayed single reply), with a distinct visual status
+while a tool call is in progress — never the model's raw reasoning or
+tool output, only the answer itself as it's written. The composer
+stays editable the entire time — a user can keep typing while Bragi is
+thinking or writing, and a draft survives the response completing. A
+Stop control cancels generation for real: the backend detects the
+client disconnecting and closes the provider stream from its side
+rather than continuing to generate unread, and a stopped answer is
+never persisted.
+
+**Conversation history.** Patients see their own past conversations,
+can continue any of them, or start a new one. Clinicians see history
+scoped to the one patient they're currently viewing — never mixed
+across patients — alongside a compact, always-visible "Asking about
+[patient]" indicator, and switching to a different patient safely
+resets to that patient's own history.
+
+**Scope.** A conversation opened from a specific document defaults to
+that document; Analize/Timeline/Overview default to the whole record.
+Scope is server-authoritative, not a client-side setting the model can
+override: a document-scoped conversation can widen for one turn via an
+explicit control or server-side detection of phrases implying a
+longitudinal question ("over time," "has this happened before"), never
+the model's own unconstrained judgment — and any such broadening is
+always shown in the conversation, never silent. This is what makes
+longitudinal questions ("has my hemoglobin always been in range?")
+work safely from inside a single-document conversation without quietly
+exposing the rest of the record.
+
+**Charts.** The model can request a chart's *intent* (which analyte,
+what date range) — it never supplies the numbers. Bragi's backend
+resolves the actual datapoints from real stored observations and
+renders them with the same expanded trend view Analize/Overview
+already use for a single analyte: real date/value axes, a reference
+band shown only when it honestly applies to every point plotted,
+a hover/tap/keyboard readout per point (value, unit, date, reference
+range, abnormal flag — never colour alone), and a click-through to that
+point's real source. Incompatible units are never silently combined
+onto one axis.
+
+**Security posture**, all reused rather than reinvented for this
+feature: every tool call is independently re-authorized against the
+same server-owned patient context (see [Roles](#roles)); the AI-
+provider data-minimization boundary in `app/services/ai_minimization.py`
+governs what leaves the server; conversations and messages are
+authorization-checked the same way any other patient record data is,
+included in the existing DSAR export and account-deletion paths; a
+real adversarial prompt-injection attempt (a document instructing the
+model to ignore its role) was retrieved and its instructions were
+completely ignored, verified live rather than assumed from design; and
+Ask Bragi is covered by the same rate limiting, audit logging, and CI
+security scanning as the rest of the platform. See
 `docs/ai/AI_GOVERNANCE.md` for the governance document and
 `BRAGI_ASK_BRAGI_PLAN.md` for full architecture, test evidence, and
-current limitations (notably: a proper large-sample latency benchmark
-and two eval categories — imaging, a two-source medication conflict —
-remain open; the reverse-language case has been verified against real
-production output. A `docs/ai/AI_GOVERNANCE.md`-governed rollout to
-real patients is a business decision, not one this repository makes on
-its own).
-
-**Status**: live. `ASK_BRAGI_ENABLED` and a real `OPENAI_API_KEY` are
-configured on the Render backend and `NEXT_PUBLIC_ASK_BRAGI_ENABLED=true`
-in Vercel — confirmed via a real synthetic-account smoke test and,
-this round, real streaming/stop/conversation-history verification
-directly against production, not just a code-complete claim.
+current limitations — notably two eval categories (imaging, a
+two-source medication conflict) and a proper large-sample latency
+benchmark remain open; the reverse-language case has been verified
+against real production output, in both Romanian and English. A
+`docs/ai/AI_GOVERNANCE.md`-governed rollout to real patients is a
+business decision, not one this repository makes on its own.
 
 ---
 
