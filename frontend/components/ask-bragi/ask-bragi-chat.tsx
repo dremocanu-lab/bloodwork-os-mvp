@@ -159,21 +159,29 @@ export default function AskBragiChat({
       setGenerating(false);
       setStreamingAnswer("");
       setStreamingStatus("");
-      setStarting(true);
       setError("");
+
+      if (conversationId == null) {
+        // LAZY CREATION: opening Ask Bragi (or clicking "New chat") must
+        // never persist a conversation row on its own — only a real,
+        // submitted first message does (see send() below). Until then
+        // this is purely local/ephemeral state: no network call, no DB
+        // row, nothing to clean up if the user just closes the panel or
+        // navigates away without typing anything.
+        setConversation(null);
+        setMessages([]);
+        setDisplayedScope(initialScope ?? (documentId != null ? "document" : "patient_record"));
+        setUserSetScope(initialScope && documentId != null && initialScope !== "document" ? initialScope : null);
+        setStarting(false);
+        return;
+      }
+
+      setStarting(true);
       try {
-        let convData: AskBragiConversation;
-        let loadedMessages: AskBragiMessage[] = [];
-        if (conversationId != null) {
-          const res = await askBragiApi.getConversation(conversationId);
-          if (cancelled) return;
-          convData = res.data;
-          loadedMessages = res.data.messages;
-        } else {
-          const res = await askBragiApi.createConversation({ patient_id: patientId, document_id: documentId });
-          if (cancelled) return;
-          convData = res.data;
-        }
+        const res = await askBragiApi.getConversation(conversationId);
+        if (cancelled) return;
+        const convData = res.data;
+        const loadedMessages = res.data.messages;
         setConversation(convData);
         onConversationStarted?.(convData);
         const lastScopeUsed = [...loadedMessages].reverse().find((m) => m.scope_used)?.scope_used;
@@ -231,7 +239,7 @@ export default function AskBragiChat({
 
   async function send(text: string) {
     const trimmed = text.trim();
-    if (!trimmed || !conversation || generating) return;
+    if (!trimmed || generating) return;
     const tokenAtSend = conversationTokenRef.current;
     setGenerating(true);
     setError("");
@@ -239,6 +247,29 @@ export default function AskBragiChat({
     setStreamingStatus(THINKING_LABEL[audience]);
     setLiveAnnouncement("Bragi is responding.");
     wasNearBottomRef.current = true;
+
+    // LAZY CREATION: this is the one and only place a conversation row is
+    // ever persisted — the FIRST real submitted message. `conversation`
+    // is still null here for a brand-new chat (see the effect above); if
+    // so, create it now, before doing anything else that would need its
+    // id. Once created it's reused for every later send() in this
+    // component instance.
+    let activeConversation = conversation;
+    if (!activeConversation) {
+      try {
+        const res = await askBragiApi.createConversation({ patient_id: patientId, document_id: documentId });
+        if (tokenAtSend !== conversationTokenRef.current) return; // superseded before creation finished
+        activeConversation = res.data;
+        setConversation(activeConversation);
+        onConversationStarted?.(activeConversation);
+      } catch (err) {
+        if (tokenAtSend !== conversationTokenRef.current) return;
+        setGenerating(false);
+        setStreamingStatus("");
+        setError(getErrorMessage(err, "Ask Bragi is unavailable right now."));
+        return;
+      }
+    }
 
     localIdRef.current -= 1;
     const userMessage: AskBragiMessage = {
@@ -263,7 +294,7 @@ export default function AskBragiChat({
 
     try {
       await streamAskBragiMessage(
-        conversation.id,
+        activeConversation.id,
         trimmed,
         userSetScope ?? undefined,
         (evt) => {
@@ -511,7 +542,7 @@ export default function AskBragiChat({
           placeholder={audience === "patient" ? "Ask about your record…" : "Ask about this patient…"}
           value={input}
           onChange={(e) => setInput(e.target.value)}
-          disabled={!conversation}
+          disabled={starting}
           autoComplete="off"
         />
         {generating ? (
@@ -519,7 +550,7 @@ export default function AskBragiChat({
             <IconStop size={14} />
           </button>
         ) : (
-          <button type="submit" className="b-btn b-btn-primary ask-bragi-send-btn" disabled={!input.trim() || !conversation} aria-label="Send">
+          <button type="submit" className="b-btn b-btn-primary ask-bragi-send-btn" disabled={!input.trim() || starting} aria-label="Send">
             <IconArrowUp size={16} />
           </button>
         )}
