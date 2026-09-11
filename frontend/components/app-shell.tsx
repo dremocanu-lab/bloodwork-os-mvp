@@ -110,43 +110,63 @@ export default function AppShell({
           </div>
         </div>
 
-        {!hideHeader ? (
-          <header className="app-shell-header">
-            <div className="app-shell-header-row">
-              <div style={{ minWidth: 0, flex: 1 }}>
-                {breadcrumbs?.length ? (
-                  <nav className="b-crumbs" aria-label="Breadcrumb">
-                    <span className="b-side-brand-role" style={{ flexShrink: 0 }}>
-                      {getWorkspaceLabel(user, t)}
-                    </span>
-                    {breadcrumbs.map((crumb) => (
-                      <span
-                        key={`${crumb.label}-${crumb.href ?? ""}`}
-                        style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0 }}
-                      >
-                        <IconChevronRight size={11} className="b-crumbs-sep" />
-                        {crumb.href ? (
-                          <Link href={crumb.href}>{crumb.label}</Link>
-                        ) : (
-                          <span style={{ color: "var(--text-2)" }}>{crumb.label}</span>
-                        )}
+        {/* One coherent sticky stack: the header and the banner (patient
+            context bar / tab row) stick TOGETHER as a single unit, never
+            as two independently-sticky elements both pinned to `top: 0` —
+            that was a real, reproduced bug (e.g. Overview's patient name
+            visibly bleeding through underneath the Overview/Timeline/Labs/
+            Documents tab row while scrolling): two sticky siblings at the
+            same `top: 0` occupy the same on-screen band once both are
+            stuck, and with each using a semi-transparent/blurred
+            background, whichever painted on top let the other's text show
+            through. Wrapping both in one sticky container means there is
+            only ever one stuck box, with the header and banner simply
+            stacked inside it in normal flow — no overlap possible, and no
+            transparency needed to hide it (see the opaque, solid
+            backgrounds on .app-shell-header/.b-ctx in globals.css).
+            `app-shell-sticky-with-header` only matters on mobile, where
+            the fuller header intentionally scrolls away (it repeats
+            content the compact `.app-mobile-topbar` already shows) while
+            the banner/tabs stay pinned on their own — see globals.css. */}
+        <div className={`app-shell-sticky${!hideHeader ? " app-shell-sticky-with-header" : ""}`}>
+          {!hideHeader ? (
+            <header className="app-shell-header">
+              <div className="app-shell-header-row">
+                <div style={{ minWidth: 0, flex: 1 }}>
+                  {breadcrumbs?.length ? (
+                    <nav className="b-crumbs" aria-label="Breadcrumb">
+                      <span className="b-side-brand-role" style={{ flexShrink: 0 }}>
+                        {getWorkspaceLabel(user, t)}
                       </span>
-                    ))}
-                  </nav>
+                      {breadcrumbs.map((crumb) => (
+                        <span
+                          key={`${crumb.label}-${crumb.href ?? ""}`}
+                          style={{ display: "inline-flex", alignItems: "center", gap: 5, minWidth: 0 }}
+                        >
+                          <IconChevronRight size={11} className="b-crumbs-sep" />
+                          {crumb.href ? (
+                            <Link href={crumb.href}>{crumb.label}</Link>
+                          ) : (
+                            <span style={{ color: "var(--text-2)" }}>{crumb.label}</span>
+                          )}
+                        </span>
+                      ))}
+                    </nav>
+                  ) : null}
+
+                  <h1 className="app-shell-title">{title}</h1>
+                  {subtitle ? <p className="app-shell-subtitle">{subtitle}</p> : null}
+                </div>
+
+                {rightContent ? (
+                  <div className="app-shell-header-actions">{rightContent}</div>
                 ) : null}
-
-                <h1 className="app-shell-title">{title}</h1>
-                {subtitle ? <p className="app-shell-subtitle">{subtitle}</p> : null}
               </div>
+            </header>
+          ) : null}
 
-              {rightContent ? (
-                <div className="app-shell-header-actions">{rightContent}</div>
-              ) : null}
-            </div>
-          </header>
-        ) : null}
-
-        {banner}
+          {banner}
+        </div>
 
         <main className="app-shell-body b-view-enter" style={{ minWidth: 0 }}>
           {children}

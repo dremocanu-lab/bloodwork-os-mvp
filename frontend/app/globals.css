@@ -1752,13 +1752,23 @@ tr:focus-within .b-row-actions {
   flex-direction: column;
 }
 
-/* Page header: compact, sticky, with breadcrumb + title + actions. */
-.app-shell-header {
+/* One coherent sticky stack: this wrapper (not the header or the banner
+   individually) is what actually sticks — see app-shell.tsx's comment
+   for why two independently-sticky siblings at the same `top: 0` is
+   exactly the bug that produced visible bleed-through between them. */
+.app-shell-sticky {
   position: sticky;
   top: 0;
   z-index: 20;
-  background: color-mix(in srgb, var(--bg) 88%, transparent);
-  backdrop-filter: saturate(1.4) blur(8px);
+}
+
+/* Page header: compact, with breadcrumb + title + actions. Opaque solid
+   background, not a translucent/blurred one — sticky surfaces must never
+   rely on transparency to avoid showing content through them (see
+   .app-shell-sticky above); a real overlap should simply be impossible,
+   not merely hidden. */
+.app-shell-header {
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
   padding: var(--s3) var(--s6);
 }
@@ -1893,11 +1903,7 @@ tr:focus-within .b-row-actions {
    -------------------------------------------------------------------------- */
 
 .b-ctx {
-  position: sticky;
-  top: 0;
-  z-index: 20;
-  background: color-mix(in srgb, var(--surface) 92%, transparent);
-  backdrop-filter: saturate(1.4) blur(8px);
+  background: var(--bg);
   border-bottom: 1px solid var(--border);
 }
 
@@ -4212,10 +4218,23 @@ tr:focus-within .b-row-actions {
     box-shadow: none;
   }
 
+  /* On mobile, the fuller header intentionally scrolls away (it repeats
+     content the compact .app-mobile-topbar above it already shows) — only
+     the banner/tab row stays pinned. See app-shell.tsx's comment: this is
+     the ONE place the header+banner stack deliberately splits apart
+     instead of sticking as one unit. */
+  .app-shell-sticky-with-header {
+    position: static;
+  }
+
+  .app-shell-sticky-with-header .b-ctx {
+    position: sticky;
+    top: 0;
+    z-index: 20;
+  }
+
   .app-shell-header {
     padding: var(--s3) var(--s4);
-    position: static;
-    backdrop-filter: none;
     background: transparent;
     border-bottom: 1px solid var(--border);
   }
@@ -4544,10 +4563,9 @@ tr:focus-within .b-row-actions {
     display: block;
   }
 
-  .app-shell-header,
-  .b-ctx {
+  .app-shell-sticky,
+  .app-shell-sticky-with-header .b-ctx {
     position: static;
-    backdrop-filter: none;
   }
 
   .b-surface,
