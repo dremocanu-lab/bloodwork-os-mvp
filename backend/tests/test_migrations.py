@@ -57,11 +57,18 @@ if not _can_create_database():
 
 from alembic import command  # noqa: E402
 from alembic.config import Config  # noqa: E402
+from alembic.script import ScriptDirectory  # noqa: E402
 
 BACKEND_DIR = __import__("pathlib").Path(__file__).resolve().parent.parent
 ALEMBIC_INI = str(BACKEND_DIR / "alembic.ini")
 LEGACY_REVISION = "77df8fa2b964"
-HEAD_REVISION = "4cf06d926267"
+# Read from the actual migration history rather than hardcoding — a
+# hardcoded value here goes stale every time a new revision is added
+# (reproduced for real: this constant silently pointed at the OLD head
+# after 0003_phase3_hardening was added, and this test would have kept
+# passing for the wrong reason — comparing against a stale expectation —
+# until pytest caught the mismatch).
+HEAD_REVISION = ScriptDirectory.from_config(Config(ALEMBIC_INI)).get_current_head()
 
 
 def _db_url_for(name: str) -> str:

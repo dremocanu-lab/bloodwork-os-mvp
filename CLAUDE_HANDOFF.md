@@ -3,6 +3,104 @@
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## Interoperability Phase 3 — FHIR production hardening (2026-09-12)
+
+Full detail: `BRAGI_INTEROP_PLAN.md`'s "Phase 3" section (read that
+first). **Status: `[IMPLEMENTED — BACKEND SUBSET — NOT DEPLOYED]`** —
+still behind `INTEROP_FHIR_ENABLED` (default false).
+
+Shipped, real and tested (not scaffolding): `app/services/interop/`
+gained `lifecycle.py` (explicit connection state machine, illegal
+transitions rejected server-side — wired into every status-changing
+route in `main.py`), `drift.py` (capability fingerprint + breaking-
+change detection, marks an ACTIVE connection DEGRADED on rediscovery
+rather than continuing silently), `resilience.py` (retry/backoff with
+jitter + `Retry-After` honoring for transient HTTP failures, a circuit
+breaker that degrades a connection after repeated failures — 401/403
+never retried), `concurrency.py` (Postgres-advisory-lock-guarded
+per-connection sync locking — two overlapping syncs against the same
+connection can't both proceed). `fhir_connector.py`'s pagination now
+bounds resource count/byte size/wall-clock duration independently and
+detects a repeated `next` link (a pagination loop) rather than trusting
+`MAX_PAGES` alone, and supports incremental sync via `_lastUpdated` with
+a race-safe cursor (advances to the sync's OWN start time, never the max
+`lastUpdated` seen in results — safe under existing idempotency).
+1 new migration (`0003_phase3_hardening.py`, 6 additive nullable/
+defaulted columns on `interop_connections`) plus a new `POST
+.../disable` route, distinct from `/pause`.
+
+**Real, independent, third-party validation**: the exact same,
+unmodified connector code was run — for real, live network calls, not
+simulated — against three genuinely independent public FHIR R4 test
+servers (HAPI, SMART Health IT, Firely). All three: capability discovery
+succeeded, resource support classified correctly, and a real bounded
+`_count=1` Patient search succeeded — zero provider-specific branching.
+Captured as a real (network-optional, skips gracefully rather than
+failing CI if a public sandbox is temporarily unreachable) test file:
+`tests/test_interop_external_validation.py`.
+
+**Four real bugs found and fixed by this round's own testing**, none
+pre-existing:
+1. `resilience.request_with_retry`'s loop fell through to `return
+   response` on the LAST retry attempt when the response was still a
+   retryable status (e.g. 503) — silently handing a failed response back
+   to the caller as if it succeeded, instead of raising
+   `ConnectorTransientError`. Caught by
+   `test_exhausts_retries_and_raises_transient_error`.
+2. `tests/test_migrations.py` hardcoded `HEAD_REVISION` as a literal
+   string — went stale the moment `0003_phase3_hardening` was added
+   (the test kept "passing" against the wrong expectation until the
+   suite's own assertion caught the mismatch). Fixed to resolve the head
+   revision dynamically from the actual migration chain
+   (`ScriptDirectory.get_current_head()`).
+3. `scripts/bootstrap_alembic.py` had the IDENTICAL hardcoding problem —
+   `LEGACY_REVISION`/`HEAD_REVISION` as literal strings, and a
+   two-state-only (legacy vs. head) classifier with no way to recognize
+   "Phase 1 applied, Phase 3 not yet" as a valid intermediate state. This
+   one is more serious than #2 (real operator tooling, not just a test) —
+   fixed by resolving the revision chain dynamically and generalizing
+   classification to walk the chain backwards, matching a database
+   against each possible "already at revision N" hypothesis in turn.
+4. A test-only assertion bug in the pagination-loop test itself expected
+   exactly 1 fetch before loop detection; the real (correct) behavior is
+   2 fetches (the repeated URL is only recognized as a repeat on its
+   SECOND appearance) — fixed the test's expectation, not the connector.
+5. **The most serious one — found by CI, not locally**:
+   `concurrency.connection_sync_lock` acquired the Postgres advisory lock
+   via the caller's ORM `Session`, but every route holding that lock also
+   calls `db.commit()` one or more times internally — each commit ends
+   the transaction and lets SQLAlchemy's connection pool hand the Session
+   a DIFFERENT physical connection for the next statement. Session-level
+   advisory locks are tied to the specific connection that acquired them;
+   the later `pg_advisory_unlock` call landing on a different pooled
+   connection is a no-op, so the lock stayed held on the original
+   connection forever once it went back to the pool — every SUBSEQUENT
+   request against that connection_id then saw "Another sync is already
+   running," permanently. This never reproduced against this session's
+   own long-lived dev database (whatever connection-reuse pattern
+   happened to apply there masked it) but failed immediately and
+   consistently in CI's fresh ephemeral Postgres. Fixed by acquiring/
+   releasing the lock on one dedicated connection checked out directly
+   from the engine and held for the exact lifetime of the `with` block,
+   independent of the caller's Session entirely. This is exactly why
+   "verify in CI, not just locally" matters for anything touching
+   session/connection lifecycle.
+
+**Deliberately not done this round** — see `BRAGI_INTEROP_PLAN.md`'s
+Phase 3 section for the honest list and reasoning: real mTLS network
+implementation, a background job queue for long-running syncs, the
+Admin → Integrations frontend page and connection wizard, Playwright
+coverage, dedicated end-to-end Ask-Bragi-over-FHIR-data and cross-source-
+conflict tests.
+
+**If you continue this work**: read `BRAGI_INTEROP_PLAN.md`'s Phase 3
+section in full first. `REVISION_ADDITIONS` in
+`scripts/bootstrap_alembic.py` must be updated every time a new
+migration ships (it's the one place left that isn't fully self-
+updating — see that script's own module docstring) or an old-schema
+database will be classified UNKNOWN (fails closed — never silently
+misclassified, but still needs a human to extend the list).
+
 ## Alembic migration framework (2026-09-12)
 
 Full detail: `docs/database/MIGRATIONS.md` (read that first). **Status:
