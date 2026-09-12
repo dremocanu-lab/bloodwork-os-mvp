@@ -426,7 +426,11 @@ class AdminActionLog(Base):
     id = Column(Integer, primary_key=True, index=True)
     admin_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     action = Column(String, nullable=False, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    # ondelete="SET NULL" documents the real constraint (added by the old
+    # run_migrations() — see alembic/versions/0001_legacy_baseline.py's
+    # matching comment) — this audit row survives a patient's account
+    # deletion, detached rather than blocking or being deleted with it.
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="SET NULL"), nullable=True, index=True)
     doctor_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
     timestamp = Column(String, nullable=False)
     details = Column(Text, nullable=True)
@@ -544,10 +548,12 @@ class EmergencyAccessSession(Base):
     emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=False, index=True)
     # Nullable (not the original NOT NULL) so this access-audit record can
     # outlive the patient row it names: account deletion detaches the
-    # reference (ON DELETE SET NULL, see run_migrations()) rather than
-    # either deleting a real access-audit record or being blocked by it —
-    # see docs/privacy/RETENTION_POLICY.md.
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
+    # reference (ON DELETE SET NULL — now declared here directly; see
+    # alembic/versions/0001_legacy_baseline.py, previously only applied by
+    # the old run_migrations()) rather than either deleting a real
+    # access-audit record or being blocked by it — see
+    # docs/privacy/RETENTION_POLICY.md.
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="SET NULL"), nullable=True, index=True)
     reason = Column(String, nullable=False)
     reason_note = Column(Text, nullable=True)
     started_at = Column(String, nullable=False)
@@ -640,9 +646,12 @@ class EmergencyAuditLog(Base):
     __tablename__ = "emergency_audit_logs"
 
     id = Column(Integer, primary_key=True, index=True)
-    emergency_user_id = Column(Integer, ForeignKey("users.id"), nullable=True, index=True)
-    patient_id = Column(Integer, ForeignKey("patients.id"), nullable=True, index=True)
-    session_id = Column(Integer, ForeignKey("emergency_access_sessions.id"), nullable=True, index=True)
+    # All three ondelete="SET NULL" — same real, run_migrations()-applied
+    # delete rule as AdminActionLog/EmergencyAccessSession above (this is
+    # an audit trail; it survives whatever it references being removed).
+    emergency_user_id = Column(Integer, ForeignKey("users.id", ondelete="SET NULL"), nullable=True, index=True)
+    patient_id = Column(Integer, ForeignKey("patients.id", ondelete="SET NULL"), nullable=True, index=True)
+    session_id = Column(Integer, ForeignKey("emergency_access_sessions.id", ondelete="SET NULL"), nullable=True, index=True)
     action = Column(String, nullable=False, index=True)
     ip_address = Column(String, nullable=True)
     user_agent = Column(String, nullable=True)

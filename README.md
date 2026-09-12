@@ -321,13 +321,14 @@ python -m venv .venv
 source .venv/bin/activate     # Windows: .venv\Scripts\activate
 pip install -r requirements-dev.txt   # includes requirements.txt + pytest
 cp .env.example .env          # fill in real values, never commit this file
+alembic upgrade head          # provisions the schema — see docs/database/MIGRATIONS.md
 uvicorn app.main:app --reload
 ```
 
-Database tables/columns are created and kept up to date automatically:
-`run_migrations()` runs idempotent `CREATE TABLE IF NOT EXISTS`/
-`ALTER TABLE ... ADD COLUMN IF NOT EXISTS` statements on every backend
-start (no separate migration-tool step to run).
+Schema is managed by Alembic (`backend/alembic/`), not created
+automatically at startup — see `docs/database/MIGRATIONS.md` for a brand-
+new database, bootstrapping an existing one, writing a new migration, and
+the rollback policy.
 
 ### Frontend
 
@@ -398,9 +399,13 @@ production)
 `main` auto-deploys to both Render and Vercel on push. Because of this,
 every commit to `main` is expected to be independently production-safe —
 additive, backward-compatible, and not dependent on a manual coordinated
-step unless explicitly documented. Database schema changes apply
-automatically on the next backend start (see `run_migrations()` above),
-not via a separate deploy step.
+step unless explicitly documented. Database schema changes are Alembic
+migrations (`backend/alembic/`, see `docs/database/MIGRATIONS.md`),
+applied via `python scripts/run_migrations.py` — ideally as a Render
+pre-deploy step (**[EXTERNAL ACTION]** — this requires a one-time Render
+dashboard configuration change this repository cannot make on its own;
+see that doc's "Production deployment" section) so schema is ready
+before the new code that expects it starts serving traffic.
 
 ---
 
@@ -435,9 +440,12 @@ Python/JS static analysis (Bandit, Semgrep) and dependency scanning
 `.github/workflows/`:
 
 - **`ci.yml`** — every push/PR to `main`: backend tests against a real
-  ephemeral Postgres service container (which doubles as migration
-  sanity checking), Bandit, frontend typecheck/lint/production build,
-  and a full git-history secret scan.
+  ephemeral Postgres service container provisioned via `alembic upgrade
+  head` (proving a brand-new database builds from migration history
+  alone — see `docs/database/MIGRATIONS.md`) plus a migration drift check,
+  Bandit, frontend typecheck/lint (a real regression gate against a
+  frozen pre-existing-error baseline, see `frontend/.eslint-baseline.json`)/
+  production build, and a full git-history secret scan.
 - **`nightly-security.yml`** — daily + manual dispatch: dependency
   vulnerability scanning (`pip-audit`, `npm audit`) and a broader
   Semgrep ruleset — kept off the fast per-push path since they depend on
@@ -504,11 +512,15 @@ technical implementation and remain open — see:
 ```
 backend/
   app/
-    main.py              — routes, authorization, migrations
+    main.py              — routes, authorization
     models.py             — SQLAlchemy models
     services/             — Reducto client/extraction, document pipeline,
                              lab resolver, security scan, rate limiting,
-                             AI-provider minimization, medication lookup, ...
+                             AI-provider minimization, medication lookup,
+                             interop/ (FHIR connector — see BRAGI_INTEROP_PLAN.md)
+  alembic/                 — schema migrations (see docs/database/MIGRATIONS.md)
+  scripts/                 — run_migrations.py (deploy), bootstrap_alembic.py
+                             (one-time existing-DB stamping), check_migration_drift.py (CI)
   tests/                   — unit + real-DB regression suite
 
 frontend/
@@ -518,6 +530,7 @@ frontend/
   qa/                       — manual/ad-hoc Playwright QA scripts
 
 docs/
+  database/                — migration framework (docs/database/MIGRATIONS.md)
   security/                — threat model, auth matrix, rate limiting,
                               malware scanning, CI pipeline, static analysis,
                               secret-scan history, and more

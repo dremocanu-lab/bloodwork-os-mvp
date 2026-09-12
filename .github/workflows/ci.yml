@@ -39,9 +39,10 @@ jobs:
     env:
       # An ephemeral, CI-only Postgres instance — never the real dev/prod
       # Neon database, and no production secret is used anywhere in this
-      # job. Running the full app against a fresh DB every run also
-      # doubles as migration-sanity coverage: run_migrations() (called at
-      # app import time) must apply cleanly to a brand-new schema.
+      # job. Starting from a genuinely empty database and provisioning it
+      # via `alembic upgrade head` (see the migration step below) proves a
+      # brand-new database can be built from migration history alone —
+      # see docs/database/MIGRATIONS.md.
       DATABASE_URL: postgresql://bragi_ci:bragi_ci_password@localhost:5432/bragi_ci
       SECRET_KEY: ci-only-test-secret-never-used-outside-this-workflow
       ENVIRONMENT: development
@@ -63,6 +64,22 @@ jobs:
         # findings from this round were reviewed and are all false
         # positives/accepted risk (see docs/security/STATIC_ANALYSIS.md);
         # gating CI on them would make them noise, not signal.
+      - name: Alembic migrations (proves a brand-new database builds from history alone)
+        working-directory: backend
+        run: python scripts/run_migrations.py
+        # This IS the migration-sanity coverage the old comment on the
+        # Postgres service above referred to — see
+        # docs/database/MIGRATIONS.md. app/main.py no longer creates/
+        # migrates schema itself (BRAGI_INTEROP_PLAN.md's migration-
+        # framework section), so this step is required before pytest, not
+        # just informative.
+      - name: Migration drift check (models vs. migration history)
+        working-directory: backend
+        run: python scripts/check_migration_drift.py
+        # Fails if app/models.py changed without a matching Alembic
+        # revision — see that script's own docstring for exactly what it
+        # tolerates (a small, named set of harmless legacy duplicate
+        # indexes) vs. what it doesn't (everything else).
       - name: pytest (full suite, real ephemeral Postgres)
         working-directory: backend
         run: pytest -q

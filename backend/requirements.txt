@@ -29,3 +29,8 @@ clamd==1.0.2
 # depend on it explicitly (secret-at-rest encryption, RSA keypair generation
 # for SMART Backend Services — see BRAGI_INTEROP_PLAN.md).
 cryptography==47.0.0
+# Schema migrations — see docs/database/MIGRATIONS.md. A real production
+# dependency (not dev-only): `scripts/run_migrations.py` runs
+# `alembic upgrade head` as part of deployment, same as any other backend
+# code path.
+alembic==1.18.4

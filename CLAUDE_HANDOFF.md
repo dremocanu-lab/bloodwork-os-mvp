@@ -3,6 +3,74 @@
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## Alembic migration framework (2026-09-12)
+
+Full detail: `docs/database/MIGRATIONS.md` (read that first). **Status:
+`[IMPLEMENTED]`** — this is a real, load-bearing change to how schema
+works, not feature-flagged (there's no "off" state for a migration
+framework), but it's a pure refactor of *how* the existing schema gets
+built, not a schema change itself.
+
+Replaced the old `Base.metadata.create_all(bind=engine)` +
+`run_migrations()` (hand-written idempotent DDL, run automatically on
+every backend start) with Alembic. Two revisions: `0001_legacy_baseline`
+(the frozen, verified-exact schema of `main` at commit `397125a`, before
+interop) and `0002_interop_phase1` (Phase 1's 6 tables + 2 columns).
+Both were generated via real `alembic revision --autogenerate` against
+genuinely fresh databases (not hand-typed), then verified table-for-
+table, column-for-column, index-for-index against a real bootstrap of
+each commit's actual application code — including finding and fixing two
+real baseline-fidelity gaps this way: (1) 8 harmless historical duplicate
+indexes on `emergency_access_sessions`/`emergency_audit_logs`/
+`emergency_contacts` that the old `run_migrations()` created redundantly
+alongside the declarative models' own indexes, now captured explicitly
+in 0001 and formalized as real `Index()` declarations in `app/models.py`
+(previously undeclared); (2) 4 foreign keys
+(`admin_action_logs`/`emergency_access_sessions`/`emergency_audit_logs`
+→ `patients`/`users`/itself) that real `run_migrations()` upgraded to
+`ON DELETE SET NULL` at runtime but `app/models.py` never declared —
+now declared explicitly (`ForeignKey(..., ondelete="SET NULL")`).
+
+**Three real bugs found and fixed by this work, all in the new code
+itself** (none in application code):
+1. `alembic/env.py` ignored an explicitly-configured `Config`'s
+   `sqlalchemy.url` and always fell back to the real `DATABASE_URL` —
+   meaning every Alembic command a test issued against a scratch
+   database silently ran against the shared real dev database instead.
+   Caught because a destructive-downgrade test then (harmlessly, since
+   it was a no-op re-stamp of an already-correct revision — verified
+   this caused no actual data loss) touched the real dev DB. Fixed to
+   respect an explicitly-set URL.
+2. `scripts/bootstrap_alembic.py`'s stamp step had the identical class of
+   bug — a fresh `Config` with no URL set, so `command.stamp()` always
+   targeted the real `DATABASE_URL` regardless of which database was
+   classified. Fixed the same way.
+3. `scripts/bootstrap_alembic.py` printed the raw (credentialed) database
+   URL in its "refusing to stamp" diagnostic output — fixed to mask the
+   password before printing.
+
+`backend/tests/test_migrations.py` (7 tests, real disposable scratch
+Postgres databases per test, never the shared dev DB) covers: fresh-DB
+upgrade to head, real sample data surviving the upgrade, the bootstrap
+tool correctly recognizing an already-Phase-1 database vs. refusing a
+deliberately drifted one, and the destructive-downgrade guard failing
+closed without an explicit override and succeeding with one.
+
+CI (`ci.yml`) now runs `python scripts/run_migrations.py` (provisions the
+ephemeral CI Postgres via `alembic upgrade head`) and
+`python scripts/check_migration_drift.py` before pytest, replacing the
+old "create_all() as a side effect of importing app.main" implicit
+coverage.
+
+**If you continue this work**: read `docs/database/MIGRATIONS.md` in
+full, especially "Writing a new migration" and the backward-compatibility
+(expand/contract) section, before adding Phase 2 schema. The Render
+pre-deploy command that actually runs `scripts/run_migrations.py` before
+a new release receives traffic is **not yet configured** — see that
+doc's `[EXTERNAL ACTION]` note; until it is, a production schema change
+needs a manual `python scripts/run_migrations.py` run by an operator
+alongside the deploy.
+
 ## Interoperability — Phase 1: FHIR R4 inbound connector (2026-09-11)
 
 Full architecture/status/phasing: `BRAGI_INTEROP_PLAN.md` (read that
