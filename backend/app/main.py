@@ -79,10 +79,13 @@ from app.services.interop.flags import INTEROP_FHIR_ENABLED, IS_PRODUCTION
 from app.services.interop import (
     auth_providers as interop_auth_providers,
     capability as interop_capability,
+    concurrency as interop_concurrency,
     fhir_connector,
     identity as interop_identity,
     jwks as interop_jwks,
+    lifecycle as interop_lifecycle,
     reports as interop_reports,
+    resilience as interop_resilience,
     templates as interop_templates,
 )
 from app.services.interop.crypto import encrypt_secret as interop_encrypt_secret
@@ -7474,6 +7477,13 @@ def _serialize_interop_connection(connection: models.InteropConnection) -> dict:
         "version": connection.version,
         "created_at": connection.created_at,
         "updated_at": connection.updated_at,
+        # Phase 3 hardening state — all PHI-safe (counts/timestamps/short
+        # classification strings only, never a secret or clinical value).
+        "capability_fingerprint": connection.capability_fingerprint,
+        "consecutive_failures": connection.consecutive_failures,
+        "last_failure_at": connection.last_failure_at,
+        "last_failure_reason": connection.last_failure_reason,
+        "disabled_at": connection.disabled_at,
     }
 
 
@@ -7717,52 +7727,110 @@ def _finish_sync_run(db: Session, run: models.InteropSyncRun, *, status: str, su
     db.commit()
 
 
+def _log_interop_metric(name: str, connection_id: int, **fields):
+    """PHI-safe operational metrics (Phase 3 §3.13) — connection_id (an
+    internal integer, not a patient identifier) plus counts/durations
+    only. Never a patient id, clinical value, or free-text field. Same
+    print-based pattern the rest of this codebase already uses for
+    operational logging (see the ASK BRAGI metric line elsewhere in this
+    file) rather than introducing a new logging framework for this alone.
+    """
+    safe_fields = " ".join(f"{k}={v}" for k, v in fields.items())
+    print(f"INTEROP METRIC: {name} connection_id={connection_id} {safe_fields}")
+
+
 @app.post("/admin/interop/connections/{connection_id}/discover")
 def discover_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
     _require_interop_enabled()
     connection = _get_interop_connection_or_404(db, connection_id)
-    run = _record_sync_run(db, connection, "discover", current_user)
+    if not interop_lifecycle.can_discover(connection.status):
+        raise HTTPException(status_code=400, detail=f"Cannot discover a {connection.status} connection.")
+
     try:
-        result = fhir_connector.run_discovery(connection)
-    except fhir_connector.ConnectorError as exc:
-        _finish_sync_run(db, run, status="failed", error=str(exc))
-        raise HTTPException(status_code=502, detail=str(exc)) from exc
+        with interop_concurrency.connection_sync_lock(db, connection.id):
+            run = _record_sync_run(db, connection, "discover", current_user)
+            try:
+                result = fhir_connector.run_discovery(connection)
+            except fhir_connector.ConnectorError as exc:
+                interop_resilience.apply_failure(connection, "discovery_error")
+                db.commit()
+                _finish_sync_run(db, run, status="failed", error=str(exc))
+                _log_interop_metric("interop_connection_tests_total", connection.id, outcome="discover_failed")
+                raise HTTPException(status_code=502, detail=str(exc)) from exc
 
-    connection.capabilities_json = json.dumps(result)
-    connection.capabilities_discovered_at = result["discovered_at"]
-    connection.fhir_version = result["capability"].get("fhir_version")
-    if connection.status == "draft":
-        connection.status = "discovered"
-    if result.get("recommended_auth_type") and connection.auth_type == "none":
-        # Recommend only — never silently activate real auth (P8). The
-        # admin still has to call PATCH .../secret to supply credentials.
-        auth_config = json.loads(connection.auth_config_json or "{}")
-        auth_config.setdefault("_recommended_auth_type", result["recommended_auth_type"])
-        connection.auth_config_json = json.dumps(auth_config)
-    connection.updated_at = now_iso()
-    db.commit()
+            drift_result = fhir_connector.compute_discovery_drift(connection, result)
 
-    _finish_sync_run(db, run, status="succeeded", summary={"resources_found": len(result["capability"].get("resources", {}))})
-    return {"capability": result, "compatibility_report": result["compatibility_report"]}
+            interop_resilience.apply_success(connection)
+            connection.capabilities_json = json.dumps(result)
+            connection.capabilities_discovered_at = result["discovered_at"]
+            connection.capability_fingerprint = drift_result["fingerprint"]
+            connection.fhir_version = result["capability"].get("fhir_version")
+            if connection.status == "draft":
+                connection.status = "discovered"
+            elif drift_result["breaking"] and connection.status == "active":
+                # Phase 3 §3.2 — a breaking capability change on an ACTIVE
+                # connection stops automatic sync rather than silently
+                # continuing as if nothing changed. Re-validate (test +
+                # preview) to clear DEGRADED — see lifecycle.py.
+                connection.status = "degraded"
+            if result.get("recommended_auth_type") and connection.auth_type == "none":
+                # Recommend only — never silently activate real auth (P8). The
+                # admin still has to call PATCH .../secret to supply credentials.
+                auth_config = json.loads(connection.auth_config_json or "{}")
+                auth_config.setdefault("_recommended_auth_type", result["recommended_auth_type"])
+                connection.auth_config_json = json.dumps(auth_config)
+            connection.updated_at = now_iso()
+            db.commit()
+
+            _finish_sync_run(
+                db,
+                run,
+                status="succeeded",
+                summary={"resources_found": len(result["capability"].get("resources", {})), "drift": drift_result},
+            )
+    except interop_concurrency.ConnectionSyncInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    _log_interop_metric("interop_connection_tests_total", connection.id, outcome="discover_succeeded")
+    return {"capability": result, "compatibility_report": result["compatibility_report"], "drift": drift_result}
 
 
 @app.post("/admin/interop/connections/{connection_id}/test")
 def test_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
     _require_interop_enabled()
     connection = _get_interop_connection_or_404(db, connection_id)
-    run = _record_sync_run(db, connection, "test", current_user)
-    stages = fhir_connector.run_connection_test(connection)
-    all_passed = all(s.passed for s in stages)
-    if all_passed and connection.status == "discovered":
-        connection.status = "validated"
-        connection.updated_at = now_iso()
-        db.commit()
-    _finish_sync_run(
-        db,
-        run,
-        status="succeeded" if all_passed else "failed",
-        summary={"stages": [{"stage": s.stage, "passed": s.passed, "message": s.message} for s in stages]},
-    )
+
+    try:
+        with interop_concurrency.connection_sync_lock(db, connection.id):
+            run = _record_sync_run(db, connection, "test", current_user)
+            stages = fhir_connector.run_connection_test(connection)
+            all_passed = all(s.passed for s in stages)
+            if all_passed:
+                interop_resilience.apply_success(connection)
+                if connection.status == "discovered":
+                    interop_lifecycle.validate_transition(connection.status, "validated")
+                    connection.status = "validated"
+                    connection.updated_at = now_iso()
+                elif connection.status == "degraded":
+                    # A passing manual test is how a DEGRADED connection
+                    # recovers — see P62/lifecycle.py's DEGRADED docstring.
+                    interop_lifecycle.validate_transition(connection.status, "active")
+                    connection.status = "active"
+                    connection.updated_at = now_iso()
+                db.commit()
+            else:
+                interop_resilience.apply_failure(connection, "test_failed")
+                db.commit()
+            _finish_sync_run(
+                db,
+                run,
+                status="succeeded" if all_passed else "failed",
+                summary={"stages": [{"stage": s.stage, "passed": s.passed, "message": s.message} for s in stages]},
+            )
+    except interop_concurrency.ConnectionSyncInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    _log_interop_metric("interop_connection_tests_total", connection.id, outcome="passed" if all_passed else "failed")
     return {"passed": all_passed, "stages": [{"stage": s.stage, "passed": s.passed, "message": s.message} for s in stages]}
 
 
@@ -7773,18 +7841,37 @@ def preview_interop_connection(connection_id: int, current_user=Depends(require_
     persist (terminology-review bookkeeping only)."""
     _require_interop_enabled()
     connection = _get_interop_connection_or_404(db, connection_id)
-    run = _record_sync_run(db, connection, "preview", current_user)
-    try:
-        result = fhir_connector.preview_sync(db, connection)
-    except fhir_connector.ConnectorError as exc:
-        _finish_sync_run(db, run, status="failed", error=str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    if not interop_lifecycle.can_run_preview(connection.status):
+        raise HTTPException(status_code=400, detail=f"Cannot preview a {connection.status} connection — discover and test it first.")
 
-    if connection.status == "validated":
-        connection.status = "shadow"
-        connection.updated_at = now_iso()
-        db.commit()
-    _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    try:
+        with interop_concurrency.connection_sync_lock(db, connection.id):
+            run = _record_sync_run(db, connection, "preview", current_user)
+            try:
+                result = fhir_connector.preview_sync(db, connection)
+            except fhir_connector.ConnectorError as exc:
+                interop_resilience.apply_failure(connection, "preview_failed")
+                db.commit()
+                _finish_sync_run(db, run, status="failed", error=str(exc))
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            interop_resilience.apply_success(connection)
+            if connection.status == "validated":
+                interop_lifecycle.validate_transition(connection.status, "shadow")
+                connection.status = "shadow"
+                connection.updated_at = now_iso()
+            db.commit()
+            _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    except interop_concurrency.ConnectionSyncInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    _log_interop_metric(
+        "interop_sync_runs_total",
+        connection.id,
+        run_type="preview",
+        would_create=result["summary"].get("would_create"),
+        would_update=result["summary"].get("would_update"),
+    )
     return result
 
 
@@ -7792,35 +7879,82 @@ def preview_interop_connection(connection_id: int, current_user=Depends(require_
 def connect_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
     """The real activation step (spec STEP 8) — only reachable after a
     connection has been discovered, tested, and shadow-previewed at least
-    once (status == "shadow"). Runs one real, idempotent commit sync."""
+    once. Runs one real, idempotent commit sync."""
     _require_interop_enabled()
     connection = _get_interop_connection_or_404(db, connection_id)
-    if connection.status not in ("shadow", "active", "paused"):
+    if not interop_lifecycle.can_activate(connection.status):
         raise HTTPException(
             status_code=400,
             detail=f"Connection must be shadow-previewed before connecting (current status: {connection.status}).",
         )
-    run = _record_sync_run(db, connection, "sync", current_user)
-    try:
-        result = fhir_connector.run_sync(db, connection, user_id=current_user.id)
-    except fhir_connector.ConnectorError as exc:
-        _finish_sync_run(db, run, status="failed", error=str(exc))
-        raise HTTPException(status_code=400, detail=str(exc)) from exc
 
-    connection.status = "active"
-    connection.updated_at = now_iso()
-    db.commit()
-    _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    try:
+        with interop_concurrency.connection_sync_lock(db, connection.id):
+            run = _record_sync_run(db, connection, "sync", current_user)
+            try:
+                result = fhir_connector.run_sync(db, connection, user_id=current_user.id)
+            except fhir_connector.ConnectorError as exc:
+                interop_resilience.apply_failure(connection, "sync_failed")
+                db.commit()
+                _finish_sync_run(db, run, status="failed", error=str(exc))
+                _log_interop_metric("interop_sync_failures_total", connection.id)
+                raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+            interop_resilience.apply_success(connection)
+            if connection.status != "active":
+                interop_lifecycle.validate_transition(connection.status, "active")
+            connection.status = "active"
+            connection.updated_at = now_iso()
+            db.commit()
+            _finish_sync_run(db, run, status="succeeded", summary=result["summary"])
+    except interop_concurrency.ConnectionSyncInProgress as exc:
+        raise HTTPException(status_code=409, detail=str(exc)) from exc
+
+    _log_interop_metric(
+        "interop_sync_runs_total",
+        connection.id,
+        run_type="sync",
+        created=result["summary"].get("created"),
+        updated=result["summary"].get("updated"),
+    )
     return result
 
 
 @app.post("/admin/interop/connections/{connection_id}/pause")
 def pause_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
     """P69/P70 — stops future sync/token use immediately; never deletes
-    already-imported clinical history."""
+    already-imported clinical history. Reversible via a subsequent
+    real sync/test call, which moves the connection back to ACTIVE."""
     _require_interop_enabled()
     connection = _get_interop_connection_or_404(db, connection_id)
+    try:
+        interop_lifecycle.validate_transition(connection.status, "paused")
+    except interop_lifecycle.LifecycleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
     connection.status = "paused"
+    connection.updated_at = now_iso()
+    db.commit()
+    interop_auth_providers.clear_token_cache(connection.id)
+    return _serialize_interop_connection(connection)
+
+
+@app.post("/admin/interop/connections/{connection_id}/disable")
+def disable_interop_connection(connection_id: int, current_user=Depends(require_role("admin")), db: Session = Depends(get_db)):
+    """P67/§3.12 — distinct from pause: disabling is a more deliberate,
+    longer-term "stop using this connection" action. Re-enabling a
+    disabled connection is NOT a status flip back — it requires a fresh
+    discover/test/shadow pass (see lifecycle.py's DISABLED docstring),
+    since a connection someone deliberately turned off deserves a real
+    compatibility re-check, not a silent resurrection. Never deletes
+    already-imported clinical history — same guarantee as pause."""
+    _require_interop_enabled()
+    connection = _get_interop_connection_or_404(db, connection_id)
+    try:
+        interop_lifecycle.validate_transition(connection.status, "disabled")
+    except interop_lifecycle.LifecycleError as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+    connection.status = "disabled"
+    connection.disabled_at = now_iso()
     connection.updated_at = now_iso()
     db.commit()
     interop_auth_providers.clear_token_cache(connection.id)

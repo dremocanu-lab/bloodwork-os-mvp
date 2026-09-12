@@ -16,6 +16,7 @@ for free, without themselves changing.
 from __future__ import annotations
 
 import json
+import time
 from dataclasses import dataclass, field
 from datetime import UTC, datetime
 from typing import Any
@@ -24,7 +25,9 @@ from sqlalchemy.orm import Session
 
 from app import models
 from app.services.interop import capability as capability_module
+from app.services.interop import drift as drift_module
 from app.services.interop import identity as identity_module
+from app.services.interop import resilience
 from app.services.interop import smart_discovery
 from app.services.interop.auth_providers import AuthConfigError, get_auth_provider
 from app.services.interop.crypto import decrypt_secret
@@ -34,6 +37,14 @@ from app.services.lab_resolver import resolve_analyte
 PREVIEW_MAX_PATIENTS = 50
 MAX_OBSERVATIONS_PER_PATIENT = 500
 MAX_PAGES = 20
+
+# Phase 3 §3.4/§3.8 — independent bounds on top of MAX_PAGES, so a
+# malicious/misbehaving server can't exhaust memory, time, or bandwidth
+# even within the page-count budget (e.g. very large pages, or distinct-
+# looking but non-terminating next links).
+MAX_SYNC_RESOURCES = 20_000
+MAX_SYNC_BYTES = 200 * 1024 * 1024  # 200MB
+MAX_SYNC_DURATION_SECONDS = 300  # 5 minutes, bounded total pagination time
 
 # Observation statuses safe to import as a real clinical value. Anything
 # else is counted and skipped, never silently dropped from the summary —
@@ -152,6 +163,28 @@ def run_discovery(connection: models.InteropConnection) -> dict[str, Any]:
     return result
 
 
+def compute_discovery_drift(connection: models.InteropConnection, discovery_result: dict[str, Any]) -> dict[str, Any]:
+    """Phase 3 §3.2 — compares this discovery against the PREVIOUSLY
+    cached one (connection.capabilities_json/capability_fingerprint) and
+    reports what changed. The caller decides what to do with a breaking
+    result (mark DEGRADED rather than silently continuing) — this
+    function only computes the diff."""
+    new_normalized = drift_module.normalize_discovery(discovery_result["capability"])
+    new_fingerprint = drift_module.compute_fingerprint(discovery_result["capability"])
+
+    previous_normalized = None
+    if connection.capabilities_json:
+        try:
+            previous_capability = json.loads(connection.capabilities_json).get("capability")
+            if previous_capability:
+                previous_normalized = drift_module.normalize_discovery(previous_capability)
+        except (json.JSONDecodeError, AttributeError, TypeError):
+            previous_normalized = None
+
+    report = drift_module.diff_fingerprints(previous_normalized, new_normalized)
+    return {"fingerprint": new_fingerprint, **report.to_dict()}
+
+
 @dataclass
 class TestStageResult:
     stage: str
@@ -231,23 +264,56 @@ def run_connection_test(connection: models.InteropConnection) -> list[TestStageR
 
 
 def _fetch_bundle_pages(url: str, connection: models.InteropConnection, headers: dict[str, str]) -> list[dict[str, Any]]:
+    """P42/Phase-3 §3.4 — every page (including every `next` link) goes
+    through the same SSRF-guarded, retrying request path. Bounded on four
+    independent axes (pages, resources, bytes, wall-clock duration) and
+    detects a repeated `next` link (a malicious or buggy server serving
+    the same page forever) rather than trusting MAX_PAGES alone to save
+    us — a server could otherwise return distinct-looking but
+    non-progressing URLs indefinitely within that page budget."""
     resources: list[dict[str, Any]] = []
+    seen_urls: set[str] = set()
+    total_bytes = 0
+    start_time = time.monotonic()
     next_url: str | None = url
+
     for _ in range(MAX_PAGES):
         if not next_url:
             break
-        response = safe_request(
-            "GET", next_url, allow_private_network=connection.allow_private_network, headers={**headers, "Accept": "application/fhir+json"}
-        )
+        if next_url in seen_urls:
+            raise ConnectorError(f"Pagination loop detected — {next_url} was already fetched this sync")
+        seen_urls.add(next_url)
+
+        if time.monotonic() - start_time > MAX_SYNC_DURATION_SECONDS:
+            raise ConnectorError(f"Sync exceeded the maximum bounded duration ({MAX_SYNC_DURATION_SECONDS}s) while paginating")
+
+        try:
+            response = resilience.request_with_retry(
+                "GET", next_url, allow_private_network=connection.allow_private_network, headers={**headers, "Accept": "application/fhir+json"}
+            )
+        except resilience.ConnectorAuthError as exc:
+            raise ConnectorError(f"Authentication was rejected by the partner server: {exc}") from exc
+        except resilience.ConnectorTransientError as exc:
+            raise ConnectorError(f"Search request to {next_url} failed after retries: {exc}") from exc
+
         if response.status_code != 200:
             raise ConnectorError(f"Search request to {next_url} returned HTTP {response.status_code}")
+
+        total_bytes += len(response.content)
+        if total_bytes > MAX_SYNC_BYTES:
+            raise ConnectorError(f"Sync exceeded the maximum bounded response size ({MAX_SYNC_BYTES} bytes) while paginating")
+
         bundle = response.json()
         if bundle.get("resourceType") != "Bundle":
             raise ConnectorError("Search response was not a FHIR Bundle")
+
         for entry in bundle.get("entry", []):
             resource = entry.get("resource")
             if resource:
                 resources.append(resource)
+                if len(resources) > MAX_SYNC_RESOURCES:
+                    raise ConnectorError(f"Sync exceeded the maximum bounded resource count ({MAX_SYNC_RESOURCES}) while paginating")
+
         next_url = None
         for link in bundle.get("link", []):
             if link.get("relation") == "next":
@@ -416,18 +482,55 @@ def _record_unmapped_terminology(db: Session, connection_id: int, fields: dict[s
     )
 
 
+def _supports_incremental_sync(connection: models.InteropConnection, resource_type: str) -> bool:
+    """Phase 3 §3.3 — only ever use `_lastUpdated` when the connection's
+    OWN cached discovery says the partner actually advertised it for this
+    resource. Never assumed."""
+    if not connection.capabilities_json:
+        return False
+    try:
+        resources = json.loads(connection.capabilities_json).get("capability", {}).get("resources", {})
+        return bool(resources.get(resource_type, {}).get("supports_last_updated"))
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return False
+
+
+def _get_sync_cursor(connection: models.InteropConnection, resource_type: str) -> str | None:
+    if not connection.sync_cursor_json:
+        return None
+    try:
+        return json.loads(connection.sync_cursor_json).get(resource_type)
+    except (json.JSONDecodeError, AttributeError, TypeError):
+        return None
+
+
 def _collect_mapped_observations(
     db: Session, connection: models.InteropConnection, headers: dict[str, str], primary_system: str
-) -> tuple[list[dict[str, Any]], list[MappedObservation], SyncSummary]:
+) -> tuple[list[dict[str, Any]], list[MappedObservation], SyncSummary, str]:
     """Shared by preview and sync — fetches Patients (bounded), resolves
-    identity per patient, fetches that patient's Observations (bounded), and
-    maps each one. Returns (patients, mapped_observations, summary)."""
+    identity per patient, fetches that patient's Observations (bounded —
+    incrementally via `_lastUpdated` where the partner supports it and a
+    prior cursor exists, otherwise a full bounded fetch), and maps each
+    one. Returns (patients, mapped_observations, summary, sync_started_at).
+
+    `sync_started_at` is captured BEFORE any request — the safe watermark
+    for the NEXT sync's cursor if this one commits (see run_sync): using
+    the pre-fetch timestamp rather than the max `meta.lastUpdated` seen in
+    results guarantees overlap with anything updated during this sync's
+    own execution window, and existing external_observation_id-keyed
+    idempotency makes that overlap safe (re-processed, never duplicated)
+    rather than something that needs its own dedup logic.
+    """
+    sync_started_at = _now_iso()
     summary = SyncSummary()
 
     patients = _fetch_bundle_pages(
         connection.base_url.rstrip("/") + f"/Patient?_count={PREVIEW_MAX_PATIENTS}", connection, headers
     )[:PREVIEW_MAX_PATIENTS]
     summary.patients_discovered = len(patients)
+
+    incremental = _supports_incremental_sync(connection, "Observation")
+    cursor = _get_sync_cursor(connection, "Observation") if incremental else None
 
     mapped: list[MappedObservation] = []
     for patient in patients:
@@ -442,11 +545,10 @@ def _collect_mapped_observations(
             continue  # not yet linked — no data fetched for an unlinked identity (P33)
 
         patient_fhir_id = patient.get("id")
-        observations = _fetch_bundle_pages(
-            connection.base_url.rstrip("/") + f"/Observation?patient={patient_fhir_id}&_count={MAX_OBSERVATIONS_PER_PATIENT}",
-            connection,
-            headers,
-        )[:MAX_OBSERVATIONS_PER_PATIENT]
+        observation_url = connection.base_url.rstrip("/") + f"/Observation?patient={patient_fhir_id}&_count={MAX_OBSERVATIONS_PER_PATIENT}"
+        if cursor:
+            observation_url += f"&_lastUpdated=gt{cursor}"
+        observations = _fetch_bundle_pages(observation_url, connection, headers)[:MAX_OBSERVATIONS_PER_PATIENT]
         summary.observations_seen += len(observations)
 
         for observation in observations:
@@ -460,7 +562,7 @@ def _collect_mapped_observations(
             else:
                 summary.mapped_automatically += 1
 
-    return patients, mapped, summary
+    return patients, mapped, summary, sync_started_at
 
 
 def preview_sync(db: Session, connection: models.InteropConnection) -> dict[str, Any]:
@@ -473,7 +575,7 @@ def preview_sync(db: Session, connection: models.InteropConnection) -> dict[str,
     if not primary_system:
         raise ConnectorError("patient_identity.primary_system is not configured — cannot resolve any identity safely.")
 
-    patients, mapped, summary = _collect_mapped_observations(db, connection, headers, primary_system)
+    patients, mapped, summary, _sync_started_at = _collect_mapped_observations(db, connection, headers, primary_system)
 
     unresolved_identities = 0
     for patient in patients:
@@ -525,7 +627,7 @@ def run_sync(db: Session, connection: models.InteropConnection, *, user_id: int 
     if not primary_system:
         raise ConnectorError("patient_identity.primary_system is not configured — cannot sync safely.")
 
-    patients, mapped, summary = _collect_mapped_observations(db, connection, headers, primary_system)
+    patients, mapped, summary, sync_started_at = _collect_mapped_observations(db, connection, headers, primary_system)
 
     # Group mapped observations by the Bragi patient they resolved to.
     by_patient: dict[int, list[MappedObservation]] = {}
@@ -616,6 +718,18 @@ def run_sync(db: Session, connection: models.InteropConnection, *, user_id: int 
             summary.created += 1
 
     summary.quarantined_identity = summary.patients_discovered - linked_patient_count
+
+    # Phase 3 §3.3 — advance the incremental-sync watermark only on a
+    # real committed sync (never during preview — see preview_sync's own
+    # docstring), and only to this sync's OWN start time (captured before
+    # any request), not the max lastUpdated seen in results — see
+    # _collect_mapped_observations' docstring for why that ordering
+    # matters for safe overlap.
+    if _supports_incremental_sync(connection, "Observation"):
+        cursor_state = json.loads(connection.sync_cursor_json or "{}")
+        cursor_state["Observation"] = sync_started_at
+        connection.sync_cursor_json = json.dumps(cursor_state)
+
     db.commit()
 
     return {"run_type": "sync", "summary": summary.to_dict()}

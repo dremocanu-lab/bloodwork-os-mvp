@@ -755,6 +755,30 @@ class InteropConnection(Base):
     updated_at = Column(String, nullable=False)
     change_reason = Column(String, nullable=True)
 
+    # Phase 3 hardening (BRAGI_INTEROP_PLAN.md P3.2/P3.5/P3.6/P3.3) — all
+    # additive, all null/zero for every Phase 1 connection until Phase 3
+    # code actually runs discovery/sync against it.
+    #
+    # Normalized capability fingerprint (app/services/interop/drift.py) —
+    # compared on every re-discovery; a breaking difference marks the
+    # connection DEGRADED rather than silently continuing to sync as if
+    # nothing changed.
+    capability_fingerprint = Column(String, nullable=True)
+    # Circuit-breaker bookkeeping — consecutive transient failures and the
+    # last one's timestamp. Crossing a threshold marks the connection
+    # DEGRADED instead of continuing to hammer a struggling partner;
+    # never persists auth/network detail here, only counts/timestamps.
+    consecutive_failures = Column(Integer, nullable=False, default=0)
+    last_failure_at = Column(String, nullable=True)
+    last_failure_reason = Column(String, nullable=True)  # short classification only, e.g. "timeout" | "5xx" | "429" — never a stack trace
+    # Per-resource incremental-sync watermark, e.g.
+    # {"Observation": "2026-01-01T00:00:00+00:00"} — only ever set for a
+    # resource the partner actually advertises `_lastUpdated` support for
+    # (see app/services/interop/fhir_connector.py); a resource without an
+    # entry always falls back to a full bounded query.
+    sync_cursor_json = Column(Text, nullable=True)
+    disabled_at = Column(String, nullable=True)
+
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
 
 

@@ -1,15 +1,59 @@
 # Bragi Interoperability Plan
 
-**Status: Phase 1 implemented, feature-flagged off (`INTEROP_FHIR_ENABLED`,
-default false). Not deployed to production. Merging this code changes
-nothing for any real user until explicitly activated.**
+**Status: Phase 1 + Phase 3 (backend hardening subset) implemented,
+feature-flagged off (`INTEROP_FHIR_ENABLED`, default false). Not deployed
+to production. Merging this code changes nothing for any real user until
+explicitly activated.**
 
 **Migration framework**: Bragi's schema is now managed by Alembic —
-see `docs/database/MIGRATIONS.md`. This was a prerequisite done alongside
-Phase 1 closure, before Phase 2 adds more schema (see that doc for the
-full story; the short version: the old hand-written
-`run_migrations()`/`create_all()` startup path is retired, Phase 1's
-schema is `alembic/versions/0002_interop_phase1.py`).
+see `docs/database/MIGRATIONS.md`. Done alongside Phase 1 closure, before
+Phase 2 (naming note: the migration-framework work itself is tracked as
+"Phase 2" in `CLAUDE_HANDOFF.md`/PR history) added more schema (the old
+hand-written `run_migrations()`/`create_all()` startup path is retired).
+Phase 1's schema is `alembic/versions/0002_interop_phase1.py`; Phase 3's
+additive hardening columns are `0003_phase3_hardening.py`.
+
+## Phase 3 — FHIR production hardening (this round)
+
+**Implemented and tested** (see `CLAUDE_HANDOFF.md` for the full detail
+and bugs found): connection lifecycle state machine with server-side-
+enforced legal transitions (`app/services/interop/lifecycle.py`);
+capability fingerprint/drift detection — a breaking change on re-
+discovery marks an ACTIVE connection DEGRADED rather than continuing
+silently (`drift.py`); incremental sync via `_lastUpdated` with a safe,
+race-tolerant per-resource cursor (`fhir_connector.py`); retry/backoff
+with jitter for transient failures, honoring `Retry-After`, never
+retrying 401/403 (`resilience.py`); a circuit breaker that marks a
+connection DEGRADED after repeated transient failures; per-connection
+sync concurrency locking via a Postgres advisory lock, so two overlapping
+sync attempts against the same connection can't both proceed
+(`concurrency.py`); pagination hardening — every page (including every
+paginated request) is bounded on resource count, byte size, wall-clock
+duration, AND detects a repeated `next` link (a pagination loop) rather
+than trusting a page-count cap alone; an explicit `disable` action
+distinct from `pause`; PHI-safe operational metric log lines (connection
+id + counts only, verified by a real test that runs a full sync and
+asserts patient identifiers never appear in captured stdout). Validated
+against **three independent, real, public third-party FHIR R4 servers**
+(HAPI, SMART Health IT, Firely — `tests/test_interop_external_validation.py`,
+network-optional/skips gracefully if one is unreachable) through the
+exact same connector code used for the synthetic servers — zero
+provider-specific branching.
+
+**Deliberately NOT done this round** (real engineering, not skipped
+casually — see the honest reasoning in `CLAUDE_HANDOFF.md`): a real mTLS
+network implementation (client-cert TLS transport) — the certificate-
+reference architecture referenced in Phase 1 is still architecture-only;
+a background job queue/worker architecture for long-running syncs (sync
+still runs synchronously within the admin request — acceptable for
+Phase 1/3's bounded sync sizes, a real concern once Bulk Data or large
+partner rosters are in scope); the Admin → Integrations page and the
+8-step connection wizard (frontend — backend API only); Playwright
+browser-automation coverage; the full end-to-end "imported FHIR data
+flows through Analize/Timeline/Ask Bragi" and cross-source conflict
+tests (P50's zero-code synthetic-server tests already prove the
+canonical-integration path works; a dedicated FHIR-sourced Ask Bragi
+question wasn't separately exercised this round).
 
 ## Why this exists / scope boundary
 
