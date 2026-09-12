@@ -27,8 +27,8 @@ if not os.environ.get("DATABASE_URL"):
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import main as app_main  # noqa: E402
 from app import models  # noqa: E402
+from app.api.routers import ask_bragi as ask_bragi_router  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.main import app  # noqa: E402
 from app.services.ask_bragi import service as ask_bragi_service  # noqa: E402
@@ -138,7 +138,7 @@ def _stream_message(monkeypatch, token, conversation_id, message, streams):
 
 
 def test_stream_yields_progressive_text_then_completed_and_persists(monkeypatch):
-    monkeypatch.setattr(app_main, "ASK_BRAGI_ENABLED", True)
+    monkeypatch.setattr(ask_bragi_router, "ASK_BRAGI_ENABLED", True)
     monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
     account = _signup("patient", cnp="6000101999941")
     conv = client.post("/ask-bragi/conversations", json={}, headers=_auth(account["token"])).json()
@@ -172,7 +172,7 @@ def test_stream_yields_progressive_text_then_completed_and_persists(monkeypatch)
 
 
 def test_stream_runs_a_tool_round_before_the_final_answer(monkeypatch):
-    monkeypatch.setattr(app_main, "ASK_BRAGI_ENABLED", True)
+    monkeypatch.setattr(ask_bragi_router, "ASK_BRAGI_ENABLED", True)
     monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
     account = _signup("patient", cnp="6000101999942")
     conv = client.post("/ask-bragi/conversations", json={}, headers=_auth(account["token"])).json()

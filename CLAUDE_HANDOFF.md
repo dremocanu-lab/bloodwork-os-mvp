@@ -1,7 +1,29 @@
 # Claude Handoff — Bragi + Reducto
 
+**For current product/architecture state, start with `docs/CURRENT_STATE.md`,
+`docs/ARCHITECTURE.md`, and `docs/KNOWN_GAPS.md` (added by the Phase 4
+backend-modularization work, 2026-09-12) — those are now authoritative.
+This file remains as historical, phase-by-phase narrative below, but it
+accumulated a few stale/superseded statements across rounds (documented
+explicitly in `docs/CURRENT_STATE.md`'s "doc staleness" note) that the
+newer docs resolve. Treat any conflict in favor of the newer docs.**
+
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
+
+## Backend modularization — Phase 4 (2026-09-12)
+
+`app/main.py` (an 8,141-line MVP-era monolith with 113+ inline routes)
+was decomposed into `app/api/routers/` (14 domain modules, 117 routes),
+`app/api/dependencies.py`, `app/core/`, `app/policies/`, and
+`app/schemas/`. Strictly behavior-preserving — see `docs/refactor/
+OPENAPI_EQUIVALENCE_REPORT.md` for the verified zero-diff proof, and
+`docs/ARCHITECTURE.md`/`docs/KNOWN_GAPS.md` for exactly what remains as
+a deliberate scope boundary (a handful of cross-cutting helpers still
+live in `app/main.py`, and authorization was relocated but not further
+centralized). Full backend/frontend regression green throughout. See
+the branch `refactor/backend-modularization` and its PR for the
+complete commit-by-commit record.
 
 ## Interoperability Phase 3 — FHIR production hardening (2026-09-12)
 
