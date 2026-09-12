@@ -20,11 +20,13 @@ app.main has fully finished loading):
   `_generate_unique_care_partner_code`), which is why it stays put for
   now rather than moving piecemeal.
 - `_generate_unique_care_partner_code` — same reason.
-- `_add_emergency_audit` — belongs to the emergency (break-glass) domain,
-  which Phase 4's decomposition plan deliberately extracts last among
-  "normal" domains, with extra care, since every route there is
-  independently audited. Reusing it unchanged here (not reimplementing
-  its audit-logging semantics) is required to preserve exact behavior.
+
+`_add_emergency_audit` is imported lazily from
+`app.api.routers.emergency` (not from app.main — it moved there once
+the emergency domain itself was extracted). Reusing it unchanged here
+(not reimplementing its audit-logging semantics) is required to
+preserve exact behavior for the active-session-revocation side effect
+of disabling emergency discoverability.
 """
 
 from __future__ import annotations
@@ -161,7 +163,7 @@ def update_emergency_access_setting(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("patient")),
 ):
-    from app.main import _add_emergency_audit
+    from app.api.routers.emergency import _add_emergency_audit
 
     patient = get_patient_for_user(db, current_user.id)
     if not patient:
