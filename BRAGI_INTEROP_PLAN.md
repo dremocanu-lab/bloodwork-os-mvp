@@ -4,6 +4,13 @@
 default false). Not deployed to production. Merging this code changes
 nothing for any real user until explicitly activated.**
 
+**Migration framework**: Bragi's schema is now managed by Alembic —
+see `docs/database/MIGRATIONS.md`. This was a prerequisite done alongside
+Phase 1 closure, before Phase 2 adds more schema (see that doc for the
+full story; the short version: the old hand-written
+`run_migrations()`/`create_all()` startup path is retired, Phase 1's
+schema is `alembic/versions/0002_interop_phase1.py`).
+
 ## Why this exists / scope boundary
 
 This is a deliberate, explicit addition to Bragi's scope, decided

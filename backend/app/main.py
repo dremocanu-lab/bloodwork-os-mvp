@@ -90,7 +90,38 @@ from app.services.interop.mapping import MappingError, parse_mapping_rule
 
 app = FastAPI()
 
-models.Base.metadata.create_all(bind=engine)
+# --- Schema provisioning: RETIRED as an import-time side effect ------------
+#
+# Until this point, every app.main import unconditionally ran
+# `models.Base.metadata.create_all(bind=engine)` followed by
+# `run_migrations()` (a ~570-line function of hand-written idempotent
+# `CREATE TABLE`/`ALTER TABLE`/`CREATE INDEX`/`DO $$` blocks) — acceptable
+# during early MVP development, no longer acceptable now that real
+# production data exists, multiple environments exist, and schema
+# complexity is growing (see BRAGI_INTEROP_PLAN.md's migration-framework
+# section). Schema is now managed by Alembic — see `alembic/` and
+# `docs/database/MIGRATIONS.md`:
+#
+#   - A brand-new database: `alembic upgrade head` (see
+#     backend/scripts/run_migrations.py for the advisory-lock-guarded
+#     runner used in deployment).
+#   - An existing database that already has schema from the OLD
+#     create_all()/run_migrations() startup code: a one-time, explicit
+#     operator action — `python scripts/bootstrap_alembic.py` — verifies
+#     the live schema and stamps it to the matching revision. This is
+#     NEVER automatic; ordinary application startup does not create,
+#     alter, or stamp anything.
+#   - Tests: tests/conftest.py runs `alembic upgrade head` once per
+#     session (only when DATABASE_URL is set), so a fresh CI/ephemeral
+#     Postgres is provisioned the same way a real deployment would be.
+#
+# `run_migrations()`'s function body is kept below, UNCALLED, as a
+# historical reference for exactly what the old startup path used to do
+# (its content is now represented, revision-for-revision, by
+# alembic/versions/0001_legacy_baseline.py and
+# alembic/versions/0002_interop_phase1.py) — it is dead code, never
+# invoked, and must not be resurrected as an automatic startup step.
+
 
 def run_migrations():
     with engine.connect() as conn:
@@ -651,7 +682,10 @@ def run_migrations():
 
         conn.commit()
 
-run_migrations()
+# run_migrations() is intentionally NOT called here anymore — see this
+# function's own module-level comment above (schema is now Alembic-
+# managed). Kept as a defined-but-uncalled function for historical
+# reference only.
 
 # These origins are always allowed regardless of any env var setting.
 # FRONTEND_ORIGINS (comma-separated) is additive — it can add staging/preview
