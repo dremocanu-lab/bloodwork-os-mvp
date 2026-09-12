@@ -65,6 +65,26 @@ pre-existing:
    exactly 1 fetch before loop detection; the real (correct) behavior is
    2 fetches (the repeated URL is only recognized as a repeat on its
    SECOND appearance) — fixed the test's expectation, not the connector.
+5. **The most serious one — found by CI, not locally**:
+   `concurrency.connection_sync_lock` acquired the Postgres advisory lock
+   via the caller's ORM `Session`, but every route holding that lock also
+   calls `db.commit()` one or more times internally — each commit ends
+   the transaction and lets SQLAlchemy's connection pool hand the Session
+   a DIFFERENT physical connection for the next statement. Session-level
+   advisory locks are tied to the specific connection that acquired them;
+   the later `pg_advisory_unlock` call landing on a different pooled
+   connection is a no-op, so the lock stayed held on the original
+   connection forever once it went back to the pool — every SUBSEQUENT
+   request against that connection_id then saw "Another sync is already
+   running," permanently. This never reproduced against this session's
+   own long-lived dev database (whatever connection-reuse pattern
+   happened to apply there masked it) but failed immediately and
+   consistently in CI's fresh ephemeral Postgres. Fixed by acquiring/
+   releasing the lock on one dedicated connection checked out directly
+   from the engine and held for the exact lifetime of the `with` block,
+   independent of the caller's Session entirely. This is exactly why
+   "verify in CI, not just locally" matters for anything touching
+   session/connection lifecycle.
 
 **Deliberately not done this round** — see `BRAGI_INTEROP_PLAN.md`'s
 Phase 3 section for the honest list and reasoning: real mTLS network
