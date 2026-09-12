@@ -25,7 +25,7 @@ if not os.environ.get("DATABASE_URL"):
 
 from fastapi.testclient import TestClient  # noqa: E402
 
-from app import main as app_main  # noqa: E402
+from app.api.routers import ask_bragi as ask_bragi_router  # noqa: E402
 from app.main import app  # noqa: E402
 
 client = TestClient(app)
@@ -66,7 +66,7 @@ def _enable_ask_bragi(monkeypatch):
     # doesn't set (see docs — production stays off unless explicitly
     # enabled). These tests exist to verify the AUTHORIZATION architecture
     # holds when it IS enabled, so flip the flag for this file only.
-    monkeypatch.setattr(app_main, "ASK_BRAGI_ENABLED", True)
+    monkeypatch.setattr(ask_bragi_router, "ASK_BRAGI_ENABLED", True)
     yield
 
 
@@ -153,7 +153,7 @@ def _revoke_doctor_access(patient_id: int, doctor_user_id: int) -> None:
 
 
 def test_feature_flag_off_rejects_conversation_creation(patient_a, monkeypatch):
-    monkeypatch.setattr(app_main, "ASK_BRAGI_ENABLED", False)
+    monkeypatch.setattr(ask_bragi_router, "ASK_BRAGI_ENABLED", False)
     response = client.post("/ask-bragi/conversations", json={}, headers=_auth(patient_a["token"]))
     assert response.status_code == 404
 
