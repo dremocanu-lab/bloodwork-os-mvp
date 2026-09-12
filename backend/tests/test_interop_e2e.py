@@ -37,6 +37,7 @@ os.environ.setdefault("ENVIRONMENT", "development")
 from fastapi.testclient import TestClient  # noqa: E402
 
 import app.main as main_module  # noqa: E402
+import app.api.routers.interop as interop_router_module  # noqa: E402
 from tests.interop.fixtures.synthetic_fhir_server import (  # noqa: E402
     PATIENT_IDENTIFIER_SYSTEM,
     SyntheticFhirServer,
@@ -48,13 +49,24 @@ from tests.interop.fixtures.synthetic_fhir_server import (  # noqa: E402
 # imports one first during pytest collection, that read happens before
 # this file's os.environ assignment ever runs, and the (then-False) value
 # gets cached in sys.modules regardless of the env var changing afterward.
-# Setting it directly on the already-imported app.main module sidesteps
-# that import-order dependency entirely — this is a test-isolation
-# artifact of running multiple interop test files in one pytest process,
-# not a production behavior (production sets the real env var before the
-# process starts, so there's no "first import wins" ordering to worry about).
+# Setting it directly on the already-imported modules sidesteps that
+# import-order dependency entirely — this is a test-isolation artifact of
+# running multiple interop test files in one pytest process, not a
+# production behavior (production sets the real env var before the
+# process starts, so there's no "first import wins" ordering to worry
+# about).
+#
+# Since the Phase 4 backend-modularization refactor moved the actual
+# INTEROP_FHIR_ENABLED/IS_PRODUCTION check from app.main into
+# app.api.routers.interop (each `from ... import` creates its own
+# independent name binding — patching app.main's copy no longer has any
+# effect on the check the route itself reads), both modules' copies are
+# set here so this keeps working regardless of which one a given route
+# happens to read from.
 main_module.INTEROP_FHIR_ENABLED = True
 main_module.IS_PRODUCTION = False  # same import-order caching hazard as above — force the real dev/test intent
+interop_router_module.INTEROP_FHIR_ENABLED = True
+interop_router_module.IS_PRODUCTION = False
 
 # crypto.py imports INTEROP_SECRET_ENCRYPTION_KEY into ITS OWN module
 # namespace at first import — the same caching hazard again, one module
@@ -314,9 +326,11 @@ def test_allow_private_network_is_refused_in_production(admin, monkeypatch):
     """P75 — plug-and-play convenience must never weaken the security
     model: a sandbox-only escape hatch is refused outright once
     ENVIRONMENT=production, regardless of what an admin requests."""
-    import app.main as main_module
+    import app.api.routers.interop as interop_router_module
 
-    monkeypatch.setattr(main_module, "IS_PRODUCTION", True)
+    # The actual check lives in app.api.routers.interop since the Phase 4
+    # router extraction — see this file's top-of-module comment.
+    monkeypatch.setattr(interop_router_module, "IS_PRODUCTION", True)
     response = client.post(
         "/admin/interop/connections",
         json={"name": "Should be refused", "base_url": "http://127.0.0.1:9/x", "connector_type": "fhir", "allow_private_network": True},
@@ -328,9 +342,11 @@ def test_allow_private_network_is_refused_in_production(admin, monkeypatch):
 def test_disabled_flag_returns_404_for_every_route(admin, monkeypatch):
     """The whole-feature kill switch (INTEROP_FHIR_ENABLED=false) — merging
     this code must change nothing until explicitly turned on."""
-    import app.main as main_module
+    import app.api.routers.interop as interop_router_module
 
-    monkeypatch.setattr(main_module, "INTEROP_FHIR_ENABLED", False)
+    # The actual check lives in app.api.routers.interop since the Phase 4
+    # router extraction — see this file's top-of-module comment.
+    monkeypatch.setattr(interop_router_module, "INTEROP_FHIR_ENABLED", False)
     response = client.get("/admin/interop/connections", headers=_auth(admin))
     assert response.status_code == 404
 
