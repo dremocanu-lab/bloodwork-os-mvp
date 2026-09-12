@@ -1,0 +1,1411 @@
+[
+  {
+    "path": "/",
+    "methods": [
+      "GET"
+    ],
+    "name": "root",
+    "tags": [],
+    "dependencies": []
+  },
+  {
+    "path": "/access-requests",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_access_request",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor',)"
+    ]
+  },
+  {
+    "path": "/access-requests/{request_id}/respond",
+    "methods": [
+      "POST"
+    ],
+    "name": "respond_to_access_request",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/admin/analyte-gaps",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_analyte_gaps",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/assignments/batch",
+    "methods": [
+      "POST"
+    ],
+    "name": "admin_batch_assign",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/assignments/{assignment_id}/end",
+    "methods": [
+      "POST"
+    ],
+    "name": "admin_end_assignment",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/doctors",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_get_doctors",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/doctors/{doctor_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_get_doctor",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/doctors/{doctor_id}/current-patients",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_doctor_current_patients",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/doctors/{doctor_id}/patient-history",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_doctor_patient_history",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_interop_connections",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/import",
+    "methods": [
+      "POST"
+    ],
+    "name": "import_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}",
+    "methods": [
+      "PATCH"
+    ],
+    "name": "update_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/connect",
+    "methods": [
+      "POST"
+    ],
+    "name": "connect_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/diagnostic-bundle",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_interop_diagnostic_bundle",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/disable",
+    "methods": [
+      "POST"
+    ],
+    "name": "disable_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/discover",
+    "methods": [
+      "POST"
+    ],
+    "name": "discover_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/export",
+    "methods": [
+      "GET"
+    ],
+    "name": "export_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/generate-signing-key",
+    "methods": [
+      "POST"
+    ],
+    "name": "generate_interop_signing_key",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/identity/conflicts",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_interop_identity_conflicts",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/identity/links",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_interop_identity_link",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/pause",
+    "methods": [
+      "POST"
+    ],
+    "name": "pause_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/preview",
+    "methods": [
+      "POST"
+    ],
+    "name": "preview_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/report",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_interop_partner_report",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/secret",
+    "methods": [
+      "POST"
+    ],
+    "name": "set_interop_connection_secret",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/terminology",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_interop_terminology_mappings",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/terminology/{mapping_id}/approve",
+    "methods": [
+      "POST"
+    ],
+    "name": "approve_interop_terminology_mapping",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/connections/{connection_id}/test",
+    "methods": [
+      "POST"
+    ],
+    "name": "test_interop_connection",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/interop/templates",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_interop_templates",
+    "tags": [],
+    "dependencies": [
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/ops/rate-limit-status",
+    "methods": [
+      "GET"
+    ],
+    "name": "rate_limit_status",
+    "tags": [],
+    "dependencies": [
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/patients/search",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_search_patients",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/admin/patients/{patient_id}/assignments",
+    "methods": [
+      "GET"
+    ],
+    "name": "admin_get_patient_assignments",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_ask_bragi_conversations",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_ask_bragi_conversation",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations/{conversation_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_ask_bragi_conversation",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations/{conversation_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_ask_bragi_conversation",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations/{conversation_id}/messages",
+    "methods": [
+      "POST"
+    ],
+    "name": "send_ask_bragi_message",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/ask-bragi/conversations/{conversation_id}/messages/stream",
+    "methods": [
+      "POST"
+    ],
+    "name": "stream_ask_bragi_message",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db",
+      "require_ask_bragi_enabled",
+      "require_role('patient', 'doctor')"
+    ]
+  },
+  {
+    "path": "/assignments",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_assignments",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/assignments",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_assignment",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  },
+  {
+    "path": "/auth/login",
+    "methods": [
+      "POST"
+    ],
+    "name": "login",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/auth/me",
+    "methods": [
+      "GET"
+    ],
+    "name": "me",
+    "tags": [],
+    "dependencies": [
+      "get_current_user"
+    ]
+  },
+  {
+    "path": "/auth/signup",
+    "methods": [
+      "POST"
+    ],
+    "name": "signup",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/docs",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_html",
+    "tags": [],
+    "dependencies": []
+  },
+  {
+    "path": "/docs/oauth2-redirect",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "swagger_ui_redirect",
+    "tags": [],
+    "dependencies": []
+  },
+  {
+    "path": "/document-types",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_document_types",
+    "tags": [],
+    "dependencies": [
+      "get_current_user"
+    ]
+  },
+  {
+    "path": "/documents/by-public-id/{public_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_document_by_public_id",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/quarantined",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_quarantined_documents",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_document",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_document",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_document",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/file",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_document_file",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/identity-review",
+    "methods": [
+      "POST"
+    ],
+    "name": "review_quarantined_document",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/share",
+    "methods": [
+      "POST"
+    ],
+    "name": "share_document",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/share/{care_partner_user_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "unshare_document",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/shares",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_document_shares",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/documents/{document_id}/verify",
+    "methods": [
+      "POST"
+    ],
+    "name": "verify_document",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/access-sessions",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_emergency_session",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/access-sessions/active",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_active_emergency_sessions",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/access-sessions/{session_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_emergency_session",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/access-sessions/{session_id}/close",
+    "methods": [
+      "POST"
+    ],
+    "name": "close_emergency_session",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/documents/{document_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "emergency_get_document",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/patients/{patient_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "emergency_get_patient",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/search",
+    "methods": [
+      "GET"
+    ],
+    "name": "emergency_search",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/search",
+    "methods": [
+      "POST"
+    ],
+    "name": "emergency_search_post",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/emergency/sessions/by-public-id/{public_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_emergency_session_by_public_id",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/lab-results/{lab_result_id}/source",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_lab_result_source",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/my-patients",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_patients",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor',)"
+    ]
+  },
+  {
+    "path": "/my/access-requests",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_access_requests",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/access/{doctor_user_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "revoke_doctor_access",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/account",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_my_account",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient', 'doctor', 'admin', 'care_partner')"
+    ]
+  },
+  {
+    "path": "/my/care-partner-code",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_care_partner_code",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/care-partner-code/regenerate",
+    "methods": [
+      "POST"
+    ],
+    "name": "regenerate_care_partner_code",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/care-partners",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_care_partners",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/dependants",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_dependants",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('care_partner',)"
+    ]
+  },
+  {
+    "path": "/my/export",
+    "methods": [
+      "POST"
+    ],
+    "name": "export_my_data",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/link-patient",
+    "methods": [
+      "POST"
+    ],
+    "name": "link_patient",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('care_partner',)"
+    ]
+  },
+  {
+    "path": "/my/medications",
+    "methods": [
+      "GET"
+    ],
+    "name": "list_my_medications",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_medication",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications/{medication_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_medication",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications/{medication_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_medication",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications/{medication_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_medication",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications/{medication_id}/refresh-official-info",
+    "methods": [
+      "POST"
+    ],
+    "name": "refresh_medication_official_info",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/medications/{medication_id}/select-rxcui",
+    "methods": [
+      "POST"
+    ],
+    "name": "select_medication_rxcui",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/profile",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_profile",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-access",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_emergency_access_setting",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-access",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_emergency_access_setting",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-contacts",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_emergency_contacts",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-contacts",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_emergency_contact",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-contacts/{contact_id}",
+    "methods": [
+      "DELETE"
+    ],
+    "name": "delete_emergency_contact",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/settings/emergency-contacts/{contact_id}",
+    "methods": [
+      "PUT"
+    ],
+    "name": "update_emergency_contact",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('patient',)"
+    ]
+  },
+  {
+    "path": "/my/shared-pages",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_shared_pages",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('care_partner',)"
+    ]
+  },
+  {
+    "path": "/openapi.json",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "openapi",
+    "tags": [],
+    "dependencies": []
+  },
+  {
+    "path": "/patient-events",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_patient_event",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patient-events/{event_id}/discharge",
+    "methods": [
+      "POST"
+    ],
+    "name": "discharge_patient_event",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patients",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients/by-public-id/{public_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_by_public_id",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/patients/search",
+    "methods": [
+      "GET"
+    ],
+    "name": "search_patients",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients/{patient_id}/bloodwork-trends",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_bloodwork_trends",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/patients/{patient_id}/documents",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_documents",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients/{patient_id}/medications",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_medications",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients/{patient_id}/medications/{medication_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_medication",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('doctor', 'admin')"
+    ]
+  },
+  {
+    "path": "/patients/{patient_id}/profile",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_patient_profile",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/pcp/patients",
+    "methods": [
+      "GET"
+    ],
+    "name": "pcp_get_patients",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/pcp/patients/{patient_id}/summary",
+    "methods": [
+      "GET"
+    ],
+    "name": "pcp_get_patient_summary",
+    "tags": [],
+    "dependencies": [
+      "dependency",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/redoc",
+    "methods": [
+      "GET",
+      "HEAD"
+    ],
+    "name": "redoc_html",
+    "tags": [],
+    "dependencies": []
+  },
+  {
+    "path": "/source-evidence/{source_evidence_id}/view",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_source_evidence_view",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload",
+    "methods": [
+      "POST"
+    ],
+    "name": "upload_compatibility_route",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload-jobs",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_my_upload_jobs",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload-jobs/{job_id}",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_upload_job",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload-jobs/{job_id}/confirm-identity",
+    "methods": [
+      "POST"
+    ],
+    "name": "confirm_upload_job_identity",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload-jobs/{job_id}/confirm-type",
+    "methods": [
+      "POST"
+    ],
+    "name": "confirm_upload_job_document_type",
+    "tags": [],
+    "dependencies": [
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload/background",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_background_upload",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/upload/batch",
+    "methods": [
+      "POST"
+    ],
+    "name": "create_batch_upload",
+    "tags": [],
+    "dependencies": [
+      "_dependency",
+      "get_current_user",
+      "get_db"
+    ]
+  },
+  {
+    "path": "/users/doctors",
+    "methods": [
+      "GET"
+    ],
+    "name": "get_doctors",
+    "tags": [],
+    "dependencies": [
+      "get_db",
+      "require_role('admin',)"
+    ]
+  }
+]
