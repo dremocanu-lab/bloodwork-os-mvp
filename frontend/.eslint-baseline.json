@@ -1,0 +1,21 @@
+{
+  "app/admin/analytes/page.tsx": 1,
+  "app/admin/logs/page.tsx": 1,
+  "app/documents/[id]/discharge/page.tsx": 1,
+  "app/emergency/documents/[document_id]/page.tsx": 1,
+  "app/emergency/search/page.tsx": 1,
+  "app/emergency/workspace/page.tsx": 2,
+  "app/my-records/page.tsx": 2,
+  "app/patients/[id]/medications/[medication_id]/page.tsx": 8,
+  "app/patients/[id]/page.tsx": 3,
+  "app/pcp/workspace/page.tsx": 1,
+  "components/account-menu.tsx": 1,
+  "components/app-shell.tsx": 1,
+  "components/auth-shell.tsx": 1,
+  "components/emergency-shell.tsx": 1,
+  "components/theme-provider.tsx": 1,
+  "components/theme-toggle.tsx": 1,
+  "lib/api.ts": 1,
+  "lib/i18n.ts": 1,
+  "qa/a11y.mjs": 1
+}

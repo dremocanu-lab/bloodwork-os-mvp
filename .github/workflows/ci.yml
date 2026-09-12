@@ -83,15 +83,19 @@ jobs:
       - name: TypeScript (tsc --noEmit)
         working-directory: frontend
         run: npx tsc --noEmit
-      - name: ESLint
+      - name: ESLint (regression gate against frozen baseline)
         working-directory: frontend
-        # Pre-existing findings (react-hooks/no-explicit-any, all
-        # predating this security round — see
-        # docs/security/STATIC_ANALYSIS.md) are not yet a hard gate;
-        # tracked as a follow-up rather than blocking every PR on
-        # unrelated code quality. New errors above that baseline still
-        # fail loudly via the exit code either way once fixed.
-        run: npx eslint . --max-warnings=100 || true
+        # This USED to be `npx eslint . --max-warnings=100 || true` — the
+        # `|| true` meant a real lint failure never actually failed CI,
+        # despite a comment here claiming otherwise. Replaced with a real
+        # gate: scripts/check-lint-baseline.mjs fails the build on any
+        # lint error beyond the exact per-file count frozen in
+        # .eslint-baseline.json (30 pre-existing errors across 19 files,
+        # none related to interoperability — see BRAGI_INTEROP_PLAN.md).
+        # A NEW error, or more errors in an already-baselined file, fails
+        # the build; paying down the baseline is welcome and shrinks it
+        # over time. See the script's own docstring for the exact policy.
+        run: node scripts/check-lint-baseline.mjs
       - name: Production build
         working-directory: frontend
         run: npm run build

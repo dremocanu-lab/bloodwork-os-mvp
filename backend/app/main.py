@@ -7613,6 +7613,16 @@ def set_interop_connection_secret(
                 created_by_user_id=current_user.id,
             )
         )
+    # SessionLocal is autoflush=False (see app/db.py) — without an explicit
+    # flush here, the new InteropSecret row and the InteropConnection
+    # UPDATE that references it by FK (secret_ref) are both only pending in
+    # memory, and nothing guarantees the INSERT is sent before the UPDATE
+    # when db.commit() flushes everything together (reproduced for real
+    # against Neon: a fresh secret_ref FK violation on first secret-set).
+    # Flushing the new secret row first makes the ordering explicit rather
+    # than relying on SQLAlchemy's flush-ordering heuristics across two
+    # mapped classes with no declared relationship() between them.
+    db.flush()
     connection.secret_ref = ref
     connection.updated_at = now_iso()
     db.commit()
@@ -7638,6 +7648,7 @@ def generate_interop_signing_key(connection_id: int, current_user=Depends(requir
         existing.rotated_at = now_iso()
     else:
         db.add(models.InteropSecret(ref=ref, ciphertext=ciphertext, created_at=now_iso(), created_by_user_id=current_user.id))
+    db.flush()  # see set_interop_connection_secret's comment — same FK-ordering hazard
     connection.secret_ref = ref
     auth_config = json.loads(connection.auth_config_json or "{}")
     auth_config["jwks"] = {"keys": [public_jwk]}

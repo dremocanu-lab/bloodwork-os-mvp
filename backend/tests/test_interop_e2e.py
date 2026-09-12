@@ -55,6 +55,15 @@ from tests.interop.fixtures.synthetic_fhir_server import (  # noqa: E402
 # process starts, so there's no "first import wins" ordering to worry about).
 main_module.INTEROP_FHIR_ENABLED = True
 main_module.IS_PRODUCTION = False  # same import-order caching hazard as above — force the real dev/test intent
+
+# crypto.py imports INTEROP_SECRET_ENCRYPTION_KEY into ITS OWN module
+# namespace at first import — the same caching hazard again, one module
+# deeper. Patch it directly there rather than relying on the os.environ
+# assignment above having run before crypto.py's first import.
+import app.services.interop.crypto as interop_crypto_module  # noqa: E402
+
+interop_crypto_module.INTEROP_SECRET_ENCRYPTION_KEY = "test-only-encryption-key-not-for-production-use"
+
 app = main_module.app
 
 client = TestClient(app)
@@ -324,3 +333,110 @@ def test_disabled_flag_returns_404_for_every_route(admin, monkeypatch):
     monkeypatch.setattr(main_module, "INTEROP_FHIR_ENABLED", False)
     response = client.get("/admin/interop/connections", headers=_auth(admin))
     assert response.status_code == 404
+
+
+# --- Secret-handling re-audit (Phase-1 closure item 4) ----------------------
+#
+# A secret set via POST .../secret must never come back out through ANY
+# response body: connection GET/LIST, export, an error path (invalid auth
+# raised as an HTTPException detail string), or the diagnostic bundle.
+
+
+SECRET_PLAINTEXT_MARKER = "SUPER-SECRET-BEARER-TOKEN-MUST-NEVER-LEAK-8f2c9a"
+
+
+def _assert_no_secret_leak(response, patient_id_unused=None):
+    body_text = response.text
+    assert SECRET_PLAINTEXT_MARKER not in body_text, f"Secret plaintext leaked in response body: {body_text[:2000]}"
+
+
+def test_secret_plaintext_never_appears_in_any_response(admin):
+    connection = _create_connection(admin, base_url="http://127.0.0.1:1/unused", mrn="MRN-SECRET-TEST")
+    connection_id = connection["id"]
+
+    set_auth = client.patch(
+        f"/admin/interop/connections/{connection_id}",
+        json={"auth_type": "static_bearer"},
+        headers=_auth(admin),
+    )
+    assert set_auth.status_code == 200, set_auth.text
+    _assert_no_secret_leak(set_auth)
+
+    set_secret = client.post(
+        f"/admin/interop/connections/{connection_id}/secret",
+        json={"secret_plaintext": SECRET_PLAINTEXT_MARKER},
+        headers=_auth(admin),
+    )
+    assert set_secret.status_code == 200, set_secret.text
+    assert set_secret.json() == {"ok": True, "has_secret": True}  # exact shape — nothing else comes back
+    _assert_no_secret_leak(set_secret)
+
+    get_connection = client.get(f"/admin/interop/connections/{connection_id}", headers=_auth(admin))
+    assert get_connection.status_code == 200
+    _assert_no_secret_leak(get_connection)
+    assert get_connection.json()["has_secret"] is True
+    assert "secret_ref" not in get_connection.json()
+    assert "ciphertext" not in get_connection.json()
+
+    list_connections = client.get("/admin/interop/connections", headers=_auth(admin))
+    assert list_connections.status_code == 200
+    _assert_no_secret_leak(list_connections)
+
+    export = client.get(f"/admin/interop/connections/{connection_id}/export", headers=_auth(admin))
+    assert export.status_code == 200
+    _assert_no_secret_leak(export)
+    assert "secret_ref" not in export.text
+
+    bundle = client.get(f"/admin/interop/connections/{connection_id}/diagnostic-bundle", headers=_auth(admin))
+    assert bundle.status_code == 200
+    _assert_no_secret_leak(bundle)
+
+    # Trigger a real auth-config error path (missing token_url for
+    # oauth2_client_credentials) and confirm the error message — which DOES
+    # echo back configuration for diagnostic purposes (P57) — still never
+    # includes the secret itself.
+    client.patch(
+        f"/admin/interop/connections/{connection_id}",
+        json={"auth_type": "oauth2_client_credentials", "auth_config": {}},
+        headers=_auth(admin),
+    )
+    discover_error = client.post(f"/admin/interop/connections/{connection_id}/discover", headers=_auth(admin))
+    _assert_no_secret_leak(discover_error)
+
+
+def test_import_refuses_profile_with_secret_shaped_field(admin):
+    response = client.post(
+        "/admin/interop/connections/import",
+        json={"profile": {"name": "Malicious import", "base_url": "https://example.invalid/fhir", "auth": {"type": "static_bearer", "client_secret": "leaked-value"}}},
+        headers=_auth(admin),
+    )
+    assert response.status_code == 400
+    assert "leaked-value" not in response.text
+
+
+# --- FK re-audit (Phase-1 closure item 5) -----------------------------------
+#
+# Every newly introduced FK must not break existing patient-deletion
+# behavior, including when a patient has a full set of interop-related rows
+# attached: identity link, synced document/lab result, and a terminology
+# mapping cross-referenced through the same connection.
+
+
+def test_account_deletion_with_full_interop_footprint(admin):
+    """Broader than test_idempotent_resync's implicit teardown coverage:
+    explicitly gives the patient an identity link AND real synced
+    Document/LabResult/SourceEvidence rows (via a real sync, not just a
+    link), then deletes the account and confirms it succeeds — the exact
+    regression class this closure round is re-auditing for."""
+    patient_account = _signup("patient", cnp="6000101999955")
+    patient_account["patient_id"] = _patient_id_for(patient_account)
+    try:
+        result = _run_full_pipeline_zero_code(admin, patient_account, profile="server_b", mrn="MRN-B-2002")
+        assert result["sync_result"]["summary"]["created"] >= 1
+
+        delete_response = client.delete("/my/account", headers=_auth(patient_account))
+        assert delete_response.status_code == 200, delete_response.text
+    finally:
+        # Best-effort cleanup if the assertion above already failed and the
+        # account wasn't deleted — avoid leaking a synthetic account.
+        client.delete("/my/account", headers=_auth(patient_account))

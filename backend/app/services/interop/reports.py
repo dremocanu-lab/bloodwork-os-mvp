@@ -27,20 +27,46 @@ SANITIZED_FIELDS = (
     "updated_at",
 )
 
+# Shared with import_connection_profile's own check below. auth_config_json
+# never carries secret material BY CONSTRUCTION (secrets only ever live in
+# InteropSecret, referenced by secret_ref — see auth_providers.py), but this
+# is a second, independent layer of defense: if an admin ever mis-set a
+# secret-shaped value directly into non-secret config (a configuration
+# mistake, not a code path this app offers), export still refuses to carry
+# it out rather than trusting that mistake never happens.
+SECRET_SHAPED_KEYS = frozenset(
+    {"client_secret", "password", "private_key", "access_token", "refresh_token", "secret_ref", "api_key", "secret_plaintext"}
+)
+
+
+def _strip_secret_shaped_keys(data: dict[str, Any], *, context: str) -> dict[str, Any]:
+    cleaned = {k: v for k, v in data.items() if k not in SECRET_SHAPED_KEYS}
+    dropped = SECRET_SHAPED_KEYS & set(data.keys())
+    if dropped:
+        # Never raise/abort the export over this — silently dropping is
+        # correct here (the caller already lost nothing they were entitled
+        # to see back), but it's worth knowing about if it ever happens, so
+        # a real admin misconfiguration doesn't go unnoticed. No secret
+        # VALUE is ever included in this message, only the field name.
+        print(f"INTEROP EXPORT WARNING: stripped secret-shaped field(s) {sorted(dropped)} from {context} before export")
+    return cleaned
+
 
 def export_connection_profile(connection: models.InteropConnection) -> dict[str, Any]:
-    """P3 — sanitized export. No secret_ref, no ciphertext, no auth_config
-    fields that could themselves be sensitive (out of caution, auth_config
-    is included since Phase 1's auth_config schema never carries secret
-    material by construction — see auth_providers.py's AuthConfigError
-    messages — but secret_ref itself is always excluded)."""
+    """P3 — sanitized export. No secret_ref, no ciphertext ever (both are
+    structurally outside auth_config_json — see InteropConnection's own
+    columns); auth_config_json is additionally passed through
+    _strip_secret_shaped_keys as defense-in-depth against a misconfigured
+    value ending up there by admin mistake rather than trusting that never
+    happens."""
+    auth_config = _strip_secret_shaped_keys(json.loads(connection.auth_config_json or "{}"), context="auth_config")
     return {
         "profile_version": 1,
         "name": connection.name,
         "connector": connection.connector_type,
         "base_url": connection.base_url,
         "fhir_version": connection.fhir_version,
-        "auth": {"type": connection.auth_type, **json.loads(connection.auth_config_json or "{}")},
+        "auth": {"type": connection.auth_type, **auth_config},
         "patient_identity": json.loads(connection.patient_identity_json or "{}"),
         "capabilities": json.loads(connection.capabilities_json or "{}"),
         "terminology_overrides": json.loads(connection.terminology_overrides_json or "{}"),
@@ -54,8 +80,7 @@ def import_connection_profile(profile: dict[str, Any]) -> dict[str, Any]:
     secret — an imported profile is expected to be the sanitized export
     above, never a live profile with credentials still attached."""
     auth = profile.get("auth", {})
-    suspicious_keys = {"client_secret", "password", "private_key", "access_token", "refresh_token", "secret_ref", "api_key"}
-    found = suspicious_keys & set(auth.keys())
+    found = SECRET_SHAPED_KEYS & set(auth.keys())
     if found:
         raise ValueError(
             f"Refusing to import: profile contains secret-shaped field(s) {sorted(found)}. "
