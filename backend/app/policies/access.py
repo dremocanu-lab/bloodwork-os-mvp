@@ -53,3 +53,15 @@ def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
     # care_partners have no general patient record access; document-level access
     # is checked separately via care_partner_can_access_document
     return False
+
+
+def care_partner_can_access_document(db: Session, care_partner_user_id: int, document_id: int) -> bool:
+    return (
+        db.query(models.SharedStructuredPage)
+        .filter(
+            models.SharedStructuredPage.care_partner_user_id == care_partner_user_id,
+            models.SharedStructuredPage.document_id == document_id,
+        )
+        .first()
+        is not None
+    )
