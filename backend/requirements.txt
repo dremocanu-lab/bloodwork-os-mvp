@@ -24,3 +24,8 @@ redis==5.2.1
 # docs/security/MALWARE_SCANNING_PLAN.md. Same "installed unconditionally,
 # activated by env var" pattern as redis above.
 clamd==1.0.2
+# Was already an implicit transitive dependency of python-jose[cryptography]
+# above; pinned directly now that app/services/interop/crypto.py and jwks.py
+# depend on it explicitly (secret-at-rest encryption, RSA keypair generation
+# for SMART Backend Services — see BRAGI_INTEROP_PLAN.md).
+cryptography==47.0.0

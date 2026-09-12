@@ -379,6 +379,14 @@ the browser).
   means a narrow heuristic structural screen only, never described as
   full malware scanning
 
+**Interoperability** (see `BRAGI_INTEROP_PLAN.md`; not enabled in
+production)
+- `INTEROP_FHIR_ENABLED` — whole-feature kill switch for the FHIR
+  connector and all `/admin/interop/*` routes, default false
+- `INTEROP_SECRET_ENCRYPTION_KEY` — required before any connector secret
+  (bearer token, OAuth client secret, SMART private key) can be stored;
+  fails closed rather than storing plaintext if unset
+
 ---
 
 ## Deployment
@@ -528,6 +536,7 @@ docs/
 |---|---|
 | `CLAUDE_HANDOFF.md` | Rolling status log across every development round — read this for "what happened and when," not the README |
 | `BRAGI_REDUCTO_PLAN.md` | The architecture/phase reference for document ingestion, classification, extraction, and source verification |
+| `BRAGI_INTEROP_PLAN.md` | Standards-based interoperability (FHIR/HL7/CDA/DICOMweb/IHE partner connectivity) — scope, phasing, and Phase 1 (FHIR connector) status. Feature-flagged off (`INTEROP_FHIR_ENABLED`) |
 | `BRAGI_SECURITY_GDPR_PLAN.md` | The authoritative, evidence-cited security/privacy engineering status record |
 | `docs/PRODUCTION_READINESS_CHECKLIST.md` | The compact checklist form of the security/GDPR plan |
 | `docs/EXTERNAL_COMPLIANCE_ACTIONS.md` | Everything outside engineering's control — vendor, legal, product decisions |

@@ -3,6 +3,74 @@
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## Interoperability — Phase 1: FHIR R4 inbound connector (2026-09-11)
+
+Full architecture/status/phasing: `BRAGI_INTEROP_PLAN.md` (read that
+first). **Status: `[IMPLEMENTED — NOT DEPLOYED]`** — feature-flagged off
+(`INTEROP_FHIR_ENABLED`, default false); merging this code changes
+nothing for any real user until explicitly activated.
+
+**Scope decision, explicit and important for future sessions**: this
+product decision *supersedes the prior "no EHR scope" boundary
+specifically for standards-based external connectivity* (FHIR/HL7/CDA/
+DICOMweb/IHE) — Bragi is not becoming an operational hospital EHR
+(scheduling/billing/order-entry/bed-management remain out of scope), but
+receiving/exporting health data through standards is now in scope. If you
+land here from a stale memory saying "don't add EHR-shaped features,"
+this file and `BRAGI_INTEROP_PLAN.md` are the record that this specific
+carve-out was made — don't re-litigate it, don't ask the user again.
+
+What shipped (Phase 1, FHIR only, inbound): `app/services/interop/`
+(ssrf.py, crypto.py, auth_providers.py, jwks.py, capability.py,
+smart_discovery.py, mapping.py, identity.py, fhir_connector.py,
+reports.py, templates.py), 6 new additive tables + 2 additive columns
+(`Document`/`LabResult`.`source_connection_id`), 20 new
+`/admin/interop/*` backend routes (all admin-only, all flag-gated), a
+declarative mapping DSL (schema-validated, no eval), deterministic
+(never fuzzy) patient-identity linking, a non-mutating test suite, a
+real shadow-sync (commits nothing) and an idempotent commit-sync path.
+
+Verified against **three real, materially different synthetic FHIR R4
+servers** (`tests/interop/fixtures/synthetic_fhir_server.py` — genuine
+in-process HTTP servers, not mocks) through the exact same, unmodified
+connector code (no `if server ==` branching anywhere in
+`fhir_connector.py`): a full-featured/SMART/paginated server, a minimal
+server with no SMART/DiagnosticReport/DocumentReference, and a
+local-code server that requires a declarative mapping override (not a
+code change) to sync fully. `tests/test_interop_e2e.py` (10 tests,
+against the real dev Postgres — see `DATABASE_URL`),
+`tests/test_interop_capability.py`, `tests/test_interop_mapping.py`,
+`tests/test_interop_ssrf.py` (27 fast unit tests, no DB) — 37 new tests,
+all passing.
+
+**Two real bugs this feature's own tests found before merging** (same
+FK-cascade class this codebase has hit before for `AskBragiConversation`
+— see the Ask Bragi entry below): `DELETE /my/account` broke with a
+`ForeignKeyViolation` for a patient with an `ExternalPatientIdentityLink`
+row, and a second one for `InteropIdentityConflict.existing_link_id`
+still referencing a link about to be deleted. Both fixed in
+`delete_my_account` in the same commit.
+
+**Not done this phase** (see `BRAGI_INTEROP_PLAN.md`'s "Next phase"
+section for the full list): connection-wizard frontend UI (backend API
+only), incremental `_lastUpdated` query strategy (capability-detected,
+not yet used to narrow a sync), Bulk Data, IHE MHD/PIXm/PDQm, HL7v2,
+CDA, DICOMweb, mTLS network implementation, certificate-expiry
+monitoring, schema-drift detection, background polling. CNAS remains
+explicitly `UNIMPLEMENTED_CONNECTION_TYPES` — awaiting real registration.
+
+**If you continue this work**: read `BRAGI_INTEROP_PLAN.md` in full
+first. Do not add a `Connection` deletion route without also fixing the
+`documents.source_connection_id`/`lab_results.source_connection_id` FK
+constraints on the live DB to actually carry `ON DELETE SET NULL` (the
+ORM model declares it; the raw migration SQL was corrected to declare it
+too, but a database that already ran the column-creation migration
+before that fix still has the constraint without it — an idempotent
+`ALTER TABLE ... DROP CONSTRAINT ... ADD CONSTRAINT ... ON DELETE SET
+NULL` migration is needed before any connection-delete path ships). Do
+not weaken `ssrf.py`'s validation to make onboarding more convenient —
+see P75/P56 in the plan doc for exactly what that guards against.
+
 ## Ask Bragi — first production-quality version (2026-09-11)
 
 Full architecture/status: `BRAGI_ASK_BRAGI_PLAN.md` (read that first —
