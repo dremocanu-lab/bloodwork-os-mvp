@@ -1,5 +1,4 @@
 import os
-import re
 import json
 import secrets
 import tempfile
@@ -38,6 +37,8 @@ from app.auth import (
 )
 from app.core.utils import generate_public_id, now_iso
 from app.db import SessionLocal, engine
+from app.policies.access import can_access_patient, doctor_has_patient_access, get_patient_for_user
+from app.schemas.serializers import serialize_patient_event
 from app.services.document_pipeline import process_uploaded_document
 from app.services.lab_catalog import find_lab_definition
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
@@ -872,10 +873,6 @@ def add_audit_log(
     db.add(log)
 
 
-def get_patient_for_user(db: Session, user_id: int):
-    return db.query(models.Patient).filter(models.Patient.linked_user_id == user_id).first()
-
-
 def ensure_patient_for_user(db: Session, user):
     patient = get_patient_for_user(db, user.id)
 
@@ -914,35 +911,6 @@ def _ensure_patient_code(db: Session, patient_id: int) -> str:
     return code
 
     return patient
-
-
-def doctor_has_patient_access(db: Session, doctor_user_id: int, patient_id: int) -> bool:
-    return (
-        db.query(models.DoctorPatientAccess)
-        .filter(
-            models.DoctorPatientAccess.doctor_user_id == doctor_user_id,
-            models.DoctorPatientAccess.patient_id == patient_id,
-            models.DoctorPatientAccess.is_active == 1,
-        )
-        .first()
-        is not None
-    )
-
-
-def can_access_patient(db: Session, current_user, patient_id: int) -> bool:
-    if current_user.role == "admin":
-        return True
-
-    if current_user.role == "doctor":
-        return doctor_has_patient_access(db, current_user.id, patient_id)
-
-    if current_user.role == "patient":
-        patient = get_patient_for_user(db, current_user.id)
-        return patient is not None and patient.id == patient_id
-
-    # care_partners have no general patient record access; document-level access
-    # is checked separately via care_partner_can_access_document
-    return False
 
 
 def care_partner_can_access_document(db: Session, care_partner_user_id: int, document_id: int) -> bool:
@@ -1035,40 +1003,6 @@ def mark_doctor_reviewed_document(db: Session, doctor_user_id: int, document_id:
     db.add(review)
 
 
-def get_best_document_date(document) -> str | None:
-    return (
-        document.test_date
-        or document.collected_on
-        or document.reported_on
-        or document.generated_on
-        or document.registered_on
-        or document.created_at
-    )
-
-
-def lab_value_to_float(value) -> float | None:
-    if value is None:
-        return None
-
-    cleaned = str(value).strip().lower()
-    cleaned = cleaned.replace(",", ".")
-    cleaned = cleaned.replace("−", "-")
-    cleaned = cleaned.replace("—", "-").replace("–", "-")
-
-    if cleaned in {"", "-", "--", "---", "nil", "n/a", "na", "null", "none"}:
-        return None
-
-    match = re.search(r"[-+]?\d+(?:\.\d+)?", cleaned)
-
-    if not match:
-        return None
-
-    try:
-        return float(match.group(0))
-    except Exception:
-        return None
-
-
 def serialize_lab_result(lab):
     return {
         "id": lab.id,
@@ -1133,25 +1067,6 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
             and current_user is not None
             and document.uploaded_by_user_id == current_user.id
         ),
-    }
-
-
-def serialize_patient_event(event) -> dict:
-    doctor = event.doctor_user
-
-    return {
-        "id": event.id,
-        "patient_id": event.patient_id,
-        "doctor_user_id": event.doctor_user_id,
-        "event_type": event.event_type,
-        "status": event.status,
-        "title": event.title,
-        "description": event.description,
-        "hospital_name": event.hospital_name,
-        "department": event.department,
-        "admitted_at": event.admitted_at,
-        "discharged_at": event.discharged_at,
-        "doctor_name": doctor.full_name if doctor else None,
     }
 
 
@@ -2410,39 +2325,6 @@ class AccessRequestCreateRequest(BaseModel):
 
 class AccessRequestRespondRequest(BaseModel):
     status: str
-
-
-class PatientEventCreateRequest(BaseModel):
-    patient_id: int
-    event_type: str = "hospitalization"
-    status: str = "active"
-    title: str
-    description: str | None = None
-    hospital_name: str | None = None
-    department: str | None = None
-    admitted_at: str
-    discharged_at: str | None = None
-
-
-@app.get("/")
-def root():
-    return {"message": "API is running"}
-
-
-@app.get("/admin/ops/rate-limit-status")
-def rate_limit_status(current_user=Depends(require_role("admin"))):
-    """Read-only diagnostic so ops can confirm which rate-limit backend is
-    actually active in a given environment — never inferred from an env
-    var alone, since a misconfigured/unreachable Redis silently falls
-    back to the in-memory (per-instance-only) backend. See
-    docs/security/RATE_LIMITING.md."""
-    from app.rate_limit import RATE_LIMIT_DISABLED, RATE_LIMIT_REDIS_URL, is_distributed
-
-    return {
-        "distributed": is_distributed(),
-        "redis_configured": bool(RATE_LIMIT_REDIS_URL),
-        "disabled": RATE_LIMIT_DISABLED,
-    }
 
 
 @app.post("/auth/signup")
@@ -4885,200 +4767,6 @@ def delete_document(
     return {"ok": True, "deleted_document_id": document_id}
 
 
-@app.get("/patients/{patient_id}/bloodwork-trends")
-def get_patient_bloodwork_trends(
-    patient_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(get_current_user),
-):
-    if not can_access_patient(db, current_user, patient_id):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    documents = (
-        db.query(models.Document)
-        .filter(
-            models.Document.patient_id == patient_id,
-            models.Document.section == "bloodwork",
-        )
-        .order_by(models.Document.id.asc())
-        .all()
-    )
-
-    document_by_id = {document.id: document for document in documents}
-    document_ids = list(document_by_id.keys())
-
-    if not document_ids:
-        return []
-
-    labs = (
-        db.query(models.LabResult)
-        .filter(
-            models.LabResult.document_id.in_(document_ids),
-            # Rows linked as Level-3 duplicate observations describe the
-            # same real-world measurement as an earlier row — counting both
-            # would plot the same value twice.
-            models.LabResult.duplicate_of_lab_result_id.is_(None),
-        )
-        .all()
-    )
-
-    trends = {}
-
-    for lab in labs:
-        numeric_value = lab_value_to_float(lab.value)
-
-        # Missing / nil / --- values must never enter trend graphs.
-        if numeric_value is None:
-            continue
-
-        test_key = (
-            lab.canonical_name
-            or lab.display_name
-            or lab.raw_test_name
-            or ""
-        ).strip()
-
-        if not test_key:
-            continue
-
-        document = document_by_id.get(lab.document_id)
-
-        if not document:
-            continue
-
-        display_name = lab.display_name or lab.canonical_name or lab.raw_test_name or test_key
-        date = get_best_document_date(document) or ""
-
-        if test_key not in trends:
-            trends[test_key] = {
-                "test_key": test_key,
-                "display_name": display_name,
-                "canonical_name": lab.canonical_name,
-                "category": lab.category,
-                "unit": lab.unit,
-                "points": [],
-            }
-
-        trends[test_key]["points"].append(
-            {
-                "document_id": document.id,
-                "lab_result_id": lab.id,
-                "date": date,
-                "value": numeric_value,
-                "value_display": str(lab.value).strip(),
-                "flag": lab.flag,
-                "report_name": document.report_name or document.filename,
-                "reference_range": lab.reference_range,
-            }
-        )
-
-    results = []
-
-    for trend in trends.values():
-        points = trend["points"]
-
-        # Sort by clinical date when possible, then document id as a stable fallback.
-        def point_sort_key(point):
-            raw_date = point.get("date") or ""
-
-            try:
-                parsed = datetime.fromisoformat(str(raw_date).replace("Z", "+00:00"))
-                return (parsed.timestamp(), point.get("document_id") or 0)
-            except Exception:
-                return (0, point.get("document_id") or 0)
-
-        points.sort(key=point_sort_key)
-
-        # Only the 5 most recent real numeric points.
-        points = points[-5:]
-
-        if not points:
-            continue
-
-        latest = points[-1]
-        previous = points[-2] if len(points) >= 2 else None
-        delta = None
-
-        if previous:
-            delta = round(latest["value"] - previous["value"], 2)
-
-        trend["points"] = points
-        trend["latest"] = latest
-        trend["previous"] = previous
-        trend["delta"] = delta
-
-        results.append(trend)
-
-    results.sort(
-        key=lambda trend: (
-            0
-            if trend["latest"].get("flag")
-            and str(trend["latest"].get("flag")).strip().lower() not in {"", "normal", "none", "ok"}
-            else 1,
-            trend["display_name"] or "",
-        )
-    )
-
-    return results
-
-@app.post("/patient-events")
-def create_patient_event(
-    payload: PatientEventCreateRequest,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("doctor", "admin")),
-):
-    patient = db.query(models.Patient).filter(models.Patient.id == payload.patient_id).first()
-
-    if not patient:
-        raise HTTPException(status_code=404, detail="Patient not found")
-
-    if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, patient.id):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    event = models.PatientEvent(
-        patient_id=patient.id,
-        doctor_user_id=current_user.id,
-        event_type=payload.event_type,
-        status=payload.status,
-        title=payload.title,
-        description=payload.description,
-        hospital_name=payload.hospital_name or current_user.hospital_name,
-        department=payload.department or current_user.department,
-        admitted_at=payload.admitted_at,
-        discharged_at=payload.discharged_at,
-        created_by_user_id=current_user.id,
-        discharged_by_user_id=None,
-    )
-
-    db.add(event)
-    db.commit()
-    db.refresh(event)
-
-    return serialize_patient_event(event)
-
-
-@app.post("/patient-events/{event_id}/discharge")
-def discharge_patient_event(
-    event_id: int,
-    db: Session = Depends(get_db),
-    current_user=Depends(require_role("doctor", "admin")),
-):
-    event = db.query(models.PatientEvent).filter(models.PatientEvent.id == event_id).first()
-
-    if not event:
-        raise HTTPException(status_code=404, detail="Patient event not found")
-
-    if current_user.role == "doctor" and not doctor_has_patient_access(db, current_user.id, event.patient_id):
-        raise HTTPException(status_code=403, detail="Forbidden")
-
-    event.status = "discharged"
-    event.discharged_at = now_iso()
-    event.discharged_by_user_id = current_user.id
-
-    db.commit()
-    db.refresh(event)
-
-
 # ── Care Partner endpoints ────────────────────────────────────────────────────
 
 
@@ -7362,5 +7050,11 @@ async def stream_ask_bragi_message(
 # ============================================================================
 
 from app.api.routers.interop import router as interop_router  # noqa: E402
+from app.api.routers.labs import router as labs_router  # noqa: E402
+from app.api.routers.patient_events import router as patient_events_router  # noqa: E402
+from app.api.routers.root import router as root_router  # noqa: E402
 
+app.include_router(root_router)
+app.include_router(labs_router)
+app.include_router(patient_events_router)
 app.include_router(interop_router)
