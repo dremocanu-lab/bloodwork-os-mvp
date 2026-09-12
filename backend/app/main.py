@@ -13,22 +13,13 @@ from dotenv import load_dotenv
 load_dotenv()
 
 
-from fastapi import Depends, FastAPI, Header, HTTPException, Request
+from fastapi import FastAPI, Header, HTTPException, Request
 from fastapi.middleware.cors import CORSMiddleware
-from pydantic import BaseModel, EmailStr, Field
 from sqlalchemy import func, text
 from sqlalchemy.exc import SQLAlchemyError
 from sqlalchemy.orm import Session
 
 from app import models
-from app.api.dependencies import get_current_user, get_db
-from app.auth import (
-    create_access_token,
-    decode_access_token,
-    hash_password,
-    verify_password,
-    verify_password_timing_safe,
-)
 from app.core.utils import _mask_cnp, generate_public_id, now_iso
 from app.db import SessionLocal, engine
 from app.policies.access import get_patient_for_user
@@ -41,7 +32,6 @@ from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
 from app.services.file_hash import compute_sha256
 from app.services.security_scan import run_security_scan
-from app.rate_limit import RateLimiter
 from app.services.patient_identity import (
     MISMATCH,
     NEEDS_CONFIRMATION,
@@ -1987,212 +1977,6 @@ def process_upload_job(job_id: int):
         db.close()
 
 
-PCP_DEPARTMENT_VALUES = frozenset([
-    "pcp", "primary care", "family medicine", "family physician",
-    "general practice", "gp", "doctor de familie", "medic de familie",
-    "medicina de familie", "medicină de familie", "medicina familiala",
-    "medicină familială",
-])
-
-
-def _normalize_doctor_type(doctor_type_input: str | None, department: str | None) -> str | None:
-    if doctor_type_input:
-        if doctor_type_input.lower() == "pcp":
-            return "pcp"
-        return "specialist"
-    # Fall back to department sniffing for backwards compat
-    if department:
-        dept_lower = department.lower()
-        for val in PCP_DEPARTMENT_VALUES:
-            if val in dept_lower:
-                return "pcp"
-    return "specialist"
-
-
-class SignupRequest(BaseModel):
-    email: EmailStr
-    full_name: str
-    # 8 is the OWASP-recommended floor for a length-only policy (no
-    # composition rules — composition requirements are no longer
-    # recommended; length is the strongest single lever) — see
-    # docs/security/THREAT_MODEL.md. No pre-existing account is affected;
-    # this only gates new signups (and any future password-change/reset
-    # flow) going forward.
-    password: str = Field(min_length=8, max_length=256)
-    role: str
-    department: str | None = None
-    hospital_name: str | None = None
-    date_of_birth: str | None = None
-    age: str | None = None
-    sex: str | None = None
-    cnp: str | None = None
-    patient_identifier: str | None = None
-    care_partner_code: str | None = None
-    doctor_type: str | None = None
-
-
-class LoginRequest(BaseModel):
-    email: EmailStr
-    password: str
-
-
-class LabResultUpdate(BaseModel):
-    raw_test_name: str | None = None
-    canonical_name: str | None = None
-    display_name: str | None = None
-    category: str | None = None
-    source_section: str | None = None
-    value: str | None = None
-    flag: str | None = None
-    reference_range: str | None = None
-    unit: str | None = None
-
-
-class ParsedDataUpdate(BaseModel):
-    patient_name: str | None = None
-    date_of_birth: str | None = None
-    age: str | None = None
-    sex: str | None = None
-    cnp: str | None = None
-    patient_identifier: str | None = None
-    lab_name: str | None = None
-    sample_type: str | None = None
-    referring_doctor: str | None = None
-    report_name: str | None = None
-    report_type: str | None = None
-    source_language: str | None = None
-    test_date: str | None = None
-    collected_on: str | None = None
-    reported_on: str | None = None
-    registered_on: str | None = None
-    generated_on: str | None = None
-    note_body: str | None = None
-    labs: list[LabResultUpdate] = Field(default_factory=list)
-
-
-class DocumentUpdateRequest(BaseModel):
-    parsed_data: ParsedDataUpdate
-    editor_name: str | None = "Manual User"
-
-
-class VerifyRequest(BaseModel):
-    verifier_name: str | None = "Manual Reviewer"
-
-
-@app.post("/auth/signup")
-def signup(
-    payload: SignupRequest,
-    db: Session = Depends(get_db),
-    _rl=Depends(RateLimiter(limit=10, window_seconds=3600, key_prefix="signup")),
-):
-    if payload.role not in {"patient", "doctor", "admin", "care_partner", "emergency_worker"}:
-        raise HTTPException(status_code=400, detail="Invalid role")
-
-    existing = db.query(models.User).filter(models.User.email == payload.email).first()
-
-    if existing:
-        raise HTTPException(status_code=400, detail="Email already exists")
-
-    doctor_type = None
-    if payload.role == "doctor":
-        doctor_type = _normalize_doctor_type(payload.doctor_type, payload.department)
-
-    user = models.User(
-        email=payload.email,
-        full_name=payload.full_name,
-        password_hash=hash_password(payload.password),
-        role=payload.role,
-        department=payload.department,
-        hospital_name=payload.hospital_name,
-        doctor_type=doctor_type,
-    )
-
-    db.add(user)
-    db.commit()
-    db.refresh(user)
-
-    if payload.role == "patient":
-        patient = models.Patient(
-            linked_user_id=user.id,
-            full_name=payload.full_name,
-            date_of_birth=payload.date_of_birth,
-            age=payload.age,
-            sex=payload.sex,
-            cnp=payload.cnp,
-            patient_identifier=payload.patient_identifier,
-            public_id=generate_public_id("brg-pt"),
-        )
-        db.add(patient)
-        db.commit()
-        db.refresh(patient)
-        _ensure_patient_code(db, patient.id)
-
-    if payload.role == "care_partner":
-        if not payload.care_partner_code:
-            raise HTTPException(status_code=400, detail="Patient access code is required.")
-
-        code_record = (
-            db.query(models.PatientCarePartnerCode)
-            .filter(models.PatientCarePartnerCode.code == payload.care_partner_code.upper().strip())
-            .first()
-        )
-
-        if not code_record:
-            raise HTTPException(status_code=400, detail="Invalid patient access code.")
-
-        link = models.CarePartnerPatientLink(
-            care_partner_user_id=user.id,
-            patient_id=code_record.patient_id,
-            linked_at=now_iso(),
-        )
-        db.add(link)
-        db.commit()
-
-    token = create_access_token({"sub": str(user.id), "role": user.role})
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": serialize_user(user),
-    }
-
-
-@app.post("/auth/login")
-def login(
-    payload: LoginRequest,
-    db: Session = Depends(get_db),
-    _rl=Depends(RateLimiter(limit=15, window_seconds=300, key_prefix="login")),
-):
-    user = db.query(models.User).filter(models.User.email == payload.email).first()
-
-    # Always pays real bcrypt cost, whether or not `user` exists — see
-    # verify_password_timing_safe's docstring.
-    if not verify_password_timing_safe(payload.password, user.password_hash if user else None):
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    if user.deleted_at:
-        # Soft-deleted account (doctor/admin self-deletion) — same generic
-        # message as any other failed login, deliberately not
-        # distinguished (no new enumeration signal).
-        raise HTTPException(status_code=401, detail="Invalid email or password")
-
-    if user.role == "patient":
-        ensure_patient_for_user(db, user)
-
-    token = create_access_token({"sub": str(user.id), "role": user.role})
-
-    return {
-        "access_token": token,
-        "token_type": "bearer",
-        "user": serialize_user(user),
-    }
-
-
-@app.get("/auth/me")
-def me(current_user=Depends(get_current_user)):
-    return serialize_user(current_user)
-
-
 # ============================================================================
 # Router registration — domains extracted into app/api/routers/ (Phase 4
 # backend modularization; docs/refactor/BACKEND_DECOMPOSITION_PLAN.md).
@@ -2205,6 +1989,7 @@ def me(current_user=Depends(get_current_user)):
 from app.api.routers.admin import router as admin_router  # noqa: E402
 from app.api.routers.ask_bragi import router as ask_bragi_router  # noqa: E402
 from app.api.routers.assignments import router as assignments_router  # noqa: E402
+from app.api.routers.auth import router as auth_router  # noqa: E402
 from app.api.routers.care_partner_settings import router as care_partner_settings_router  # noqa: E402
 from app.api.routers.documents import router as documents_router  # noqa: E402
 from app.api.routers.emergency import router as emergency_router  # noqa: E402
@@ -2220,6 +2005,7 @@ app.include_router(root_router)
 app.include_router(admin_router)
 app.include_router(ask_bragi_router)
 app.include_router(assignments_router)
+app.include_router(auth_router)
 app.include_router(care_partner_settings_router)
 app.include_router(documents_router)
 app.include_router(emergency_router)
