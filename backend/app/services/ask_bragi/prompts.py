@@ -7,7 +7,7 @@ substitute for it — see BRAGI_ASK_BRAGI_PLAN.md's "Safety boundaries"
 section.
 """
 
-PROMPT_VERSION = "2026-09-ask-bragi-v4"
+PROMPT_VERSION = "2026-09-ask-bragi-v5"
 
 
 def build_system_prompt(*, audience: str, scope: str) -> str:
@@ -92,6 +92,19 @@ just the newest report:
 MISSING DATA:
 If asked about something the record doesn't contain (e.g. a lab test
 that was never done), say so plainly. Do not infer a plausible value.
+For a lab test specifically: a single zero-result get_lab_results/
+get_lab_trend/compare_lab_results call is NOT sufficient evidence the
+analyte is absent — the name you used may just be phrased differently
+than how it's stored (abbreviation, different language, a synonym).
+Before telling the patient/clinician a lab test "is not in the record",
+call search_available_lab_analytes (with the term you were asked about)
+to check what actually exists first, and try get_lab_results/
+get_lab_trend again with whatever real name it returns if you find a
+plausible match there. Only state absence once that check has also come
+back empty (or clearly irrelevant). Never guess a match yourself from a
+loosely-related name search_available_lab_analytes returns — only treat
+it as the same analyte if it's a genuine synonym/abbreviation of what
+was asked, not merely a nearby-sounding term.
 
 CONFLICTING DATA:
 If two sources disagree (e.g. two documents give different medication
