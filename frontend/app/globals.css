@@ -1752,6 +1752,26 @@ tr:focus-within .b-row-actions {
   flex-direction: column;
 }
 
+/* Opt-in (AppShell's `bodyFillHeight` prop) — see app-shell.tsx's own
+   comment on that prop for what this changes and why it's scoped to
+   only the pages that ask for it. The sticky header/banner stack above
+   is unaffected either way; only the body region below it stops
+   growing with its content (and letting the whole window scroll) and
+   instead becomes a bounded flex region that fills the rest of the
+   viewport and scrolls internally. */
+.app-shell-main-fill-height {
+  height: 100dvh;
+  overflow: hidden;
+}
+
+.app-shell-body-fill-height {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+}
+
 /* One coherent sticky stack: this wrapper (not the header or the banner
    individually) is what actually sticks — see app-shell.tsx's comment
    for why two independently-sticky siblings at the same `top: 0` is
@@ -2401,9 +2421,13 @@ tr:focus-within .b-row-actions {
 }
 
 .ask-bragi-history-desktop-only {
-  position: sticky;
-  top: var(--s4);
-  max-height: calc(100dvh - 96px);
+  /* .ask-bragi-workspace's grid row is now a real, bounded height (see
+     its own comment) rather than sized by content with the whole page
+     scrolling around it — this column fills that height and scrolls
+     internally, the same idea `position: sticky` + a max-height
+     approximated before there was a real bounded height to work with. */
+  height: 100%;
+  min-height: 0;
   overflow-y: auto;
   display: flex;
   flex-direction: column;
@@ -2457,12 +2481,22 @@ tr:focus-within .b-row-actions {
   font-weight: 600;
 }
 
-/* Desktop/tablet: global sidebar | Ask Bragi history | conversation. */
+/* Desktop/tablet: global sidebar | Ask Bragi history | conversation.
+   Both dedicated Ask Bragi pages render this inside AppShell's
+   `bodyFillHeight` body (see app-shell.tsx) — `flex: 1; min-height: 0`
+   lets this grid receive that region's real, bounded height instead of
+   sizing to its own content, and `align-items: stretch` (the grid
+   default — restated here so its intent is explicit, since this used to
+   deliberately be `start`) makes both columns fill that height rather
+   than each sizing to its own content and leaving dead space below a
+   short one. */
 .ask-bragi-workspace {
   display: grid;
   grid-template-columns: 220px minmax(0, 1fr);
   gap: var(--s5);
-  align-items: start;
+  align-items: stretch;
+  flex: 1;
+  min-height: 0;
 }
 
 .ask-bragi-history-toggle {

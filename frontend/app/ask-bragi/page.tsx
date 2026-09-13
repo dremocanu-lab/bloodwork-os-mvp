@@ -154,6 +154,7 @@ function AskBragiPageInner() {
       user={currentUser}
       title="Ask Bragi"
       subtitle="Ask about your medical record — every answer shows its source."
+      bodyFillHeight
       rightContent={
         <button
           type="button"
@@ -172,6 +173,7 @@ function AskBragiPageInner() {
           suggestions={SUGGESTIONS}
           conversationId={activeId ?? undefined}
           onConversationStarted={handleConversationStarted}
+          fillHeight
         />
       </div>
 
