@@ -41,6 +41,7 @@ from sqlalchemy import or_
 from app import models
 from app.services.ai_minimization import minimize_patient_context
 from app.services.lab_catalog import find_lab_definition
+from app.services.lab_resolver import resolve_analyte
 
 from .context import AskBragiAccessDenied, AskBragiContext
 
@@ -74,31 +75,65 @@ def _clamp_limit(value: Any, default: int, maximum: int) -> int:
 
 def _canonical_lab_filter(canonical_name_arg: str):
     """Build the SQLAlchemy filter for "does this LabResult match the
-    analyte the model asked for", tolerant of the model naming it
-    differently than what ended up stored.
+    analyte the model asked for", tolerant of both the model naming it
+    differently than what ended up stored, AND of Bragi's ingestion
+    pipeline having historically written LabResult.canonical_name in
+    either of TWO different formats depending on which resolver actually
+    processed a given row.
 
-    A bare `canonical_name ILIKE '%<arg>%'` (the previous behavior) is
-    fragile: LabResult.canonical_name is normalized at ingest time to the
-    catalog's own display form (see app/services/lab_catalog.py — e.g.
-    "White Blood Cell Count"), which does not contain common synonyms
-    the model might reasonably use instead ("WBC", "white blood cell
-    count", "leukocytes") as a literal substring in either direction —
-    this was a real, reproduced retrieval failure (a longitudinal/
-    "ever high" WBC question found nothing, even though an unfiltered
-    date-range query proved the exact same WBC data was present and
-    correctly flagged). Reusing `find_lab_definition` — the SAME
-    alias/fuzzy resolver ingestion already uses to normalize raw lab
-    names into a canonical one — closes that gap by resolving the
-    model's term to the stored canonical form before filtering.
-    Falls back to (and still ALSO tries) the raw substring match against
-    both canonical_name and raw_test_name, so a rare analyte the catalog
-    doesn't recognize is never worse off than before this fix."""
-    definition = find_lab_definition(canonical_name_arg)
+    A bare `canonical_name ILIKE '%<arg>%'` (the original behavior) is
+    fragile: LabResult.canonical_name is normalized at ingest time,
+    which does not necessarily contain common synonyms the model might
+    reasonably use instead ("WBC", "white blood cell count",
+    "leukocytes") as a literal substring in either direction — this was
+    a real, reproduced retrieval failure (a longitudinal/"ever high" WBC
+    question found nothing, even though an unfiltered date-range query
+    proved the exact same WBC data was present and correctly flagged).
+
+    Reusing `find_lab_definition` (app/services/lab_catalog.py) closed
+    part of that gap, but not all of it: Bragi's real ingestion pipeline
+    (app/services/document_pipeline.py) normalizes CBC-adjacent analytes
+    (including platelets) through a SEPARATE resolver,
+    app/services/lab_resolver.py (wrapping app/synonyms.py's
+    LAB_DEFINITIONS), whose own canonical form is a snake_case slug
+    (e.g. "platelet_count") — not lab_catalog.py's human-readable form
+    (e.g. "Platelet Count"). A stored LabResult.canonical_name of
+    "platelet_count" never contains "Platelet Count" (a space, not an
+    underscore) as a substring, so a "platelets"/"PLT"/"trombocite"
+    query against lab_catalog.py's resolver ALONE found nothing — even
+    though the exact same row's raw_test_name/canonical_name already
+    encode that concept, just via the other catalog's naming
+    convention. Reproduced directly (see
+    tests/test_ask_bragi_lab_retrieval.py) — WBC's own slug ("wbc")
+    happens to coincide with the abbreviation itself, which is why that
+    earlier fix appeared to fully resolve the class of bug when it had
+    only fixed half of it.
+
+    Consulting BOTH resolvers and trying every canonical/display form
+    each one produces (not inventing a third alias resolver of Ask
+    Bragi's own — see BACKEND spec Part G) means this now matches a
+    LabResult row regardless of which ingestion-era resolver actually
+    wrote its canonical_name. Falls back to (and still ALSO tries) the
+    raw substring match against both canonical_name and raw_test_name,
+    so a rare analyte NEITHER catalog recognizes is never worse off than
+    before this fix."""
     terms = {canonical_name_arg}
-    if definition is not None:
-        terms.add(definition.canonical_name)
+
+    catalog_definition = find_lab_definition(canonical_name_arg)
+    if catalog_definition is not None:
+        terms.add(catalog_definition.canonical_name)
+
+    resolved = resolve_analyte(canonical_name_arg)
+    if resolved.resolved:
+        if resolved.canonical_name:
+            terms.add(resolved.canonical_name)
+        if resolved.display_name:
+            terms.add(resolved.display_name)
+
     clauses = []
     for term in terms:
+        if not term:
+            continue
         clauses.append(models.LabResult.canonical_name.ilike(f"%{term}%"))
         clauses.append(models.LabResult.raw_test_name.ilike(f"%{term}%"))
     return or_(*clauses)
@@ -445,6 +480,82 @@ def _tool_compare_lab_results(ctx: AskBragiContext, args: dict) -> dict:
     return {"canonical_name": canonical_name, "latest": latest, "previous": previous, "delta": delta}
 
 
+def _tool_search_available_lab_analytes(ctx: AskBragiContext, args: dict) -> dict:
+    """Patient-specific analyte discovery (BRAGI PRODUCT RELIABILITY PASS,
+    Part H) — the recovery path for when get_lab_results/get_lab_trend/
+    compare_lab_results already returned zero rows for a query term
+    neither catalog resolved as an alias. Deliberately does NOT reuse
+    `_canonical_lab_filter` (that would share the exact same blind spot
+    this tool exists to catch) — instead lists every DISTINCT analyte
+    name actually on record for this patient, and — only when a query
+    term is given — narrows to the ones whose stored name contains it as
+    a plain substring. If that narrowed search finds nothing either, the
+    FULL inventory is returned instead of an empty list, so the model can
+    still see everything that genuinely does exist before ever asserting
+    absence — the model itself decides relevance from real names, this
+    tool never guesses a match on its own.
+
+    No values/dates/flags here — only analyte names and how many
+    observations exist for each; get_lab_results/get_lab_trend remain the
+    only tools that return actual clinical values. Patient-scoped via
+    ctx.patient_id exactly like every other lab tool — no caller/model
+    -supplied patient_id parameter."""
+    query_term = (args.get("query") or "").strip()
+
+    rows = (
+        ctx.db.query(
+            models.LabResult.canonical_name,
+            models.LabResult.raw_test_name,
+            models.LabResult.display_name,
+        )
+        .join(models.Document, models.Document.id == models.LabResult.document_id)
+        .filter(models.Document.patient_id == ctx.patient_id)
+        .distinct()
+        .all()
+    )
+
+    analytes: dict[str, dict] = {}
+    for canonical_name, raw_test_name, display_name in rows:
+        label = display_name or canonical_name or raw_test_name
+        if not label:
+            continue
+        entry = analytes.setdefault(
+            label,
+            {"canonical_name": canonical_name, "raw_test_name": raw_test_name, "display_name": display_name, "count": 0},
+        )
+        entry["count"] += 1
+
+    if query_term:
+        term_normalized = query_term.lower()
+
+        def _matches(entry: dict) -> bool:
+            return any(
+                term_normalized in (value or "").lower()
+                for value in (entry["canonical_name"], entry["raw_test_name"], entry["display_name"])
+            )
+
+        narrowed = {label: entry for label, entry in analytes.items() if _matches(entry)}
+        # Only fall back to the full inventory when the narrowed search
+        # truly found nothing — a real (even partial) match is always
+        # more useful to the model than the whole list.
+        result_set = narrowed if narrowed else analytes
+    else:
+        result_set = analytes
+
+    return {
+        "query": query_term or None,
+        "analytes": [
+            {
+                "canonical_name": entry["canonical_name"],
+                "raw_test_name": entry["raw_test_name"],
+                "display_name": entry["display_name"],
+                "observation_count": entry["count"],
+            }
+            for entry in result_set.values()
+        ],
+    }
+
+
 def _tool_get_medications(ctx: AskBragiContext, args: dict) -> dict:
     _mark_broadened_if_document_scoped(ctx)
     query = ctx.db.query(models.PatientMedication).filter(models.PatientMedication.patient_id == ctx.patient_id)
@@ -531,6 +642,7 @@ TOOL_IMPLS: dict[str, Callable[[AskBragiContext, dict], dict]] = {
     "get_lab_results": _tool_get_lab_results,
     "get_lab_trend": _tool_get_lab_trend,
     "compare_lab_results": _tool_compare_lab_results,
+    "search_available_lab_analytes": _tool_search_available_lab_analytes,
     "get_medications": _tool_get_medications,
     "get_patient_timeline": _tool_get_patient_timeline,
     "get_source_evidence": _tool_get_source_evidence,
@@ -626,6 +738,21 @@ TOOL_SCHEMAS: list[dict] = [
         "test (latest vs. previous), with the real numeric delta.",
         {"canonical_name": {"type": "string"}},
         required=["canonical_name"],
+    ),
+    _schema(
+        "search_available_lab_analytes",
+        "Discover which lab analytes actually exist in this patient's record "
+        "by name — call this if get_lab_results/get_lab_trend/"
+        "compare_lab_results returned ZERO results for a term, BEFORE "
+        "concluding the patient has no data for it. One zero-result "
+        "canonical-name lookup is not proof of absence — the term you tried "
+        "may just be phrased differently than how it's stored. Pass the "
+        "term you were originally asked about (e.g. 'platelets') to narrow "
+        "the results, or omit it to list everything on record. Returns "
+        "analyte names and how many observations exist for each — never "
+        "actual values; call get_lab_results/get_lab_trend again with "
+        "whichever real name you find here.",
+        {"query": {"type": ["string", "null"]}},
     ),
     _schema(
         "get_medications",

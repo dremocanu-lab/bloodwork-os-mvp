@@ -179,6 +179,7 @@ export default function PatientAskBragiPage() {
         { label: patientName || "Patient", href: `/patients/${patientId}` },
         { label: "Ask Bragi" },
       ]}
+      bodyFillHeight
       rightContent={
         <button
           type="button"
@@ -201,6 +202,7 @@ export default function PatientAskBragiPage() {
             suggestions={SUGGESTIONS}
             conversationId={activeId ?? undefined}
             onConversationStarted={handleConversationStarted}
+            fillHeight
           />
         </div>
       )}

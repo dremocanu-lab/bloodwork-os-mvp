@@ -52,7 +52,13 @@ export function AskBragiPanel({ variant }: { variant: "split" | "sheet" }) {
           <IconClose size={15} />
         </button>
       </div>
-      <div style={{ flex: 1, minHeight: 0, overflowY: "auto", padding: "var(--s3) var(--s4)" }}>
+      {/* No `overflowY: auto` here — AskBragiChat itself (with fillHeight)
+          is a full-height flex column whose OWN message list is the only
+          part that scrolls; the scope pills, suggestions, and composer
+          stay pinned in view above/below it. Wrapping this in its own
+          scrollable box as well would let the composer scroll out of
+          view for a long conversation. */}
+      <div style={{ flex: 1, minHeight: 0, padding: "var(--s3) var(--s4)" }}>
         <AskBragiChat
           key={`${target.patientId ?? "self"}-${target.documentId ?? "record"}`}
           audience={target.audience}
@@ -61,6 +67,7 @@ export function AskBragiPanel({ variant }: { variant: "split" | "sheet" }) {
           suggestions={target.suggestions}
           initialScope={target.initialScope}
           compact
+          fillHeight
         />
       </div>
     </div>

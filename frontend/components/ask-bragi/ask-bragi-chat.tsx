@@ -42,9 +42,20 @@ type Props = {
   documentId?: number;
   audience: "patient" | "doctor";
   suggestions?: string[];
-  /** Compact mode for the contextual side panel / Overview card (narrower
-   * max-width, denser padding, capped height) — see ask-bragi-panel.tsx. */
+  /** Denser visual treatment for a smaller surface (narrower max-width,
+   * tighter padding) — see ask-bragi-panel.tsx and the Overview card.
+   * Controls density only; it does NOT by itself cap how tall the
+   * message list renders — see `fillHeight` for that. */
   compact?: boolean;
+  /** This chat's own root becomes a full-height flex column, and the
+   * message list flexes to fill whatever height its parent actually
+   * gives it (instead of a fixed max-height) — for any surface that
+   * already establishes a real height for this component to fill (the
+   * contextual right-hand panel; the dedicated /ask-bragi page). Omit
+   * (default) for a surface with no such height of its own — e.g. the
+   * Overview card, which sits inline in a normally-scrolling page and
+   * needs its message list to stay within a fixed, modest cap instead. */
+  fillHeight?: boolean;
   /** Which scope pill starts selected — see BRAGI_ASK_BRAGI_PLAN.md's
    * per-surface scope defaults (a document reader defaults to "document";
    * Analize/Timeline/Overview default to "patient_record" even when a
@@ -93,6 +104,7 @@ export default function AskBragiChat({
   audience,
   suggestions,
   compact,
+  fillHeight,
   initialScope,
   conversationId,
   onConversationStarted,
@@ -128,6 +140,12 @@ export default function AskBragiChat({
   // BRAGI_ASK_BRAGI_PLAN.md's "Patient switch safety" section.
   const conversationTokenRef = useRef(0);
   const abortControllerRef = useRef<AbortController | null>(null);
+  // Set the instant send()'s lazy-creation path persists a brand-new
+  // conversation row, to the id of that conversation — see the init
+  // effect below for why this exists. Read once and cleared by that
+  // effect; a real subsequent conversationId change (history select,
+  // "New chat") is never affected by it.
+  const justCreatedConversationIdRef = useRef<number | null>(null);
 
   // Scope UI — only meaningful when this conversation actually has a
   // document to be scoped to. `userSetScope` is undefined until the user
@@ -147,6 +165,33 @@ export default function AskBragiChat({
   useEffect(() => {
     let cancelled = false;
     async function start() {
+      // OWNERSHIP GUARD: send()'s lazy-creation path (below) persists a
+      // brand-new conversation and immediately calls
+      // onConversationStarted(newConversation) so a parent can learn its
+      // id (history sidebar, URL state, etc.) — see e.g.
+      // app/ask-bragi/page.tsx's handleConversationStarted. If that
+      // parent stores the id in state and passes it straight back down
+      // as this same component's own `conversationId` prop (a completely
+      // reasonable, common pattern), THIS effect would otherwise re-run
+      // for what is really just an echo of a conversation this exact
+      // component instance already knows about and may still be
+      // mid-stream on — not a genuine "switch to a different
+      // conversation" (history select / "New chat"). Re-running the full
+      // reset-and-reload logic below in that case would abort the
+      // in-flight stream (whose AbortController this same effect clears),
+      // wipe the optimistic user bubble send() just added, and re-fetch a
+      // conversation that (being brand new) still has zero messages on
+      // the server — reproduced as the dedicated Ask Bragi page
+      // appearing to "reset" on a first submit. Recognizing that specific
+      // echo and treating it as a no-op is the fix; a real conversationId
+      // change (a different id, or the same id arriving through any path
+      // OTHER than this component's own just-completed creation) still
+      // takes the normal reload path below exactly as before.
+      if (conversationId != null && conversationId === justCreatedConversationIdRef.current) {
+        justCreatedConversationIdRef.current = null;
+        return;
+      }
+
       // Invalidates any send()/stream already in flight for the PREVIOUS
       // conversation (see conversationTokenRef's own comment) and clears
       // whatever leftover generating state that request left behind —
@@ -260,6 +305,12 @@ export default function AskBragiChat({
         const res = await askBragiApi.createConversation({ patient_id: patientId, document_id: documentId });
         if (tokenAtSend !== conversationTokenRef.current) return; // superseded before creation finished
         activeConversation = res.data;
+        // Recorded BEFORE onConversationStarted fires: if the parent it
+        // notifies turns around and feeds this same id straight back in
+        // as our own `conversationId` prop, the init effect above needs
+        // this already set by the time that prop change lands (see its
+        // "OWNERSHIP GUARD" comment).
+        justCreatedConversationIdRef.current = activeConversation.id;
         setConversation(activeConversation);
         onConversationStarted?.(activeConversation);
       } catch (err) {
@@ -424,7 +475,15 @@ export default function AskBragiChat({
   const showEscalateLink = Boolean(onEscalate) && (hiddenCount > 0 || (latestHasChart && compact));
 
   return (
-    <div className="b-stack" style={{ maxWidth, margin: compact ? undefined : "0 auto", minWidth: 0 }}>
+    <div
+      className="b-stack"
+      style={{
+        maxWidth,
+        margin: compact ? undefined : "0 auto",
+        minWidth: 0,
+        ...(fillHeight ? { height: "100%", minHeight: 0 } : {}),
+      }}
+    >
       {hasDocumentScope ? (
         <div role="group" aria-label="Ask Bragi scope" style={{ display: "flex", gap: 6, alignSelf: "flex-start" }}>
           <ScopePill active={displayedScope === "document"} onClick={() => selectScope("document")}>
@@ -458,10 +517,11 @@ export default function AskBragiChat({
           display: "flex",
           flexDirection: "column",
           gap: "var(--s3)",
-          minHeight: compact ? 180 : 320,
-          maxHeight: compact ? 320 : "60vh",
           overflowY: "auto",
           padding: "var(--s4)",
+          ...(fillHeight
+            ? { flex: 1, minHeight: 0 }
+            : { minHeight: compact ? 180 : 320, maxHeight: compact ? 320 : "60vh" }),
         }}
       >
         {visibleMessages.length === 0 && !generating ? (
