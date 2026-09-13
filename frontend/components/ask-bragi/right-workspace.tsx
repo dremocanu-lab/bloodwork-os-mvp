@@ -13,6 +13,20 @@
  * Deliberately does NOT touch SourceViewerPanel's internals — visibility
  * is toggled with the `hidden` attribute on a wrapping div, never a prop
  * into that component.
+ *
+ * IMPORTANT: each panel's `flex: 1` wrapper div is only ever rendered
+ * while that panel is actually open (`{sourceOpen ? <div>...</div> :
+ * null}`), never unconditionally with an empty child. An earlier version
+ * of this file rendered both wrapper divs unconditionally and used
+ * `hidden` alone to control visibility — with only one panel open,
+ * `showTabs` is false, so `hidden={showTabs && ...}` evaluated to
+ * `false` for BOTH wrappers, leaving an empty-but-visible `flex: 1` div
+ * sitting next to the real one and splitting the available height
+ * roughly in half. Conditionally rendering the wrapper on the panel's
+ * own open flag (rather than only on `hidden`) fixes this while still
+ * keeping both wrappers mounted and toggling only `hidden` between them
+ * whenever both panels really are open at once (`showTabs` true) — so
+ * the "never remount while both are open" guarantee above is preserved.
  */
 
 import type { CSSProperties } from "react";
@@ -105,12 +119,16 @@ export function RightWorkspace({
         </div>
       ) : null}
 
-      <div style={{ flex: 1, minHeight: 0 }} hidden={showTabs && activeTab !== "source"}>
-        {sourceOpen ? <SourceViewerPanel variant={variant} /> : null}
-      </div>
-      <div style={{ flex: 1, minHeight: 0 }} hidden={showTabs && activeTab !== "askBragi"}>
-        {askBragiOpen ? <AskBragiPanel variant={variant} /> : null}
-      </div>
+      {sourceOpen ? (
+        <div style={{ flex: 1, minHeight: 0 }} hidden={showTabs && activeTab !== "source"}>
+          <SourceViewerPanel variant={variant} />
+        </div>
+      ) : null}
+      {askBragiOpen ? (
+        <div style={{ flex: 1, minHeight: 0 }} hidden={showTabs && activeTab !== "askBragi"}>
+          <AskBragiPanel variant={variant} />
+        </div>
+      ) : null}
     </div>
   );
 }
