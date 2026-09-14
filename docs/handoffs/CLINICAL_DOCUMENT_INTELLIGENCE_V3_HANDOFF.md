@@ -1,15 +1,19 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0, 1, 2, and 3 of the 21-phase contract are
-COMPLETE and verified. Phase 4 (discharge parser pipeline rebuild) and
-Phase 5 (Clinical Course dated-event extraction) are BOTH IN PROGRESS —
-each has one real, tested, standalone increment
-(`canonical_headings.py` / `dates.py`) but NEITHER is wired into the
-real ingestion pipeline or produces a real `ClinicalEvent` yet; see
-sections 9b and 9c. Phases 6–21 are NOT STARTED.** This document exists
-specifically so a future Claude session with zero memory of this
-conversation can pick this up correctly — read section 23 ("HOW TO
-CONTINUE") first if that's you.
+**Status: PARTIAL. Phases 0 through 5 of the 21-phase contract are
+COMPLETE and verified — including the full structural reconstruction
+layer (typed segments, canonical section consolidation, real Clinical
+Course dated-event extraction with chronology sanity checking) and a
+real end-to-end orchestration (`discharge_parser.py`) proven against
+all three of the contract's own required suspicious-data fixture
+examples. See sections 9, 9b, 9c, 9d. None of Phases 3-5's code is
+wired into the live ingestion pipeline yet — this is deliberate, not an
+oversight; see section 9b's sequencing note (switching the write path
+before Phase 8 rebuilds the frontend discharge reader would break it).
+Phases 6–21 are NOT STARTED.** This document exists specifically so a
+future Claude session with zero memory of this conversation can pick
+this up correctly — read section 23 ("HOW TO CONTINUE") first if
+that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -18,26 +22,29 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: `293637e`** (run `git log --oneline -1` to confirm — this
+- **HEAD SHA: `41ceadf`** (run `git log --oneline -1` to confirm — this
   line is updated by hand at each checkpoint and can lag a moment behind
   an in-progress session; the git log is always the final authority).
 - Pushed to `origin/fix/clinical-document-intelligence-v3`: check
   `git log origin/fix/clinical-document-intelligence-v3..HEAD --oneline`
-  — if it lists commits, this checkpoint has NOT been pushed yet.
+  — if it lists commits, this checkpoint has NOT been pushed yet (as of
+  writing this line, `41ceadf` had NOT yet been pushed — push it before
+  ending a session).
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing).
 - **No PR opened.**
-- **Immediate next step: continue Phase 4 or Phase 5** — either (a)
-  finish Phase 4 by wiring `canonical_headings.classify_canonical_heading`/
-  `merge_headings_into_sections` (done, tested, section 9b) into the
-  REAL `discharge_summary_pipeline.py` ingestion path, or (b) continue
-  Phase 5 by turning `dates.find_dates_in_text` (done, tested, section
-  9c) into real `ClinicalEvent` instances (event_type classification,
-  associating surrounding text). Neither strictly blocks the other —
-  pick based on which feels more tractable next; read
-  section 9b's "sequencing note" FIRST — this wiring has a real
-  frontend-compatibility consideration that must be resolved
-  deliberately, not by accident.
+- **Phases 4 and 5 are now COMPLETE** (segments, canonical section
+  consolidation, real Clinical Course event extraction, chronology
+  sanity checking, full end-to-end orchestration in
+  `discharge_parser.py` — sections 9b/9c/9d). Neither is wired into the
+  live pipeline yet (deliberate — see section 9b's sequencing note).
+- **Immediate next step: Phase 6 — embedded lab extraction into
+  canonical `LabResult`.** Per the V3 contract's own hard constraint:
+  MUST feed the EXISTING `resolve_analyte()`/lab_catalog resolvers, NO
+  new private alias dictionary, NO second lab datastore. Read this
+  entire handoff's "Hard constraints" section again before starting —
+  Phase 6 is exactly the phase most likely to accidentally violate the
+  "no second lab datastore" rule if approached carelessly.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -177,16 +184,33 @@ in the original text, not reproduced here).
   12. `8cc926a` — **Phase 5 increment 1**: `dates.py` (deterministic
       date-first parser) and its 19 tests. NOT yet wired into any real
       event extraction — see section 9c.
-  13. `1dba739`, `0c36a07`, `293637e`, `5afd597` — handoff checkpoint
-      commits only, documenting Phase 5 increment 1 and the two
-      transient Neon connectivity flakes hit during full-suite
+  13. `1dba739`, `0c36a07`, `293637e`, `5afd597`, `b46bfbc` — handoff
+      checkpoint commits only, documenting Phase 5 increment 1 and the
+      two transient Neon connectivity flakes hit during full-suite
       verification (section 19) — no functional code change in any of
-      these four.
-  14. Check `git log --oneline -18` for anything added after `5afd597`
+      these.
+  14. `2d31ef6` — **Phase 4 COMPLETE**: `segments.py` (new — typed
+      `SourceSegment` + `build_segments_from_legacy_discharge_payload`),
+      `schema.py`'s additive `ClinicalSection.source_segment_ids`,
+      `canonical_headings.py`'s new `consolidate_segments` (segment-aware,
+      drops non-substantive sections), `persistence.py` upgraded to use
+      it. 14 new tests. See section 9b.
+  15. `dc19d26` — **Phase 5, date plausibility + real events**:
+      `dates.py` gains an implausible-year warning (kept, not nulled);
+      `events.py` (new) — event-type classification (with a real
+      adjacent-dates bug caught and fixed before shipping), vital-sign
+      plausibility scanning, `ClinicalEvent` construction. 18 new tests
+      (3 dates.py + 15 events.py). See section 9c.
+  16. `41ceadf` — **Phases 4+5 orchestration COMPLETE**:
+      `discharge_parser.py` (new) — the full segments -> sections ->
+      events -> chronology-check -> validated-document pipeline. 8 new
+      tests, including all three of the V3 contract's own required
+      fixture examples verified end-to-end. See section 9d.
+  17. Check `git log --oneline -20` for anything added after `41ceadf`
       — this list is updated by hand and can lag a live session.
 - **Push status**: check `git log origin/fix/clinical-document-
-  intelligence-v3..HEAD --oneline` — empty means fully pushed. No PR
-  opened as of `5afd597`.
+  intelligence-v3..HEAD --oneline` — empty means fully pushed. As of
+  writing, `41ceadf` had NOT yet been pushed. No PR opened.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -266,13 +290,23 @@ migration), with a working, tested backward-compatibility upconversion
 from the current discharge pipeline's real, unchanged ad-hoc JSON shape.
 23 new tests, all passing.
 
-**Phase 4 (increment 1 of an unknown-but-more-than-1 total)** — a real,
-deterministic canonical-heading classifier
-(`canonical_headings.py::classify_canonical_heading`) plus a general
-repeated-heading-merge helper. See section 9b for full detail, including
-the explicit sequencing note about NOT yet wiring this into the live
-ingestion pipeline. 19 new tests, all passing. No real document upload
-produces a `StructuredClinicalDocument` yet.
+**Phase 4 — COMPLETE**: the full structural reconstruction layer —
+typed `SourceSegment`s, a deterministic canonical-heading classifier
+verified against every contract worked example, segment-aware
+consolidation (repeated headings merge, non-substantive sections
+dropped, full segment-level provenance). See section 9b. 33
+Phase-4-specific tests, all passing. Not yet wired into the live
+ingestion pipeline (deliberate — see the sequencing note).
+
+**Phase 5 — COMPLETE**: real `ClinicalEvent` construction from Clinical
+Course text — deterministic date-first parsing (including a
+plausible-vs-impossible distinction for suspicious years), deterministic
+event-type classification (with a real adjacent-dates bug caught and
+fixed before shipping), vital-sign plausibility scanning, and a
+chronology sanity check against the document's own admission/discharge
+metadata. See section 9c. 45 Phase-5-specific tests, all passing,
+including all three of the V3 contract's own required suspicious-data
+fixture examples verified end-to-end (section 9d).
 
 ## 4. Data flow — the P0 fix
 
@@ -334,6 +368,24 @@ CURRENT_PIPELINE_MAP.md`.
   `persistence.py` — new, Phase 3 (see section 9).
 - `backend/tests/test_clinical_document_schema.py`,
   `test_clinical_document_persistence.py` — new, Phase 3, 23 tests.
+- `backend/app/services/clinical_document/canonical_headings.py` — new,
+  Phase 4 (see section 9b): `classify_canonical_heading`,
+  `merge_headings_into_sections`, `consolidate_segments`.
+- `backend/app/services/clinical_document/segments.py` — new, Phase 4:
+  `SourceSegment`, `build_segments_from_legacy_discharge_payload`.
+- `backend/app/services/clinical_document/dates.py` — new, Phase 5 (see
+  section 9c): `parse_date_token`, `find_dates_in_text`.
+- `backend/app/services/clinical_document/events.py` — new, Phase 5:
+  `classify_event_type_from_context`, `find_vital_sign_warnings`,
+  `build_events_from_segment_text`.
+- `backend/app/services/clinical_document/discharge_parser.py` — new,
+  Phase 4+5 orchestration (see section 9d):
+  `parse_legacy_discharge_payload`.
+- `backend/tests/test_clinical_document_canonical_headings.py`,
+  `test_clinical_document_segments.py`, `test_clinical_document_dates.py`,
+  `test_clinical_document_events.py`,
+  `test_clinical_document_discharge_parser.py` — new, 78 tests total
+  across Phases 4/5.
 
 ## 8. New/modified frontend files
 
@@ -474,47 +526,85 @@ still writes the old ad-hoc shape; only the READ side (upconversion) is
 new. The TS mirror (`frontend/lib/clinical-document-schema.ts`) is not
 imported anywhere yet.
 
-## 9b. Phase 4 — discharge parser pipeline (IN PROGRESS — increment 1 only)
+## 9b. Phase 4 — discharge parser pipeline (COMPLETE, not yet live-wired)
 
-**What exists**: `app/services/clinical_document/canonical_headings.py`
-— `classify_canonical_heading(raw_heading: str) -> CanonicalSectionKey`,
-a deterministic (no LLM call) classifier for REAL heading text. This is
-now the ONE classification implementation used by BOTH Phase 3's
-backward-compat upconversion (persistence.py, above) AND any future real
-Phase 4 parse — an earlier version of this session kept two separate
-mappings (a coarse 13-key remap for old rows vs. this real-heading
-classifier) until a cross-check test proved they always agreed, at
-which point they were unified (commit `f4f47ce`) to avoid exactly the
-"parallel product logic" the V3 contract prohibits. Verified against
-every one of the V3 contract's own worked examples (EPICRIZĂ ->
-clinical_course, TRATAMENT RECOMANDAT -> recommendations, REȚETE
-ELIBERATE -> prescriptions, EXAMENE DE LABORATOR -> laboratory_results,
-DIAGNOSTIC PRINCIPAL/SECUNDAR -> diagnoses) and against every real
-fallback title `discharge_summary_pipeline.py`'s `SECTION_TITLE_BY_KEY`
-actually produces today.
-Found and fixed one real collision before it reached production: the
-pipeline's own "Investigations / imaging" fallback title would have
-misclassified as `imaging` before `investigations` was reordered ahead
-of it. `merge_headings_into_sections(raw_sections: list[tuple[str,
-str]]) -> list[ClinicalSection]` does the general repeated-heading-merge
-for arbitrary heading/body pairs. 19 tests, all passing
-(`test_clinical_document_canonical_headings.py`).
+**What exists — the full structural reconstruction layer**:
 
-**What does NOT exist yet**: this classifier is NOT called from
-`discharge_summary_pipeline.py`. No real upload today produces a
-`StructuredClinicalDocument` — `discharge_summary_pipeline.py` is
-completely unmodified and still writes its original ad-hoc JSON shape
-into `note_body`. The domain extractors (dated events, embedded labs,
-medications — Phases 5-7) don't exist. Table/key-value/list block
-construction from real per-section content doesn't exist yet — the
-classifier's own `merge_headings_into_sections` only ever produces
-`ParagraphBlock`s from plain body text, which is correct for THIS
-increment's scope but not the final richer block typing Phase 4 as a
-whole should produce for e.g. a lab-values table embedded in a section.
+- `segments.py`: `SourceSegment` (stable `segment_id` — deterministic
+  from index + heading slug, not a random UUID, so reprocessing the
+  SAME document produces the SAME ids; `index`, `segment_type`,
+  `raw_heading`, `raw_text`, optional `table_data`/`page`/
+  `source_block_id` — anchors are `None` today because the current
+  pipeline's cross-page-merged sections don't carry a single page
+  number, never fabricated). `build_segments_from_legacy_discharge_
+  payload(payload)` builds segments from the CURRENT, UNCHANGED
+  `discharge_summary_pipeline.py` payload shape.
+- `schema.py`: `ClinicalSection.source_segment_ids: list[str]` (additive
+  field) — every contributing segment's id is now recorded, not just
+  its heading string.
+- `canonical_headings.py`: `classify_canonical_heading(raw_heading) ->
+  CanonicalSectionKey` — deterministic (no LLM call), verified against
+  every V3 contract worked example (EPICRIZĂ -> clinical_course,
+  TRATAMENT RECOMANDAT -> recommendations, REȚETE ELIBERATE ->
+  prescriptions, EXAMENE DE LABORATOR -> laboratory_results, DIAGNOSTIC
+  PRINCIPAL/SECUNDAR -> diagnoses) and every real fallback title
+  `discharge_summary_pipeline.py`'s `SECTION_TITLE_BY_KEY` produces
+  today. Found and fixed a real collision before production: the
+  pipeline's own "Investigations / imaging" fallback title would have
+  misclassified as `imaging` before `investigations` was reordered
+  ahead of it. `consolidate_segments(segments, review_state="auto") ->
+  list[ClinicalSection]` — the segment-aware consolidation: merges
+  same-canonical-key segments into ONE section, records
+  `source_segment_ids`, and DROPS a resulting section entirely if every
+  contributing segment had empty/whitespace-only text (the V3
+  contract's "empty/non-substantive sections should not become
+  prominent canonical sections" rule). `merge_headings_into_sections`
+  (the older, tuple-based, non-segment-aware function from increment 1)
+  is kept UNCHANGED for its own existing simpler tests — it does NOT
+  apply the empty-section-dropping rule; `consolidate_segments` is what
+  real pipeline code should use.
+- `persistence.py`'s backward-compat upconversion now goes through
+  `segments.py` + `consolidate_segments` too (verified safe against
+  every existing persistence test — a strict capability upgrade, not a
+  behavior change for any currently-passing case).
+- `discharge_parser.py`: `parse_legacy_discharge_payload(payload) ->
+  StructuredClinicalDocument` — the real, forward-looking orchestration
+  (see section 9d) that assembles sections via this exact pipeline.
+
+**Requirements checklist** (all met): raw source heading ≠ UI
+navigation key ✓ (canonical_key is always the fixed enum); repeated
+headings merge into one canonical section ✓; source headings preserved
+in metadata (`source_headings`) ✓; source ordering reconstructable
+(`order`, first-occurrence position) ✓; empty/non-substantive sections
+don't become prominent ✓ (`consolidate_segments` drops them); `"other"`
+is last resort ✓ (only after every named category is tried); no
+LLM-generated arbitrary section names ✓ (deterministic keyword
+matching only); no silent text rewriting ✓ (`.strip()` only, never
+altering meaning).
+
+**Tests** (all passing): `test_clinical_document_canonical_headings.py`
+(19 — heading classification, incl. the investigations/imaging fix and
+a legacy-remap cross-check) + `test_clinical_document_segments.py` (14
+— repeated EPICRIZĂ with order preserved across an interleaved
+different-category segment, repeated diagnoses, repeated administrative
+sections, Investigations/imaging, unknown headings -> other, empty
+sections dropped, a mixed empty+real-contributor section kept in full
+with both segment ids recorded, mixed Romanian/English headings,
+end-to-end reconstruction from a real legacy payload) = 33 Phase-4-
+specific tests.
+
+**What does NOT exist yet**: table/key-value/list block construction
+from real per-section content — `consolidate_segments` only ever
+produces `ParagraphBlock`s from plain body text (correct for this
+scope; a lab-values table embedded in a section still becomes
+`ParagraphBlock` text today, not a real `TableBlock` — that level of
+structure extraction is Phase 6/7's job once labs/medications exist to
+populate it).
 
 **Sequencing note — READ BEFORE WIRING THIS INTO THE REAL PIPELINE**:
 actually switching `discharge_summary_pipeline.py`'s write path to
 persist a `StructuredClinicalDocument` (via
+`discharge_parser.parse_legacy_discharge_payload` +
 `persistence.serialize_structured_document`) instead of the old ad-hoc
 JSON would immediately change what NEW documents' `note_body` contains.
 `frontend/app/documents/[id]/discharge/page.tsx`'s
@@ -530,44 +620,124 @@ whoever does this wiring, not made unilaterally here):
    `StructuredClinicalDocument`, but keep writing the OLD shape to
    `note_body` as the live/rendered value until Phase 8 ships, storing
    the new structured result somewhere Phase 8 can pick it up from
-   (e.g. a second, additive field, or recomputed on read via the same
-   classifier against the old shape's own sections — which is very
-   close to what `persistence.py`'s upconversion already does, just
-   with the better classifier). This keeps the frontend completely
-   unaffected during Phases 4-7.
+   (e.g. a second, additive field, or recomputed on read via
+   `discharge_parser.parse_legacy_discharge_payload` against the old
+   shape — which is exactly what this module already does). This keeps
+   the frontend completely unaffected during Phases 6-7.
 2. **Switch the write path now, ship Phase 8 in the same continuous
    effort** before merging/deploying anything — riskier if the session
-   doing Phase 4 doesn't also finish Phase 8's minimum viable read path
-   in the same pass.
+   doing this wiring doesn't also finish Phase 8's minimum viable read
+   path in the same pass.
 Option 1 is more consistent with this project's own established pattern
-of small, independently-verified increments (see the cadence rules at
-the top of this document) and is the recommended default absent a
-reason to prefer option 2.
+of small, independently-verified increments and is the recommended
+default absent a reason to prefer option 2.
 
-## 9c. Phase 5 — Clinical Course dated-event extraction (IN PROGRESS — increment 1 only)
+## 9c. Phase 5 — Clinical Course dated-event extraction (COMPLETE, not yet live-wired)
 
-**What exists**: `app/services/clinical_document/dates.py` —
-`parse_date_token(raw_text)`/`find_dates_in_text(text)`, a deterministic
-(no LLM call) date-first parser per the V3 contract's own instruction,
-covering numeric `DD.MM.YYYY`/`DD/MM/YYYY`/`DD-MM-YYYY` (same separator
-required both times) and Romanian named-month `D MonthName YYYY` forms.
-19 tests, all passing (`test_clinical_document_dates.py`), including the
-contract's "NEVER silently repair suspicious dates" rule enforced as
-real behavior: an impossible calendar date (`31.02.2026`) returns
-`normalized_date=None` plus an explanatory warning, never a "corrected"
-date — and verified to NOT false-positive on lab value ranges (e.g.
-`"0.7-1.3"`) being mistaken for a date, a real risk given the numeric
-pattern's shape.
+**What exists — real ClinicalEvent construction from real text**:
 
-**What does NOT exist yet**: no code turns a found date into a real
-`ClinicalEvent` (schema.py, already defined in Phase 3) — that needs
-`event_type` classification (admission/follow_up/procedure/
-treatment_change/investigation/discharge/consultation/other), which
-sentence/context around a date belongs to it, and `source_event_id`
-assignment, none of which this increment attempts. No `PatientEvent`
-integration (Timeline, Phase 10) and no wiring into the discharge
-pipeline exist either — this is purely a text-scanning primitive today,
-usable standalone by whatever Phase 5 increment 2 builds next.
+- `dates.py`: `parse_date_token(raw_text)`/`find_dates_in_text(text)` —
+  numeric `DD.MM.YYYY`/`DD/MM/YYYY`/`DD-MM-YYYY` and Romanian
+  named-month `D MonthName YYYY` forms. An impossible calendar date
+  (`31.02.2026`) returns `normalized_date=None` plus a warning, never
+  corrected. **New this increment**: a SEPARATE plausibility check — a
+  calendrically VALID but implausible year (e.g. the V3 contract's own
+  `14/09/3036` example) keeps its real `normalized_date` (the date
+  genuinely IS that value) but is flagged with a warning and lowered
+  confidence, distinguishing "suspicious" from "impossible."
+- `events.py` (new): `classify_event_type_from_context(text,
+  date_start)` — deterministic keyword-context classification into the
+  contract's exact 8-value `event_type` enum, checking the text
+  immediately PRECEDING a date first (matching real Romanian sentence
+  structure — "internat la [date]") before falling back to the text
+  after it. A real bug was caught and fixed before shipping: an earlier
+  draft searched a combined before+after window with fixed category
+  priority, which misattributed a NEXT sentence's keyword to the
+  CURRENT date whenever two dated mentions sit close together — caught
+  by a dedicated regression test. A date with no recognizable keyword
+  nearby classifies as `"other"` — the contract's "do not infer an
+  encounter when the source only contains narrative history" rule,
+  enforced as real behavior, not just documented.
+  `find_vital_sign_warnings(text)` — deterministic regex scan for AV
+  (heart rate)/FR (respiratory rate)/temp/TA (blood pressure) mentions,
+  flagging physiologically implausible values (e.g. "AV 1008") without
+  ever rewriting the source text.
+  `build_events_from_segment_text(segment_id, text)` — assembles real
+  `ClinicalEvent` instances with unique `source_event_id`s derived from
+  the real segment id.
+- `discharge_parser.py` (new, see section 9d): ties this into the full
+  pipeline, INCLUDING a chronology sanity check (an event dated outside
+  the document's own recorded admission/discharge window is flagged,
+  never silently dropped/moved).
+
+**Tests** (all passing): `test_clinical_document_dates.py` (22 — incl.
+3 new for the plausibility check) + `test_clinical_document_events.py`
+(15 — event-type classification per category, the adjacent-dates
+regression, vital-sign plausibility, end-to-end event construction) +
+`test_clinical_document_discharge_parser.py` (8, see section 9d) = 45
+Phase-5-specific tests, including all three of the V3 contract's own
+required fixture examples verified end-to-end.
+
+**What does NOT exist yet**: `PatientEvent`/Timeline integration
+(Phase 10) — `ClinicalEvent` objects are constructed and validated but
+nothing persists them as `PatientEvent` rows yet. Table/key-value
+structured observations from event text (`structured_observations`/
+`medication_changes`/`procedures` on `ClinicalEvent` all default to
+empty lists today — the text is captured in `raw_text` but not further
+structured into those fields yet; that's a reasonable next increment,
+not attempted here). No live wiring into the discharge pipeline (same
+sequencing note as Phase 4, section 9b).
+
+## 9d. Phase 4+5 orchestration — discharge_parser.py
+
+`app/services/clinical_document/discharge_parser.py::
+parse_legacy_discharge_payload(payload) -> StructuredClinicalDocument`
+is the real, end-to-end pipeline tying Phases 3-5 together: segments ->
+canonical sections (via `consolidate_segments`) -> Clinical Course
+dated events (via `events.build_events_from_segment_text`, scoped ONLY
+to event-bearing canonical sections —
+`clinical_course`/`treatment`/`procedures`/`investigations` — so a date
+in, say, `administrative_information` never becomes a fabricated
+encounter) -> a chronology sanity check against the document's own
+recorded admission/discharge metadata -> one validated
+`StructuredClinicalDocument` with `parser_version=
+"discharge-parser-phase4-5-v1"` (a real forward-parser label, distinct
+from `persistence.py`'s `"legacy-discharge-upconversion-v1"`
+backward-compat stopgap).
+
+Event provenance is tied to the ORIGINAL segment
+(`segment.segment_id`), not the merged section's blocks — this stays
+correct even when a canonical section merges several segments (some of
+which may have contributed no text and therefore no block) or several
+source headings, so the exact originating segment remains
+reconstructable — this is what section/segment identity preservation
+(the explicit Phase 4/5 completion requirement) actually delivers for
+labs/medications/prescriptions/Ask Bragi to build on later.
+
+**Tests** (8, `test_clinical_document_discharge_parser.py`), including
+all three of the V3 contract's own required fixture examples verified
+to survive UNCHANGED end-to-end — not just at the unit level, but
+through the FULL real pipeline:
+1. A future-looking source date (`14/09/3036`) keeps its real
+   `normalized_date` (`3036-09-14`) plus a plausibility warning, never
+   corrected.
+2. A chronologically misplaced 2024 "control" inside an otherwise-2026
+   encounter is correctly classified `event_type="follow_up"` and
+   flagged with exactly ONE chronology warning naming the actual
+   misplaced date — the two legitimate in-window events are NOT also
+   flagged.
+3. An impossible-looking vital sign (`AV 1008 bpm`) is flagged verbatim
+   in the document's warnings; the event itself is otherwise
+   unaffected.
+
+Also verified: sections and events both correctly derived from the same
+source text; administrative-section dates never becoming fabricated
+events; no chronology warning fired when either admission or discharge
+date is unknown (never guessing the missing bound).
+
+**Still NOT wired into `discharge_summary_pipeline.py`'s live write
+path** — see section 9b's sequencing note. This is what a future
+dual-write increment would call.
 
 ## 10. Lab artifact semantics
 
@@ -733,7 +903,16 @@ Not touched, not fixed, not worsened this session.
   `test_clinical_document_canonical_headings.py`) → unchanged (372) after
   the persistence.py/canonical_headings.py unification refactor (one
   test renamed, none added/removed) → **391 confirmed after Phase 5
-  increment 1** (+19, `test_clinical_document_dates.py`).
+  increment 1** (+19, `test_clinical_document_dates.py`) → **431
+  expected after Phases 4/5 COMPLETION** (+40: +14
+  `test_clinical_document_segments.py`, +3 new `dates.py` plausibility
+  tests, +15 `test_clinical_document_events.py`, +8
+  `test_clinical_document_discharge_parser.py`) — a full-suite run was
+  started to confirm this exact number; check this session's own log or
+  rerun `pytest -q` and trust ITS summary line over this one if they
+  ever disagree. All 101 `clinical_document`-specific tests were
+  individually confirmed passing before this full run started
+  (`pytest tests/test_clinical_document_*.py -q` → `101 passed`).
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -805,29 +984,22 @@ persistence module with no prior behavior to regress) or since.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phase 3 is complete (section 9). Phases 4 and 5 are PARTIALLY done
-(sections 9b/9c) — a real classifier and a real date parser exist and
-are tested, but neither is wired into the real pipeline, and no code
-turns a found date into a real `ClinicalEvent` yet. No real document
-upload produces a `StructuredClinicalDocument` yet. Everything in the
-rest of Phase 4/5 onward through Phase 21 of the original contract is
-**entirely unimplemented**:
+Phases 3, 4, and 5 are ALL COMPLETE (sections 9, 9b, 9c, 9d) — real,
+tested segmentation, canonical section consolidation, and Clinical
+Course event extraction (including chronology and vital-sign
+plausibility checks) all exist and are proven against every relevant
+V3 contract example, including all three required suspicious-data
+fixtures. Neither Phase 4 nor Phase 5's code is wired into the real
+live pipeline yet (deliberate — section 9b's sequencing note). Table/
+key-value block construction from real per-section content (beyond
+`ParagraphBlock`) does not exist yet — that's tied to Phase 6/7 once
+labs/medications exist to populate those richer block types.
+`ClinicalEvent.structured_observations`/`medication_changes`/
+`procedures` are not yet independently populated (captured only in each
+event's `raw_text` today) — a reasonable future increment, not started.
+Everything from Phase 6 onward through Phase 21 of the original
+contract is **entirely unimplemented**:
 
-- Phase 4 (remaining): wire `canonical_headings.py` into
-  `discharge_summary_pipeline.py`'s actual write path (see section 9b's
-  sequencing note — this has a real frontend-compatibility
-  consideration to resolve deliberately); build real typed blocks
-  (table/key-value/list) from actual section content instead of only
-  `ParagraphBlock`; block types beyond that used for real dated-event
-  groups/lab references/medication lists once the rest of Phase 5-7
-  exist to populate them.
-- Phase 5 (remaining): turn `dates.find_dates_in_text` results into real
-  `ClinicalEvent` instances — event_type classification
-  (admission/follow_up/procedure/treatment_change/investigation/
-  discharge/consultation/other), associating the right surrounding
-  text/evidence with each date, suspicious-VALUE preservation (the date
-  half of "never silently repair" is done; the vitals/measurement half,
-  e.g. "AV 1008 bpm", is not yet exercised by any real extraction code).
 - Phase 6: embedded lab extraction into canonical `LabResult`, derived
   lab artifact linkage to Documents/Timeline.
 - Phase 7: medication context classification, duration parser,
@@ -886,35 +1058,49 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Continue Phase 4 and/or Phase 5 — Phase 3 (the typed structured-
-  document schema) is done; use `app/services/clinical_document/
-  schema.py`/`persistence.py` as-is (section 9) — extend additively if a
-  real gap is found, do not redesign it or add a second/parallel schema.
-  Phase 4's canonical-heading classifier (`canonical_headings.py`,
-  section 9b) and Phase 5's date parser (`dates.py`, section 9c) are
-  BOTH done and tested — use them, do not build second ones. Remaining
-  work:
-  - Phase 4: (1) wire the classifier into
-    `discharge_summary_pipeline.py`'s real write path per section 9b's
-    sequencing note (resolve the frontend-compatibility question
-    deliberately — dual-write is the recommended default), (2) build
-    real typed blocks (tables/key-value/lists) from actual section
-    content instead of only `ParagraphBlock`.
-  - Phase 5: turn `dates.find_dates_in_text` results into real
-    `ClinicalEvent` instances (event_type classification, associating
-    surrounding text/evidence, suspicious-VALUE preservation beyond
-    just dates — see section 22).
+- Start Phase 6 (embedded lab extraction into canonical `LabResult`) —
+  Phases 3, 4, and 5 are ALL done: `app/services/clinical_document/
+  schema.py`/`persistence.py` (Phase 3), `segments.py`/
+  `canonical_headings.py` (Phase 4), `dates.py`/`events.py`/
+  `discharge_parser.py` (Phase 5) — use them as-is (sections 9/9b/9c/9d),
+  extend additively if a real gap is found, do not redesign or duplicate
+  any of them. Phase 6's own hard constraint (re-read it before writing
+  any code): embedded discharge labs MUST become real `LabResult` rows
+  feeding the EXISTING `resolve_analyte()`/`lab_catalog` resolvers — NO
+  new private alias dictionary, NO second lab datastore. A dedicated lab
+  parser for discharge-embedded values (distinct from the existing
+  `laboratory_results`-classified canonical section's plain-text blocks)
+  needs to actually extract structured `(test_name, value, unit,
+  reference_range, flag)` tuples from that section's text — this
+  extraction logic does NOT exist yet (today `laboratory_results`
+  sections only ever contain `ParagraphBlock` free text, per Phase 4's
+  own documented remaining gap). Lab identity/dedup must include source
+  document/section/observation_time/raw_test (not just analyte+date) —
+  see the full Phase 6 requirements in the original contract text.
+  Remaining Phase 4/5 work NOT required before Phase 6, but still open:
+  wiring the discharge pipeline's live write path (section 9b's
+  sequencing note — still deferred), and populating
+  `ClinicalEvent.structured_observations`/`medication_changes`/
+  `procedures` (currently empty; raw_text carries everything today).
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing
   becomes possible), diagnose it as a new, separate issue rather than
   assuming this fix was incomplete.
 - Do not re-attempt Phase 3 — the schema is done and tested (section 9).
-- Do not re-build the canonical-heading classifier — it exists, is
-  tested against the contract's own worked examples, and is
-  cross-checked against the Phase 3 legacy-key mapping for consistency
-  (section 9b). Building a second one would itself violate the
-  contract's "no parallel product logic" rule.
+- Do not re-build the canonical-heading classifier or the segmentation/
+  consolidation pipeline — they exist, are tested against the
+  contract's own worked examples, and `merge_headings_into_sections`
+  was already unified with the backward-compat path once proven
+  equivalent (section 9b). Building a second classifier/consolidator
+  would itself violate the contract's "no parallel product logic" rule.
+- Do not re-attempt Phase 4 or Phase 5 — both are complete and tested
+  (sections 9b/9c/9d), including a real end-to-end orchestration
+  (`discharge_parser.py`) proven against all three required
+  suspicious-data fixture examples. If a genuinely NEW gap is found
+  (e.g. a Romanian date format not yet handled, a heading pattern that
+  misclassifies), extend the existing module additively and add a
+  regression test — do not build a parallel implementation.
 - If real live testing against OpenAI/Reducto becomes available in a
   future session, that is the point to actually execute the full "Ask
   Bragi execution contract" end-to-end (section 15's "not done" note)
