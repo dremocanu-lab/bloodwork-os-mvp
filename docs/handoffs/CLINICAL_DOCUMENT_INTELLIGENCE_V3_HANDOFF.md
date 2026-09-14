@@ -1,12 +1,13 @@
 # Clinical Document Intelligence V3 — Handoff
 
 **Status: PARTIAL. Phases 0, 1, 2, and 3 of the 21-phase contract are
-COMPLETE and verified. Phases 4–21 (the discharge parser rebuild,
-Clinical Course dated-event extraction, embedded lab/medication
-extraction, frontend rebuild, and everything downstream of them) are NOT
-STARTED.** This document exists specifically so a future Claude session
-with zero memory of this conversation can pick this up correctly — read
-section 23 ("HOW TO CONTINUE") first if that's you.
+COMPLETE and verified. Phase 4 (discharge parser pipeline rebuild) is
+IN PROGRESS — its canonical-heading classifier is built and tested
+(`canonical_headings.py`) but NOT YET WIRED into the real ingestion
+pipeline; see section 9b. Phases 5–21 are NOT STARTED.** This document
+exists specifically so a future Claude session with zero memory of this
+conversation can pick this up correctly — read section 23 ("HOW TO
+CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -15,24 +16,23 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: `c9deaaa`** (run `git log --oneline -1` to confirm — this
+- **HEAD SHA: `1e71f03`** (run `git log --oneline -1` to confirm — this
   line is updated by hand at each checkpoint and can lag a moment behind
   an in-progress session; the git log is always the final authority).
 - Pushed to `origin/fix/clinical-document-intelligence-v3`: check
   `git log origin/fix/clinical-document-intelligence-v3..HEAD --oneline`
-  — if it lists commits, this checkpoint has NOT been pushed yet (push
-  before ending a session, per the user's own stated preference for the
-  Phase 0-2 checkpoint).
+  — if it lists commits, this checkpoint has NOT been pushed yet.
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing).
 - **No PR opened.**
-- **Immediate next step for the next session: Phase 4** — the discharge
-  parser pipeline rebuild (canonical section classifier, repeated-
-  heading merge, dated Clinical Course extraction groundwork). Phase 3
-  (the typed schema this document persists through) is done — see
-  section 9 below for exactly what exists and how to use it. Do not
-  redesign or duplicate that schema; extend it additively if a real gap
-  is found.
+- **Immediate next step: finish Phase 4** — wire
+  `canonical_headings.classify_canonical_heading`/
+  `merge_headings_into_sections` (done, tested, section 9b) into the
+  REAL `discharge_summary_pipeline.py` ingestion path so a real upload
+  actually produces a validated `StructuredClinicalDocument`. Read
+  section 9b's "sequencing note" FIRST — this wiring has a real
+  frontend-compatibility consideration that must be resolved
+  deliberately, not by accident.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -155,11 +155,16 @@ in the original text, not reproduced here).
   6. `c9deaaa` — **Phase 3**: `app/services/clinical_document/` (schema.py
      + persistence.py) and its 23 tests, plus a TS mirror type file. See
      section 9 for full detail.
-  7. Check `git log --oneline -10` for anything added after `c9deaaa` —
+  7. `e81ea9b` — handoff checkpoint for Phase 3's completion (this file
+     only); full backend suite reran green at 353/353 after Phase 3.
+  8. `1e71f03` — **Phase 4 increment 1**: `canonical_headings.py` (real
+     heading classifier + repeated-heading merge) and its 19 tests. NOT
+     yet wired into the real ingestion pipeline — see section 9b.
+  9. Check `git log --oneline -12` for anything added after `1e71f03` —
      this list is updated by hand and can lag a live session.
 - **Push status**: check `git log origin/fix/clinical-document-
   intelligence-v3..HEAD --oneline` — empty means fully pushed. No PR
-  opened as of `c9deaaa`.
+  opened as of `1e71f03`.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -237,7 +242,15 @@ clinical_document/` package (`schema.py` + `persistence.py`), persisted
 through the EXISTING `Document.note_body` field (no new DB column, no
 migration), with a working, tested backward-compatibility upconversion
 from the current discharge pipeline's real, unchanged ad-hoc JSON shape.
-23 new tests, all passing. No parser exists yet — that's Phase 4.
+23 new tests, all passing.
+
+**Phase 4 (increment 1 of an unknown-but-more-than-1 total)** — a real,
+deterministic canonical-heading classifier
+(`canonical_headings.py::classify_canonical_heading`) plus a general
+repeated-heading-merge helper. See section 9b for full detail, including
+the explicit sequencing note about NOT yet wiring this into the live
+ingestion pipeline. 19 new tests, all passing. No real document upload
+produces a `StructuredClinicalDocument` yet.
 
 ## 4. Data flow — the P0 fix
 
@@ -439,6 +452,73 @@ is "already done" because this stopgap exists). The TS mirror
 (`frontend/lib/clinical-document-schema.ts`) is not imported anywhere
 yet.
 
+## 9b. Phase 4 — discharge parser pipeline (IN PROGRESS — increment 1 only)
+
+**What exists**: `app/services/clinical_document/canonical_headings.py`
+— `classify_canonical_heading(raw_heading: str) -> CanonicalSectionKey`,
+a deterministic (no LLM call) classifier for REAL heading text (not the
+current pipeline's coarse 13-key vocabulary — that's what Phase 3's
+`_LEGACY_KEY_TO_CANONICAL` handles, for OLD rows only). Verified against
+every one of the V3 contract's own worked examples (EPICRIZĂ ->
+clinical_course, TRATAMENT RECOMANDAT -> recommendations, REȚETE
+ELIBERATE -> prescriptions, EXAMENE DE LABORATOR -> laboratory_results,
+DIAGNOSTIC PRINCIPAL/SECUNDAR -> diagnoses) and cross-checked for
+agreement against `_LEGACY_KEY_TO_CANONICAL` on every real fallback
+title `discharge_summary_pipeline.py`'s `SECTION_TITLE_BY_KEY` actually
+produces today (so the two classification paths — old-row backward
+compat vs. real heading classification — don't silently drift apart).
+Found and fixed one real collision before it reached production: the
+pipeline's own "Investigations / imaging" fallback title would have
+misclassified as `imaging` before `investigations` was reordered ahead
+of it. `merge_headings_into_sections(raw_sections: list[tuple[str,
+str]]) -> list[ClinicalSection]` does the general repeated-heading-merge
+for arbitrary heading/body pairs. 19 tests, all passing
+(`test_clinical_document_canonical_headings.py`).
+
+**What does NOT exist yet**: this classifier is NOT called from
+`discharge_summary_pipeline.py`. No real upload today produces a
+`StructuredClinicalDocument` — `discharge_summary_pipeline.py` is
+completely unmodified and still writes its original ad-hoc JSON shape
+into `note_body`. The domain extractors (dated events, embedded labs,
+medications — Phases 5-7) don't exist. Table/key-value/list block
+construction from real per-section content doesn't exist yet — the
+classifier's own `merge_headings_into_sections` only ever produces
+`ParagraphBlock`s from plain body text, which is correct for THIS
+increment's scope but not the final richer block typing Phase 4 as a
+whole should produce for e.g. a lab-values table embedded in a section.
+
+**Sequencing note — READ BEFORE WIRING THIS INTO THE REAL PIPELINE**:
+actually switching `discharge_summary_pipeline.py`'s write path to
+persist a `StructuredClinicalDocument` (via
+`persistence.serialize_structured_document`) instead of the old ad-hoc
+JSON would immediately change what NEW documents' `note_body` contains.
+`frontend/app/documents/[id]/discharge/page.tsx`'s
+`parseDischargePayload` only understands the OLD shape today — it does
+NOT read `schema_version`-carrying JSON. Doing the write-side switch
+before Phase 8 (discharge reader frontend rebuild) exists would make
+every NEW discharge upload's page render incorrectly (or fail to
+render) until Phase 8 catches up — a real, visible regression, and
+exactly the kind of "redesigning the frontend" this session was told
+not to begin. Two honest ways to sequence this correctly (a decision for
+whoever does this wiring, not made unilaterally here):
+1. **Dual-write**: have the pipeline construct and validate a
+   `StructuredClinicalDocument`, but keep writing the OLD shape to
+   `note_body` as the live/rendered value until Phase 8 ships, storing
+   the new structured result somewhere Phase 8 can pick it up from
+   (e.g. a second, additive field, or recomputed on read via the same
+   classifier against the old shape's own sections — which is very
+   close to what `persistence.py`'s upconversion already does, just
+   with the better classifier). This keeps the frontend completely
+   unaffected during Phases 4-7.
+2. **Switch the write path now, ship Phase 8 in the same continuous
+   effort** before merging/deploying anything — riskier if the session
+   doing Phase 4 doesn't also finish Phase 8's minimum viable read path
+   in the same pass.
+Option 1 is more consistent with this project's own established pattern
+of small, independently-verified increments (see the cadence rules at
+the top of this document) and is the recommended default absent a
+reason to prefer option 2.
+
 ## 10. Lab artifact semantics
 
 **NOT STARTED.** No derived-lab-artifact concept exists yet. Today,
@@ -596,17 +676,22 @@ Not touched, not fixed, not worsened this session.
 ## 19. Test counts
 
 - Backend: 328 (Phase 0-2 session start baseline) → 330 after Phase 2
-  (+2, `test_ask_bragi_service.py`) → **353 after Phase 3** (+23,
+  (+2, `test_ask_bragi_service.py`) → 353 after Phase 3 (+23,
   `test_clinical_document_schema.py` + `test_clinical_document_
-  persistence.py`) — see the checkpoint history below for which full-
-  suite run confirms which count; always re-run `pytest -q` and trust
-  its own summary line over any number in this file if they ever
-  disagree.
+  persistence.py`) — **full suite reran green at this point: 353 passed
+  in 1041.44s.** → **372 after Phase 4 increment 1** (+19,
+  `test_clinical_document_canonical_headings.py`) — this increment's own
+  focused tests all pass; the full suite was NOT rerun again
+  specifically for this one small, isolated addition (see the cadence
+  rule: full suite after every 2-3 substantial phases, or immediately
+  after anything touching canonical persistence/LabResult/medications/
+  PatientEvent/SourceEvidence/deletion/Ask-Bragi — this increment
+  touches none of those). Always re-run `pytest -q` and trust its own
+  summary line over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
-  `right-workspace-geometry.spec.ts`) — unchanged by Phase 3 (no
-  frontend application behavior changed; the new TS file has no tests
-  of its own since nothing consumes it yet).
-- OpenAPI routes: unchanged, 117 routes / 99 paths (Phase 3 added no
+  `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-4 (no
+  frontend application behavior changed).
+- OpenAPI routes: unchanged, 117 routes / 99 paths (Phases 3-4 added no
   route).
 
 ## 20. Playwright coverage (what exists now)
@@ -639,15 +724,21 @@ persistence module with no prior behavior to regress) or since.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phase 3 is now complete (see section 9). Everything in Phases 4 through
-21 of the original contract is **entirely unimplemented**:
+Phase 3 is complete (section 9). Phase 4 is PARTIALLY done (section 9b)
+— the classifier exists and is tested, but it is not wired into the
+real pipeline, so no real document upload produces a
+`StructuredClinicalDocument` yet. Everything in the rest of Phase 4
+onward through Phase 21 of the original contract is **entirely
+unimplemented**:
 
-- Phase 4: discharge parser pipeline rebuild (canonical section
-  classifier, repeated-heading merge, block types) — this is the
-  IMMEDIATE next phase; it will actually PRODUCE
-  `StructuredClinicalDocument` instances from real documents for the
-  first time (Phase 3 only defined the shape and a read-time backward-
-  compat path for the OLD shape).
+- Phase 4 (remaining): wire `canonical_headings.py` into
+  `discharge_summary_pipeline.py`'s actual write path (see section 9b's
+  sequencing note — this has a real frontend-compatibility
+  consideration to resolve deliberately); build real typed blocks
+  (table/key-value/list) from actual section content instead of only
+  `ParagraphBlock`; block types beyond that used for real dated-event
+  groups/lab references/medication lists once Phases 5-7 exist to
+  populate them.
 - Phase 5: dated Clinical Course event extraction (Romanian date
   parsing, `ClinicalEvent` model, suspicious-date/value preservation).
 - Phase 6: embedded lab extraction into canonical `LabResult`, derived
@@ -708,23 +799,29 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start at Phase 4 (the discharge parser pipeline rebuild) — Phase 3
-  (the typed structured-document schema every later phase depends on)
-  is done; see section 9 for exactly what exists (`app/services/
-  clinical_document/schema.py`/`persistence.py`) and use it as-is —
+- Continue Phase 4 (the discharge parser pipeline rebuild) — Phase 3
+  (the typed structured-document schema) is done; use `app/services/
+  clinical_document/schema.py`/`persistence.py` as-is (section 9) —
   extend additively if a real gap is found, do not redesign it or add a
-  second/parallel schema.
+  second/parallel schema. Phase 4's canonical-heading classifier is
+  ALSO done and tested (`canonical_headings.py`, section 9b) — use it,
+  do not build a second one. The remaining Phase 4 work is: (1) wire the
+  classifier into `discharge_summary_pipeline.py`'s real write path per
+  section 9b's sequencing note (resolve the frontend-compatibility
+  question deliberately — dual-write is the recommended default), (2)
+  build real typed blocks (tables/key-value/lists) from actual section
+  content instead of only `ParagraphBlock`.
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing
   becomes possible), diagnose it as a new, separate issue rather than
   assuming this fix was incomplete.
 - Do not re-attempt Phase 3 — the schema is done and tested (section 9).
-  Phase 4's job is to make a REAL parser produce instances of it from
-  actual discharge documents; `discharge_summary_pipeline.py` itself
-  has not been touched yet and still writes the old ad-hoc `note_body`
-  shape (Phase 3 only added a read-time backward-compat upconversion for
-  that old shape, it did not change what gets written).
+- Do not re-build the canonical-heading classifier — it exists, is
+  tested against the contract's own worked examples, and is
+  cross-checked against the Phase 3 legacy-key mapping for consistency
+  (section 9b). Building a second one would itself violate the
+  contract's "no parallel product logic" rule.
 - If real live testing against OpenAI/Reducto becomes available in a
   future session, that is the point to actually execute the full "Ask
   Bragi execution contract" end-to-end (section 15's "not done" note)
