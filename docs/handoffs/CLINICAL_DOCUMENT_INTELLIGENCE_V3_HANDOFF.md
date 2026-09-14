@@ -18,7 +18,7 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: (this commit)** (run `git log --oneline -1` to confirm — this
+- **HEAD SHA: `293637e`** (run `git log --oneline -1` to confirm — this
   line is updated by hand at each checkpoint and can lag a moment behind
   an in-progress session; the git log is always the final authority).
 - Pushed to `origin/fix/clinical-document-intelligence-v3`: check
