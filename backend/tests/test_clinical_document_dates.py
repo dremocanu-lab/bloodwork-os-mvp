@@ -71,6 +71,34 @@ def test_invalid_calendar_date_is_preserved_verbatim_never_corrected():
     assert parsed.confidence < 0.9
 
 
+def test_implausible_future_year_is_flagged_but_normalized_date_is_kept():
+    """The V3 contract's own fixture example: '14/09/3036' — calendrically
+    VALID (date(3036, 9, 14) constructs fine) but chronologically absurd
+    for a clinical record. Unlike an invalid calendar date, this must NOT
+    null out normalized_date — the contract says such a date 'may
+    produce warnings but must never be corrected', meaning the value
+    itself survives, just flagged."""
+    parsed = parse_date_token("14/09/3036")
+    assert parsed is not None
+    assert parsed.normalized_date == "3036-09-14"
+    assert parsed.raw_text == "14/09/3036"
+    assert any("outside the plausible range" in w for w in parsed.warnings)
+    assert parsed.confidence < 0.9
+
+
+def test_implausible_past_year_is_also_flagged_but_kept():
+    parsed = parse_date_token("01.01.1850")
+    assert parsed is not None
+    assert parsed.normalized_date == "1850-01-01"
+    assert any("outside the plausible range" in w for w in parsed.warnings)
+
+
+def test_plausible_year_boundary_does_not_warn():
+    parsed = parse_date_token("01.01.1900")
+    assert parsed is not None
+    assert parsed.warnings == ()
+
+
 def test_invalid_month_number_is_also_preserved_not_corrected():
     parsed = parse_date_token("10.13.2026")  # month 13 doesn't exist
     assert parsed is not None

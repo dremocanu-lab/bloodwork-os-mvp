@@ -17,6 +17,16 @@ whenever the calendar date is genuinely impossible (e.g. day 31 in
 February) — the ORIGINAL text always survives in `raw_text` regardless,
 and a human-readable reason is always in `warnings`. Nothing in this
 module ever guesses a "probably meant" value.
+
+A SEPARATE, weaker check applies to a date that IS calendrically valid
+but chronologically absurd for a clinical record (e.g. "14/09/3036" —
+`date(3036, 9, 14)` constructs without error, Python's `date` supports
+any year 1-9999). This is "suspicious", not "impossible": the V3
+contract's own example says such a date "may produce warnings but must
+never be corrected" — so, unlike the invalid-calendar-date case,
+`normalized_date` is still returned (the date genuinely IS that value),
+just flagged in `warnings` with a lowered `confidence`, never nulled out
+or silently adjusted to a "more plausible" year.
 """
 
 from __future__ import annotations
@@ -68,6 +78,14 @@ _NUMERIC_DATE_RE = re.compile(r"\b(?P<day>\d{1,2})(?P<sep>[.\-/])(?P<month>\d{1,
 # D MonthName YYYY (Romanian convention — no comma, day before month name).
 _NAMED_MONTH_DATE_RE = re.compile(r"\b(?P<day>\d{1,2})\s+(?P<month_name>[^\W\d_]+)\s+(?P<year>\d{4})\b", re.UNICODE)
 
+# A clinical record's dates are expected to fall in a plausible
+# real-world range — generous on both ends (well past this app's actual
+# operating years) specifically so it only ever catches genuinely absurd
+# values (a "3036" typo, a "1850" OCR misread), never a real historical
+# document.
+_PLAUSIBLE_YEAR_MIN = 1900
+_PLAUSIBLE_YEAR_MAX = 2100
+
 
 @dataclass(frozen=True)
 class ParsedDate:
@@ -93,6 +111,19 @@ def _try_build_iso_date(day: int, month: int, year: int) -> tuple[str | None, li
                 "— preserved verbatim in raw_text, not corrected or guessed."
             ],
         )
+
+
+def _plausibility_warning(year: int) -> list[str]:
+    """A SEPARATE check from calendar validity — see the module
+    docstring. A year outside the plausible range does NOT null the
+    normalized date (it is still a real, constructible calendar date),
+    it only adds a warning and signals the caller to lower confidence."""
+    if year < _PLAUSIBLE_YEAR_MIN or year > _PLAUSIBLE_YEAR_MAX:
+        return [
+            f"Year {year} is outside the plausible range for a clinical record "
+            f"({_PLAUSIBLE_YEAR_MIN}-{_PLAUSIBLE_YEAR_MAX}) — preserved verbatim, not corrected."
+        ]
+    return []
 
 
 def _normalize_year(year_str: str) -> tuple[int, list[str]]:
@@ -123,6 +154,8 @@ def parse_date_token(raw_text: str, *, start: int = 0) -> ParsedDate | None:
         year, year_warnings = _normalize_year(m.group("year"))
         normalized, date_warnings = _try_build_iso_date(day, month, year)
         warnings = year_warnings + date_warnings
+        if normalized is not None:
+            warnings = warnings + _plausibility_warning(year)
         confidence = 0.95 if not warnings else 0.55
         return ParsedDate(raw_text=text, start=start, normalized_date=normalized, confidence=confidence, warnings=tuple(warnings))
 
@@ -134,6 +167,8 @@ def parse_date_token(raw_text: str, *, start: int = 0) -> ParsedDate | None:
             return None  # not a recognized month name — not a date shape at all
         year = int(m.group("year"))
         normalized, warnings = _try_build_iso_date(day, month, year)
+        if normalized is not None:
+            warnings = warnings + _plausibility_warning(year)
         confidence = 0.95 if not warnings else 0.55
         return ParsedDate(raw_text=text, start=start, normalized_date=normalized, confidence=confidence, warnings=tuple(warnings))
 
