@@ -1,12 +1,12 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0, 1, and 2 of the 21-phase contract are
-COMPLETE and verified. Phases 3–21 (the structured-document schema,
-discharge parser rebuild, lab/medication/event extraction, frontend
-rebuild, and everything downstream of them) are NOT STARTED.** This
-document exists specifically so a future Claude session with zero memory
-of this conversation can pick this up correctly — read section 23
-("HOW TO CONTINUE") first if that's you.
+**Status: PARTIAL. Phases 0, 1, 2, and 3 of the 21-phase contract are
+COMPLETE and verified. Phases 4–21 (the discharge parser rebuild,
+Clinical Course dated-event extraction, embedded lab/medication
+extraction, frontend rebuild, and everything downstream of them) are NOT
+STARTED.** This document exists specifically so a future Claude session
+with zero memory of this conversation can pick this up correctly — read
+section 23 ("HOW TO CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -15,21 +15,24 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: `f51f954cd90720abcedfbe17c033fef3c380345e`**
-- Pushed to `origin/fix/clinical-document-intelligence-v3`: **yes**
-  (tracking branch set up via `git push -u`).
+- **HEAD SHA: `c9deaaa`** (run `git log --oneline -1` to confirm — this
+  line is updated by hand at each checkpoint and can lag a moment behind
+  an in-progress session; the git log is always the final authority).
+- Pushed to `origin/fix/clinical-document-intelligence-v3`: check
+  `git log origin/fix/clinical-document-intelligence-v3..HEAD --oneline`
+  — if it lists commits, this checkpoint has NOT been pushed yet (push
+  before ending a session, per the user's own stated preference for the
+  Phase 0-2 checkpoint).
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing).
-- **No PR opened.** The user was asked (this session, via
-  AskUserQuestion) whether to open a scoped PR now, keep implementing
-  Phase 3+ first, or stop here with no PR — the user chose to stop here
-  cleanly at this checkpoint. Opening the PR is a still-pending decision
-  for whoever picks this up next, not forgotten.
-- **Immediate next step for the next session: Phase 3** — design the
-  typed, versioned `StructuredClinicalDocument` schema (see the
-  contract's own Phase 3 section, summarized in "Hard constraints"
-  below). Nothing else should start before this, per the contract's own
-  dependency ordering.
+- **No PR opened.**
+- **Immediate next step for the next session: Phase 4** — the discharge
+  parser pipeline rebuild (canonical section classifier, repeated-
+  heading merge, dated Clinical Course extraction groundwork). Phase 3
+  (the typed schema this document persists through) is done — see
+  section 9 below for exactly what exists and how to use it. Do not
+  redesign or duplicate that schema; extend it additively if a real gap
+  is found.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -146,13 +149,17 @@ in the original text, not reproduced here).
      wording).
   4. `f51f954` — this handoff, plus pointers in `docs/CURRENT_STATE.md`/
      `docs/ARCHITECTURE.md`/`docs/KNOWN_GAPS.md`/`CLAUDE_HANDOFF.md`.
-  5. A follow-up checkpoint commit (adding the "Hard constraints" and
-     "Exact current state" sections above, and this note) — check
-     `git log --oneline -8` for its actual SHA, which will be HEAD.
-- **Pushed to `origin/fix/clinical-document-intelligence-v3`.** No PR
-  opened — the user was explicitly asked whether to open one scoped to
-  Phases 0-2, keep implementing further first, or stop here; they chose
-  to stop at this checkpoint with no PR yet. See section 25.
+  5. `45709b6` — checkpoint commit recording the exact HEAD/push state at
+     the end of the Phase 0-2 session, plus the "Hard constraints"
+     section now above.
+  6. `c9deaaa` — **Phase 3**: `app/services/clinical_document/` (schema.py
+     + persistence.py) and its 23 tests, plus a TS mirror type file. See
+     section 9 for full detail.
+  7. Check `git log --oneline -10` for anything added after `c9deaaa` —
+     this list is updated by hand and can lag a live session.
+- **Push status**: check `git log origin/fix/clinical-document-
+  intelligence-v3..HEAD --oneline` — empty means fully pushed. No PR
+  opened as of `c9deaaa`.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -224,6 +231,14 @@ genuinely missing piece: a real Playwright geometry regression for
 RightWorkspace (the contract explicitly asks for this; the existing
 suite's own comment already flagged it as a known gap).
 
+**Phase 3** — the typed, versioned `StructuredClinicalDocument` schema.
+See section 9 for full detail. Summary: new `app/services/
+clinical_document/` package (`schema.py` + `persistence.py`), persisted
+through the EXISTING `Document.note_body` field (no new DB column, no
+migration), with a working, tested backward-compatibility upconversion
+from the current discharge pipeline's real, unchanged ad-hoc JSON shape.
+23 new tests, all passing. No parser exists yet — that's Phase 4.
+
 ## 4. Data flow — the P0 fix
 
 ```
@@ -280,6 +295,10 @@ CURRENT_PIPELINE_MAP.md`.
   application code, not wired into CI.
 - `docs/clinical_document_v3/CURRENT_PIPELINE_MAP.md` — new, Phase 0
   deliverable.
+- `backend/app/services/clinical_document/__init__.py`, `schema.py`,
+  `persistence.py` — new, Phase 3 (see section 9).
+- `backend/tests/test_clinical_document_schema.py`,
+  `test_clinical_document_persistence.py` — new, Phase 3, 23 tests.
 
 ## 8. New/modified frontend files
 
@@ -287,16 +306,138 @@ CURRENT_PIPELINE_MAP.md`.
   single open panel (Ask Bragi) fills the split column; both panels open
   together show the tab switcher and the inactive one has zero rendered
   height (not just squeezed).
+- `frontend/lib/clinical-document-schema.ts` — new, Phase 3. A TS mirror
+  of the backend schema, **not wired into any page/component** — inert
+  until Phase 8 (discharge reader rebuild) actually imports it.
 
-No frontend application code was modified this session (the layout code
-this Playwright test exercises was already fixed by the merge described
-in section 2, not by anything new here).
+No frontend APPLICATION behavior was modified this session — the
+Playwright test exercises layout code already fixed by the merge
+described in section 2, and the new TS file is a type-only addition
+nothing currently imports.
 
 ## 9. Structured document schema
 
-**NOT STARTED.** Phase 3 of the contract (the `StructuredClinicalDocument`
-/ `ClinicalSection` / block-type schema) was not designed or implemented.
-No `schema_version` exists anywhere in this codebase yet.
+**COMPLETE.** `backend/app/services/clinical_document/schema.py` defines
+`StructuredClinicalDocument` exactly per the contract's conceptual root:
+`schema_version` (constant `CURRENT_SCHEMA_VERSION = "v1"`),
+`parser_version` (caller-supplied — no global "the parser" constant,
+since no real parser exists yet; the backward-compat upconversion path
+uses its own honest `"legacy-discharge-upconversion-v1"`),
+`document_kind` (reuses the EXISTING `DocumentType` enum from
+`app/services/document_taxonomy.py` — no parallel vocabulary),
+`source_language`, `metadata` (a typed `DocumentMetadata`, not a raw
+dict), `sections[]`, `dated_events[]`, `derived_artifacts[]`,
+`warnings[]`.
+
+`ClinicalSection`: `id`, `canonical_key` (the fixed 19-value enum,
+`CanonicalSectionKey`/`CANONICAL_SECTION_KEYS` — verified by test against
+the contract's exact list), `display_title`, `source_headings[]`
+(plural, preserves every original heading that merged into this
+section), `order`, `blocks[]` (the typed discriminated union below),
+`source_evidence_ids[]`, `confidence`, `review_state`
+(`"auto"|"needs_review"|"reviewed"|None`).
+
+`ClinicalBlock` (Pydantic discriminated union on a `type` field):
+`ParagraphBlock`, `KeyValueBlock`, `BulletListBlock`, `TableBlock`,
+`DatedEventGroupBlock` (references `dated_events[].source_event_id`),
+`LabReportReferenceBlock` (references real `LabResult.id`),
+`MedicationListBlock` (references real `PatientMedication.id`),
+`PrescriptionTableBlock`, `WarningBlock`. Every ID-bearing block stores
+IDs, never a copy of the referenced data — `LabResult`/
+`PatientMedication`/this schema's own `dated_events` remain the one
+source of truth for their own content, exactly per the "no second
+lab/medication datastore" constraint.
+
+`ClinicalEvent` (Phase 5's type, defined now so `dated_events`/
+`DatedEventGroupBlock` have something real to reference once Phase 5
+populates them): `source_event_id`, `raw_date_text`, `normalized_date`,
+`date_confidence`, `event_type` (the 8-value enum from the contract),
+`raw_text`, `structured_observations[]`, `medication_changes[]`,
+`procedures[]`, `source_evidence_ids[]`, `warnings[]`.
+
+`DerivedArtifactRef` (Phase 6's type, same "defined now, populated
+later" reasoning): `artifact_type` (`"lab_report"` only, for now),
+`document_id`, `source_section_id`, `lab_result_ids[]`.
+
+**Two hard rules from the contract are enforced as real Pydantic
+validators, not just documented conventions**:
+1. Two sections with the same `canonical_key` in one document is a
+   `ValidationError`, not a warning — a parser MUST merge repeated
+   headings (e.g. multiple EPICRIZĂ pages) into ONE canonical section
+   BEFORE constructing this model.
+2. `model_config = {"extra": "forbid"}` — an unrecognized top-level
+   field is a `ValidationError`, not silently dropped or passed through.
+   (`ClinicalSection.id` and `ClinicalEvent.source_event_id` uniqueness
+   are also enforced the same way.)
+
+**Persistence** — `persistence.py` — decision and reasoning: reused the
+EXISTING `Document.note_body` field rather than `structured_sections`
+(reserved for 6 unrelated Phase-4-era reader document types, with its
+own fixed shape already consumed by `ask_bragi/tools.py` and the
+frontend Reader — repurposing it risked regressing those) or a new DB
+column (the contract's own "no new DB columns unless truly necessary"
+instruction, and `note_body` is ALREADY what
+`discharge_summary_pipeline.py` uses to store a full JSON payload for
+exactly this kind of document today). **Zero migration, zero schema
+change** — confirmed by `scripts/check_migration_drift.py` staying clean
+after this phase.
+
+`parse_structured_document(note_body: str | None) -> StructuredClinicalDocument | None`
+is the one sanctioned read path: returns `None` (never raises) for a
+`None`/empty/plain-text/malformed-JSON `note_body`; for a payload
+carrying `schema_version`, validates it as the new shape (returns `None`
+— not a partially-trusted dict — if validation fails); for a payload
+matching the CURRENT, UNCHANGED legacy discharge shape (`document_type
+== "discharge_summary"` and a `sections` list, no `schema_version` —
+`discharge_summary_pipeline.py` was NOT modified and still produces
+exactly this shape), upconverts it in memory via a deterministic
+13-key-legacy → 19-key-canonical mapping
+(`_LEGACY_KEY_TO_CANONICAL`), honestly labeled
+`parser_version="legacy-discharge-upconversion-v1"` and
+`review_state="needs_review"` on every section it produces — never
+presented as a confident Phase 4 parse. **Never rewrites the DB row** —
+this is read-time-only backward compatibility.
+`serialize_structured_document(doc) -> str` is the one sanctioned write
+path — takes an already-validated model instance, never a hand-built
+dict.
+
+**Real backward-compatibility proof, not just a claim**: a test feeds
+the upconverter a payload with BOTH `laboratory_normal` and
+`laboratory_abnormal` legacy section keys (two distinct real keys
+`discharge_summary_pipeline.py` actually produces today) and verifies
+they merge into ONE `laboratory_results` canonical section, with BOTH
+original headings preserved in `source_headings` and BOTH bodies kept
+as SEPARATE blocks (not concatenated into one string) — this is the
+contract's own worked "repeated headings merge" example, exercised for
+real against the actual current pipeline's actual output shape.
+
+**Tests**: 23 new, all passing —
+`backend/tests/test_clinical_document_schema.py` (12: canonical-key
+enum matches the contract's exact list, round-trip serialization, a raw
+heading rejected as a canonical key, duplicate canonical-key/section-id/
+event-id all rejected, an unrecognized field rejected, every block type
+round-trips through the discriminated union, a suspicious-value warning
+never carries a "corrected" field) and
+`backend/tests/test_clinical_document_persistence.py` (11: None/empty/
+plain-text/malformed `note_body` all → `None` not a crash; valid
+new-shape round-trip; an invalid new-shape payload → `None` not
+partially trusted; the real legacy discharge shape upconverts correctly
+including the lab-heading-merge case above; an unmapped legacy key falls
+back to `"other"`; a non-discharge JSON blob isn't misidentified as a
+legacy discharge payload).
+
+**Not yet done** (explicitly Phase 4+'s job, not Phase 3's): no code
+actually PRODUCES a `StructuredClinicalDocument` from a real document
+upload yet — `discharge_summary_pipeline.py` itself is unchanged and
+still writes the old ad-hoc shape; only the READ side (upconversion) is
+new. `_LEGACY_KEY_TO_CANONICAL`'s mapping is a simple, deterministic
+backward-compat stopgap for the OLD 13-key vocabulary, not Phase 4's
+real canonical-heading classifier (which will work from raw OCR'd
+headings, not this closed set, and will supersede this mapping for
+anything parsed going forward — do not confuse the two or assume Phase 4
+is "already done" because this stopgap exists). The TS mirror
+(`frontend/lib/clinical-document-schema.ts`) is not imported anywhere
+yet.
 
 ## 10. Lab artifact semantics
 
@@ -454,14 +595,19 @@ Not touched, not fixed, not worsened this session.
 
 ## 19. Test counts
 
-- Backend: 328 (session start baseline) → **330** (+2, both in
-  `test_ask_bragi_service.py`) → full suite reran green: `330 passed in
-  797.33s`.
-- Frontend Playwright: 3 (existing, `ask-bragi-workspace.spec.ts`) → **5**
-  (+2, new `right-workspace-geometry.spec.ts`) → all 5 green in one run
-  (`38.7s`).
-- OpenAPI routes: unchanged, 117 routes / 99 paths (no route was
-  added/removed/changed this session).
+- Backend: 328 (Phase 0-2 session start baseline) → 330 after Phase 2
+  (+2, `test_ask_bragi_service.py`) → **353 after Phase 3** (+23,
+  `test_clinical_document_schema.py` + `test_clinical_document_
+  persistence.py`) — see the checkpoint history below for which full-
+  suite run confirms which count; always re-run `pytest -q` and trust
+  its own summary line over any number in this file if they ever
+  disagree.
+- Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
+  `right-workspace-geometry.spec.ts`) — unchanged by Phase 3 (no
+  frontend application behavior changed; the new TS file has no tests
+  of its own since nothing consumes it yet).
+- OpenAPI routes: unchanged, 117 routes / 99 paths (Phase 3 added no
+  route).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -478,7 +624,7 @@ Not touched, not fixed, not worsened this session.
   Restored and reverified green afterward.
 
 None of Phase 16's document/derived-lab/timeline/medication Playwright
-coverage exists yet — those need Phases 3-13 to exist first.
+coverage exists yet — those need Phases 4-13 to exist first.
 
 ## 21. Real bugs found (this session)
 
@@ -488,18 +634,20 @@ coverage exists yet — those need Phases 3-13 to exist first.
    case the pre-existing `test_max_tool_rounds_is_enforced` test
    already covered), fixed, and regression-tested both ways.
 
-No other new bugs were found this session (Phases 3-21's own subject
-matter — the discharge pipeline, lab/medication extraction, etc. — was
-not implemented, so there was nothing there yet to find bugs in).
+No other bugs were found during Phase 3 (a new, isolated schema/
+persistence module with no prior behavior to regress) or since.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Everything in Phases 3 through 21 of the original contract is
-**entirely unimplemented**:
+Phase 3 is now complete (see section 9). Everything in Phases 4 through
+21 of the original contract is **entirely unimplemented**:
 
-- Phase 3: `StructuredClinicalDocument` typed schema (backend + TS).
 - Phase 4: discharge parser pipeline rebuild (canonical section
-  classifier, repeated-heading merge, block types).
+  classifier, repeated-heading merge, block types) — this is the
+  IMMEDIATE next phase; it will actually PRODUCE
+  `StructuredClinicalDocument` instances from real documents for the
+  first time (Phase 3 only defined the shape and a read-time backward-
+  compat path for the OLD shape).
 - Phase 5: dated Clinical Course event extraction (Romanian date
   parsing, `ClinicalEvent` model, suspicious-date/value preservation).
 - Phase 6: embedded lab extraction into canonical `LabResult`, derived
@@ -533,7 +681,7 @@ This is a large, honest scope gap. The contract's own framing (21
 phases, dozens of named sub-requirements, a 26-section handoff, a 75-
 100-case benchmark) is realistically multiple full engineering sessions
 of work, not one. Rather than fabricate partial/fake implementations of
-Phases 3-21 to appear more complete, this handoff reports exactly what
+Phases 4-21 to appear more complete, this handoff reports exactly what
 was verified and stops there.
 
 ## 23. HOW TO CONTINUE IN THE NEXT CLAUDE SESSION
@@ -560,14 +708,23 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start at Phase 3 (the typed structured-document schema) — it is the
-  one piece every later phase depends on, and per the contract must be
-  designed before any parser work begins.
+- Start at Phase 4 (the discharge parser pipeline rebuild) — Phase 3
+  (the typed structured-document schema every later phase depends on)
+  is done; see section 9 for exactly what exists (`app/services/
+  clinical_document/schema.py`/`persistence.py`) and use it as-is —
+  extend additively if a real gap is found, do not redesign it or add a
+  second/parallel schema.
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing
   becomes possible), diagnose it as a new, separate issue rather than
   assuming this fix was incomplete.
+- Do not re-attempt Phase 3 — the schema is done and tested (section 9).
+  Phase 4's job is to make a REAL parser produce instances of it from
+  actual discharge documents; `discharge_summary_pipeline.py` itself
+  has not been touched yet and still writes the old ad-hoc `note_body`
+  shape (Phase 3 only added a read-time backward-compat upconversion for
+  that old shape, it did not change what gets written).
 - If real live testing against OpenAI/Reducto becomes available in a
   future session, that is the point to actually execute the full "Ask
   Bragi execution contract" end-to-end (section 15's "not done" note)
