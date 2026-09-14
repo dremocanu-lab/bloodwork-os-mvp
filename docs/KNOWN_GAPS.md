@@ -139,3 +139,21 @@ and the Phase 4 final report), not an accidental omission:
   background job queue, and no CNAS work was added during this refactor
   — Phase 4 was reorganization only, not feature work.
 - `demo.bragi.health` was explicitly out of scope and was not started.
+
+## Clinical Document Intelligence V3 — Phases 3-21 (2026-09-14)
+
+An implementation contract for rebuilding structured clinical-document
+ingestion (discharge sections, dated clinical events, embedded lab/
+medication extraction into canonical models, a new frontend document
+reader) was received. Only Phase 0 (architecture inventory), Phase 1
+(baseline), and Phase 2 (a real Ask Bragi P0 fix — see ARCHITECTURE.md's
+"Ask Bragi — tool-call round budget" section) were completed and
+verified. The structured document schema, the discharge parser rebuild,
+Clinical-Course date extraction, embedded lab/medication extraction, the
+derived-lab-artifact concept, the new discharge reader frontend,
+Timeline/Documents integration for any of the above, idempotency/
+deletion tests for it, the synthetic test fixture, and the accessibility/
+responsive/benchmark QA passes are all **not implemented** — this is a
+large, deliberate scope gap, not an oversight. Full honest accounting
+and a continuation plan: `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`.

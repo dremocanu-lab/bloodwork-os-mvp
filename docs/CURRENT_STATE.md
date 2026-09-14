@@ -185,6 +185,21 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-2 of 21 only)
+
+Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
+the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
+done: `ASK_BRAGI_MAX_TOOL_ROUNDS` (4) was too tight for broad multi-
+analyte questions like "what changed in my latest bloodwork" — fixed via
+prompt guidance + raising the budget to 8, both proven with tests that
+fail under the old default and pass under the new one. A RightWorkspace
+geometry Playwright regression was also added. **Phases 3-21 of the
+originating contract (the structured clinical-document schema, discharge
+parser rebuild, lab/medication/event extraction, frontend rebuild, and
+everything downstream) are entirely unimplemented** — see
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
+full, section-by-section honest accounting and how to continue.
+
 ## Phase 4 (backend modularization) — this document's own origin
 
 `app/main.py` went from an 8,141-line MVP-era monolith to a 2,017-line

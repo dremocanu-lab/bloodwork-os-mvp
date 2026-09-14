@@ -175,3 +175,17 @@ Alembic remains authoritative (`backend/alembic/`,
 `docs/database/MIGRATIONS.md`). Phase 4 made **zero** schema changes —
 confirmed by `scripts/check_migration_drift.py` passing after every
 single commit in this phase, and no new Alembic revision was created.
+
+## Ask Bragi — tool-call round budget (2026-09-14)
+
+`ASK_BRAGI_MAX_TOOL_ROUNDS` (in `app/services/ask_bragi/service.py`)
+governs how many `client.responses.create()` round trips a single turn
+may use before Ask Bragi gives up and returns a generic error. Raised
+from 4 to 8 after a real, reproduced failure: a broad multi-analyte
+question ("what changed in my latest bloodwork") can legitimately need
+several tool rounds (context calls + one comparison per analyte in a
+panel), and 4 was not enough headroom. See
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 15
+for the full diagnosis and `prompts.py`'s "TOOL EFFICIENCY" guidance,
+which reduces how many rounds this class of question actually needs in
+the first place.
