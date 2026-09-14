@@ -728,13 +728,28 @@ Not touched, not fixed, not worsened this session.
   `test_clinical_document_canonical_headings.py`) → unchanged (372) after
   the persistence.py/canonical_headings.py unification refactor (one
   test renamed, none added/removed) → **391 after Phase 5 increment 1**
-  (+19, `test_clinical_document_dates.py`). A second full-suite run was
-  kicked off after Phase 4 increment 1/the unification refactor (a
-  cadence-rule checkpoint, not tied to a specific commit) — check this
-  session's own log or rerun `pytest -q` to get its exact number, since
-  Phase 5 increment 1 was added while that run was still in flight and
-  is not reflected in it. Always re-run `pytest -q` and trust its own
-  summary line over any number in this file if they ever disagree.
+  (+19, `test_clinical_document_dates.py`).
+  **A cadence-rule full-suite run kicked off after Phase 4 increment 1
+  reported `1 failed, 360 passed, 11 errors` — diagnosed as a transient
+  Neon connectivity dropout mid-run** (`psycopg.OperationalError:
+  ... No route to host` / `getaddrinfo failed` against the pooler host,
+  on `tests/test_migrations.py` and `tests/test_upload_validation.py`
+  only — neither file imports or touches anything in
+  `clinical_document`), **not a code regression**: connectivity was
+  confirmed restored immediately after
+  (`SessionLocal().execute(text("SELECT 1"))` succeeded), and all 13
+  affected tests were re-run in isolation and passed cleanly
+  (`pytest tests/test_migrations.py tests/test_upload_validation.py -v`
+  → 13/13 passed). A full, clean re-run covering everything through
+  Phase 5 increment 1 (391 tests) was then started — check this
+  session's own log or rerun `pytest -q` for its exact final result if
+  it isn't reflected here yet. If a future run ever reports a similar
+  `OperationalError`/`getaddrinfo failed` pattern, check DB connectivity
+  directly before assuming a real regression — but always re-verify by
+  re-running the specific failed tests once connectivity is confirmed,
+  never assume "it was probably just the network" without that
+  confirmation. Always re-run `pytest -q` and trust its own summary line
+  over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
   `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-4 (no
   frontend application behavior changed).
