@@ -177,11 +177,16 @@ in the original text, not reproduced here).
   12. `8cc926a` — **Phase 5 increment 1**: `dates.py` (deterministic
       date-first parser) and its 19 tests. NOT yet wired into any real
       event extraction — see section 9c.
-  13. Check `git log --oneline -16` for anything added after `8cc926a` —
-      this list is updated by hand and can lag a live session.
+  13. `1dba739`, `0c36a07`, `293637e`, `5afd597` — handoff checkpoint
+      commits only, documenting Phase 5 increment 1 and the two
+      transient Neon connectivity flakes hit during full-suite
+      verification (section 19) — no functional code change in any of
+      these four.
+  14. Check `git log --oneline -18` for anything added after `5afd597`
+      — this list is updated by hand and can lag a live session.
 - **Push status**: check `git log origin/fix/clinical-document-
   intelligence-v3..HEAD --oneline` — empty means fully pushed. No PR
-  opened as of `8cc926a`.
+  opened as of `5afd597`.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
