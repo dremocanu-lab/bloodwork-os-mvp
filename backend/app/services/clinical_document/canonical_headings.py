@@ -9,15 +9,15 @@ keyword/phrase matching only — no LLM call, per the V3 contract's
 only after every named category has been tried and none matched, never
 as a shortcut.
 
-This is DIFFERENT from — and supersedes, for anything parsed going
-forward — the `_LEGACY_KEY_TO_CANONICAL` mapping in `persistence.py`:
-that one is a narrow backward-compat stopgap translating the CURRENT
-discharge pipeline's own fixed 13-key `ALLOWED_SECTION_KEYS` vocabulary
-(the model's coarse classification) into a canonical key. This module
-instead classifies the REAL heading text itself (`section["title"]` in
-the current pipeline's terms), which is what the V3 contract's own
-worked examples are actually about, and is closer to what any future
-raw/OCR heading would need too — not tied to that fixed 13-key set.
+`persistence.py`'s backward-compat upconversion of the CURRENT
+discharge pipeline's existing ad-hoc payload shape also uses THIS
+classifier (via `merge_headings_into_sections`, applied to each
+section's real `title` text) rather than a separate mapping of its own
+fixed 13-key `ALLOWED_SECTION_KEYS` vocabulary — the two were unified
+after a test proved they classified every real title identically,
+avoiding two independently-maintained classification systems. See that
+module's docstring for the `review_state` distinction between the two
+call sites.
 
 Not yet wired into `discharge_summary_pipeline.py` — that wiring (plus
 domain extractors and validated `StructuredClinicalDocument` assembly)
