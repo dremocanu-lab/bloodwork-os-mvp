@@ -31,6 +31,7 @@ from __future__ import annotations
 from app.services.lab_catalog import normalize_text
 
 from .schema import CanonicalSectionKey, ClinicalSection, ParagraphBlock
+from .segments import SourceSegment
 
 # Ordered most-specific-first: a heading is classified into the FIRST
 # canonical key whose pattern list contains a normalized substring match.
@@ -220,3 +221,65 @@ def merge_headings_into_sections(
                 existing.blocks.append(ParagraphBlock(text=body_text))
 
     return list(merged.values())
+
+
+def consolidate_segments(
+    segments: list[SourceSegment],
+    *,
+    review_state: str | None = "auto",
+) -> list[ClinicalSection]:
+    """Segment-aware canonical-section consolidation — the richer,
+    provenance-preserving counterpart to `merge_headings_into_sections`
+    above (which takes plain `(heading, body)` tuples and has no segment
+    identity to track). This is the function real Phase 4+ pipeline code
+    should use; `merge_headings_into_sections` is kept, unmodified, for
+    its own existing simple callers/tests — the two are NOT the same
+    behavior (see below), so this is a deliberate second entry point,
+    not "parallel logic": one is intentionally the richer, stricter
+    successor for the real ingestion path.
+
+    Two segments classified to the SAME canonical key merge into ONE
+    `ClinicalSection`, exactly as `merge_headings_into_sections` does,
+    PLUS: every contributing segment's `segment_id` is recorded on
+    `ClinicalSection.source_segment_ids`, in encounter order — this is
+    what lets a later phase (labs, medications, prescriptions, Ask
+    Bragi) point back to the exact originating segment, not just a
+    heading string.
+
+    Additional rule NOT applied by `merge_headings_into_sections`: a
+    resulting section is DROPPED ENTIRELY if every one of its
+    contributing segments turned out to have empty/whitespace-only
+    `raw_text` — see the V3 contract's "empty/non-substantive sections
+    should not become prominent canonical sections" rule. A section with
+    at least one non-empty contributor is kept in full, including any
+    of its OTHER empty contributors' segment ids (provenance is still
+    recorded even for a contributor that added no text).
+    """
+    merged: dict[str, ClinicalSection] = {}
+    order_counter = 0
+
+    for segment in segments:
+        canonical_key = classify_canonical_heading(segment.raw_heading)
+        body_text = (segment.raw_text or "").strip()
+
+        existing = merged.get(canonical_key)
+        if existing is None:
+            merged[canonical_key] = ClinicalSection(
+                id=f"section-{canonical_key}",
+                canonical_key=canonical_key,
+                display_title=segment.raw_heading or canonical_key.replace("_", " ").title(),
+                source_headings=[segment.raw_heading] if segment.raw_heading else [],
+                source_segment_ids=[segment.segment_id],
+                order=order_counter,
+                blocks=[ParagraphBlock(text=body_text)] if body_text else [],
+                review_state=review_state,
+            )
+            order_counter += 1
+        else:
+            if segment.raw_heading and segment.raw_heading not in existing.source_headings:
+                existing.source_headings.append(segment.raw_heading)
+            existing.source_segment_ids.append(segment.segment_id)
+            if body_text:
+                existing.blocks.append(ParagraphBlock(text=body_text))
+
+    return [section for section in merged.values() if section.blocks]

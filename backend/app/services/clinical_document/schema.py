@@ -193,6 +193,13 @@ class ClinicalSection(BaseModel):
     canonical_key: CanonicalSectionKey
     display_title: str
     source_headings: list[str] = Field(default_factory=list)
+    # Stable ids of every raw SourceSegment (see segments.py) that
+    # contributed to this canonical section, in encounter order —
+    # additive field (default empty list, so older persisted payloads
+    # without it still validate). This is what lets a later phase (labs,
+    # medications, prescriptions, Ask Bragi citations) point back to the
+    # EXACT originating segment rather than only a heading string.
+    source_segment_ids: list[str] = Field(default_factory=list)
     order: int
     blocks: list[ClinicalBlock] = Field(default_factory=list)
     # Real SourceEvidence ids this section's content is grounded in —

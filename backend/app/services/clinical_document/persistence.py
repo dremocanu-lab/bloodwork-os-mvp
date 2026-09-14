@@ -21,22 +21,22 @@ shape discharge_summary_pipeline.py has always produced (no
 per-section `title` — the actual heading text as it appeared on the
 page). This module does NOT rewrite those rows in place.
 `parse_structured_document()` upconverts that legacy shape into a valid
-`StructuredClinicalDocument` IN MEMORY, on read, by running each
-section's real `title` through the SAME deterministic classifier Phase
-4 uses for real parsing
-(`canonical_headings.classify_canonical_heading`/
-`merge_headings_into_sections`) — there is deliberately no second,
-separately-maintained classification mapping for this backward-compat
-path; the two were proven to classify every real legacy title
-identically before unifying them this way (see
-`test_clinical_document_canonical_headings.py`'s cross-check test),
-which is what makes sharing one implementation safe. The only thing
-that distinguishes this path from a real Phase 4 parse is
-`parser_version` (`LEGACY_UPCONVERSION_PARSER_VERSION` below, never
-mistaken for real parser output) and `review_state="needs_review"` on
-every section it produces (a human never reviewed sections built
-retroactively from an old row, even though the classification itself is
-exactly as accurate as it would be for a brand new document).
+`StructuredClinicalDocument` IN MEMORY, on read, by running it through
+the SAME segmentation + consolidation pipeline Phase 4's real parsing
+uses (`segments.build_segments_from_legacy_discharge_payload` +
+`canonical_headings.consolidate_segments`) — there is deliberately no
+second, separately-maintained classification/merge implementation for
+this backward-compat path; an earlier version of this session kept one
+(a coarse 13-key remap), proved it always agreed with the real
+classifier on every real legacy title, then deleted it (commit
+`f4f47ce`) once that agreement was established, which is what makes
+sharing one implementation safe. The only thing that distinguishes this
+path from a real Phase 4 parse is `parser_version`
+(`LEGACY_UPCONVERSION_PARSER_VERSION` below, never mistaken for real
+parser output) and `review_state="needs_review"` on every section it
+produces (a human never reviewed sections built retroactively from an
+old row, even though the classification itself is exactly as accurate
+as it would be for a brand new document).
 
 `note_body` is ALSO used, for other document types, as a plain free-text
 note (not JSON at all) — `parse_structured_document` returns `None` for
@@ -52,8 +52,9 @@ from typing import Any
 
 from app.services.document_taxonomy import DocumentType
 
-from .canonical_headings import merge_headings_into_sections
+from .canonical_headings import consolidate_segments
 from .schema import DocumentMetadata, StructuredClinicalDocument
+from .segments import build_segments_from_legacy_discharge_payload
 
 # Distinct from CURRENT_SCHEMA_VERSION (schema.py) — this labels the
 # *parser* that produced a given payload, not the shape it validates
@@ -73,20 +74,8 @@ def _looks_like_legacy_discharge_payload(payload: dict[str, Any]) -> bool:
 
 
 def _upconvert_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinicalDocument:
-    raw_sections = payload.get("sections") or []
-    heading_body_pairs: list[tuple[str, str]] = []
-    for raw in raw_sections:
-        if not isinstance(raw, dict):
-            continue
-        # The pipeline always sets a real title (falling back to its own
-        # SECTION_TITLE_BY_KEY when the model didn't provide one) — the
-        # `raw.get("key")` fallback here is defensive only, for a
-        # malformed/hand-edited row that somehow has neither.
-        heading = raw.get("title") or raw.get("key") or "other"
-        body = raw.get("body") or ""
-        heading_body_pairs.append((heading, body))
-
-    sections = merge_headings_into_sections(heading_body_pairs, review_state="needs_review")
+    segments = build_segments_from_legacy_discharge_payload(payload)
+    sections = consolidate_segments(segments, review_state="needs_review")
 
     metadata = DocumentMetadata(
         patient_name=payload.get("patient_name"),
