@@ -1,9 +1,9 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0–2 of the 21-phase contract are done and
-verified. Phases 3–21 (the structured-document schema, discharge parser
-rebuild, lab/medication/event extraction, frontend rebuild, and
-everything downstream of them) were NOT attempted this session.** This
+**Status: PARTIAL. Phases 0, 1, and 2 of the 21-phase contract are
+COMPLETE and verified. Phases 3–21 (the structured-document schema,
+discharge parser rebuild, lab/medication/event extraction, frontend
+rebuild, and everything downstream of them) are NOT STARTED.** This
 document exists specifically so a future Claude session with zero memory
 of this conversation can pick this up correctly — read section 23
 ("HOW TO CONTINUE") first if that's you.
@@ -11,6 +11,119 @@ of this conversation can pick this up correctly — read section 23
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
 can open, or a test you can execute.
+
+## Exact current state (checkpoint)
+
+- Branch: `fix/clinical-document-intelligence-v3`
+- **HEAD SHA: `f51f954cd90720abcedfbe17c033fef3c380345e`**
+- Pushed to `origin/fix/clinical-document-intelligence-v3`: **yes**
+  (tracking branch set up via `git push -u`).
+- Working tree at this checkpoint: **clean, zero uncommitted changes**
+  (`git status --short` returns nothing).
+- **No PR opened.** The user was asked (this session, via
+  AskUserQuestion) whether to open a scoped PR now, keep implementing
+  Phase 3+ first, or stop here with no PR — the user chose to stop here
+  cleanly at this checkpoint. Opening the PR is a still-pending decision
+  for whoever picks this up next, not forgotten.
+- **Immediate next step for the next session: Phase 3** — design the
+  typed, versioned `StructuredClinicalDocument` schema (see the
+  contract's own Phase 3 section, summarized in "Hard constraints"
+  below). Nothing else should start before this, per the contract's own
+  dependency ordering.
+
+## Hard constraints and architecture decisions the next session MUST preserve
+
+These are pulled directly from the original V3 contract text and are
+easy to accidentally violate while implementing Phase 3+ — re-read the
+original contract for full wording, but at minimum do not violate any
+of these:
+
+- **DO NOT move business logic back into `app/main.py`.** All new logic
+  belongs in `app/services/` (new modules as needed) or existing
+  routers under `app/api/routers/`.
+- **Migration authority is Alembic only. No runtime DDL, ever.**
+- **Reducto/provider extraction is the document-reading layer only.**
+  Bragi's own code is the clinical normalization/canonicalization/
+  provenance layer on top of it — do not blur this boundary (e.g. don't
+  ask Reducto to do canonical classification, and don't have Bragi
+  re-parse raw PDF bytes).
+- **Ask Bragi reads persisted canonical data. It does NOT call Reducto
+  live per question.** Nothing in Phase 11 (retrieval hardening) should
+  introduce a live per-question extraction call.
+- **No second lab datastore, no second medication datastore.** Embedded
+  discharge labs MUST become real `LabResult` rows (feeding the existing
+  `resolve_analyte()`/lab_catalog resolvers — no new private alias
+  dictionary). Medications MUST use the existing `PatientMedication`
+  model/status semantics — no separate "discharge medication" table or
+  tab.
+- **No new DB columns unless truly necessary** — prefer the existing
+  structured JSON field(s) documented in the Phase 0 pipeline map.
+- **Canonical section keys are a fixed enum** (overview,
+  administrative_information, encounter_details, diagnoses,
+  medical_history, examination, clinical_course, investigations,
+  laboratory_results, imaging, procedures, treatment, medications,
+  discharge_medications, recommendations, follow_up, prescriptions,
+  signatures, other) — never the raw source heading. Repeated headings
+  (e.g. multiple EPICRIZĂ sections) MUST merge into one canonical entry,
+  preserving each source heading/order/evidence.
+- **NEVER silently repair a suspicious date or an implausible clinical
+  value** (e.g. "AV 1008 bpm") — preserve verbatim with a warning flag,
+  never auto-correct.
+- **Medication start-date priority**: (1) explicit start date in text,
+  (2) explicit "start today" tied to encounter/discharge date, (3)
+  discharge recommendation clearly starting at discharge, (4)
+  prescription issue date ONLY if text semantics clearly indicate
+  treatment start. **NEVER** use upload date or ingestion date as a
+  medication start date.
+- **End-date derivation** ONLY when a reliable start date AND an
+  explicit finite duration both exist. Exact convention: start +14 days
+  = interval `[start, start+14 days)` (e.g. 2026-03-05 + 14 days =
+  2026-03-19); "2 weeks" = exactly +14 days; months = real calendar-month
+  arithmetic, not `30 × N` days. `end_date = null` for PRN, "according to
+  scheme", "N days each month", alternate dosing, "until follow-up",
+  indefinite continue, or a taper with no clear total duration. Use a
+  real date library for month arithmetic and document its exact rounding
+  behavior (e.g. 2026-01-31 + 1 month) explicitly wherever it's used —
+  do not hand-roll month math.
+- **Duration parsing is deterministic** (Romanian + English units) — no
+  LLM call for simple duration arithmetic.
+- **One reusable `StructuredLabReport` frontend component**, used by
+  both the embedded (inside a discharge reader) and standalone (derived-
+  artifact) lab views via a `mode: "embedded" | "standalone"` prop — not
+  two separate components.
+- **A derived lab artifact is ONE per coherent source lab report/date
+  grouping**, not a separate upload — must keep a parent-document
+  reference, appear in Documents as "Derived from: [parent]", and be
+  independently openable.
+- **Timeline**: a discharge encounter stays ONE parent clinical-document
+  event — do not fragment it. Only real state changes (medication
+  started/stopped/major dose change, prescription issued) become
+  Timeline events — not every "continues medication" mention.
+- **DOCX/non-PDF sources**: do not invent PDF page/bbox coordinates —
+  use a document/heading/block/paragraph anchor instead. Hide/disable
+  "original layout" UX when precise layout data is genuinely absent
+  (never show a blank screen pretending it's loading).
+- **Idempotency**: reprocessing the same discharge document 1x, 2x, or
+  10x must never duplicate `LabResult`/derived-lab-artifact/medication-
+  episode/`PatientEvent`/`SourceEvidence` rows — deterministic
+  import/source identities are required, not a `created_at` timestamp
+  check.
+- **No special-case code for a specific analyte name** (e.g. no
+  "if canonical_name == platelet, do X" branch) — general alias
+  resolution only, reusing `resolve_analyte()`.
+- **Do not parse clinical documents in the browser.**
+- **Do not fabricate panel membership** for lab groupings (Hematology/
+  Chemistry/Coagulation/etc.) — only group by a trustworthy
+  source_panel/source_section/canonical_category field, never a guess.
+- **`demo.bragi.health` remains explicitly out of scope — do not start
+  it.**
+
+If the original contract text is not visible in whatever conversation
+picks this up next, ask the user for it — this list is a safety net for
+the highest-risk-to-violate rules, not a full restatement of all 21
+phases' detail (e.g. the exact block-type enum, the full canonical
+heading→key mapping examples, and Phase 17's full required test list are
+in the original text, not reproduced here).
 
 ---
 
@@ -31,9 +144,15 @@ can open, or a test you can execute.
   3. `0f5c6a0` — RightWorkspace geometry Playwright regression
      (cross-checks the merged-in layout fix against this contract's own
      wording).
-  4. This handoff commit (see section 26).
-- **Not yet pushed / no PR opened yet** — see section 25 for why, and
-  what still needs to happen before one should be.
+  4. `f51f954` — this handoff, plus pointers in `docs/CURRENT_STATE.md`/
+     `docs/ARCHITECTURE.md`/`docs/KNOWN_GAPS.md`/`CLAUDE_HANDOFF.md`.
+  5. A follow-up checkpoint commit (adding the "Hard constraints" and
+     "Exact current state" sections above, and this note) — check
+     `git log --oneline -8` for its actual SHA, which will be HEAD.
+- **Pushed to `origin/fix/clinical-document-intelligence-v3`.** No PR
+  opened — the user was explicitly asked whether to open one scoped to
+  Phases 0-2, keep implementing further first, or stop here; they chose
+  to stop at this checkpoint with no PR yet. See section 25.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -511,17 +630,20 @@ found and had to avoid touching a pre-existing, unrelated
 
 ## 25. PR status
 
-**Not opened.** Per the contract's own instruction ("do NOT auto-merge
-if any of [the full check list] fail"), and given the honest scope
-reality in section 22, opening a PR titled "Rebuild Bragi clinical
-document intelligence and restore Ask Bragi" would overstate what this
-branch actually contains — that title describes Phases 3-21's work,
-none of which exists yet. Recommend either: (a) open a PR now scoped
-honestly to what's actually here ("Ask Bragi P0 fix + RightWorkspace
-geometry regression — Clinical Document Intelligence V3 Phases 0-2
-only"), or (b) hold off until at least Phase 3 exists so the PR
-represents a more complete slice of the contract. This is a judgment
-call for the user, not made unilaterally here.
+**Not opened, by explicit user decision.** The user was asked
+(this session, via a direct question) whether to (a) open a PR now
+scoped honestly to what's actually here, (b) keep implementing Phase 3+
+first with no PR yet, or (c) stop cleanly at this checkpoint with
+nothing pushed further and no PR — they chose (c), specifically asking
+to stop the session at the verified Phase 0-2 checkpoint, push the
+branch, keep the handoff current, and not open a PR or merge anything.
+That was done: the branch is pushed to
+`origin/fix/clinical-document-intelligence-v3`, no PR exists. Opening
+one (scoped honestly to Phases 0-2, NOT titled/described as "Rebuild
+Bragi clinical document intelligence and restore Ask Bragi" — that
+title describes Phases 3-21's work, which doesn't exist on this branch)
+remains a decision for whoever picks this branch up next, made with the
+user at that time.
 
 ## 26. This document itself
 
