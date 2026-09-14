@@ -904,14 +904,13 @@ Not touched, not fixed, not worsened this session.
   the persistence.py/canonical_headings.py unification refactor (one
   test renamed, none added/removed) → **391 confirmed after Phase 5
   increment 1** (+19, `test_clinical_document_dates.py`) → **431
-  expected after Phases 4/5 COMPLETION** (+40: +14
+  CONFIRMED after Phases 4/5 COMPLETION** (+40: +14
   `test_clinical_document_segments.py`, +3 new `dates.py` plausibility
   tests, +15 `test_clinical_document_events.py`, +8
-  `test_clinical_document_discharge_parser.py`) — a full-suite run was
-  started to confirm this exact number; check this session's own log or
-  rerun `pytest -q` and trust ITS summary line over this one if they
-  ever disagree. All 101 `clinical_document`-specific tests were
-  individually confirmed passing before this full run started
+  `test_clinical_document_discharge_parser.py`) — **full suite reran
+  clean: `431 passed, 5 warnings in 981.97s (0:16:21)` — zero failures,
+  zero errors, no Neon flake this run.** All 101 `clinical_document`-
+  specific tests were also individually confirmed passing beforehand
   (`pytest tests/test_clinical_document_*.py -q` → `101 passed`).
 
   **Environmental note for future sessions — Neon connectivity drops
