@@ -16,7 +16,7 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: `1e71f03`** (run `git log --oneline -1` to confirm — this
+- **HEAD SHA: `f4f47ce`** (run `git log --oneline -1` to confirm — this
   line is updated by hand at each checkpoint and can lag a moment behind
   an in-progress session; the git log is always the final authority).
 - Pushed to `origin/fix/clinical-document-intelligence-v3`: check
@@ -160,11 +160,18 @@ in the original text, not reproduced here).
   8. `1e71f03` — **Phase 4 increment 1**: `canonical_headings.py` (real
      heading classifier + repeated-heading merge) and its 19 tests. NOT
      yet wired into the real ingestion pipeline — see section 9b.
-  9. Check `git log --oneline -12` for anything added after `1e71f03` —
-     this list is updated by hand and can lag a live session.
+  9. `757a2e8` — handoff checkpoint for Phase 4 increment 1 (this file
+     only).
+  10. `f4f47ce` — unified persistence.py's backward-compat upconversion
+      onto the SAME classifier as increment 1, deleting the now-
+      redundant `_LEGACY_KEY_TO_CANONICAL` mapping (proven equivalent
+      first, then removed — no behavior change, 42/42 clinical_document
+      tests unchanged in outcome).
+  11. Check `git log --oneline -14` for anything added after `f4f47ce` —
+      this list is updated by hand and can lag a live session.
 - **Push status**: check `git log origin/fix/clinical-document-
   intelligence-v3..HEAD --oneline` — empty means fully pushed. No PR
-  opened as of `1e71f03`.
+  opened as of `f4f47ce`.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -403,16 +410,22 @@ carrying `schema_version`, validates it as the new shape (returns `None`
 matching the CURRENT, UNCHANGED legacy discharge shape (`document_type
 == "discharge_summary"` and a `sections` list, no `schema_version` —
 `discharge_summary_pipeline.py` was NOT modified and still produces
-exactly this shape), upconverts it in memory via a deterministic
-13-key-legacy → 19-key-canonical mapping
-(`_LEGACY_KEY_TO_CANONICAL`), honestly labeled
+exactly this shape), upconverts it in memory by running each section's
+real `title` text through `canonical_headings.classify_canonical_heading`/
+`merge_headings_into_sections` — **as of a later commit this session
+(`f4f47ce`), this is the SAME classifier Phase 4's real parsing uses,
+not a separate mapping** (see section 9b — the original `_LEGACY_KEY_TO_
+CANONICAL` dict this section originally described was deleted once a
+cross-check test proved the two mechanisms always agreed, unifying them
+to avoid maintaining two classification systems). Honestly labeled
 `parser_version="legacy-discharge-upconversion-v1"` and
 `review_state="needs_review"` on every section it produces — never
-presented as a confident Phase 4 parse. **Never rewrites the DB row** —
-this is read-time-only backward compatibility.
-`serialize_structured_document(doc) -> str` is the one sanctioned write
-path — takes an already-validated model instance, never a hand-built
-dict.
+presented as a confident, human-reviewed parse, even though the
+classification itself is exactly as accurate as a real Phase 4 parse
+would produce. **Never rewrites the DB row** — this is read-time-only
+backward compatibility. `serialize_structured_document(doc) -> str` is
+the one sanctioned write path — takes an already-validated model
+instance, never a hand-built dict.
 
 **Real backward-compatibility proof, not just a claim**: a test feeds
 the upconverter a payload with BOTH `laboratory_normal` and
@@ -443,30 +456,27 @@ legacy discharge payload).
 actually PRODUCES a `StructuredClinicalDocument` from a real document
 upload yet — `discharge_summary_pipeline.py` itself is unchanged and
 still writes the old ad-hoc shape; only the READ side (upconversion) is
-new. `_LEGACY_KEY_TO_CANONICAL`'s mapping is a simple, deterministic
-backward-compat stopgap for the OLD 13-key vocabulary, not Phase 4's
-real canonical-heading classifier (which will work from raw OCR'd
-headings, not this closed set, and will supersede this mapping for
-anything parsed going forward — do not confuse the two or assume Phase 4
-is "already done" because this stopgap exists). The TS mirror
-(`frontend/lib/clinical-document-schema.ts`) is not imported anywhere
-yet.
+new. The TS mirror (`frontend/lib/clinical-document-schema.ts`) is not
+imported anywhere yet.
 
 ## 9b. Phase 4 — discharge parser pipeline (IN PROGRESS — increment 1 only)
 
 **What exists**: `app/services/clinical_document/canonical_headings.py`
 — `classify_canonical_heading(raw_heading: str) -> CanonicalSectionKey`,
-a deterministic (no LLM call) classifier for REAL heading text (not the
-current pipeline's coarse 13-key vocabulary — that's what Phase 3's
-`_LEGACY_KEY_TO_CANONICAL` handles, for OLD rows only). Verified against
+a deterministic (no LLM call) classifier for REAL heading text. This is
+now the ONE classification implementation used by BOTH Phase 3's
+backward-compat upconversion (persistence.py, above) AND any future real
+Phase 4 parse — an earlier version of this session kept two separate
+mappings (a coarse 13-key remap for old rows vs. this real-heading
+classifier) until a cross-check test proved they always agreed, at
+which point they were unified (commit `f4f47ce`) to avoid exactly the
+"parallel product logic" the V3 contract prohibits. Verified against
 every one of the V3 contract's own worked examples (EPICRIZĂ ->
 clinical_course, TRATAMENT RECOMANDAT -> recommendations, REȚETE
 ELIBERATE -> prescriptions, EXAMENE DE LABORATOR -> laboratory_results,
-DIAGNOSTIC PRINCIPAL/SECUNDAR -> diagnoses) and cross-checked for
-agreement against `_LEGACY_KEY_TO_CANONICAL` on every real fallback
-title `discharge_summary_pipeline.py`'s `SECTION_TITLE_BY_KEY` actually
-produces today (so the two classification paths — old-row backward
-compat vs. real heading classification — don't silently drift apart).
+DIAGNOSTIC PRINCIPAL/SECUNDAR -> diagnoses) and against every real
+fallback title `discharge_summary_pipeline.py`'s `SECTION_TITLE_BY_KEY`
+actually produces today.
 Found and fixed one real collision before it reached production: the
 pipeline's own "Investigations / imaging" fallback title would have
 misclassified as `imaging` before `investigations` was reordered ahead
