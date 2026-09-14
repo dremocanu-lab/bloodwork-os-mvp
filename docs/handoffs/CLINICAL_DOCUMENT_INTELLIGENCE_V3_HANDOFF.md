@@ -18,7 +18,7 @@ can open, or a test you can execute.
 ## Exact current state (checkpoint)
 
 - Branch: `fix/clinical-document-intelligence-v3`
-- **HEAD SHA: `8cc926a`** (run `git log --oneline -1` to confirm — this
+- **HEAD SHA: (this commit)** (run `git log --oneline -1` to confirm — this
   line is updated by hand at each checkpoint and can lag a moment behind
   an in-progress session; the git log is always the final authority).
 - Pushed to `origin/fix/clinical-document-intelligence-v3`: check
@@ -727,28 +727,42 @@ Not touched, not fixed, not worsened this session.
   in 1041.44s.** → 372 after Phase 4 increment 1 (+19,
   `test_clinical_document_canonical_headings.py`) → unchanged (372) after
   the persistence.py/canonical_headings.py unification refactor (one
-  test renamed, none added/removed) → **391 after Phase 5 increment 1**
-  (+19, `test_clinical_document_dates.py`).
-  **A cadence-rule full-suite run kicked off after Phase 4 increment 1
-  reported `1 failed, 360 passed, 11 errors` — diagnosed as a transient
-  Neon connectivity dropout mid-run** (`psycopg.OperationalError:
-  ... No route to host` / `getaddrinfo failed` against the pooler host,
-  on `tests/test_migrations.py` and `tests/test_upload_validation.py`
-  only — neither file imports or touches anything in
-  `clinical_document`), **not a code regression**: connectivity was
-  confirmed restored immediately after
-  (`SessionLocal().execute(text("SELECT 1"))` succeeded), and all 13
-  affected tests were re-run in isolation and passed cleanly
-  (`pytest tests/test_migrations.py tests/test_upload_validation.py -v`
-  → 13/13 passed). A full, clean re-run covering everything through
-  Phase 5 increment 1 (391 tests) was then started — check this
-  session's own log or rerun `pytest -q` for its exact final result if
-  it isn't reflected here yet. If a future run ever reports a similar
-  `OperationalError`/`getaddrinfo failed` pattern, check DB connectivity
-  directly before assuming a real regression — but always re-verify by
-  re-running the specific failed tests once connectivity is confirmed,
-  never assume "it was probably just the network" without that
-  confirmation. Always re-run `pytest -q` and trust its own summary line
+  test renamed, none added/removed) → **391 confirmed after Phase 5
+  increment 1** (+19, `test_clinical_document_dates.py`).
+
+  **Environmental note for future sessions — Neon connectivity drops
+  during long (20-25 min) full-suite runs are a real, observed, RECURRING
+  characteristic of this dev setup, not a one-off fluke**: two separate
+  full-suite runs this session each hit exactly ONE transient DB
+  connection failure, on two entirely different, unrelated tests:
+  1. Run after Phase 4 increment 1: `1 failed, 360 passed, 11 errors` —
+     all 12 dysfunctional outcomes were `psycopg.OperationalError`
+     ("No route to host" / "getaddrinfo failed") on
+     `tests/test_migrations.py`/`tests/test_upload_validation.py`.
+  2. A later full clean re-run covering all 391 tests: `1 failed, 390
+     passed` — `tests/test_interop_e2e.py::
+     test_server_a_full_featured_zero_code_sync` failed with
+     `OperationalError: server closed the connection unexpectedly` on a
+     `pg_advisory_unlock` call.
+  Neither failure touches `clinical_document` (pure-Python, zero DB
+  access) or anything else this session changed. Both times, DB
+  connectivity was confirmed restored within seconds
+  (`SessionLocal().execute(text("SELECT 1"))` succeeding), and the
+  SPECIFIC failed test(s) were re-run in isolation and passed cleanly
+  every time (13/13, then 1/1). **391/391 tests are genuinely
+  confirmed passing** — via the combination of a full run plus an
+  isolated re-run of its one flaky failure, not via a single
+  uninterrupted green run (repeatedly re-running the full 20-25-minute
+  suite hoping for one lucky uninterrupted pass is not a good use of
+  time once the flake's cause is this well-established).
+  **Guidance for a future session**: if a full-suite run reports a
+  `psycopg.OperationalError`/`getaddrinfo failed`/"server closed the
+  connection unexpectedly" failure, do NOT treat it as a regression by
+  default — (1) confirm DB connectivity is currently fine
+  (`SessionLocal().execute(text("SELECT 1"))`), (2) re-run ONLY the
+  specific failed test(s) in isolation, (3) only if it fails AGAIN in
+  isolation with connectivity confirmed good should it be treated as a
+  real bug. Always re-run `pytest -q` and trust its own summary line
   over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
   `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-4 (no
