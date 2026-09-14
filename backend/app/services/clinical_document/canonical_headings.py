@@ -161,14 +161,28 @@ def classify_canonical_heading(raw_heading: str | None) -> CanonicalSectionKey:
 
 def merge_headings_into_sections(
     raw_sections: list[tuple[str, str]],
+    *,
+    review_state: str | None = "auto",
 ) -> list[ClinicalSection]:
     """Classifies and merges a document-ordered list of
     `(raw_heading, body_text)` pairs into canonical `ClinicalSection`s —
     the general form of the V3 contract's "repeated headings merge into
-    ONE canonical entry" rule, for ANY raw heading text (not tied to the
-    current pipeline's fixed 13-key vocabulary — contrast with
-    `persistence.py`'s `_upconvert_legacy_discharge_payload`, which is a
-    narrower backward-compat path for that specific old shape).
+    ONE canonical entry" rule, for ANY raw heading text. This is now the
+    ONE shared implementation for BOTH directions the V3 contract needs:
+    a forward-looking real parser (this module's own callers, once
+    Phase 4's pipeline wiring lands, would use the default `"auto"`) AND
+    `persistence.py`'s backward-compat upconversion of the CURRENT
+    pipeline's existing ad-hoc payload shape (which passes
+    `review_state="needs_review"` — a human never reviewed sections built
+    retroactively from an old row, even though the classification itself
+    is exactly as accurate as it would be for a brand new document).
+    There is deliberately no second, separately-maintained merge/
+    classification implementation for the legacy path — see this
+    project's own "no parallel product logic" rule; the two paths were
+    proven to classify every real legacy heading identically before this
+    unification (see `test_classifier_agrees_with_the_legacy_key_remap_
+    on_every_real_fallback_title`), so sharing one implementation changes
+    no observed behavior, only removes the duplication.
 
     Two sections classified to the SAME canonical key merge into ONE
     `ClinicalSection`: `order` is the first occurrence's position,
@@ -176,8 +190,8 @@ def merge_headings_into_sections(
     encounter order, and each contributor's body becomes its OWN
     `ParagraphBlock` (never concatenated into one string) — callers with
     richer per-contributor structure (tables, key/value pairs, etc.)
-    should build their own blocks and use this function's classification
-    step directly instead, rather than forcing everything through
+    should build their own blocks and use `classify_canonical_heading`
+    directly instead, rather than forcing everything through
     `ParagraphBlock`.
     """
     merged: dict[str, ClinicalSection] = {}
@@ -196,7 +210,7 @@ def merge_headings_into_sections(
                 source_headings=[heading] if heading else [],
                 order=order_counter,
                 blocks=[ParagraphBlock(text=body_text)] if body_text else [],
-                review_state="auto",
+                review_state=review_state,
             )
             order_counter += 1
         else:

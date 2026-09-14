@@ -117,40 +117,33 @@ def test_a_section_with_no_body_text_still_produces_a_section_with_no_blocks():
     assert sections[0].blocks == []
 
 
-def test_classifier_agrees_with_the_legacy_key_remap_on_every_real_fallback_title():
-    """Cross-checks THIS module's real-heading classifier against
-    persistence.py's _LEGACY_KEY_TO_CANONICAL stopgap mapping, using the
-    EXACT fallback title strings discharge_summary_pipeline.py's own
-    SECTION_TITLE_BY_KEY produces today. The two mechanisms classify
-    different inputs (real heading text vs. a coarse legacy key) for
-    different reasons (a real parser vs. backward-compat for old rows)
-    and are allowed to diverge in principle — but for every title the
-    CURRENT pipeline actually generates, they should agree, or the two
-    "views" of an old vs. newly (re)classified document would visibly
-    disagree with no real justification. If this test ever needs to
-    change, that disagreement should be a deliberate, reviewed decision,
-    not silent drift between two independently-maintained mappings."""
-    from app.services.clinical_document.persistence import _LEGACY_KEY_TO_CANONICAL
-
-    fallback_title_by_legacy_key = {
-        "administrative_information": "Administrative information",
-        "diagnoses": "Diagnoses",
-        "discharge_status": "Discharge status",
-        "epicriza": "EPICRIZA",
-        "investigations": "Investigations / imaging",
-        "consults": "Consults",
-        "laboratory_normal": "Examen de laborator cu valori normale",
-        "laboratory_abnormal": "Examen de laborator cu valori patologice",
-        "treatment_in_hospital": "Tratament administrat in timpul internarii",
-        "recommended_treatment": "Tratament recomandat",
-        "prescriptions_released": "Retete eliberate",
-        "recommendations": "Recomandari",
-        "other": "Other",
+def test_classifier_correctly_handles_every_real_legacy_fallback_title():
+    """Every fallback title discharge_summary_pipeline.py's own
+    SECTION_TITLE_BY_KEY actually produces today (used whenever the
+    model didn't supply its own page-level title) — verified against
+    hardcoded expected canonical keys chosen the same way
+    persistence.py's backward-compat upconversion path documents its own
+    reasoning (see that module's docstring), now that both paths share
+    THIS classifier as their one implementation rather than maintaining
+    two separate mappings that could silently drift apart."""
+    expected_canonical_key_by_fallback_title = {
+        "Administrative information": "administrative_information",
+        "Diagnoses": "diagnoses",
+        "Discharge status": "encounter_details",
+        "EPICRIZA": "clinical_course",
+        "Investigations / imaging": "investigations",
+        "Consults": "other",
+        "Examen de laborator cu valori normale": "laboratory_results",
+        "Examen de laborator cu valori patologice": "laboratory_results",
+        "Tratament administrat in timpul internarii": "treatment",
+        "Tratament recomandat": "recommendations",
+        "Retete eliberate": "prescriptions",
+        "Recomandari": "recommendations",
+        "Other": "other",
     }
-    for legacy_key, title in fallback_title_by_legacy_key.items():
-        expected = _LEGACY_KEY_TO_CANONICAL[legacy_key]
+    for title, expected in expected_canonical_key_by_fallback_title.items():
         actual = classify_canonical_heading(title)
-        assert actual == expected, f"{legacy_key!r} ({title!r}): legacy remap says {expected!r}, classifier says {actual!r}"
+        assert actual == expected, f"{title!r}: expected {expected!r}, classifier says {actual!r}"
 
 
 def test_merged_sections_are_auto_review_state_not_needs_review():

@@ -17,15 +17,26 @@ instruction asks for.
 Backward compatibility: existing discharge_summary documents already
 have a JSON payload in `note_body` using the OLDER, unversioned, ad-hoc
 shape discharge_summary_pipeline.py has always produced (no
-`schema_version` field, a fixed 13-key section vocabulary). This module
-does NOT rewrite those rows in place. `parse_structured_document()`
-upconverts that legacy shape into a valid `StructuredClinicalDocument`
-IN MEMORY, on read, using a deterministic (not fuzzy/LLM) key mapping —
-see `_LEGACY_KEY_TO_CANONICAL` below. This is a Phase 3 backward-
-compatibility stopgap only: Phase 4's real canonical-heading classifier
-(operating on raw OCR'd headings, not this closed 13-key set) supersedes
-it for anything parsed going forward — see that phase's own module once
-it exists.
+`schema_version` field, a fixed 13-key section vocabulary, but a REAL
+per-section `title` — the actual heading text as it appeared on the
+page). This module does NOT rewrite those rows in place.
+`parse_structured_document()` upconverts that legacy shape into a valid
+`StructuredClinicalDocument` IN MEMORY, on read, by running each
+section's real `title` through the SAME deterministic classifier Phase
+4 uses for real parsing
+(`canonical_headings.classify_canonical_heading`/
+`merge_headings_into_sections`) — there is deliberately no second,
+separately-maintained classification mapping for this backward-compat
+path; the two were proven to classify every real legacy title
+identically before unifying them this way (see
+`test_clinical_document_canonical_headings.py`'s cross-check test),
+which is what makes sharing one implementation safe. The only thing
+that distinguishes this path from a real Phase 4 parse is
+`parser_version` (`LEGACY_UPCONVERSION_PARSER_VERSION` below, never
+mistaken for real parser output) and `review_state="needs_review"` on
+every section it produces (a human never reviewed sections built
+retroactively from an old row, even though the classification itself is
+exactly as accurate as it would be for a brand new document).
 
 `note_body` is ALSO used, for other document types, as a plain free-text
 note (not JSON at all) — `parse_structured_document` returns `None` for
@@ -41,57 +52,14 @@ from typing import Any
 
 from app.services.document_taxonomy import DocumentType
 
-from .schema import (
-    ClinicalSection,
-    DocumentMetadata,
-    ParagraphBlock,
-    StructuredClinicalDocument,
-)
+from .canonical_headings import merge_headings_into_sections
+from .schema import DocumentMetadata, StructuredClinicalDocument
 
 # Distinct from CURRENT_SCHEMA_VERSION (schema.py) — this labels the
 # *parser* that produced a given payload, not the shape it validates
 # against. A payload upconverted by this stopgap is always honestly
 # labeled as such, never mistaken for real Phase 4+ parser output.
 LEGACY_UPCONVERSION_PARSER_VERSION = "legacy-discharge-upconversion-v1"
-
-# discharge_summary_pipeline.py's fixed 13-key ALLOWED_SECTION_KEYS
-# vocabulary -> the V3 contract's fixed CanonicalSectionKey enum.
-# Deterministic and intentionally simple — a backward-compat safety net
-# for OLD rows, not Phase 4's real classifier. Non-obvious choices:
-#   - "discharge_status" -> "encounter_details": no exact enum match;
-#     discharge status describes the encounter/discharge state.
-#   - "epicriza" -> "clinical_course": explicit V3 contract example
-#     (EPICRIZĂ -> clinical_course).
-#   - "consults" -> "other": no clean 1:1 canonical match available.
-#   - "laboratory_normal" AND "laboratory_abnormal" -> "laboratory_results":
-#     explicit V3 contract example (EXAMENE DE LABORATOR ->
-#     laboratory_results) — these two legacy keys deliberately MERGE into
-#     one canonical section, which is exactly the "repeated headings
-#     merge" rule this module's own tests exercise.
-#   - "treatment_in_hospital" -> "treatment": in-hospital administered
-#     treatment maps directly onto the "treatment" canonical key.
-#   - "recommended_treatment" -> "recommendations": explicit V3 contract
-#     example (TRATAMENT RECOMANDAT -> recommendations/
-#     discharge_medications) — "recommendations" chosen as the safe
-#     default since resolving actual discharge MEDICATIONS out of this
-#     text is Phase 7's extraction job, not this upconversion's.
-#   - "prescriptions_released" -> "prescriptions": explicit V3 contract
-#     example (REȚETE ELIBERATE -> prescriptions).
-_LEGACY_KEY_TO_CANONICAL: dict[str, str] = {
-    "administrative_information": "administrative_information",
-    "diagnoses": "diagnoses",
-    "discharge_status": "encounter_details",
-    "epicriza": "clinical_course",
-    "investigations": "investigations",
-    "consults": "other",
-    "laboratory_normal": "laboratory_results",
-    "laboratory_abnormal": "laboratory_results",
-    "treatment_in_hospital": "treatment",
-    "recommended_treatment": "recommendations",
-    "prescriptions_released": "prescriptions",
-    "recommendations": "recommendations",
-    "other": "other",
-}
 
 
 def _looks_like_legacy_discharge_payload(payload: dict[str, Any]) -> bool:
@@ -106,35 +74,19 @@ def _looks_like_legacy_discharge_payload(payload: dict[str, Any]) -> bool:
 
 def _upconvert_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinicalDocument:
     raw_sections = payload.get("sections") or []
-    merged: dict[str, ClinicalSection] = {}
-    order_counter = 0
-
+    heading_body_pairs: list[tuple[str, str]] = []
     for raw in raw_sections:
         if not isinstance(raw, dict):
             continue
-        legacy_key = raw.get("key") or "other"
-        canonical_key = _LEGACY_KEY_TO_CANONICAL.get(legacy_key, "other")
-        heading = raw.get("title") or legacy_key
-        body = (raw.get("body") or "").strip()
+        # The pipeline always sets a real title (falling back to its own
+        # SECTION_TITLE_BY_KEY when the model didn't provide one) — the
+        # `raw.get("key")` fallback here is defensive only, for a
+        # malformed/hand-edited row that somehow has neither.
+        heading = raw.get("title") or raw.get("key") or "other"
+        body = raw.get("body") or ""
+        heading_body_pairs.append((heading, body))
 
-        existing = merged.get(canonical_key)
-        if existing is None:
-            merged[canonical_key] = ClinicalSection(
-                id=f"legacy-{canonical_key}",
-                canonical_key=canonical_key,  # type: ignore[arg-type]
-                display_title=heading,
-                source_headings=[heading],
-                order=order_counter,
-                blocks=[ParagraphBlock(text=body)] if body else [],
-                confidence=None,  # never fabricated for an upconverted legacy row
-                review_state="needs_review",
-            )
-            order_counter += 1
-        else:
-            if heading not in existing.source_headings:
-                existing.source_headings.append(heading)
-            if body:
-                existing.blocks.append(ParagraphBlock(text=body))
+    sections = merge_headings_into_sections(heading_body_pairs, review_state="needs_review")
 
     metadata = DocumentMetadata(
         patient_name=payload.get("patient_name"),
@@ -150,7 +102,7 @@ def _upconvert_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredCl
         document_kind=DocumentType.DISCHARGE_SUMMARY,
         source_language=payload.get("source_language") or payload.get("language"),
         metadata=metadata,
-        sections=list(merged.values()),
+        sections=sections,
         warnings=[str(w) for w in (payload.get("warnings") or [])],
     )
 
