@@ -34,3 +34,8 @@ cryptography==47.0.0
 # `alembic upgrade head` as part of deployment, same as any other backend
 # code path.
 alembic==1.18.4
+# Was already an implicit transitive dependency; pinned directly now that
+# app/services/clinical_document/medication_duration.py depends on it
+# explicitly for real calendar-month arithmetic (relativedelta) — Clinical
+# Document Intelligence V3, Phase 7. Never hand-roll month-end correction.
+python-dateutil==2.9.0.post0
