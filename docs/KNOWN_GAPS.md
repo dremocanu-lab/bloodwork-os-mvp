@@ -140,20 +140,32 @@ and the Phase 4 final report), not an accidental omission:
   — Phase 4 was reorganization only, not feature work.
 - `demo.bragi.health` was explicitly out of scope and was not started.
 
-## Clinical Document Intelligence V3 — Phases 3-21 (2026-09-14)
+## Clinical Document Intelligence V3 — Phases 7-21 (2026-09-15)
 
 An implementation contract for rebuilding structured clinical-document
 ingestion (discharge sections, dated clinical events, embedded lab/
 medication extraction into canonical models, a new frontend document
-reader) was received. Only Phase 0 (architecture inventory), Phase 1
-(baseline), and Phase 2 (a real Ask Bragi P0 fix — see ARCHITECTURE.md's
-"Ask Bragi — tool-call round budget" section) were completed and
-verified. The structured document schema, the discharge parser rebuild,
-Clinical-Course date extraction, embedded lab/medication extraction, the
-derived-lab-artifact concept, the new discharge reader frontend,
-Timeline/Documents integration for any of the above, idempotency/
-deletion tests for it, the synthetic test fixture, and the accessibility/
-responsive/benchmark QA passes are all **not implemented** — this is a
-large, deliberate scope gap, not an oversight. Full honest accounting
-and a continuation plan: `docs/handoffs/
+reader) was received. Phase 0 (architecture inventory), Phase 1
+(baseline), Phase 2 (a real Ask Bragi P0 fix — see ARCHITECTURE.md's
+"Ask Bragi — tool-call round budget" section), Phase 3 (the structured
+document schema), Phases 4-5 (source segmentation, canonical-section
+consolidation, Clinical Course dated-event extraction with chronology
+checks, and a full end-to-end orchestration), and Phase 6 (embedded lab
+extraction/grouping/canonical persistence into real `LabResult` rows,
+feeding the existing shared analyte resolver, plus derived lab-artifact
+backend semantics with real deletion and idempotency guarantees) are all
+completed and verified — see `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` sections 9/9b/9c/9d/9e.
+None of Phases 3-6's production code is wired into the live discharge
+upload write path yet (deliberate sequencing, not an oversight — the
+frontend discharge reader still consumes the old payload shape).
+Medication extraction/duration derivation, the new discharge reader
+frontend, Timeline/Documents integration for any of the above, the
+exhaustive real-Postgres idempotency/deletion test suites (Phase 6 laid
+real groundwork for both but the full 1x/2x/10x/exhaustive-cascade
+proofs remain open), the full synthetic discharge-document test
+fixture, the deterministic retrieval benchmark, and the accessibility/
+responsive QA passes are all **not implemented** — this remains a large,
+deliberate scope gap, not an oversight. Full honest accounting and a
+continuation plan: `docs/handoffs/
 CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`.

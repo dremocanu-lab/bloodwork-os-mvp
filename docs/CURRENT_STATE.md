@@ -185,7 +185,7 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
-## Clinical Document Intelligence V3 — PARTIAL (Phases 0-2 of 21 only)
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-6 of 21)
 
 Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
 the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
@@ -193,10 +193,25 @@ done: `ASK_BRAGI_MAX_TOOL_ROUNDS` (4) was too tight for broad multi-
 analyte questions like "what changed in my latest bloodwork" — fixed via
 prompt guidance + raising the budget to 8, both proven with tests that
 fail under the old default and pass under the new one. A RightWorkspace
-geometry Playwright regression was also added. **Phases 3-21 of the
-originating contract (the structured clinical-document schema, discharge
-parser rebuild, lab/medication/event extraction, frontend rebuild, and
-everything downstream) are entirely unimplemented** — see
+geometry Playwright regression was also added (Phase 2). Phases 3-5
+built a real, tested structured-document pipeline: a typed, versioned
+`StructuredClinicalDocument` schema; deterministic source segmentation
+and canonical-section consolidation; deterministic Clinical Course
+dated-event extraction with chronology/plausibility checks; and a full
+end-to-end orchestration (`discharge_parser.py`), all proven against the
+contract's own required suspicious-data fixtures. Phase 6 (NEW) added
+embedded lab extraction from a discharge's laboratory_results section
+into REAL, canonical `LabResult` rows — feeding the existing
+`lab_resolver.resolve_analyte()`, never a private alias dictionary or a
+second lab datastore — plus one derived "lab_report" `Document` artifact
+per coherent source report, with real deletion-cascade and idempotency
+guarantees, DB-proven with 44 new tests. **None of Phases 3-6's
+production code is wired into the live discharge upload write path yet
+— deliberate, not an oversight (the frontend discharge reader still
+consumes the old payload shape; see the handoff's sequencing note).
+Phases 7-21 of the originating contract (medication extraction, the
+frontend rebuild, Timeline/Ask-Bragi integration, and everything
+downstream) are entirely unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
 full, section-by-section honest accounting and how to continue.
 
