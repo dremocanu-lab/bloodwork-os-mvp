@@ -1075,6 +1075,23 @@ def delete_document(
 
     saved_to = document.saved_to
 
+    # Clinical Document Intelligence V3, Phase 6: a derived lab-report
+    # artifact (models.Document.derived_artifact_kind is set) must be
+    # REMOVED, not orphaned, when its parent is deleted — unlike an
+    # ordinary Reducto Split page-range child, which intentionally keeps
+    # `parent_document_id`'s existing `ondelete="SET NULL"` behavior
+    # (survives its split parent's deletion). The derived artifact's own
+    # LabResult/SourceEvidence rows are NOT deleted here: Phase 6
+    # attaches those to the AUTHORITATIVE parent document, not to the
+    # derived artifact, so they are already covered by `document.
+    # lab_results`' existing cascade below when `document` IS that
+    # parent — deleting this pointer-only artifact row never deletes
+    # another, unrelated source's LabResult.
+    db.query(models.Document).filter(
+        models.Document.parent_document_id == document.id,
+        models.Document.derived_artifact_kind.isnot(None),
+    ).delete(synchronize_session=False)
+
     db.query(models.NoteDocumentLink).filter(
         (models.NoteDocumentLink.note_document_id == document.id)
         | (models.NoteDocumentLink.linked_document_id == document.id)

@@ -254,6 +254,14 @@ class DerivedArtifactRef(BaseModel):
     document_id: int | None = None
     source_section_id: str | None = None
     lab_result_ids: list[int] = Field(default_factory=list)
+    # Phase 6's deterministic coherent-report identity (see
+    # lab_grouping.py's `LabReportGroup.group_key`) — additive, defaults
+    # to None for anything built before Phase 6. Distinguishes MULTIPLE
+    # derived artifacts that share the same `source_section_id` (a
+    # laboratory_results section containing more than one coherent
+    # report) and is what makes derived-artifact get-or-create
+    # idempotent across repeated ingestion of the same document.
+    group_key: str | None = None
 
 
 class DocumentMetadata(BaseModel):

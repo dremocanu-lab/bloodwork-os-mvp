@@ -222,6 +222,19 @@ class Document(Base):
     # upload pipeline.
     source_connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="SET NULL"), nullable=True, index=True)
 
+    # Clinical Document Intelligence V3, Phase 6 — distinguishes a real
+    # DERIVED artifact Document (e.g. "lab_report": structured laboratory
+    # results extracted from a parent discharge summary, see
+    # app/services/clinical_document/lab_persistence.py) from an ordinary
+    # uploaded/Reducto-Split-child Document that also happens to use
+    # `parent_document_id`. Null for every existing row and every normal
+    # upload/split child. This distinction is what lets
+    # `DELETE /documents/{id}` hard-delete a derived artifact when its
+    # parent is deleted (see that route) while a Split child continues to
+    # use the existing `ondelete="SET NULL"` behavior on
+    # `parent_document_id`, unchanged.
+    derived_artifact_kind = Column(String, nullable=True)
+
     patient = relationship("Patient", back_populates="documents", foreign_keys=[patient_id])
     intended_patient = relationship("Patient", foreign_keys=[intended_patient_id])
     parent_document = relationship("Document", foreign_keys=[parent_document_id], remote_side=[id])
