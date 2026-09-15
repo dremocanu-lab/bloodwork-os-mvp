@@ -386,6 +386,14 @@ class SourceEvidence(Base):
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
     lab_result_id = Column(Integer, ForeignKey("lab_results.id"), nullable=True, index=True)
+    # Clinical Document Intelligence V3, Phase 7 — the medication half of
+    # this model's own documented "generalize beyond lab rows" intent
+    # (see the docstring above). `ondelete="SET NULL"` is a DB-level
+    # safety net independent of the ORM cascade declared on
+    # `PatientMedication.source_evidence`: it also protects a BULK delete
+    # (e.g. `DELETE /my/account`'s patient-medication cleanup), which
+    # does not trigger ORM-level relationship cascades.
+    medication_id = Column(Integer, ForeignKey("patient_medications.id", ondelete="SET NULL"), nullable=True, index=True)
 
     page_number = Column(Integer, nullable=True)
     bbox_x = Column(Float, nullable=True)
@@ -418,6 +426,7 @@ class SourceEvidence(Base):
 
     document = relationship("Document")
     lab_result = relationship("LabResult", back_populates="source_evidence")
+    medication = relationship("PatientMedication", back_populates="source_evidence")
 
 
 class AuditLog(Base):
@@ -534,9 +543,40 @@ class PatientMedication(Base):
     official_retrieved_at = Column(String, nullable=True)
     official_label_date = Column(String, nullable=True)
 
+    # Clinical Document Intelligence V3, Phase 7 — provenance for a
+    # document-derived medication fact. Both null for every existing row
+    # and every manually patient-entered medication (unchanged current
+    # behavior) — set only by
+    # app/services/clinical_document/medication_persistence.py.
+    # `ondelete="SET NULL"` is a deliberate difference from Phase 6's
+    # derived lab artifact (which is hard-deleted with its parent): a
+    # medication fact has independent clinical meaning even once the
+    # document that mentioned it is gone, so deleting the source document
+    # clears the (now-stale) provenance link rather than deleting the
+    # medication itself — see DELETE /documents/{id} for the paired
+    # explicit SourceEvidence cleanup this requires.
+    source_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    # The originating SourceSegment.segment_id (segments.py) — free-text,
+    # mirrors LabResult.source_section's existing convention for the same
+    # purpose (deterministic provenance/idempotency identity, not a FK,
+    # since segments are not persisted as their own DB rows).
+    source_segment_id = Column(String, nullable=True)
+    # How `stop_date` was determined — "explicit" (source stated it
+    # directly), "derived" (calculated from a reliable start date + an
+    # explicit finite duration), or "explicit_with_derived_conflict" (both
+    # existed and disagreed; `stop_date` keeps the EXPLICIT value, never
+    # silently overwritten by the derived one — see medication_duration.py
+    # and medication_persistence.py). Null for a manually-entered
+    # medication (no derivation ever applies) and for any document-derived
+    # row with no stop_date at all. Never lets a calculated date read as
+    # provider-authored without this field explaining otherwise.
+    stop_date_basis = Column(String, nullable=True)
+
     patient = relationship("Patient", back_populates="medications")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id])
+    source_document = relationship("Document", foreign_keys=[source_document_id])
+    source_evidence = relationship("SourceEvidence", back_populates="medication", cascade="all, delete-orphan")
 
 
 class EmergencyContact(Base):

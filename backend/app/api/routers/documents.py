@@ -1092,6 +1092,22 @@ def delete_document(
         models.Document.derived_artifact_kind.isnot(None),
     ).delete(synchronize_session=False)
 
+    # Clinical Document Intelligence V3, Phase 7: a document-derived
+    # PatientMedication row is NOT deleted when its source document is
+    # (SET NULL, not cascade — see models.py's source_document_id
+    # docstring: the medication fact stays independently meaningful).
+    # But its SourceEvidence.document_id column is NOT NULL, so any
+    # medication-linked evidence row for THIS document must be removed
+    # explicitly before the document itself is deleted, or the delete
+    # would violate that FK constraint. Scoped to medication-linked,
+    # non-lab-linked rows only — lab-linked evidence is already covered
+    # by the LabResult cascade below when `document` IS a lab's parent.
+    db.query(models.SourceEvidence).filter(
+        models.SourceEvidence.document_id == document.id,
+        models.SourceEvidence.lab_result_id.is_(None),
+        models.SourceEvidence.medication_id.isnot(None),
+    ).delete(synchronize_session=False)
+
     db.query(models.NoteDocumentLink).filter(
         (models.NoteDocumentLink.note_document_id == document.id)
         | (models.NoteDocumentLink.linked_document_id == document.id)

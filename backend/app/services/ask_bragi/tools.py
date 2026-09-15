@@ -573,8 +573,15 @@ def _tool_get_medications(ctx: AskBragiContext, args: dict) -> dict:
                 # Honest status vocabulary (Priority 21 in the build spec):
                 # this is exactly what "status"/"is_uncertain" already
                 # record — the model must not upgrade this to "currently
-                # taking" beyond what the record actually supports.
-                "status": m.status,  # "active" | "discontinued" | other recorded status
+                # taking" beyond what the record actually supports. The
+                # actually-enforced set is VALID_MED_STATUSES in
+                # app/api/routers/medications.py: "active" | "as_needed" |
+                # "paused" | "stopped" — NOT "discontinued" (a real,
+                # documented inaccuracy in this comment prior to Clinical
+                # Document Intelligence V3 Phase 7; see
+                # docs/clinical_document_v3/CURRENT_PIPELINE_MAP.md's Open
+                # Question #11 and the V3 handoff, section 9e).
+                "status": m.status,
                 "is_uncertain": bool(m.is_uncertain),
                 "start_date": m.start_date,
                 "stop_date": m.stop_date,
