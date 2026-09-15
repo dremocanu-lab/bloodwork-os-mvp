@@ -185,7 +185,7 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
-## Clinical Document Intelligence V3 — PARTIAL (Phases 0-6 of 21)
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-7 of 21)
 
 Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
 the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
@@ -199,17 +199,24 @@ built a real, tested structured-document pipeline: a typed, versioned
 and canonical-section consolidation; deterministic Clinical Course
 dated-event extraction with chronology/plausibility checks; and a full
 end-to-end orchestration (`discharge_parser.py`), all proven against the
-contract's own required suspicious-data fixtures. Phase 6 (NEW) added
-embedded lab extraction from a discharge's laboratory_results section
-into REAL, canonical `LabResult` rows — feeding the existing
+contract's own required suspicious-data fixtures. Phase 6 added embedded
+lab extraction from a discharge's laboratory_results section into REAL,
+canonical `LabResult` rows — feeding the existing
 `lab_resolver.resolve_analyte()`, never a private alias dictionary or a
 second lab datastore — plus one derived "lab_report" `Document` artifact
 per coherent source report, with real deletion-cascade and idempotency
-guarantees, DB-proven with 44 new tests. **None of Phases 3-6's
-production code is wired into the live discharge upload write path yet
-— deliberate, not an oversight (the frontend discharge reader still
-consumes the old payload shape; see the handoff's sequencing note).
-Phases 7-21 of the originating contract (medication extraction, the
+guarantees, DB-proven with 44 new tests. Phase 7 (NEW) added medication
+extraction/context classification from a discharge's medication-bearing
+sections into REAL, canonical `PatientMedication` rows — feeding the
+existing status vocabulary, never a second medication table — with
+deterministic Romanian/English duration parsing, real calendar-month
+end-date derivation, an exact 4-tier start-date priority that never uses
+an upload/ingestion timestamp, and explicit preservation of same-drug
+conflicts and explicit-vs-derived date disagreements, DB-proven with 81
+new tests. **None of Phases 3-7's production code is wired into the live
+discharge upload write path yet — deliberate, not an oversight (the
+frontend discharge reader still consumes the old payload shape; see the
+handoff's sequencing note). Phases 8-21 of the originating contract (the
 frontend rebuild, Timeline/Ask-Bragi integration, and everything
 downstream) are entirely unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the

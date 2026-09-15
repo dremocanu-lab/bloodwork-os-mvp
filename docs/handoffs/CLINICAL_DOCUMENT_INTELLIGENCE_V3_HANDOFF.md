@@ -1,26 +1,29 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0 through 6 of the 21-phase contract are
+**Status: PARTIAL. Phases 0 through 7 of the 21-phase contract are
 COMPLETE and verified. Phases 0-5: the full structural reconstruction
 layer (typed segments, canonical section consolidation, real Clinical
 Course dated-event extraction with chronology sanity checking) and a
 real end-to-end orchestration (`discharge_parser.py`) proven against
 all three of the contract's own required suspicious-data fixture
-examples. See sections 9, 9b, 9c, 9d. Phase 6 (NEW this checkpoint):
-embedded lab extraction from a discharge's `laboratory_results` section
-into real, canonical `LabResult` rows — feeding the EXISTING
-`resolve_analyte()` resolver, no private alias dictionary, no second lab
-datastore — plus a real derived "lab_report" artifact `Document` per
-coherent source report. See section 9e. None of Phases 3-6's code is
-wired into the live ingestion pipeline yet — this is deliberate, not an
-oversight; see section 9b's sequencing note (switching the write path
+examples. See sections 9, 9b, 9c, 9d. Phase 6: embedded lab extraction
+from a discharge's `laboratory_results` section into real, canonical
+`LabResult` rows — feeding the EXISTING `resolve_analyte()` resolver, no
+private alias dictionary, no second lab datastore — plus a real derived
+"lab_report" artifact `Document` per coherent source report. See section
+9e. Phase 7 (NEW this checkpoint): medication extraction/context
+classification + deterministic duration/end-date derivation, persisted
+into the EXISTING `PatientMedication` model/status vocabulary — no
+second medication datastore. See section 9f. None of Phases 3-7's code
+is wired into the live ingestion pipeline yet — this is deliberate, not
+an oversight; see section 9b's sequencing note (switching the write path
 before Phase 8 rebuilds the frontend discharge reader would break it).
-Phase 6's own persistence service (`lab_persistence.py`) IS fully
-callable and DB-tested standalone in the meantime (see section 9e).
-Phases 7–21 are NOT STARTED.** This document exists specifically so a
-future Claude session with zero memory of this conversation can pick
-this up correctly — read section 23 ("HOW TO CONTINUE") first if
-that's you.
+Phase 6's and Phase 7's own persistence services (`lab_persistence.py`,
+`medication_persistence.py`) ARE fully callable and DB-tested standalone
+in the meantime (see sections 9e/9f). Phases 8–21 are NOT STARTED.**
+This document exists specifically so a future Claude session with zero
+memory of this conversation can pick this up correctly — read section 23
+("HOW TO CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -32,38 +35,52 @@ can open, or a test you can execute.
 - **HEAD SHA: check `git log --oneline -1`** (this line is updated by
   hand at each checkpoint and can lag a moment behind an in-progress
   session; the git log is always the final authority). As of this
-  checkpoint, the last three commits are (newest first): a handoff
-  checkpoint commit for this section, `9a085ca` (Phase 6 persistence +
-  derived artifact semantics + migration), `ada9fd8` (Phase 6 grouping),
-  `512dd74` (Phase 6 extraction) — on top of the Phase 0-5 checkpoint at
-  `ea3d795`.
-- Pushed to `origin/fix/clinical-document-intelligence-v3`: check
-  `git log origin/fix/clinical-document-intelligence-v3..HEAD --oneline`
-  — if it lists commits, this checkpoint has NOT been pushed yet. As of
-  writing this line, the three Phase 6 commits above had NOT yet been
-  pushed — push before ending a session, per the same convention as
-  every prior checkpoint.
+  checkpoint, the last five commits are (newest first): a handoff
+  checkpoint commit for this section, `cabe297` (Phase 7 persistence +
+  provenance + migration), `c3b38d2` (Phase 7 extraction + duration),
+  `a026fa0` (Phase 6 handoff checkpoint), `9a085ca` (Phase 6 persistence
+  + derived artifact semantics + migration) — on top of the Phase 0-5
+  checkpoint at `ea3d795`.
+- **Pushed to `origin/fix/clinical-document-intelligence-v3`**: the four
+  Phase 6 commits (through `a026fa0`) were explicitly authorized and
+  pushed at the START of this Phase 7 session — confirmed synchronized
+  (`git log origin/...\..HEAD --oneline` returned empty immediately
+  after). The Phase 7 commits above (`c3b38d2`, `cabe297`, and this
+  handoff commit) are pushed at the END of this session, per the same
+  explicit authorization — check `git log origin/fix/clinical-document-
+  intelligence-v3..HEAD --oneline` to confirm empty before trusting this
+  line.
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing) once this handoff commit lands.
 - **No PR opened.**
-- **Phases 4, 5, and 6 are now COMPLETE.** Phases 4/5: segments,
+- **Phases 4, 5, 6, and 7 are now COMPLETE.** Phases 4/5: segments,
   canonical section consolidation, real Clinical Course event
   extraction, chronology sanity checking, full end-to-end orchestration
   in `discharge_parser.py` (sections 9b/9c/9d). Phase 6: embedded lab
   extraction/grouping/canonical persistence + derived lab artifact
-  backend semantics (section 9e, NEW). None of Phases 3-6's own
+  backend semantics (section 9e). Phase 7 (NEW): medication extraction/
+  context classification, deterministic duration parsing, and
+  start/end-date derivation, persisted into the EXISTING
+  `PatientMedication` model (section 9f). None of Phases 3-7's own
   production code is wired into the live discharge ingestion write path
-  yet (deliberate — see section 9b's sequencing note); Phase 6's
-  persistence SERVICE itself (`lab_persistence.py`) is fully callable
-  and DB-tested standalone right now, distinct from "wired into the live
-  pipeline" — see section 9e for the precise distinction.
-- **Immediate next step: Phase 7 — medication extraction/context
-  classification + deterministic duration/end-date derivation.** Reuse
-  the EXISTING `PatientMedication` model/status semantics — no separate
-  "discharge medication" table or tab. Re-read the V3 contract's exact
-  end-date interval convention (start+N days, calendar-month arithmetic,
-  the `null` cases) before implementing — this handoff's "Hard
-  constraints" section only summarizes it.
+  yet (deliberate — see section 9b's sequencing note, which now also
+  covers Phase 7); Phase 6's and Phase 7's persistence SERVICES
+  (`lab_persistence.py`, `medication_persistence.py`) are both fully
+  callable and DB-tested standalone right now, distinct from "wired into
+  the live pipeline" — see sections 9e/9f for the precise distinction.
+- **Immediate next step: Phase 8 — discharge reader frontend rebuild.**
+  This is the first phase that touches the frontend at all since Phase
+  0-2 (the RightWorkspace Playwright fix). Consume
+  `StructuredClinicalDocument`, eliminate the old repetitive EPICRIZĂ/
+  card-heavy reader, introduce one reusable `StructuredLabReport`
+  component (embedded + standalone modes, per the contract's own
+  constraint), handle medications via canonical `PatientMedication`
+  references (never a copy of medication data in the frontend schema),
+  handle DOCX/non-PDF original-source behavior honestly, and preserve
+  compatibility during the still-deferred live-ingestion transition.
+  Per the contract's own stop condition: do not start Phase 8 unless
+  context is still comfortably small — it is a substantial frontend
+  effort and deserves a fresh session's full budget.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -240,13 +257,42 @@ in the original text, not reproduced here).
       `schema.DerivedArtifactRef.group_key`. `DELETE /documents/{id}`
       (`documents.py`) now hard-deletes derived-artifact children instead
       of leaving them orphaned. 18 new tests (real DB). See section 9e.
-  21. Check `git log --oneline -20` for anything added after this
+  21. `a026fa0` — handoff checkpoint for Phase 6's completion (this file,
+      `CURRENT_STATE.md`, `KNOWN_GAPS.md` only) — full backend suite
+      reran clean at 474/474 at this point; no functional code change.
+      Explicitly pushed to origin at the START of the Phase 7 session
+      (user-approved) before any Phase 7 work began.
+  22. `c3b38d2` — **Phase 7 increment 1**: `medication_extraction.py`
+      (new) — `MedicationCandidate` + extraction from medication-bearing
+      canonical sections and Phase 5 `treatment_change` events;
+      `medication_duration.py` (new) — deterministic RO/EN duration
+      parsing + real calendar-month-arithmetic end-date derivation via
+      `dateutil.relativedelta` (now a direct `requirements.txt`
+      dependency). 50 new tests. See section 9f.
+  23. `cabe297` — **Phase 7 COMPLETE**: `medication_persistence.py`
+      (new) — `persist_medication_candidates`, the exact 4-tier
+      start-date priority, explicit-vs-derived-vs-conflicting end dates,
+      same-drug conflict detection, idempotent inserts. Additive
+      `models.PatientMedication.source_document_id`/`source_segment_id`/
+      `stop_date_basis` and `models.SourceEvidence.medication_id`
+      columns (+ Alembic migration `ff84f15530a9`). `DELETE
+      /documents/{id}` now also explicitly cleans up medication-linked
+      document-level `SourceEvidence` (required because, unlike Phase
+      6's derived lab artifact, a document-derived medication SURVIVES
+      its source document's deletion). Also fixes a real, previously-
+      documented stale comment in `ask_bragi/tools.py` (claimed
+      `"discontinued"` was a valid medication status; it never was).
+      31 new tests (real DB). See section 9f.
+  24. Check `git log --oneline -20` for anything added after this
       checkpoint — this list is updated by hand and can lag a live
       session.
 - **Push status**: check `git log origin/fix/clinical-document-
-  intelligence-v3..HEAD --oneline` — empty means fully pushed. As of
-  writing, the three Phase 6 commits above (and this handoff commit) had
-  NOT yet been pushed. No PR opened.
+  intelligence-v3..HEAD --oneline` — empty means fully pushed. The four
+  Phase 6 commits (through `a026fa0`) were pushed at the start of this
+  Phase 7 session (explicit user authorization). The three commits above
+  (`c3b38d2`, `cabe297`, and this handoff commit) are pushed at the end
+  of this same session, per that same explicit authorization. No PR
+  opened.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -925,6 +971,230 @@ only real data flowing through it (proven now by
 has_one`, which synthesizes a segment with a real `page` to prove the
 plumbing works today even though nothing produces one in practice yet).
 
+## 9f. Phase 7 — medication extraction/context/duration/end-date (COMPLETE)
+
+**What exists — extraction, context classification, deterministic
+duration/end-date derivation, and canonical persistence, all real and
+DB-tested**:
+
+- `medication_extraction.py` (new): `MedicationCandidate` — the typed
+  intermediate (source_segment_id, source_section_id, source_heading,
+  canonical_key, raw_text, raw_medication_name, dose_text, route,
+  frequency, instructions, status_context, explicit_start_date,
+  starts_at_discharge_or_encounter, prescription_date,
+  explicit_end_date, raw_duration, parsed_duration, prn,
+  scheme_or_intermittent, indefinite, taper_without_clear_duration,
+  source_evidence_text, source_page, confidence, warnings).
+  `extract_medication_candidates_from_segment(segment, canonical_key=)`
+  scans ONLY `treatment`/`medications`/`discharge_medications`/
+  `recommendations`/`prescriptions`-classified segments
+  (`MEDICATION_BEARING_CANONICAL_KEYS`) — `medical_history` and every
+  other section are never scanned at all, so a historical medication
+  mentioned there is excluded by construction, not by a runtime guess.
+  `extract_medication_candidates_from_event(event)` additionally
+  extracts from a Phase 5 `treatment_change`-classified `ClinicalEvent`
+  — reusing Phase 5's own Clinical Course classification rather than
+  independently re-segmenting that text (the V3 contract's "one parser
+  architecture" instruction), with a fallback name-isolation strategy
+  (a capitalized-word run, e.g. "BESREMI") for free narrative prose,
+  distinct from the structured-line boundary parser used for
+  section-sourced candidates.
+- **Context classification** (`_classify_medication_context`):
+  deterministic keyword matching (no LLM call, mirrors `events.py`'s
+  own convention) into 8 contexts — started/continued/stopped/paused/
+  completed/prescribed/historical/uncertain. A `prescriptions`-section
+  mention with no keyword match falls back to "prescribed"; anything
+  else with no keyword match is "uncertain" — never silently guessed as
+  current, per the contract's own "if genuinely ambiguous, preserve as
+  uncertain" rule.
+- **Precision-first exclusion** (`_is_excluded_context`): an allergy
+  statement, a refusal, a hypothetical/"consider starting", or a
+  family-member mention produces ZERO candidates — excluded entirely,
+  never persisted even as an uncertain row (persisting is a stronger
+  claim than staying silent).
+- **A real bug found and fixed before shipping**: the same "din data de
+  <DATE>" ("starting from <DATE>") phrasing that means "starts from"
+  for a started/continued mention means something different — "stopped,
+  EFFECTIVE from <DATE>" — for a stopped/completed/paused mention. An
+  earlier draft would have misread "Metformin 850mg, oprit din data de
+  04.03.2026" as an explicit START date; `_build_candidate` now swaps
+  the label's target to `explicit_end_date` specifically for a
+  stop/complete/pause context — caught by
+  `test_din_data_de_after_stopped_context_is_read_as_a_stop_date_not_a_
+  start_date` before this ever reached persistence.
+- `medication_duration.py` (new): `parse_duration` — deterministic RO
+  (zi/zile, saptamana/saptamani, luna/luni) + EN (day/days, week/weeks,
+  month/months) parsing, `ParsedDuration.total_days` exact for
+  days/weeks, `None` for months (real calendar arithmetic needed, never
+  approximated). `is_intermittent_per_month_phrase` — the critical
+  precision guard that an "N zile/days PER MONTH" phrase (an ongoing
+  intermittent regimen) is NEVER misread as a finite N-day course, even
+  though it superficially contains a `<N> zile` token pair.
+  `find_prn_marker`/`find_scheme_or_intermittent_marker`/
+  `find_indefinite_marker`/`find_taper_without_clear_duration` — the
+  exact exclusion set from the V3 contract's Phase 7 text.
+  `derive_end_date(start_iso, duration)` — `[start, start+duration)`;
+  days/weeks via exact `timedelta`; months via
+  `dateutil.relativedelta` (now a direct `requirements.txt` dependency,
+  previously only an implicit transitive one) — real calendar-month
+  arithmetic, e.g. `2026-01-31 + 1 month = 2026-02-28`
+  (relativedelta's own deterministic month-end clamping), never
+  hand-rolled `30 * N` day math.
+- `medication_persistence.py` (new): `persist_medication_candidates(db,
+  document=, created_by_user_id=, candidates=, admission_date=,
+  discharge_date=)` — the ONLY place this package writes
+  `PatientMedication`/medication-linked `SourceEvidence` rows.
+  - **Start-date resolution** (`_resolve_start_date`) — the exact
+    4-tier priority, non-negotiable: (1) `candidate.explicit_start_date`
+    parsed via `dates.parse_date_token`; (2)
+    `candidate.starts_at_discharge_or_encounter` combined with the
+    document's own `discharge_date`; (3) `canonical_key ==
+    "discharge_medications"` AND `status_context in {"started",
+    "prescribed"}` (NEVER "continued" — an already-ongoing medication
+    did not start at discharge) combined with `discharge_date`; (4)
+    `candidate.prescription_date`, ONLY when
+    `starts_at_discharge_or_encounter` also signals the prescription
+    date IS the start. No tier ever reads `created_at`/upload/ingestion
+    timestamps — those values are never even threaded into this
+    function's inputs.
+  - **End-date resolution** (`_resolve_stop_date`) — derived ONLY when
+    a resolved start date exists AND `candidate.parsed_duration` is set
+    AND none of prn/scheme_or_intermittent/indefinite/
+    taper_without_clear_duration are set. `stop_date_basis` records
+    `"explicit"` / `"derived"` / `"explicit_with_derived_conflict"` —
+    when an explicit end date and a derivable one disagree, the
+    EXPLICIT value is kept in `stop_date` (never silently overwritten
+    by Bragi's own calculation) and the disagreement is named in a
+    warning, never dropped. A documented duration that COULDN'T be used
+    to derive an end date (no reliable start) is still preserved in
+    `extra_info` — a real gap found and fixed before shipping (an
+    earlier draft only mentioned duration in `extra_info` when it was
+    actually used to derive a date, silently losing the fact
+    otherwise — caught by
+    `test_duration_preserved_in_extra_info_even_when_no_start_date_to_
+    derive_from`).
+  - **Status mapping** (`_resolve_status`) — `status_context` maps onto
+    the EXISTING `VALID_MED_STATUSES` (`app/api/routers/medications.py`)
+    exactly, never a parallel vocabulary: started/continued/prescribed/
+    uncertain → `"active"`; stopped/completed/historical → `"stopped"`;
+    paused → `"paused"`; PRN (`candidate.prn`) overrides everything to
+    `"as_needed"`. `is_uncertain` (the model's EXISTING field) is set
+    for "uncertain"/"prescribed" contexts and for any detected conflict
+    — "completed" vs. plain "stopped", "historical" vs. plain
+    "stopped", etc. survive as human-readable `extra_info` text rather
+    than inventing new status values the app doesn't otherwise have.
+  - **Conflict detection** (`_detect_conflicts`) — two candidates for
+    the SAME normalized drug name with DIFFERING resolved statuses are
+    flagged (`is_uncertain=True` on both, `extra_info` names the
+    conflicting statuses) ONLY when neither carries a start-date signal
+    that would explain a legitimate sequential transition. A genuine
+    "started on day 1, stopped on day 14" sequence (the V3 contract's
+    own BESREMI example) is explicitly NOT flagged — it persists as two
+    ordinary, un-flagged rows with different statuses, exactly matching
+    "preserve source-supported state transitions... do not deduplicate
+    across genuinely distinct clinical events."
+  - **Idempotency** (`_find_existing_medication`) — exact-match lookup
+    on `(patient_id, source_document_id, source_segment_id, name,
+    reason)` (where `reason` carries the full verbatim source line/
+    sentence) runs before every insert — never `created_at`. Two
+    genuinely distinct mentions of the same drug (different segment or
+    different raw text) are NEVER collapsed by this lookup.
+
+**Schema/model changes** (all additive, one Alembic migration
+`ff84f15530a9_phase7_medication_provenance.py`):
+- `models.PatientMedication.source_document_id` (nullable FK →
+  `documents.id`, `ondelete="SET NULL"`) — a DELIBERATE difference from
+  Phase 6's derived lab artifact (hard-deleted with its parent): a
+  medication fact has independent clinical meaning even once the
+  document that mentioned it is gone, so deleting the source document
+  clears the (now-stale) provenance link rather than deleting the
+  medication — see section 17.
+- `models.PatientMedication.source_segment_id` (nullable `String`) —
+  mirrors `LabResult.source_section`'s existing convention exactly.
+- `models.PatientMedication.stop_date_basis` (nullable `String`) — the
+  field that keeps a calculated `stop_date` from ever reading as
+  provider-authored; explicitly named in the V3 contract's own "DERIVED
+  END DATE MUST REMAIN EXPLAINABLE" section as the kind of field
+  genuinely justified here.
+- `models.SourceEvidence.medication_id` (nullable FK →
+  `patient_medications.id`, `ondelete="SET NULL"`) — the medication half
+  of this model's OWN documented "generalize beyond lab rows" intent
+  (see its docstring, unchanged since before this session), mirroring
+  `lab_result_id`'s exact shape. `PatientMedication.source_evidence`
+  (new relationship, `cascade="all, delete-orphan"`) handles the normal
+  single-row-delete path; `ondelete="SET NULL"` on the FK itself is an
+  independent DB-level safety net for the bulk-delete path
+  (`DELETE /my/account`'s `PatientMedication` cleanup), which does not
+  trigger ORM-level cascades.
+
+**Deletion** (see section 17 for full detail): `DELETE /documents/{id}`
+now explicitly deletes medication-linked, non-lab document-level
+`SourceEvidence` rows for the document being deleted — required because
+`PatientMedication.source_document_id` uses `SET NULL`, not cascade, so
+the medication row (and therefore any `SourceEvidence` still pointing at
+this now-being-deleted document) would otherwise violate
+`SourceEvidence.document_id`'s `NOT NULL` constraint.
+
+**Requirements checklist** (all met): no second medication datastore —
+`PatientMedication` is the only table, verified by
+`test_no_second_medication_model_exists` ✓; typed `MedicationCandidate`
+intermediate, no direct ORM mutation while reading text ✓; extraction
+scoped to medication-bearing sections + `treatment_change` events, never
+independently re-segmenting Clinical Course ✓; precision-first exclusion
+of allergy/refusal/hypothetical/family-member mentions ✓; exact 4-tier
+start-date priority, never upload/ingestion date ✓; deterministic
+RO+EN duration parsing, real calendar-month arithmetic ✓; end-date
+derivation only for a reliable start + explicit finite duration, `null`
+for PRN/scheme/indefinite/unclear-taper ✓; explicit vs. derived end date
+distinguishable (`stop_date_basis`), conflict preserved not overwritten
+✓; existing status vocabulary reused, no parallel vocabulary ✓;
+conflicts preserved and flagged, sequential transitions NOT
+over-flagged ✓; raw medication name always preserved, RxNorm resolution
+never mandatory (persistence never calls `medication_lookup.py` at all
+— that remains the router's own best-effort background-task path,
+untouched) ✓; provenance to segment/document/evidence, never a fake PDF
+page/bbox ✓; deterministic identity/idempotency ✓; deletion-safe (no
+orphaned evidence, medication survives its source document) ✓; no
+derived medication artifact document fabricated (unlike Phase 6's real
+need for one) ✓; frontend NOT touched ✓.
+
+**Tests** (81 new, all passing — 16 `test_clinical_document_medication_
+duration.py` + 34 `test_clinical_document_medication_extraction.py`
+[both pure, no DB] + 31 `test_clinical_document_medication_
+persistence.py` [real DB, same skip-gracefully convention]) — covering
+every category in the V3 contract's Phase 7 required-test list (all 40
+items): every context/status mapping, all 4 start-date tiers, upload/
+ingestion date never used (2 separate items), duration parsing for
+every named RO/EN unit, the exact `2026-03-05 + 14 days = 2026-03-19`
+case, `2 weeks == 14 days` exactly, real calendar-month arithmetic
+including the `2026-01-31 + 1 month` edge case, every PRN/scheme/
+indefinite/taper exclusion, explicit end date preserved and
+distinguishable from derived, the explicit-vs-derived conflict case,
+same-drug sequential transition vs. genuine cross-source conflict,
+three distinct idempotency proofs, segment/evidence provenance, honest
+absence of PDF geometry, raw-name-survives-verbatim, unresolved name
+survives, historical-context exclusion, literal "discontinued" wording
+never producing an active row, prescription-issued not pretending
+administration, uncertain/ambiguous → requires-review, and the
+no-second-datastore guard.
+
+**What does NOT exist yet**: `discharge_summary_pipeline.py`'s live
+write path is unchanged — `medication_persistence.py` is callable and
+fully DB-tested standalone but nothing in the real upload flow calls it
+yet (same deliberate sequencing as Phases 4-6, section 9b). No derived
+medication artifact/document exists (deliberately — Phase 7 followed
+its own instruction not to fabricate one; prescription documents remain
+their real source documents). `schema.MedicationListBlock.medication_ids`/
+`PrescriptionRow.medication_id` (Phase 3's own stubbed pointer fields)
+are still never populated — nothing wires Phase 7's persistence result
+back into a `StructuredClinicalDocument`'s own blocks yet, since nothing
+calls Phase 7 from `discharge_parser.py`'s orchestration (same
+"persistence service exists, orchestration wiring deferred" shape as
+Phase 6's `DerivedArtifactRef`). Ask Bragi's `_tool_get_medications`
+was NOT extended to surface `stop_date_basis`/provenance — deliberately
+out of scope (Phase 11's job), only its stale comment was fixed. No
+frontend surfaces any of this (Phase 7's own explicit instruction).
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs — see section 9e for
@@ -950,19 +1220,32 @@ bending its own ownership rule.
 
 ## 11. Medication semantics
 
-**NOT STARTED.** No medication-context classification, duration parser,
-or end-date derivation exists. `PatientMedication` rows today are
-created only through the existing manual/medication-list-document paths
-documented in the pipeline map — discharge-summary-embedded medication
-mentions are not extracted into `PatientMedication` at all today.
+**Phase 7 COMPLETE for discharge-embedded medications — see section 9f
+for full detail.** Medication mentions inside a discharge document's
+`treatment`/`medications`/`discharge_medications`/`recommendations`/
+`prescriptions` sections (plus Phase 5 `treatment_change` events) are
+now extracted (`medication_extraction.py`), context-classified, and
+persisted as real, canonical `PatientMedication` rows
+(`medication_persistence.py`) — feeding the EXISTING `VALID_MED_
+STATUSES` vocabulary, never a second medication datastore. This is a
+real, DB-tested, callable service — **not yet wired into the live
+discharge upload write path** (same sequencing note as labs, section
+9b). Manual/medication-list-document creation paths (documented in the
+pipeline map) are unchanged and unaffected.
 
 ## 12. End-date derivation rule
 
-**NOT STARTED / NOT DEFINED.** No end-date calculation code exists. The
-contract's exact interval convention (start + N days = [start, start+N),
-"2 weeks" = +14 days, calendar-month arithmetic for months, `null` for
-PRN/ambiguous/indefinite cases) is specified in the contract text but
-not yet implemented anywhere.
+**Phase 7 COMPLETE — see section 9f for full detail.** The contract's
+exact interval convention is now implemented in `medication_
+duration.py`: `derive_end_date(start, duration)` = `[start, start+N)`
+for days/weeks (exact `timedelta`, "2 weeks" = precisely 14 days), real
+calendar-month arithmetic via `dateutil.relativedelta` for months
+(`2026-01-31 + 1 month = 2026-02-28`, documented and tested), and
+`null` for every PRN/scheme-intermittent/indefinite/unclear-taper case
+— never derived, never guessed. `medication_persistence.py`'s
+`stop_date_basis` field (new, additive) distinguishes an explicit
+source-stated end date from a derived one, and preserves — never
+silently overwrites — an explicit-vs-derived disagreement.
 
 ## 13. Timeline rules
 
@@ -974,10 +1257,18 @@ Timeline entries, exist yet.
 
 ## 14. Provenance rules
 
-Unchanged from before this session for the existing (lab-result-level)
-SourceEvidence mechanism — that part of the architecture was not
-touched. No new provenance mechanism for discharge-document sections/
-events/medications exists yet (that's Phase 12's job, not attempted).
+For labs (Phase 6, section 9e) and now medications (Phase 7, section
+9f): every extracted fact traces back to `SourceEvidence.document_id`
+(the authoritative parent) + `source_block_id`/`source_segment_id` (the
+exact originating `SourceSegment`) + the verbatim source text — never a
+fabricated PDF page/bbox for either. `SourceEvidence.medication_id`
+(new, additive) is the medication half of this model's own long-
+documented "generalize beyond lab rows" intent, mirroring
+`lab_result_id`'s exact shape. Still not attempted: a dedicated,
+document-section-level provenance mechanism independent of labs/
+medications specifically (Phase 12's own broader scope — diagnoses,
+procedures, and general section-level citations beyond what Phase 6/7
+already cover for their own entity types).
 
 ## 15. Ask Bragi changes (the actual P0 fix — full detail)
 
@@ -1074,35 +1365,56 @@ itself is mocked at the boundary (`ask_bragi_service._client`/
 
 ## 16. Idempotency keys
 
-**Phase 6 establishes the first real idempotent identities in this
-package** (see section 9e): a `LabResult`'s identity is
-`(document_id, source_segment_id, raw_test_name, raw_value,
-observation_datetime)`; a derived lab-report `Document`'s identity is
-`(parent_document_id, group_key)`. Both are exact-match DB lookups run
-before every insert — never `created_at`. Proven by three dedicated
-tests (`test_repeated_identical_extraction_does_not_duplicate_
-lab_results`/`..._the_derived_artifact`/`..._source_evidence`), each
-calling `persist_lab_candidates` twice with the SAME candidates and
-asserting row counts are unchanged the second time. This satisfies
-Phase 6's own instruction 12 ("begin the idempotency architecture now")
-— NOT Phase 13's full requirement, which still needs the 1x/2x/10x
-proof against a REAL end-to-end upload once the live write path exists
-(medications/`PatientEvent` idempotency is also still Phase 13's job,
+**Phase 6 (labs) and Phase 7 (medications) each establish real
+idempotent identities in this package** (sections 9e/9f). A
+`LabResult`'s identity is `(document_id, source_segment_id,
+raw_test_name, raw_value, observation_datetime)`; a derived lab-report
+`Document`'s identity is `(parent_document_id, group_key)`. A
+`PatientMedication`'s identity is `(patient_id, source_document_id,
+source_segment_id, name, reason)` — `reason` carries the full verbatim
+source line/sentence specifically so two genuinely distinct mentions of
+the same drug (different segment, or different raw text within one
+segment) are never collapsed. All of these are exact-match DB lookups
+run before every insert — never `created_at`. Proven by dedicated tests
+in both phases (`test_repeated_identical_extraction_does_not_
+duplicate_*` for labs; `test_repeated_identical_extraction_does_not_
+duplicate_medications`/`test_genuinely_separate_source_medication_
+events_do_not_over_deduplicate` for medications), each calling the
+persistence function twice with the SAME candidates and asserting row
+counts are unchanged the second time. This satisfies each phase's own
+instruction to "begin the idempotency architecture now" — NOT Phase
+13's full requirement, which still needs the 1x/2x/10x proof against a
+REAL end-to-end upload once the live write path exists for either
+(`PatientEvent` idempotency is also still entirely Phase 13's job,
 unaddressed here).
 
 ## 17. Deletion behavior
 
-Single-document delete (`DELETE /documents/{document_id}`) gained one
-real behavior change this checkpoint (Phase 6, section 9e): it now
-explicitly hard-deletes any child `Document` with
-`derived_artifact_kind` set before deleting the requested document —
-previously (and still, for an ordinary Reducto Split child) a child's
-`parent_document_id` only gets `SET NULL`'d at the DB level, leaving it
-orphaned rather than removed. This does NOT change Split-child behavior
-at all (that FK's `ondelete="SET NULL"` is untouched; the new logic is
-a separate, explicit query scoped only to `derived_artifact_kind IS NOT
-NULL` rows). Everything else — the pre-existing asymmetry between this
-route and `DELETE /my/account` documented in `docs/clinical_document_v3/
+Single-document delete (`DELETE /documents/{document_id}`) gained two
+real behavior changes across these two checkpoints:
+- **Phase 6** (section 9e): explicitly hard-deletes any child
+  `Document` with `derived_artifact_kind` set before deleting the
+  requested document — previously (and still, for an ordinary Reducto
+  Split child) a child's `parent_document_id` only gets `SET NULL`'d at
+  the DB level, leaving it orphaned rather than removed. Does NOT
+  change Split-child behavior at all (that FK's `ondelete="SET NULL"`
+  is untouched; the new logic is a separate, explicit query scoped only
+  to `derived_artifact_kind IS NOT NULL` rows).
+- **Phase 7** (section 9f): explicitly deletes medication-linked,
+  non-lab document-level `SourceEvidence` rows for the document being
+  deleted. Required because `PatientMedication.source_document_id`
+  uses `SET NULL` (the medication survives its source document's
+  deletion — a deliberate difference from Phase 6's derived lab
+  artifact, which is hard-deleted with its parent, since a medication
+  fact stays independently meaningful once the document that mentioned
+  it is gone), so its `SourceEvidence` rows would otherwise still point
+  at the document about to be deleted and violate `SourceEvidence.
+  document_id`'s `NOT NULL` constraint. Scoped to `lab_result_id IS
+  NULL AND medication_id IS NOT NULL` only — lab-linked evidence is
+  unaffected (already covered by the `LabResult` cascade).
+
+Everything else — the pre-existing asymmetry between this route and
+`DELETE /my/account` documented in `docs/clinical_document_v3/
 CURRENT_PIPELINE_MAP.md`, the reliance on `Document.lab_results`'s ORM
 cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
 
@@ -1157,6 +1469,17 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   clean: `474 passed, 5 warnings in 885.98s (0:14:45)` — zero failures,
   zero errors, no Neon flake this run.** All 44 new Phase 6 tests were
   also individually reconfirmed passing per-file immediately beforehand.
+  → **555 CONFIRMED after Phase 7 COMPLETION** (net +81 over the 474
+  baseline — an EXACT match this time, no discrepancy: 81 new
+  Phase-7-specific test functions were added across three new files —
+  `test_clinical_document_medication_duration.py` (16),
+  `test_clinical_document_medication_extraction.py` (34),
+  `test_clinical_document_medication_persistence.py` (31). **Full suite
+  reran clean: `555 passed, 5 warnings in 1069.41s (0:17:49)` — zero
+  failures, zero errors, no Neon flake this run.** All 81 new Phase 7
+  tests were also individually reconfirmed passing per-file immediately
+  beforehand (the two pure, no-DB files together: 50/50; the real-DB
+  file: 31/31 on its own run right after writing it).
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -1193,20 +1516,21 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   real bug. Always re-run `pytest -q` and trust its own summary line
   over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
-  `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-6 (no
+  `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-7 (no
   frontend application behavior changed).
-- OpenAPI routes: unchanged, 117 routes / 99 paths (Phases 3-6 added no
-  route — Phase 6's only DB-visible surface is the one additive
-  `documents.derived_artifact_kind` column, via `DELETE /documents/{id}`,
-  an EXISTING route with no new endpoint).
-- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 6 — zero
+- OpenAPI routes: unchanged, 117 routes / 99 paths (Phases 3-7 added no
+  route — Phase 6's DB-visible surface was the additive
+  `documents.derived_artifact_kind` column; Phase 7's is the three
+  additive `patient_medications`/`source_evidence` columns — both only
+  via `DELETE /documents/{id}`, an EXISTING route with no new endpoint).
+- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 7 — zero
   findings (only benign "Test in comment" collector warnings unrelated
   to any real issue, same as every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean
-  after Phase 6's migration — "No migration drift detected (8
+  after Phase 7's migration — "No migration drift detected (8
   known/tolerated legacy-index difference(s) ignored)", same 8 as every
-  prior checkpoint, plus the new `derived_artifact_kind` column applied
-  and confirmed via `alembic upgrade head`.
+  prior checkpoint, plus `ff84f15530a9_phase7_medication_provenance.py`
+  applied and confirmed via `alembic upgrade head`.
 
 ## 20. Playwright coverage (what exists now)
 
@@ -1232,37 +1556,71 @@ coverage exists yet — those need Phases 4-13 to exist first.
    realistic mocked tool-call sequence, not merely the abstract "N > 4"
    case the pre-existing `test_max_tool_rounds_is_enforced` test
    already covered), fixed, and regression-tested both ways.
+2. **A "starting from `<DATE>`" label misread as a START date when it
+   actually describes a STOP date** (Phase 7) — see section 9f. Romanian
+   "din data de" means "starting from" in a started/continued mention
+   but "effective from" (i.e. the STOP date) in a stopped/completed/
+   paused one; an earlier draft of `medication_extraction.py` would have
+   recorded "Metformin 850mg, oprit din data de 04.03.2026" with an
+   `explicit_start_date` of 04.03.2026 instead of an `explicit_end_
+   date`. Caught by `test_din_data_de_after_stopped_context_is_read_as_
+   a_stop_date_not_a_start_date` before this reached persistence; fixed
+   with a context-aware label swap in `_build_candidate`.
+3. **A documented medication duration silently disappearing when no
+   reliable start date existed to derive an end date from** (Phase 7) —
+   see section 9f. An earlier draft of `medication_persistence.py`'s
+   `_build_extra_info` only recorded `raw_duration` in `extra_info` when
+   it was actually USED to derive `stop_date` — so a genuinely documented
+   "10 zile" course with an unresolvable start date lost that fact
+   entirely, violating Phase 7M's own "preserve duration" requirement.
+   Caught by `test_duration_preserved_in_extra_info_even_when_no_start_
+   date_to_derive_from`; fixed by always recording the documented
+   duration, with different wording depending on whether it was actually
+   used to compute a date.
+4. **A stale, factually wrong comment in `ask_bragi/tools.py`** claiming
+   `"discontinued"` is a valid `PatientMedication.status` value — it
+   never was (`VALID_MED_STATUSES = {"active", "as_needed", "paused",
+   "stopped"}`). Pre-existing, already documented as a known inaccuracy
+   in `docs/clinical_document_v3/CURRENT_PIPELINE_MAP.md`'s Open
+   Question #11 and this handoff's own "Hard constraints" section
+   before this checkpoint; fixed now (comment-only, zero behavior
+   change) since Phase 7 was directly working with this exact
+   vocabulary.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
-persistence module with no prior behavior to regress) or since.
+persistence module with no prior behavior to regress) or Phase 6.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phases 3, 4, 5, and 6 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e) —
+Phases 3 through 7 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f) —
 real, tested segmentation, canonical section consolidation, Clinical
 Course event extraction (including chronology and vital-sign
-plausibility checks), and embedded lab extraction/grouping/canonical
-persistence all exist and are proven against every relevant V3 contract
-example, including all three required suspicious-data fixtures (Phase
-5) and the synthetic hematology fixture (Phase 6). None of Phases 4-6's
-production code is wired into the real live discharge INGESTION pipeline
-yet (deliberate — section 9b's sequencing note, which now also governs
-Phase 6); Phase 6's own persistence SERVICE (`lab_persistence.py`) is
-however fully callable and DB-tested standalone today — a real
-distinction, not a contradiction (see section 9e). Table/key-value block
-construction from real per-section content (beyond `ParagraphBlock`)
-still does not exist for the STRUCTURED-DOCUMENT schema's own blocks
-(`TableBlock` etc. — Phase 6 produces real structured `LabCandidate`s,
-but doesn't yet emit a `TableBlock`/`LabReportReferenceBlock` back into
-a section's own `blocks[]`, since nothing wires Phase 6 into
-`discharge_parser.py`'s orchestration yet). `ClinicalEvent.
-structured_observations`/`medication_changes`/`procedures` are not yet
-independently populated (captured only in each event's `raw_text`
-today) — Phase 7's job. Everything from Phase 7 onward through Phase 21
-of the original contract is **entirely unimplemented**:
+plausibility checks), embedded lab extraction/grouping/canonical
+persistence, and medication extraction/context classification/duration/
+end-date derivation all exist and are proven against every relevant V3
+contract example, including all three required suspicious-data fixtures
+(Phase 5) and the synthetic hematology fixture (Phase 6). None of
+Phases 4-7's production code is wired into the real live discharge
+INGESTION pipeline yet (deliberate — section 9b's sequencing note, which
+now also governs Phases 6 and 7); Phase 6's and Phase 7's own
+persistence SERVICES (`lab_persistence.py`, `medication_persistence.py`)
+are however both fully callable and DB-tested standalone today — a real
+distinction, not a contradiction (see sections 9e/9f). Table/key-value
+block construction from real per-section content (beyond
+`ParagraphBlock`) still does not exist for the STRUCTURED-DOCUMENT
+schema's own blocks (`TableBlock`/`MedicationListBlock`/
+`PrescriptionTableBlock` etc. — Phases 6/7 produce real structured
+candidates, but neither yet emits a block back into a section's own
+`blocks[]`, since nothing wires either phase into `discharge_parser.py`'s
+orchestration yet). `ClinicalEvent.structured_observations`/
+`medication_changes`/`procedures` are STILL not independently populated
+(captured only in each event's `raw_text`) — Phase 7 consumed
+`treatment_change` events for its OWN extraction but did not retrofit
+`ClinicalEvent` itself to carry structured medication-change data; a
+reasonable future increment, not attempted. Everything from Phase 8
+onward through Phase 21 of the original contract is **entirely
+unimplemented**:
 
-- Phase 7: medication context classification, duration parser,
-  deterministic end-date derivation.
 - Phase 8: discharge reader frontend rebuild (header/outline/canvas/
   workspace), `StructuredLabReport` component.
 - Phase 9: Documents page derived-artifact relationship UI.
@@ -1271,26 +1629,30 @@ of the original contract is **entirely unimplemented**:
   (structured dated-event queries, transparent end-date-derivation
   language in answers).
 - Phase 12: provenance for the new structured facts.
-- Phase 13 (partial — Phase 6 laid the LabResult/derived-artifact
-  identity groundwork and DB-proved it standalone, section 9e/16 — the
-  full 1x/2x/10x proof against a REAL end-to-end discharge UPLOAD, plus
-  medication/PatientEvent idempotency, is still this phase's job):
-  idempotency guarantees for repeated discharge ingestion.
-- Phase 14 (partial — Phase 6 proved its own derived-artifact deletion
+- Phase 13 (partial — Phases 6 AND 7 each laid real identity groundwork
+  and DB-proved it standalone, sections 9e/9f/16 — the full 1x/2x/10x
+  proof against a REAL end-to-end discharge UPLOAD, plus `PatientEvent`
+  idempotency, is still this phase's job): idempotency guarantees for
+  repeated discharge ingestion.
+- Phase 14 (partial — Phases 6 AND 7 each proved their own deletion
   semantics both at the ORM level and through the real DELETE route,
-  section 9e/17 — the exhaustive real-Postgres cascade suite across
+  sections 9e/9f/17 — the exhaustive real-Postgres cascade suite across
   every entity type this contract touches is still this phase's job):
   real-Postgres deletion tests for the new derived data.
 - Phase 15 (partial — the synthetic hematology LAB VALUES fixture exists
-  and is reused across Phase 6's own tests, section 18 — a full
-  synthetic DISCHARGE document fixture exercising every phase together,
-  as Phase 15 originally intends, does not exist yet): the synthetic
-  hematology-discharge test fixture.
+  and is reused across Phase 6's own tests, section 18; Phase 7's own
+  medication fixture text lives inline in `test_clinical_document_
+  medication_persistence.py` rather than as a shared standalone file —
+  a full synthetic DISCHARGE document fixture exercising every phase
+  together, as Phase 15 originally intends, does not exist yet): the
+  synthetic hematology-discharge test fixture.
 - Phase 16 (partial — done for Phase 2's own scope, not for the rest):
   Playwright for the document/lab/medication/timeline flows.
-- Phase 17 (partial — Phase 6 contributed its own share of this list:
-  alias resolution, dedup/conflict preservation, table/qualitative-value
-  extraction, section 17 of this document): the extensive backend test
+- Phase 17 (partial — Phases 6 AND 7 each contributed their own share
+  of this list: alias resolution, dedup/conflict preservation, table/
+  qualitative-value extraction (Phase 6); context classification,
+  duration parsing, date-priority resolution, conflict preservation
+  (Phase 7) — section 17 of this document): the extensive backend test
   list (heading normalization, date extraction, lab/medication dedup,
   etc.).
 - Phase 18: the 75-100-case deterministic retrieval benchmark.
@@ -1298,9 +1660,9 @@ of the original contract is **entirely unimplemented**:
 - Phase 20: accessibility verification.
 - Phase 21 (full): the final full regression across all of the above —
   the full backend suite HAS been re-run clean at every checkpoint
-  through Phase 6 (474/474 as of this one, section 19), but that is
-  verification of Phases 0-6's own code, not a certification that
-  Phases 7-21's (still nonexistent) code passes anything.
+  through Phase 7 (555/555 as of this one, section 19), but that is
+  verification of Phases 0-7's own code, not a certification that
+  Phases 8-21's (still nonexistent) code passes anything.
 
 This is a large, honest scope gap. The contract's own framing (21
 phases, dozens of named sub-requirements, a 26-section handoff, a 75-
@@ -1333,37 +1695,51 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start Phase 7 (medication context classification + deterministic
-  duration/end-date derivation) — Phases 3, 4, 5, and 6 are ALL done:
-  `app/services/clinical_document/schema.py`/`persistence.py` (Phase 3),
-  `segments.py`/`canonical_headings.py` (Phase 4), `dates.py`/`events.py`/
-  `discharge_parser.py` (Phase 5), `lab_extraction.py`/`lab_grouping.py`/
-  `lab_persistence.py` (Phase 6) — use them all as-is (sections
-  9/9b/9c/9d/9e), extend additively if a real gap is found, do not
-  redesign or duplicate any of them. Reuse the EXISTING
-  `PatientMedication` model/status semantics (`app/api/routers/
-  medications.py`'s `VALID_MED_STATUSES`) — no separate "discharge
-  medication" table or tab, same "no second datastore" rule Phase 6 just
-  followed for labs. Re-read the V3 contract's EXACT end-date interval
-  convention before writing any code (this handoff's "Hard constraints"
-  section only summarizes it: start+N days = `[start, start+N)`, "2
-  weeks" = exactly +14 days, real calendar-month arithmetic for months —
-  not `30 × N` days, `null` for PRN/"according to scheme"/alternate
-  dosing/indefinite/unclear-total-duration tapers). Medication
-  start-date priority is likewise exact and easy to get subtly wrong —
-  re-read it in the contract text, not just this handoff's summary.
-  Duration parsing must be deterministic (Romanian + English units, no
-  LLM call), matching every other Phase 4-6 module's own convention.
-  Remaining Phase 4/5/6 work NOT required before Phase 7, but still
-  open: wiring the discharge pipeline's live write path (section 9b's
-  sequencing note — still deferred, now covers Phase 6 too), populating
-  `ClinicalEvent.structured_observations`/`medication_changes`/
-  `procedures` (currently empty; raw_text carries everything today —
-  Phase 7 may naturally want to populate `medication_changes` as part
-  of its own work, which is in-scope, not scope creep), and Phase 6's
-  own explicitly-deferred items (frontend, `/bloodwork-trends`
-  reachability — see section 10's exact wording on why that's a real,
-  separate gap).
+- Start Phase 8 (discharge reader frontend rebuild) — Phases 3 through 7
+  are ALL done: `app/services/clinical_document/schema.py`/
+  `persistence.py` (Phase 3), `segments.py`/`canonical_headings.py`
+  (Phase 4), `dates.py`/`events.py`/`discharge_parser.py` (Phase 5),
+  `lab_extraction.py`/`lab_grouping.py`/`lab_persistence.py` (Phase 6),
+  `medication_extraction.py`/`medication_duration.py`/`medication_
+  persistence.py` (Phase 7) — use them all as-is (sections
+  9/9b/9c/9d/9e/9f), extend additively if a real gap is found, do not
+  redesign or duplicate any of them. This is the FIRST phase since 0-2
+  that touches the frontend — re-read the V3 contract's exact Phase 8
+  requirements in full before starting (this handoff does not
+  summarize them the way it does the backend phases' hard constraints,
+  since Phase 8 was never attempted this session). Known landmines
+  going in: `frontend/app/documents/[id]/discharge/page.tsx`'s
+  `parseDischargePayload` only understands the OLD, pre-Phase-3 JSON
+  shape (see `CURRENT_PIPELINE_MAP.md` §15) — the live write path is
+  STILL not switched to produce `StructuredClinicalDocument` (section
+  9b's sequencing note), so Phase 8 needs its own honest read-time
+  upconversion strategy (e.g. reading via `persistence.parse_structured_
+  document` against existing `note_body` rows) rather than assuming new
+  uploads already produce the new shape. One reusable
+  `StructuredLabReport` component for both embedded and standalone
+  modes (contract's own explicit constraint) — not two components.
+  Medications must be surfaced via real `PatientMedication` references
+  (`schema.MedicationListBlock.medication_ids`/`PrescriptionRow.
+  medication_id` — currently always empty; Phase 8 is a reasonable place
+  to finally wire discharge_parser.py to call Phase 7's extraction and
+  populate these, OR that wiring could be its own preceding increment —
+  a decision for whoever picks this up, not made unilaterally here).
+- Do not re-attempt Phase 7 — medication extraction/context
+  classification/duration/end-date derivation/persistence is complete
+  and DB-tested (section 9f), including all 40 required test
+  categories from the contract's own Phase 7 test list. If Phase 8 (or
+  later work) needs a genuinely NEW medication-extraction capability
+  this module doesn't have, extend `medication_extraction.py`/
+  `medication_duration.py`/`medication_persistence.py` additively and
+  add a regression test — do not build a second medication-candidate
+  parser or a second persistence path. The one thing intentionally left
+  for a LATER phase, not a gap in Phase 7 itself: wiring
+  `medication_persistence.persist_medication_candidates` into the live
+  discharge upload write path (still deliberately deferred, same
+  sequencing reasoning as Phases 4-6 — see section 9b), and populating
+  `schema.MedicationListBlock`/`PrescriptionRow.medication_id` from a
+  real extraction pass (see the Phase 8 note above — likely Phase 8's
+  own first step, not Phase 7's).
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing

@@ -189,3 +189,22 @@ panel), and 4 was not enough headroom. See
 for the full diagnosis and `prompts.py`'s "TOOL EFFICIENCY" guidance,
 which reduces how many rounds this class of question actually needs in
 the first place.
+
+## `SourceEvidence` generalizing beyond lab rows (2026-09-15)
+
+`SourceEvidence.lab_result_id` was always nullable specifically so this
+model could "generalize to other clinical entities... not just lab
+rows" (its own long-standing docstring). Clinical Document Intelligence
+V3 Phase 7 is the first real use of that intent: a new, symmetric
+`SourceEvidence.medication_id` (nullable FK → `patient_medications.id`,
+`ondelete="SET NULL"`) provides the same provenance mechanism for a
+document-derived `PatientMedication` row that `lab_result_id` already
+provides for a `LabResult` row. `PatientMedication` itself gained three
+additive provenance columns (`source_document_id`, `source_segment_id`,
+`stop_date_basis`) — see `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 9f for the full
+design reasoning, including why `source_document_id` deliberately uses
+`ondelete="SET NULL"` rather than the hard-delete-with-parent pattern
+Phase 6 used for its derived lab artifact (a medication fact stays
+independently meaningful once its source document is gone; a
+pointer-only derived artifact does not).
