@@ -405,7 +405,13 @@ export default function MyRecordsUploadPage() {
         </button>
       }
     >
-      <div className="b-stack" style={{ maxWidth: 900 }}>
+      {/* No maxWidth cap here — this page previously hardcoded 900px,
+          leaving a large unused strip on the right at any viewport wider
+          than that on top of AppShell's own --content-max (1440px)
+          centering. Removed so the upload workspace uses the SAME
+          available body width every other page already gets, not a
+          second, narrower cap. */}
+      <div className="b-stack">
         {error ? <ErrorNote>{error}</ErrorNote> : null}
 
         {/* One coherent upload workspace: the dropzone, the queue, and the
