@@ -591,10 +591,29 @@ def test_deleting_source_document_does_not_delete_the_projected_event(discharge_
 
     db = SessionLocal()
     try:
+        # Post-Phase-10 integration check (Part C): the invariant is "no
+        # Timeline event may continue asserting a fact with no canonical
+        # support" — verified here by confirming the CANONICAL FACT
+        # (PatientMedication) itself is what actually survives, not just
+        # asserting the projection survives in isolation. This schema has
+        # no multi-document-support concept for a medication row (exactly
+        # ONE source_document_id per row, by Phase 7's own idempotency
+        # design — a genuinely different mention gets its own row) so
+        # there is no "Case A vs Case B" ambiguity to resolve: a
+        # medication row is either supported by its one source document
+        # (now gone, SET NULL) or it isn't tracked as supported by
+        # anything else at all — Phase 7 already decided the fact stays
+        # independently meaningful either way, and Phase 10 correctly
+        # inherits that decision rather than inventing a stricter rule.
         event = db.query(models.PatientEvent).filter(models.PatientEvent.id == event_id).first()
         assert event is not None
         assert event.source_document_id is None
         assert event.title == "Amoxicilina"
+
+        medication = db.query(models.PatientMedication).filter(models.PatientMedication.id == amox.id).first()
+        assert medication is not None
+        assert medication.source_document_id is None
+        assert event.source_medication_id == medication.id
     finally:
         db.close()
 
