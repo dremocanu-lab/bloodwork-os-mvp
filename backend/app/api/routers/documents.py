@@ -56,6 +56,7 @@ moved here in full, unchanged.
 
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -328,7 +329,7 @@ def get_patient_documents(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("doctor", "admin")),
 ):
-    from app.main import serialize_document_card
+    from app.main import resolve_derived_artifact_contexts, serialize_document_card
 
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
 
@@ -345,6 +346,8 @@ def get_patient_documents(
         .all()
     )
 
+    derived_contexts = resolve_derived_artifact_contexts(db, documents)
+
     return {
         "patient": {
             "id": patient.id,
@@ -358,7 +361,16 @@ def get_patient_documents(
             "cnp": _mask_cnp(patient.cnp),
             "patient_identifier": patient.patient_identifier,
         },
-        "documents": [serialize_document_card(db, document, current_user) for document in documents],
+        "documents": [
+            serialize_document_card(
+                db,
+                document,
+                current_user,
+                parent_document=derived_contexts.get(document.id, {}).get("parent_document"),
+                has_abnormal_override=derived_contexts.get(document.id, {}).get("has_abnormal_override"),
+            )
+            for document in documents
+        ],
     }
 
 
@@ -853,20 +865,67 @@ def get_clinical_reader_payload(
     elif not can_access_patient(db, current_user, document.patient_id):
         raise HTTPException(status_code=403, detail="Forbidden")
 
-    structured_document = parse_structured_document(document.note_body)
+    # Clinical Document Intelligence V3 Phase 9: a derived lab-report
+    # artifact's own note_body is a JSON pointer (group_key,
+    # source_section_id, lab_result_ids — see lab_persistence.py), not a
+    # StructuredClinicalDocument, so there is nothing to parse; its
+    # canonical LabResult rows live on the PARENT document (Phase 6's
+    # ownership rule), never on the artifact's own id, so they must be
+    # resolved via the pointer's lab_result_ids, not `LabResult.
+    # document_id == document.id` (which is always empty here).
+    derived_artifact_payload = None
+    if document.derived_artifact_kind:
+        try:
+            note_data = json.loads(document.note_body or "{}")
+        except (TypeError, ValueError):
+            note_data = {}
+        lab_result_ids = [lab_id for lab_id in (note_data.get("lab_result_ids") or []) if isinstance(lab_id, int)]
 
-    labs = (
-        db.query(models.LabResult)
-        .filter(models.LabResult.document_id == document.id)
-        .order_by(models.LabResult.id.asc())
-        .all()
-    )
-    medications = (
-        db.query(models.PatientMedication)
-        .filter(models.PatientMedication.source_document_id == document.id)
-        .order_by(models.PatientMedication.id.asc())
-        .all()
-    )
+        structured_document = None
+        labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.id.in_(lab_result_ids))
+            .order_by(models.LabResult.id.asc())
+            .all()
+            if lab_result_ids
+            else []
+        )
+        medications: list = []
+
+        parent = (
+            db.query(models.Document).filter(models.Document.id == document.parent_document_id).first()
+            if document.parent_document_id
+            else None
+        )
+        derived_artifact_payload = {
+            "kind": document.derived_artifact_kind,
+            "group_key": note_data.get("group_key"),
+            "source_section_id": note_data.get("source_section_id"),
+            "parent_document_id": document.parent_document_id,
+            "parent_report_name": parent.report_name if parent else None,
+            "parent_filename": parent.filename if parent else None,
+            "parent_document_type": parent.document_type if parent else None,
+            # The derived artifact itself has no file/content_type of its
+            # own (see lab_persistence.py) — ReaderSourceAction's PDF-vs-
+            # non-PDF honesty check must gate on the PARENT's real file
+            # type, since "View source" always opens the parent's file.
+            "parent_content_type": parent.content_type if parent else None,
+        }
+    else:
+        structured_document = parse_structured_document(document.note_body)
+
+        labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.document_id == document.id)
+            .order_by(models.LabResult.id.asc())
+            .all()
+        )
+        medications = (
+            db.query(models.PatientMedication)
+            .filter(models.PatientMedication.source_document_id == document.id)
+            .order_by(models.PatientMedication.id.asc())
+            .all()
+        )
 
     lab_payload = [
         {
@@ -912,8 +971,16 @@ def get_clinical_reader_payload(
     # a fabricated PDF page/bbox: see ensure_document_level_evidence's
     # own docstring for the honest page_only/document_only precision
     # this always produces.
+    #
+    # A derived lab artifact has no `saved_to`/real file of its own
+    # (see lab_persistence.py's _get_or_create_derived_document — it is
+    # a pointer row, never an upload), so anchoring evidence to its OWN
+    # id would create a phantom row pointing at nothing. "View source"
+    # for a derived artifact always resolves against the PARENT
+    # document's real file instead.
+    evidence_target_document = parent if document.derived_artifact_kind and parent else document
     document_level_evidence = source_evidence_service.ensure_document_level_evidence(
-        db, document, provider="clinical_reader"
+        db, evidence_target_document, provider="clinical_reader"
     )
 
     return {
@@ -930,10 +997,12 @@ def get_clinical_reader_payload(
             "created_at": document.created_at,
             "is_verified": bool(document.is_verified),
             "document_level_source_evidence_id": document_level_evidence.id,
+            "derived_artifact_kind": document.derived_artifact_kind,
         },
         "structured_document": structured_document.model_dump() if structured_document else None,
         "labs": lab_payload,
         "medications": medication_payload,
+        "derived_artifact": derived_artifact_payload,
     }
 
 
@@ -1193,6 +1262,19 @@ def delete_document(
 
         if not patient or patient.id != document.patient_id:
             raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Clinical Document Intelligence V3 Phase 9: a derived lab-report
+    # artifact is a pointer into the parent document's own canonical
+    # LabResult rows, not an independent upload — deleting it directly
+    # would silently desynchronize Documents from the parent's real
+    # content without actually removing any clinical data. It is only
+    # ever removed as a side effect of its parent's deletion (the cascade
+    # a few lines below, unchanged from Phase 6).
+    if document.derived_artifact_kind:
+        raise HTTPException(
+            status_code=400,
+            detail="Derived artifacts cannot be deleted directly — delete the source document instead.",
+        )
 
     saved_to = document.saved_to
 

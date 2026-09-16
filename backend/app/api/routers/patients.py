@@ -591,7 +591,7 @@ def serialize_doctor_access(link) -> dict:
 
 
 def build_patient_profile_response(db: Session, patient, current_user) -> dict:
-    from app.main import serialize_document_card
+    from app.main import resolve_derived_artifact_contexts, serialize_document_card
 
     documents = (
         db.query(models.Document)
@@ -599,6 +599,8 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
         .order_by(models.Document.id.desc())
         .all()
     )
+
+    derived_contexts = resolve_derived_artifact_contexts(db, documents)
 
     grouped_documents = {
         "notes": [],
@@ -612,7 +614,17 @@ def build_patient_profile_response(db: Session, patient, current_user) -> dict:
 
     for document in documents:
         section = document.section if document.section in grouped_documents else "other"
-        grouped_documents[section].append(serialize_document_card(db, document, current_user))
+        context = derived_contexts.get(document.id, {})
+
+        grouped_documents[section].append(
+            serialize_document_card(
+                db,
+                document,
+                current_user,
+                parent_document=context.get("parent_document"),
+                has_abnormal_override=context.get("has_abnormal_override"),
+            )
+        )
 
     events = (
         db.query(models.PatientEvent)

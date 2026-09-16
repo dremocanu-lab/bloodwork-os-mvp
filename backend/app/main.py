@@ -820,6 +820,67 @@ def document_has_abnormal_labs(db: Session, document_id: int) -> bool:
     return any(lab_flag_is_abnormal(lab.flag) for lab in labs)
 
 
+def resolve_derived_artifact_contexts(db: Session, documents: list) -> dict[int, dict]:
+    """Batched `serialize_document_card` context for every derived lab
+    artifact in `documents` (Clinical Document Intelligence V3 Phase 9).
+
+    `documents` must already be the full set of documents this card
+    listing is about to render — a derived artifact's parent is always
+    another document in that same set (same patient), so this never
+    issues a parent-lookup query per card. Every derived artifact's
+    `lab_result_ids` (populated in its note_body by lab_persistence.py)
+    is collected first, then resolved with exactly ONE batched
+    `LabResult` query no matter how many derived artifacts exist, fixing
+    `document_has_abnormal_labs(db, document.id)`'s always-False result
+    for a derived artifact (see serialize_document_card's docstring).
+
+    Returns `{document_id: {"parent_document": dict | None,
+    "has_abnormal_override": bool}}`, one entry per derived artifact in
+    `documents` (ordinary documents/Reducto Split children are absent).
+    """
+    documents_by_id = {document.id: document for document in documents}
+
+    derived_lab_result_ids: dict[int, list[int]] = {}
+    for document in documents:
+        if not document.derived_artifact_kind:
+            continue
+        try:
+            note_data = json.loads(document.note_body or "{}")
+        except (TypeError, ValueError):
+            note_data = {}
+        derived_lab_result_ids[document.id] = [
+            lab_id for lab_id in (note_data.get("lab_result_ids") or []) if isinstance(lab_id, int)
+        ]
+
+    all_referenced_lab_ids = {lab_id for ids in derived_lab_result_ids.values() for lab_id in ids}
+    abnormal_lab_ids: set[int] = set()
+    if all_referenced_lab_ids:
+        flags = (
+            db.query(models.LabResult.id, models.LabResult.flag)
+            .filter(models.LabResult.id.in_(all_referenced_lab_ids))
+            .all()
+        )
+        abnormal_lab_ids = {lab_id for lab_id, flag in flags if lab_flag_is_abnormal(flag)}
+
+    contexts: dict[int, dict] = {}
+    for document_id, referenced_ids in derived_lab_result_ids.items():
+        parent = documents_by_id.get(documents_by_id[document_id].parent_document_id)
+        parent_document = None
+        if parent is not None:
+            parent_document = {
+                "id": parent.id,
+                "report_name": parent.report_name,
+                "filename": parent.filename,
+                "document_type": parent.document_type,
+            }
+        contexts[document_id] = {
+            "parent_document": parent_document,
+            "has_abnormal_override": any(lab_id in abnormal_lab_ids for lab_id in referenced_ids),
+        }
+
+    return contexts
+
+
 def doctor_reviewed_document(db: Session, doctor_user_id: int | None, document_id: int) -> bool:
     if not doctor_user_id:
         return False
@@ -876,9 +937,38 @@ def serialize_lab_result(lab):
     }
 
 
-def serialize_document_card(db: Session, document, current_user=None) -> dict:
+def serialize_document_card(
+    db: Session,
+    document,
+    current_user=None,
+    *,
+    parent_document: dict | None = None,
+    has_abnormal_override: bool | None = None,
+) -> dict:
+    """`parent_document`/`has_abnormal_override` exist for Clinical
+    Document Intelligence V3 Phase 9's derived-lab-artifact cards:
+
+    - `document_has_abnormal_labs(db, document.id)` queries `LabResult.
+      document_id == document.id` — for a derived artifact this is
+      ALWAYS empty (Phase 6 attaches every LabResult to the
+      AUTHORITATIVE PARENT document, never to the derived artifact
+      itself — see lab_persistence.py's own ownership rule), so calling
+      it unconditionally would silently and incorrectly report every
+      derived artifact as never abnormal. The caller (`build_patient_
+      profile_response`) computes this correctly for derived artifacts
+      via ONE batched query across every derived artifact's own
+      `lab_result_ids` (never one query per card) and passes the
+      result in; every other document keeps the existing per-call
+      behavior unchanged.
+    - `parent_document` is a small, pre-resolved `{id, report_name,
+      filename, document_type}` dict (or `None`) — the caller already
+      has every one of a patient's documents loaded in one query, so
+      resolving a derived artifact's parent from that same in-memory
+      list costs zero extra DB round trips; this function never
+      queries for it itself.
+    """
     uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
-    has_abnormal = document_has_abnormal_labs(db, document.id)
+    has_abnormal = has_abnormal_override if has_abnormal_override is not None else document_has_abnormal_labs(db, document.id)
 
     reviewed_by_current_doctor = False
     if current_user and current_user.role == "doctor":
@@ -907,6 +997,12 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
         "section": document.section,
         "document_type": document.document_type,
         "parent_document_id": document.parent_document_id,
+        # Clinical Document Intelligence V3 Phase 9 — null for every
+        # ordinary upload AND every Reducto Split child (both of which
+        # also use parent_document_id, but never set this marker); only
+        # ever "lab_report" today (Phase 6's own derived-artifact kind).
+        "derived_artifact_kind": document.derived_artifact_kind,
+        "parent_document": parent_document,
         "page_range_start": document.page_range_start,
         "page_range_end": document.page_range_end,
         "is_verified": bool(document.is_verified),
@@ -965,6 +1061,12 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "section": document.section,
         "document_type": document.document_type,
         "parent_document_id": document.parent_document_id,
+        # Clinical Document Intelligence V3 Phase 9 — lets the generic
+        # /documents/{id} page detect a derived lab artifact and redirect
+        # to its dedicated standalone reader instead of rendering the
+        # normal document view (which has no lab data of its own; see
+        # serialize_document_card's docstring above for why).
+        "derived_artifact_kind": document.derived_artifact_kind,
         "page_range_start": document.page_range_start,
         "page_range_end": document.page_range_end,
         "classification_status": document.classification_status,

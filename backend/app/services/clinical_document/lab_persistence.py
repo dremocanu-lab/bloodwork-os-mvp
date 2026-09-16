@@ -193,18 +193,28 @@ def _find_existing_derived_document(db: Session, *, parent_document_id: int, gro
     return None
 
 
-def _build_derived_document_note_body(*, group_key: str, source_section_id: str | None) -> str:
-    """Pointer-only payload — NEVER a copy of lab values (the "no second
-    lab datastore" rule). Deliberately minimal: real lab values are
-    always read back from the canonical `LabResult` rows this artifact
-    points at (via a future Phase 8 query keyed on this document's own
-    linkage), never duplicated here."""
+def _build_derived_document_note_body(
+    *, group_key: str, source_section_id: str | None, lab_result_ids: list[int]
+) -> str:
+    """Pointer-only payload — NEVER a copy of lab VALUES (the "no second
+    lab datastore" rule). `lab_result_ids` is a list of integer ids —
+    exactly `DerivedArtifactRef.lab_result_ids`'s own already-declared
+    pointer field (schema.py), never a copy of what those rows contain.
+    This is what lets a later reader (Phase 9) resolve "which canonical
+    LabResult rows does this artifact represent" via a direct id lookup,
+    rather than re-deriving group membership from scratch (request_code/
+    date/panel are not stored as their own LabResult columns, so without
+    this the only other option would be re-running extraction — a much
+    heavier and less honest path). Always rewritten (idempotently, same
+    inputs -> same output) each time this group is processed, never
+    hand-edited elsewhere."""
     return json.dumps(
         {
             "document_type": "derived_lab_report",
             "artifact_type": DERIVED_ARTIFACT_KIND_LAB_REPORT,
             "group_key": group_key,
             "source_section_id": source_section_id,
+            "lab_result_ids": sorted(lab_result_ids),
         },
         ensure_ascii=False,
     )
@@ -233,7 +243,9 @@ def _get_or_create_derived_document(
         filename=parent_document.filename,
         report_name=f"Structured laboratory results extracted from {parent_document.report_name or parent_document.filename}",
         report_type=f"derived-lab-report:{group.group_key}",
-        note_body=_build_derived_document_note_body(group_key=group.group_key, source_section_id=source_section_id),
+        note_body=_build_derived_document_note_body(
+            group_key=group.group_key, source_section_id=source_section_id, lab_result_ids=[]
+        ),
         patient_name=parent_document.patient_name,
         date_of_birth=parent_document.date_of_birth,
         test_date=group.observation_date,
@@ -379,6 +391,17 @@ def persist_lab_candidates(
                     f"Conflicting source values for '{candidate.raw_test_name}' in group '{group.group_key}': "
                     f"both preserved, neither treated as authoritative — requires review."
                 )
+
+        # Rewrite the derived artifact's pointer payload with the now-
+        # complete lab_result_ids for this group — deterministic (same
+        # candidates -> same ids -> same JSON), so an idempotent re-run
+        # is a no-op write, never a duplicate or a drift.
+        derived_document.note_body = _build_derived_document_note_body(
+            group_key=group.group_key,
+            source_section_id=source_section_id,
+            lab_result_ids=persisted_group.lab_result_ids,
+        )
+        db.add(derived_document)
 
         result.groups.append(persisted_group)
 
