@@ -44,6 +44,9 @@ from app.services.clinical_document.medication_extraction import MedicationCandi
 from app.services.clinical_document.medication_persistence import persist_medication_candidates  # noqa: E402
 from app.services.clinical_document.persistence import serialize_structured_document  # noqa: E402
 from app.services.clinical_document.segments import SourceSegment  # noqa: E402
+from app.services.clinical_document.timeline_projection import (  # noqa: E402
+    project_clinical_document_to_timeline,
+)
 
 DISCHARGE_PAYLOAD = {
     "document_type": "discharge_summary",
@@ -222,7 +225,38 @@ def main() -> None:
             admission_date=DISCHARGE_PAYLOAD["admission_date"], discharge_date=DISCHARGE_PAYLOAD["discharge_date"],
         )
 
+        # Clinical Document Intelligence V3 Phase 10 — project medication
+        # start/stop Timeline events for this document's own medications
+        # (Amoxicilina gets BOTH: an explicit start via the discharge date
+        # + a DERIVED completion from its 14-day course; Ibuprofen/BESREMI
+        # never do — PRN/continuation/conflict, see timeline_projection.py).
+        project_clinical_document_to_timeline(db, doc)
+
+        # A manually-created hospitalization event, coexisting with the
+        # projected medication events above — proves the two event kinds
+        # render distinctly on the same Timeline, never conflated.
+        manual_event = models.PatientEvent(
+            patient_id=patient.id,
+            doctor_user_id=user.id,
+            event_type="hospitalization",
+            status="discharged",
+            title="Manual admission note",
+            admitted_at="2025-11-01",
+            discharged_at="2025-11-03",
+        )
+        db.add(manual_event)
+
         db.commit()
+
+        amoxicilina_medication_id = (
+            db.query(models.PatientMedication)
+            .filter(
+                models.PatientMedication.source_document_id == doc.id,
+                models.PatientMedication.name == "Amoxicilina",
+            )
+            .first()
+            .id
+        )
 
         token = create_access_token({"sub": str(user.id), "role": "patient"})
         print(
@@ -235,6 +269,8 @@ def main() -> None:
                     "derived_document_id": derived_document_id,
                     "second_derived_document_id": second_derived_document_id,
                     "split_child_id": split_child_id,
+                    "amoxicilina_medication_id": amoxicilina_medication_id,
+                    "manual_event_id": manual_event.id,
                 }
             )
         )
