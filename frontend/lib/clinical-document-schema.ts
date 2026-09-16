@@ -267,6 +267,12 @@ export interface ReaderMedication {
 export interface ReaderDocumentMeta {
   id: number;
   public_id: string | null;
+  /** Post-Phase-10 integration fix — the one field the discharge
+   * reader's own Ask Bragi target needs and previously did not have
+   * (it passed `document.id` in its place, a real bug: see
+   * app-shell/documents.py commit history). Mirrors the generic
+   * /documents/{id} payload's own `patient_id` field. */
+  patient_id: number;
   filename: string;
   content_type: string | null;
   document_type: string | null;

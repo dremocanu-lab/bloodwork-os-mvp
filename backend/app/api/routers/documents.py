@@ -987,6 +987,13 @@ def get_clinical_reader_payload(
         "document": {
             "id": document.id,
             "public_id": document.public_id,
+            # Post-Phase-10 integration fix: the discharge reader's own
+            # Ask Bragi target previously had no authoritative patient id
+            # to read at all and passed `document.id` in its place (a
+            # real bug — see the frontend commit). This mirrors the
+            # generic /documents/{id} payload's own `patient_id` field
+            # exactly, the one every other Ask Bragi target already uses.
+            "patient_id": document.patient_id,
             "filename": document.filename,
             "content_type": document.content_type,
             "document_type": document.document_type,

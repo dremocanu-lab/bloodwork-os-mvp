@@ -127,6 +127,26 @@ def test_legacy_discharge_note_body_upconverts_into_reader_payload(patient_accou
     assert payload["structured_document"]["parser_version"] == "legacy-discharge-upconversion-v1"
 
 
+def test_reader_payload_document_includes_real_patient_id(patient_account):
+    """Post-Phase-10 integration fix: the discharge reader's own Ask
+    Bragi target previously had no authoritative patient id to read at
+    all and passed the DOCUMENT's own id in its place for a doctor/admin
+    viewer (a real bug found during manual QA) — this is the field that
+    fix depends on existing and being correct."""
+    db = SessionLocal()
+    try:
+        document_id = _make_document(
+            db, patient_id=patient_account["patient_id"], note_body=json.dumps(LEGACY_REPEATED_EPICRIZA_PAYLOAD)
+        )
+    finally:
+        db.close()
+
+    response = client.get(f"/documents/{document_id}/clinical-reader", headers=_auth(patient_account["account"]["token"]))
+    assert response.status_code == 200, response.text
+    assert response.json()["document"]["patient_id"] == patient_account["patient_id"]
+    assert response.json()["document"]["patient_id"] != document_id
+
+
 def test_repeated_epicriza_does_not_become_duplicate_sections(patient_account):
     db = SessionLocal()
     try:
