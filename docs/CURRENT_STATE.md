@@ -185,7 +185,7 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
-## Clinical Document Intelligence V3 — PARTIAL (Phases 0-9 of 21)
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-10 of 21)
 
 Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
 the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
@@ -242,8 +242,23 @@ derived artifact is now rejected (still removable only via its
 parent's cascade); a genuine Phase-6 gap (the derived artifact's own
 `lab_result_ids` pointer was declared but never populated) was
 completed to make all of this possible — proven with 15 new backend
-tests and 8 new real-browser Playwright tests. Phases 10-21 of the
-originating contract (Timeline/Ask-Bragi integration and everything
+tests and 8 new real-browser Playwright tests. **Phase 10 (NEW) made
+canonical medication state changes appear on the patient's Timeline** as
+real, idempotent `PatientEvent` projections: a new `timeline_
+projection.py` service reads already-canonical `PatientMedication` rows
+and projects "medication started"/"medication completed" events (never
+inventing a date, never asserting a state change a conflicting row can't
+support, never duplicating on reprocessing), coexisting with manually-
+created hospitalization events on the SAME table — no second Timeline
+system. A deliberate architecture decision: a clinical document/derived
+lab artifact is NOT separately projected, since it already appeared on
+the Timeline via the pre-existing client-side document/event fusion —
+Phase 10 fixed that mechanism's derived-artifact title instead of
+building a redundant path, and along the way found and fixed a real bug
+that would have made a projected medication event corrupt the existing
+admission-grouping logic across four frontend files — proven with 15 new
+backend tests and 7 new real-browser Playwright tests. Phases 11-21 of
+the originating contract (Ask-Bragi retrieval hardening and everything
 downstream) are entirely unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
 full, section-by-section honest accounting and how to continue.

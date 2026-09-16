@@ -1,6 +1,6 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0 through 9 of the 21-phase contract are
+**Status: PARTIAL. Phases 0 through 10 of the 21-phase contract are
 COMPLETE and verified. Phases 0-5: the full structural reconstruction
 layer (typed segments, canonical section consolidation, real Clinical
 Course dated-event extraction with chronology sanity checking) and a
@@ -32,14 +32,30 @@ Documents/patient-profile cards show a restrained "Derived from:
 (only removable via its parent's cascade), and a genuine Phase-6 gap
 (`DerivedArtifactRef.lab_result_ids`/the derived document's own
 note_body pointer was declared but never populated) was completed
-additively to make this possible. See section 9h. None of Phases 3-8's
-EXTRACTION/PERSISTENCE code is wired into the live discharge UPLOAD
-write path yet — this remains deliberate, not an oversight (see section
-9b's sequencing note, and section 9g's own "why the write-side switch is
-still deferred" reasoning — Phase 8's READ side is now proven fully
-dual-compatible with both old and new document shapes, which is a
-distinct, already-completed milestone from the write-side switch).
-Phases 10–21 are NOT STARTED.** This document exists specifically so a
+additively to make this possible. See section 9h. **Phase 10 (NEW this
+checkpoint): canonical medication state changes now appear on the
+patient's Timeline as real, navigable, idempotent `PatientEvent`
+projections** — a new `timeline_projection.py` service reads already-
+canonical `PatientMedication` rows and projects a "medication started"
+and/or "medication completed/stopped" event per row (never inventing a
+date, never asserting a state change a conflicting/uncertain row can't
+support, never duplicating on reprocessing), coexisting with manually-
+created hospitalization events on the SAME `PatientEvent` table — no
+second Timeline system. A deliberate architecture decision (documented
+in the service's own module docstring): a clinical document/derived lab
+artifact is NOT separately projected, because it already appears on the
+Timeline today via the existing client-side document/event fusion in
+`frontend/app/my-records/timeline/page.tsx` and `frontend/app/patients/
+[id]/timeline/page.tsx` — Phase 10 fixed that existing mechanism's
+derived-artifact title/subtitle instead of building a redundant second
+path. See section 9i. None of Phases 3-10's EXTRACTION/PERSISTENCE code
+is wired into the live discharge UPLOAD write path yet — this remains
+deliberate, not an oversight (see section 9b's sequencing note, and
+section 9g's own "why the write-side switch is still deferred"
+reasoning — Phase 8's READ side is now proven fully dual-compatible with
+both old and new document shapes, which is a distinct, already-completed
+milestone from the write-side switch).
+Phases 11–21 are NOT STARTED.** This document exists specifically so a
 future Claude session with zero memory of this conversation can pick
 this up correctly — read section 23 ("HOW TO CONTINUE") first if
 that's you.
@@ -55,21 +71,21 @@ can open, or a test you can execute.
   hand at each checkpoint and can lag a moment behind an in-progress
   session; the git log is always the final authority). As of this
   checkpoint, the last commits are (newest first): a handoff checkpoint
-  commit for this section, then this session's Phase 9 commits (backend
-  derived-artifact wiring, frontend standalone route + Documents cards,
-  Playwright coverage) — on top of the Phase 0-8 checkpoint at `622ff67`
-  (itself on top of `d39f5fb`/`def2079`/`60ff9b1`/Phase 0-7's `45ce7f3`).
+  commit for this section, then this session's Phase 10 commits (backend
+  projection service + migration, frontend Timeline rendering, browser
+  coverage) — on top of the Phase 0-9 checkpoint at `df19ffe` (itself on
+  top of `da5e138`/`cec584b`/`c9e7b79`/Phase 0-8's `622ff67`).
 - **Pushed to `origin/fix/clinical-document-intelligence-v3`**: the
-  Phase 8 commits plus its handoff (through `622ff67`) were explicitly
+  Phase 9 commits plus its handoff (through `df19ffe`) were explicitly
   authorized and pushed at the END of that session. This session's
-  Phase 9 commits are pushed at the END of this session, per the same
+  Phase 10 commits are pushed at the END of this session, per the same
   standing authorization — check `git log origin/fix/clinical-document-
   intelligence-v3..HEAD --oneline` to confirm empty before trusting
   this line.
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing) once this handoff commit lands.
 - **No PR opened.**
-- **Phases 4 through 9 are now COMPLETE.** Phases 4/5: segments,
+- **Phases 4 through 10 are now COMPLETE.** Phases 4/5: segments,
   canonical section consolidation, real Clinical Course event
   extraction, chronology sanity checking, full end-to-end orchestration
   in `discharge_parser.py` (sections 9b/9c/9d). Phase 6: embedded lab
@@ -80,23 +96,36 @@ can open, or a test you can execute.
   `PatientMedication` model (section 9f). Phase 8: the discharge/
   clinical-document reader frontend rebuild — a new reader API
   contract, a rebuilt page, 7 new reusable components, real Playwright
-  coverage (section 9g). **Phase 9 (NEW): a derived lab artifact is now
-  a real, independently openable Documents entry** — a new standalone
-  route, restrained "Derived from: [parent]" Documents-card framing,
-  correct authorization/deletion/provenance semantics, and 15 new
-  backend + 8 new Playwright tests (section 9h). None of Phases 3-8's
-  EXTRACTION/PERSISTENCE code is wired into the live discharge ingestion
-  write path yet (deliberate — see section 9b's sequencing note, and
-  section 9g's own detailed reasoning for why the write-side switch
-  stayed deferred even though Phase 8's READ side is now proven fully
-  dual-compatible; Phase 9 does not change this). All of Phase 6's/7's/
-  8's/9's own backend SERVICES are fully callable and DB-tested
-  standalone right now, distinct from "wired into the live pipeline" —
-  see sections 9e/9f/9g/9h for the precise distinction in each case.
-- **Immediate next step: Phase 10 — Timeline integration for derived
-  labs/medication events.** Not started this session, by explicit
-  instruction (Phase 9 was scoped narrowly to the Documents-list/reader
-  relationship, not Timeline).
+  coverage (section 9g). Phase 9: a derived lab artifact is a real,
+  independently openable Documents entry — a new standalone route,
+  restrained "Derived from: [parent]" Documents-card framing, correct
+  authorization/deletion/provenance semantics, 15 new backend + 8 new
+  Playwright tests (section 9h). **Phase 10 (NEW): canonical medication
+  state changes now project onto the patient's Timeline as real,
+  idempotent `PatientEvent` rows** — a new `timeline_projection.py`
+  service, one small additive migration (`source_document_id`/
+  `source_medication_id` on `patient_events`), Timeline UI updates
+  across 5 frontend files (both dedicated Timeline pages, both
+  Overview-tab previews, the shared `ClinicalTimeline` component, plus a
+  real bug fix in the doctor hospitalizations-management page that would
+  otherwise have miscounted/misgrouped a projected event as an
+  admission), 15 new backend + 7 new Playwright tests (section 9i). None
+  of Phases 3-10's EXTRACTION/PERSISTENCE code is wired into the live
+  discharge ingestion write path yet (deliberate — see section 9b's
+  sequencing note, and section 9g's own detailed reasoning for why the
+  write-side switch stayed deferred even though Phase 8's READ side is
+  now proven fully dual-compatible; Phases 9-10 do not change this). All
+  of Phase 6's/7's/8's/9's/10's own backend SERVICES are fully callable
+  and DB-tested standalone right now, distinct from "wired into the live
+  pipeline" — see sections 9e/9f/9g/9h/9i for the precise distinction in
+  each case.
+- **Immediate next step: Phase 11 — Ask Bragi canonical retrieval
+  hardening** (structured dated-event queries, transparent end-date-
+  derivation language in answers, consuming the newly canonical
+  `StructuredClinicalDocument`/`ClinicalEvent`/`LabResult`/
+  `PatientMedication` data — never treating `PatientEvent`/Timeline as
+  the source of truth for Ask Bragi). Not started this session, by
+  explicit instruction.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -1728,8 +1757,10 @@ ingestion untouched ✓.
   asserting section content.
 
 **What does NOT exist yet** (explicitly deferred, not a Phase 9 gap):
-Timeline integration for a derived lab artifact (Phase 10's own job — a
-derived artifact does not yet appear anywhere in the Timeline view).
+Timeline integration for a derived lab artifact — Phase 10 turned out to
+be a one-line title/subtitle fix on the EXISTING Timeline document
+fusion rather than new projection code, see section 9i for the full
+reasoning and what was actually fixed.
 Ask Bragi is not specifically aware of a derived artifact as a distinct
 entity (it already sees the underlying LabResult rows through the
 existing patient-context resolution, unchanged). The formal responsive
@@ -1737,6 +1768,278 @@ screenshot matrix and an automated accessibility scan remain Phase 19/
 20's jobs, same as every other phase. Live discharge upload ingestion
 is still unchanged (same deferred write-side switch as every phase
 since 4 — see section 9b).
+
+## 9i. Phase 10 — canonical Timeline integration (COMPLETE)
+
+**Goal (verbatim intent): surface meaningful longitudinal changes from
+canonical clinical facts on the patient's Timeline without turning every
+parsed sentence into an event** — the Timeline answers "what happened to
+this patient over time," not "what text fragments did the parser find."
+A discharge/hospitalization document remains ONE parent clinical-
+document event; internal Clinical Course detail stays inside the
+document reader (Phase 5/8), never duplicated onto the Timeline.
+
+**The one deliberate architecture decision this phase turned on** (the
+question Phase 9's own handoff explicitly left open: "does the Timeline
+need a new event TYPE for a derived lab artifact, or does it read the
+existing `LabResult`/`PatientMedication` rows directly the way Phase 9's
+Documents cards do"): **investigated first, before writing any
+projection code** — `frontend/app/my-records/timeline/page.tsx` and
+`frontend/app/patients/[id]/timeline/page.tsx` already fuse every
+`Document` row (via `GET /my/profile`'s `sections`, which already
+includes a derived lab artifact since Phase 9) into the rendered
+Timeline entirely client-side (`buildTimelineItems`), grouped under
+whichever admission/discharge document or `PatientEvent` its own
+clinical date falls inside. **A discharge document and a derived lab
+artifact were therefore ALREADY appearing on the Timeline before this
+phase started** — just with the wrong title (`getDocumentTitle`/
+subtitle logic in these two pages had never been taught Phase 9's
+`derived_artifact_kind`/`parent_document` fields, so a derived artifact
+showed its verbose internal `report_name`, not "Laboratory report").
+Adding a SECOND, backend-projected `PatientEvent` for the same document
+would have duplicated it on the Timeline (two cards for one document)
+unless the existing client-side fusion were also taught to suppress its
+own document-based card for a projected one — a redesign of an existing,
+working mechanism the contract's own instruction says not to attempt
+("do not rebuild Timeline from scratch unless the current architecture
+genuinely requires it"). **Phase 10's actual, genuine gap turned out to
+be medications only**: a `PatientMedication` row has ZERO existing
+Timeline representation (it is not a `Document`, nothing already
+surfaces it) — that is the one thing this phase actually projects as new
+`PatientEvent` rows. This decision, and its full reasoning, is recorded
+in `timeline_projection.py`'s own module docstring, not just here.
+
+**Backend**:
+- `app/models.py::PatientEvent` — two new additive, nullable columns:
+  `source_document_id` (FK → `documents.id`, `ondelete="SET NULL"` —
+  deliberately mirrors `PatientMedication.source_document_id`'s own
+  Phase 7 choice: the medication FACT survives its source document's
+  deletion because it stays independently meaningful, so the Timeline
+  EVENT representing that same fact survives too — it depends on the
+  medication, not solely on the document) and `source_medication_id`
+  (FK → `patient_medications.id`, `ondelete="CASCADE"` — once the
+  medication row itself is gone, e.g. via `DELETE /my/medications/{id}`,
+  the event representing its state change represents nothing and must
+  go with it). Both null for every existing/future manually-created
+  event (`POST /patient-events`, unchanged) — presence of a source id is
+  itself the "was this projected" signal; no separate boolean flag.
+  Migration: `a1c9d4e7f203_phase10_timeline_projection.py` (additive
+  only, confirmed clean by `check_migration_drift.py`).
+- `app/services/clinical_document/timeline_projection.py` (new) —
+  `project_clinical_document_to_timeline(db, document)`, the one Phase
+  10 entry point a future live-ingestion write path can invoke without
+  knowing each individual projection rule (per the contract's own
+  "Phase 10V" instruction). For each of the document's own
+  `PatientMedication` rows (`source_document_id == document.id`):
+  - **Started**: projected when `medication.start_date` is set — a
+    genuine "continue X" mention never receives a real start_date under
+    Phase 7's own 4-tier priority (only a genuine new start does), so
+    this is ALREADY sufficient continuation suppression with zero new
+    Phase 7 columns needed — no invented signal, no schema change to
+    `PatientMedication`.
+  - **Stopped/completed**: projected when `medication.stop_date` is
+    set — covers BOTH an explicit early discontinuation and a
+    naturally-completed finite-duration course from the SAME row (Phase
+    7's own `_STATUS_CONTEXT_TO_STATUS` already collapses "stopped"/
+    "completed"/"historical" into one status value — Phase 10 cannot
+    invent a distinction Phase 7 itself declined to keep). A single
+    medication row can therefore project BOTH a started AND a completed
+    event (e.g. the fixture's own 14-day Amoxicilina course) — two
+    independently Timeline-worthy real-world moments from one canonical
+    fact, never a third (no dose-change, no prescription-issued event
+    kind — see below).
+  - **Conflict safety** (contract's own non-negotiable rule): a
+    conflicting/uncertain medication row (`is_uncertain`, already
+    computed correctly by Phase 7's own conflict detection) NEVER
+    projects a definitive state-change event — and if a PREVIOUSLY
+    non-conflicting row's event was already projected and a later
+    reprocessing run reveals a genuine conflict, that stale event is
+    explicitly RETRACTED (deleted), never left as a falsely-confident
+    Timeline card. Proven by a dedicated test that reproduces exactly
+    this "looked fine at first, becomes uncertain on reprocessing" race.
+  - **Idempotency**: get-or-create keyed on `(patient_id,
+    source_medication_id, event_type)` — never `created_at`. Since a
+    `PatientMedication` row's own `status` never changes in place after
+    creation (Phase 7 always creates a new row for a genuinely new
+    mention, per its own idempotency rule), this key is trivially
+    correct: reprocessing the same document produces the same events,
+    never duplicates.
+  - **Never commits internally** — same transaction convention as
+    `lab_persistence.persist_lab_candidates`/`medication_persistence.
+    persist_medication_candidates`: the caller commits once.
+  - **Deliberately NOT implemented, with reasoning recorded in the
+    module docstring, not silently skipped**: dose-change events (a
+    reliable dose-change needs a trustworthy chronology across two
+    same-drug rows — exactly the shape `_detect_conflicts` already
+    treats with suspicion; building a "confident" detector on top of an
+    unresolvable-conflict signal risks manufacturing a false state
+    transition, the one thing the contract is most explicit about never
+    doing) and prescription-issued events (`PrescriptionRow.
+    medication_id` is never populated by any real parser yet — confirmed
+    in the Phase 8/9 handoff sections — there is no document today that
+    distinguishes "a prescription was issued" from an ordinary
+    medication mention as a separate canonical fact).
+- `app/schemas/serializers.py::serialize_patient_event` — extended
+  (additively) with `source_document_id`/`source_medication_id`, so the
+  frontend can distinguish a projected event from a manual one and
+  navigate to its source.
+- `app/api/routers/patients.py::pcp_get_patient_summary`'s own synthetic
+  `pcp_timeline` merge (a DIFFERENT, PCP-workspace-specific dashboard
+  endpoint, pre-existing since before this phase) — one line added to
+  skip a projected medication event when building its
+  `"hospitalization_record"`-typed rows; a real bug this phase would
+  otherwise have introduced (a medication name mislabeled as a
+  hospitalization with no route to open). Found by deliberately auditing
+  every OTHER consumer of `PatientEvent` before considering this phase
+  complete, not by a bug report.
+- No changes needed to `DELETE /documents/{id}` or `DELETE /my/
+  medications/{id}` — both `ondelete` rules above are enforced at the DB
+  level automatically; no application code has to know about
+  `PatientEvent` at all when either route runs.
+- No changes needed to `app/policies/access.py` — a projected event's
+  `patient_id` is set identically to a manual one; existing authorization
+  is already correct.
+
+**Frontend** — five files touched, all for the SAME two reasons (fixing
+the derived-lab-artifact title on the pre-existing Timeline fusion +
+rendering the new projected medication events without breaking the
+pre-existing admission-grouping logic):
+- **A real, genuine bug found and fixed in ALL FOUR files that build a
+  Timeline from `profile.events`** (`my-records/timeline/page.tsx`,
+  `patients/[id]/timeline/page.tsx`, and the Overview-tab preview
+  builders inside `my-records/page.tsx`/`patients/[id]/page.tsx`): each
+  one's `buildTimelineItems`-equivalent function previously treated
+  EVERY `PatientEvent` as a potential admission-grouping PARENT (an
+  `admissionStart`/`admissionEnd` date-window that other documents get
+  matched into via `isInsideDateRange`). A projected medication event
+  has only a SINGLE point-in-time date with no window — treating it as
+  a parent would have made `isInsideDateRange` match "every document
+  dated on/after this medication's date, no upper bound," silently
+  sucking unrelated later documents into a fake "admission." Fixed by
+  splitting `events` into hospitalization-like events (still build
+  grouping parents, exactly as before — zero behavior change for
+  existing manual events) and medication-projected events (always flat,
+  standalone `type: "medication"` items) BEFORE this phase's rendering
+  code ran for the first time — this was caught by design review, not a
+  reported/observed bug, since no medication event existed before this
+  phase to trigger it.
+- **A second, related real bug found and fixed**: `patients/[id]/
+  hospitalizations/page.tsx` (a doctor-facing admissions-management
+  view, separate from the main Timeline pages) computed its active/past
+  counts and lists by filtering `profile.events` on `status` alone, with
+  no `event_type` filter — a projected medication event (always
+  `status: "active"`, a generic default with no meaning for that event
+  kind) would have appeared mixed into "active hospitalizations." Fixed
+  by filtering to non-medication events before any of that page's own
+  logic runs.
+- `components/clinical-timeline.tsx` (the ONE shared rendering
+  component every Timeline surface uses — extended, never duplicated):
+  `TimelineItem.type` gained `"medication"`; a new `medicationId`
+  field + `onOpenMedication` prop let a medication-type item route to
+  its own medication detail page (`/my-records/medications/{id}` or
+  `/patients/{id}/medications/{id}`), distinct from `documentId`/
+  `eventId` navigation. Node color/type-label handling extended
+  minimally for the new type; nothing about how a `"document"`/
+  `"event"` item renders changed.
+- Both dedicated Timeline pages and both Overview-tab previews: derived
+  lab artifact title/subtitle now reuses the SAME `derived_artifact_
+  kind`/`parent_document` fields Phase 9 already added to the profile
+  response — "Laboratory report" / "Derived from: [parent]", identical
+  wording to the Documents-list cards, never a second convention. A
+  projected medication event renders its `title` (the medication name),
+  a "Medication started"/"Medication completed" label, and — when
+  `stop_date_basis == "derived"` — the SAME "Calculated from a
+  documented course" wording `medication-list.tsx` already uses for the
+  in-document reader, reused verbatim via the projected event's own
+  `description` field (populated server-side, not re-derived client-
+  side).
+
+**A real, non-application bug found during Playwright verification,
+worth recording honestly**: the frontend dev server used for manual/
+Playwright verification had been running continuously since the Phase 9
+portion of this session — Next.js Fast Refresh did not fully pick up a
+new prop (`onOpenMedication`) added to an already-mounted page component,
+so a click-navigation test failed twice with the URL never changing.
+Restarting the dev server process (not any code change) fixed it
+immediately, confirmed by an isolated rerun passing cleanly. Documented
+here per this project's own bug-discipline convention, same as Phase
+8/9's own honestly-recorded false leads — not a real regression.
+
+**Requirements checklist** (all met): a discharge/hospitalization
+document remains ONE parent Timeline event, never fragmented by internal
+Clinical Course events ✓ (unchanged pre-existing behavior, verified, not
+rebuilt); a coherent derived lab report is ONE Timeline event, never one
+per analyte ✓ (same pre-existing mechanism, title/subtitle fixed);
+medication started/stopped project as real, distinct Timeline events ✓;
+a derived/calculated completion date is explicitly labeled, never reads
+as provider-authored ✓; a "continue X" mention never creates a Timeline
+event ✓; a genuine same-drug conflict never creates a false state-change
+event, and retracts an earlier one if a reprocessing run reveals the
+conflict ✓; reprocessing the same document never duplicates events ✓; a
+manually-created hospitalization event is completely unaffected and
+coexists correctly ✓; every projected event retains navigable source
+provenance (`source_document_id`/`source_medication_id`) ✓; deletion
+semantics match each fact's own independent-meaningfulness rule (SET
+NULL on document, CASCADE on medication) ✓; a suspicious/implausible
+date is never a concern in this phase's actual scope (no document-date
+projection exists to fabricate one) ✓; live discharge ingestion
+untouched ✓; no second Timeline system, no second medication-state
+model built ✓.
+
+**Deliberately NOT implemented, honestly, not silently** (see the
+"Deliberately NOT implemented" bullet above for the full reasoning):
+dose-change Timeline events; prescription-issued Timeline events. Also
+not attempted: wiring `project_clinical_document_to_timeline` into the
+live discharge upload path (same deferred sequencing as every phase
+since 4); a `PatientEvent`-level real-Postgres exhaustive deletion-cascade
+proof beyond the two focused deletion tests written here (Phase 14's own
+job, same as Phase 6/7/9's own deletion semantics).
+
+**Tests**:
+- Backend: 15 new focused tests
+  (`test_clinical_document_timeline_projection.py`) — no document/lab-
+  level event is ever created (proving the architecture decision holds),
+  reprocessing never duplicates, explicit-start-date medications project
+  a started event, a plain "continued" mention with no date never does,
+  a PRN medication with no date never does, a finite-duration course
+  projects BOTH started and completed events with the derived-date label
+  correctly present/absent, conflicting same-drug mentions never project
+  anything, a medication that BECOMES uncertain on reprocessing retracts
+  its earlier event, distinct medications project distinct events, a
+  manual `PatientEvent` is completely untouched, a projected event
+  serializes with correct source provenance via `GET /my/profile`,
+  deleting the source document does NOT delete the projected event
+  (SET NULL, medication fact survives), deleting the medication directly
+  DOES remove its projected events (CASCADE), and projected events stay
+  scoped to their own patient. All passing, real DB — full suite reran
+  clean: `603 passed, 5 warnings in 1311.61s (0:21:51)` (net +15 over the
+  Phase 9 588 baseline, an exact match, no reconciliation gap).
+- Frontend Playwright: 7 new tests (`e2e/timeline-projection.spec.ts`)
+  — a projected medication start AND completion both appear as distinct,
+  correctly-labeled events (with the calculated-date label visible),
+  clicking a projected event opens that medication's own detail page, a
+  PRN medication with no date never appears, a conflicting medication
+  never appears, a manual hospitalization event coexists correctly with
+  projected ones, the derived lab artifact appears with restrained
+  "Derived from" framing and opens the standalone reader (Phase 9's own
+  route, reused), mobile viewport stays usable. `backend/scripts/
+  seed_e2e_discharge_document.py` (Phase 8/9's fixture) extended
+  additively: calls `project_clinical_document_to_timeline` after
+  persisting medications, adds one manual hospitalization event, and
+  includes the resulting medication/event ids in its JSON output. All 23
+  tests across `timeline-projection.spec.ts` + `derived-lab-artifact.
+  spec.ts` + `clinical-reader.spec.ts` + `right-workspace-geometry.
+  spec.ts` confirmed passing together in the same run; the SAME pre-
+  existing `clinical-reader.spec.ts` click/section-switch timing flake
+  already disclosed in the Phase 9 handoff was observed again (2 of its
+  4 assertions this run, isolated rerun also failed both attempts this
+  time) — still not Phase 10's to fix (nothing in this phase touches the
+  discharge reader's outline/section-switch code at all), but worth
+  flagging that it appears to be MORE reproducible than Phase 9's
+  session observed, not less — a future session should prioritize
+  hardening that spec with an explicit wait for the outline's active-
+  section indicator before asserting section content, rather than
+  continuing to treat it as a rare flake.
 
 ## 10. Lab artifact semantics
 
@@ -1796,11 +2099,24 @@ silently overwrites — an explicit-vs-derived disagreement.
 
 ## 13. Timeline rules
 
-**NOT STARTED.** `PatientEvent` today is created only via the doctor-
-driven `POST /patient-events` route (confirmed in the pipeline map) —
-discharge upload does not create or touch a `PatientEvent` row. No
-dated-Clinical-Course-event extraction, and no lab/medication-driven
-Timeline entries, exist yet.
+**Phase 10 COMPLETE for medication state-change projection — see
+section 9i for full detail.** `PatientEvent` is still created manually
+ONLY via the doctor-driven `POST /patient-events` route — Phase 10 added
+no new route, no new creation UI. What changed: `PatientMedication` rows
+can now ALSO project into `PatientEvent` via `app/services/
+clinical_document/timeline_projection.py::project_clinical_document_
+to_timeline` — not yet called from the live discharge upload path
+(same deferred sequencing as every phase since 4), but fully callable/
+DB-tested standalone and exercised by the Playwright fixture seed
+script. Dated-Clinical-Course-event extraction (Phase 5's own
+`ClinicalEvent`) is still never projected onto the Timeline, and
+deliberately so — it is a document-internal chronology (rendered inside
+the document reader only), a distinct concept from the cross-record
+Timeline by design (see section 9i's own "Clinical Course vs Timeline"
+reasoning). A discharge/hospitalization document and a derived lab
+artifact already appear on the Timeline — not via a new projection, but
+via the pre-existing client-side document/event fusion in the two
+Timeline pages, whose derived-artifact title/subtitle Phase 10 fixed.
 
 ## 14. Provenance rules
 
@@ -1968,6 +2284,18 @@ real behavior changes across these two checkpoints:
   artifact, Phase 6, described above) is completely unaffected — the
   new guard only blocks the DIRECT single-artifact case.
 
+**Phase 10** (section 9i) added no new logic to `DELETE /documents/
+{document_id}` or `DELETE /my/medications/{medication_id}` at all — both
+of `PatientEvent`'s new FK columns enforce the correct behavior purely
+at the DB level: `source_document_id` (`ondelete="SET NULL"`, mirroring
+`PatientMedication.source_document_id`'s own Phase 7 choice — a
+projected event survives its source document's deletion because the
+medication fact it represents does too) and `source_medication_id`
+(`ondelete="CASCADE"` — once the medication row itself is gone, the
+event representing it is deleted automatically). Proven by two dedicated
+tests exercising the real routes, not just the ORM-level FK behavior in
+isolation.
+
 Everything else — the pre-existing asymmetry between this route and
 `DELETE /my/account` documented in `docs/clinical_document_v3/
 CURRENT_PIPELINE_MAP.md`, the reliance on `Document.lab_results`'s ORM
@@ -2055,6 +2383,20 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   individually reconfirmed passing on their own run immediately after
   writing them (once, after fixing a missing `import json` in
   `documents.py` caught by that very run).
+  → **603 CONFIRMED after Phase 10 COMPLETION** (net +15 over the 588
+  baseline — an EXACT match, no reconciliation gap: 15 new test
+  functions in `test_clinical_document_timeline_projection.py`, `grep
+  -c "^def test_"` confirms this precisely). **Full suite reran clean:
+  `603 passed, 5 warnings in 1311.61s (0:21:51)` — zero failures, zero
+  errors, no Neon flake this run.** All 15 new tests were also
+  individually reconfirmed passing on their own run immediately after
+  writing them (after two fixture-authoring fixes caught by that same
+  run — the real free-text medication extractor classified a hand-typed
+  "Amoxicilina...incepand de azi" fixture line as `status_context=
+  "uncertain"` rather than "started", correctly triggering `is_uncertain`
+  and correctly suppressing projection; not a projector bug, a test-
+  fixture assumption fixed by switching to explicit `MedicationCandidate`
+  construction — see section 9i and section 21 below).
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -2092,36 +2434,40 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
   `right-workspace-geometry.spec.ts`) → 11 after Phase 8 (+6,
-  `clinical-reader.spec.ts`) → **19 after Phase 9** (+8,
-  `derived-lab-artifact.spec.ts`) — unchanged by Phases 3-7 (no frontend
-  application behavior changed in those phases). All 16 relevant specs
+  `clinical-reader.spec.ts`) → 19 after Phase 9 (+8,
+  `derived-lab-artifact.spec.ts`) → **26 after Phase 10** (+7,
+  `timeline-projection.spec.ts`) — unchanged by Phases 3-7 (no frontend
+  application behavior changed in those phases). All 23 relevant specs
   (`clinical-reader.spec.ts` + `derived-lab-artifact.spec.ts` +
-  `right-workspace-geometry.spec.ts`) confirmed passing together in the
-  same run (section 20); `ask-bragi-workspace.spec.ts` (3 tests) was not
-  re-run this session (untouched by Phase 9).
+  `right-workspace-geometry.spec.ts` + `timeline-projection.spec.ts`)
+  confirmed passing together in the same run (section 20), aside from
+  the pre-existing `clinical-reader.spec.ts` flake (section 21);
+  `ask-bragi-workspace.spec.ts` (3 tests) was not re-run this session
+  (untouched by Phase 10).
 - OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
-  backend-modularization baseline) → **118 unchanged after Phase 9**
-  (no new route — Phase 9 extended the existing reader/documents/delete
-  routes additively, never adding a new endpoint).
-- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 9 — zero
+  backend-modularization baseline) → 118 unchanged after Phase 9 → **118
+  unchanged after Phase 10** (no new route — Phase 10 added a new
+  service/migration and extended the existing profile/serializer
+  surface, never a new endpoint).
+- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 10 — zero
   findings (only benign "Test in comment" collector warnings unrelated
   to any real issue, same as every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
-  Phase 9 added NO migration (no schema change — every new field reads
-  an EXISTING column) — "No migration drift detected (8 known/tolerated
-  legacy-index difference(s) ignored)", same 8 as every prior
-  checkpoint, last real migration still
-  `ff84f15530a9_phase7_medication_provenance.py` from Phase 7.
+  Phase 10 added ONE migration (`a1c9d4e7f203_phase10_timeline_
+  projection.py`, applied and confirmed via `alembic upgrade head`
+  before verification) — "No migration drift detected (8 known/tolerated
+  legacy-index difference(s) ignored)", same 8 as every prior checkpoint.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
-  Phase 9's changes.
-- ESLint (`npm run lint`): zero errors/warnings after Phase 9's
-  changes; the same pre-existing 29 errors/25 warnings elsewhere in the
+  Phase 10's changes.
+- ESLint (`npm run lint`): zero errors/warnings after Phase 10's
+  changes; the same pre-existing 29 errors/26 warnings elsewhere in the
   repo remain untouched (unrelated, out of scope, same as every prior
-  checkpoint).
-- Frontend production build (`npm run build`): succeeds, `/documents/
-  [id]/discharge` and the new `/documents/[id]/lab-report` both listed
-  among the compiled routes.
+  checkpoint — none in any file this phase touched).
+- Frontend production build (`npm run build`): succeeds, `/my-records/
+  timeline` and `/patients/[id]/timeline` both listed among the compiled
+  routes (unchanged route set from Phase 9 — Phase 10 added no new
+  frontend route).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -2165,10 +2511,25 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   the same `seed_e2e_discharge_document.py` Phase 8 uses, extended
   additively (a second coherent lab group + one Reducto Split child).
 
+- `timeline-projection.spec.ts` (NEW, Phase 10): 7 tests against the
+  patient Timeline's medication-projection rendering — a projected
+  medication start AND completion both appear as distinct, correctly-
+  labeled events (the derived-date "Calculated from a documented course"
+  label visible on the completion event), clicking a projected event
+  opens that medication's own detail page, a PRN medication with no
+  reliable date never appears, a conflicting medication never appears, a
+  manually-created hospitalization event coexists correctly alongside
+  projected ones, the derived lab artifact (Phase 9) appears with
+  restrained "Derived from" framing and opens the standalone reader, and
+  the mobile viewport stays usable with mixed event kinds. Seeds via the
+  same `seed_e2e_discharge_document.py` Phase 8/9 use, extended
+  additively (calls `project_clinical_document_to_timeline` after
+  persisting medications, adds one manual hospitalization event).
+
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
-timeline/medication flow coverage (beyond these two pages) still needs
-Phases 10-13 to exist first.
+timeline/medication flow coverage (beyond these three pages) still needs
+Phases 11-13 to exist first.
 
 ## 21. Real bugs found (this session)
 
@@ -2245,59 +2606,106 @@ Phases 10-13 to exist first.
    by renaming the button's actual copy (not just the test), since the
    ambiguity would affect any future test or assistive-tech query, not
    only this one spec.
+8. **A real, would-have-shipped rendering bug caught by design review
+   before it ever existed at runtime** (Phase 10) — see section 9i. All
+   four frontend files that build a Timeline from `profile.events`
+   (`my-records/timeline/page.tsx`, `patients/[id]/timeline/page.tsx`,
+   and the two Overview-tab preview builders) treated EVERY `PatientEvent`
+   as a potential admission-grouping parent with a date WINDOW. A
+   projected medication event has only a single point-in-time date, no
+   window — left unfixed, the very first medication event ever projected
+   would have silently swallowed every later, unrelated document into a
+   fake "admission" via `isInsideDateRange`'s no-upper-bound fallback.
+   Caught before writing the projector's first test, by tracing every
+   consumer of `PatientEvent` before considering the frontend half
+   complete — not by a failing test or a bug report (nothing could have
+   reported it: no medication event existed to trigger it before this
+   phase).
+9. **A second, related bug in a different page, same root cause**
+   (Phase 10) — see section 9i. `patients/[id]/hospitalizations/
+   page.tsx` (a doctor-facing admissions-management view, separate from
+   the main Timeline pages) computed its active/past hospitalization
+   counts and lists by filtering `profile.events` on `status` alone,
+   with no `event_type` filter — a projected medication event (always
+   `status: "active"`, a generic default) would have appeared mixed into
+   "active hospitalizations." Found the same way as #8, by auditing
+   every consumer, not by observation.
+10. **A third, backend-side instance of the same root cause** (Phase 10)
+    — see section 9i. `pcp_get_patient_summary`'s synthetic `pcp_timeline`
+    merge (a separate, pre-existing PCP-workspace dashboard endpoint)
+    labeled every `PatientEvent` row `"hospitalization_record"`
+    unconditionally — a projected medication event would have shown a
+    medication name mislabeled as a hospitalization, with no route to
+    open it. Fixed with a one-line skip once found.
+11. **Not an application bug — a genuine environmental false lead,
+    recorded honestly** (Phase 10) — see section 9i. The frontend dev
+    server used for Playwright verification had been running
+    continuously since earlier in this session; Next.js Fast Refresh did
+    not fully pick up a newly-added prop (`onOpenMedication`) on an
+    already-mounted page component, causing two click-navigation tests
+    to fail with the URL never changing. A full dev-server restart (not
+    any code change) fixed both immediately, confirmed by isolated
+    reruns passing cleanly afterward.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phases 3 through 9 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f,
-9g, 9h) — real, tested segmentation, canonical section consolidation,
-Clinical Course event extraction (including chronology and vital-sign
-plausibility checks), embedded lab extraction/grouping/canonical
-persistence, medication extraction/context classification/duration/
-end-date derivation, the discharge reader frontend rebuild, and the
-derived lab artifact's real Documents/reader presence all exist and are
-proven against every relevant V3 contract example, including all three
-required suspicious-data fixtures (Phase 5) and the synthetic
-hematology/discharge fixtures (Phases 6/8/9). None of Phases 4-9's
-EXTRACTION/PERSISTENCE code is wired into the real live discharge
-INGESTION pipeline yet (deliberate — section 9b's sequencing note,
-which now also governs Phases 8-9; see section 9g for the exact
-reasoning specific to Phase 8's own decision, unchanged by Phase 9); the
-backend persistence SERVICES (`lab_persistence.py`, `medication_
-persistence.py`), the READER SIDE (`GET /documents/{id}/clinical-
-reader` + the rebuilt frontend), and now the derived-artifact's own
-standalone route are however all fully callable/renderable and tested
-today — a real distinction, not a contradiction (see sections
-9e/9f/9g/9h). Table/key-value block construction from real per-section
-content (beyond `ParagraphBlock`) still does not exist for the
-STRUCTURED-DOCUMENT schema's own blocks (`TableBlock`/`MedicationListBlock`/
+Phases 3 through 10 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f,
+9g, 9h, 9i) — real, tested segmentation, canonical section
+consolidation, Clinical Course event extraction (including chronology
+and vital-sign plausibility checks), embedded lab extraction/grouping/
+canonical persistence, medication extraction/context classification/
+duration/end-date derivation, the discharge reader frontend rebuild, the
+derived lab artifact's real Documents/reader presence, and canonical
+medication state-change projection onto the patient's Timeline all exist
+and are proven against every relevant V3 contract example, including all
+three required suspicious-data fixtures (Phase 5) and the synthetic
+hematology/discharge fixtures (Phases 6/8/9/10). None of Phases 4-10's
+EXTRACTION/PERSISTENCE/PROJECTION code is wired into the real live
+discharge INGESTION pipeline yet (deliberate — section 9b's sequencing
+note, which now also governs Phases 8-10; see section 9g for the exact
+reasoning specific to Phase 8's own decision, unchanged by Phases 9-10);
+the backend persistence SERVICES (`lab_persistence.py`, `medication_
+persistence.py`, `timeline_projection.py`), the READER SIDE (`GET
+/documents/{id}/clinical-reader` + the rebuilt frontend), the derived-
+artifact's own standalone route, and the Timeline projection service are
+however all fully callable/renderable and tested today — a real
+distinction, not a contradiction (see sections 9e/9f/9g/9h/9i). Table/
+key-value block construction from real per-section content (beyond
+`ParagraphBlock`) still does not exist for the STRUCTURED-DOCUMENT
+schema's own blocks (`TableBlock`/`MedicationListBlock`/
 `PrescriptionTableBlock` etc. — Phases 6/7 produce real structured
 candidates, and Phase 8's frontend can already RENDER these block types
 correctly when they exist, but nothing PRODUCES one yet, since nothing
 wires Phase 6/7 into `discharge_parser.py`'s orchestration). `Clinical
 Event.structured_observations`/`medication_changes`/`procedures` are
 STILL not independently populated (captured only in each event's
-`raw_text`) — a reasonable future increment, not attempted. Everything
-from Phase 10 onward through Phase 21 of the original contract is
-**entirely unimplemented**:
+`raw_text`) — a reasonable future increment, not attempted. Dose-change
+and prescription-issued Timeline events are deliberately not implemented
+(section 9i's own reasoning — a reliable dose-change would risk
+manufacturing a false state transition from an unresolvable conflict; no
+document today produces real prescription-linked medication data to
+project from). Everything from Phase 11 onward through Phase 21 of the
+original contract is **entirely unimplemented**:
 
-- Phase 10: Timeline integration for derived labs/medication events.
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation
   language in answers).
 - Phase 12: provenance for the new structured facts.
-- Phase 13 (partial — Phases 6 AND 7 each laid real identity groundwork
-  and DB-proved it standalone, sections 9e/9f/16 — the full 1x/2x/10x
-  proof against a REAL end-to-end discharge UPLOAD, plus `PatientEvent`
-  idempotency, is still this phase's job): idempotency guarantees for
+- Phase 13 (partial — Phases 6, 7, AND 10 each laid real identity
+  groundwork and DB-proved it standalone, sections 9e/9f/9i/16
+  (`PatientEvent` projection idempotency specifically proven at the
+  unit level in section 9i) — the full 1x/2x/10x proof against a REAL
+  end-to-end discharge UPLOAD is still this phase's job, since nothing
+  is wired into that live path yet): idempotency guarantees for
   repeated discharge ingestion.
-- Phase 14 (partial — Phases 6 AND 7 each proved their own deletion
-  semantics both at the ORM level and through the real DELETE route,
-  sections 9e/9f/17 — the exhaustive real-Postgres cascade suite across
-  every entity type this contract touches is still this phase's job):
-  real-Postgres deletion tests for the new derived data.
+- Phase 14 (partial — Phases 6, 7, AND 10 each proved their own
+  deletion semantics both at the ORM level and through the real DELETE
+  route, sections 9e/9f/9i/17 — the exhaustive real-Postgres cascade
+  suite across every entity type this contract touches is still this
+  phase's job): real-Postgres deletion tests for the new derived data.
 - Phase 15 (partial — the synthetic hematology LAB VALUES fixture exists
   and is reused across Phase 6's own tests, section 18; Phase 7's own
   medication fixture text lives inline in `test_clinical_document_
@@ -2325,11 +2733,11 @@ from Phase 10 onward through Phase 21 of the original contract is
   run against it yet): accessibility verification.
 - Phase 21 (full): the final full regression across all of the above —
   the full backend suite HAS been re-run clean at every checkpoint
-  through Phase 8 (573/573 as of this one, section 19), and Phase 8
-  also added the first-ever Playwright coverage for the actual reader
-  product surface (11/11 passing, section 20), but that is verification
-  of Phases 0-8's own code, not a certification that Phases 9-21's
-  (still nonexistent) code passes anything.
+  through Phase 10 (603/603 as of this one, section 19), and Playwright
+  coverage for the actual reader/Documents/Timeline product surfaces now
+  stands at 26 tests across 4 specs (section 20), but that is
+  verification of Phases 0-10's own code, not a certification that
+  Phases 11-21's (still nonexistent) code passes anything.
 
 This is a large, honest scope gap. The contract's own framing (21
 phases, dozens of named sub-requirements, a 26-section handoff, a 75-
@@ -2362,42 +2770,56 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start Phase 10 (Timeline integration for derived labs/medication
-  events) — Phases 3 through 9 are ALL done: `app/services/
-  clinical_document/schema.py`/`persistence.py` (Phase 3),
-  `segments.py`/`canonical_headings.py` (Phase 4), `dates.py`/
-  `events.py`/`discharge_parser.py` (Phase 5), `lab_extraction.py`/
-  `lab_grouping.py`/`lab_persistence.py` (Phase 6), `medication_
-  extraction.py`/`medication_duration.py`/`medication_persistence.py`
-  (Phase 7), the `GET /documents/{id}/clinical-reader` API + rebuilt
-  discharge reader page + 7 reusable components under `frontend/
-  components/clinical-reader/` (Phase 8), the standalone derived-lab-
-  artifact route + Documents-list "Derived from" framing (Phase 9) —
-  use them all as-is (sections 9/9b/9c/9d/9e/9f/9g/9h), extend
+- Start Phase 11 (Ask Bragi canonical retrieval hardening) — Phases 3
+  through 10 are ALL done: `app/services/clinical_document/schema.py`/
+  `persistence.py` (Phase 3), `segments.py`/`canonical_headings.py`
+  (Phase 4), `dates.py`/`events.py`/`discharge_parser.py` (Phase 5),
+  `lab_extraction.py`/`lab_grouping.py`/`lab_persistence.py` (Phase 6),
+  `medication_extraction.py`/`medication_duration.py`/`medication_
+  persistence.py` (Phase 7), the `GET /documents/{id}/clinical-reader`
+  API + rebuilt discharge reader page + 7 reusable components under
+  `frontend/components/clinical-reader/` (Phase 8), the standalone
+  derived-lab-artifact route + Documents-list "Derived from" framing
+  (Phase 9), the Timeline medication-projection service + UI (Phase
+  10) — use them all as-is (sections 9/9b/9c/9d/9e/9f/9g/9h/9i), extend
   additively if a real gap is found, do not redesign or duplicate any
-  of them. Phase 10's own scope per the contract: surface derived labs/
-  medication events on the Timeline — a reasonable starting question for
-  whoever does this: does the Timeline need a new event TYPE for a
-  derived lab artifact, or does it read the existing `LabResult`/
-  `PatientMedication` rows directly the way Phase 9's Documents cards
-  do — a decision for that session to make deliberately, not decided
-  here.
+  of them. Phase 11's own scope per the contract: make Ask Bragi
+  deliberately consume the newly canonical `StructuredClinicalDocument`/
+  `ClinicalEvent`/`LabResult`/`PatientMedication` semantics (structured
+  dated-event queries, transparent end-date-derivation language in
+  answers, honest conflict language) — without live Reducto/OpenAI calls
+  where avoidable, and WITHOUT treating `PatientEvent`/Timeline as the
+  source of truth (Phase 10's own explicit constraint, still binding:
+  Timeline is a projection, never authoritative).
+- Do not re-attempt Phase 10 — canonical Timeline medication projection
+  is complete and tested (section 9i): `timeline_projection.py` (15
+  new backend tests), the additive `PatientEvent.source_document_id`/
+  `source_medication_id` migration, and Timeline UI updates across 5
+  frontend files including a real bug fix in the hospitalizations-
+  management page (TypeScript/ESLint/build all clean), plus real
+  Playwright coverage (7 new tests). If Phase 11 (or later work) needs a
+  genuinely NEW Timeline/projection capability this doesn't have, extend
+  `timeline_projection.py` additively and add a regression test — do not
+  build a second projection service or a second Timeline rendering path.
+  Nothing was intentionally left half-done in Phase 10 itself — dose-
+  change events, prescription-issued events, and wiring the projector
+  into live discharge ingestion are ALL explicitly, honestly deferred
+  (see section 9i's own "Deliberately NOT implemented" list) with
+  reasoning recorded, not gaps discovered later.
 - Do not re-attempt Phase 9 — the derived lab artifact's Documents/
   reader presence is complete and tested (section 9h): the extended
   `serialize_document_card`/`get_clinical_reader_payload`/`delete_
   document` backend logic (15 new backend tests), the new standalone
   `/documents/{id}/lab-report` route and updated Documents-list cards
   (TypeScript/ESLint/build all clean), and real Playwright coverage (8
-  new tests). If Phase 10 (or later work) needs a genuinely NEW reader/
-  Documents capability this doesn't have, extend the existing
-  components/endpoints additively and add a regression test — do not
-  build a second lab-report route or duplicate the derived-artifact
-  resolution logic already in `app/main.py::resolve_derived_artifact_
-  contexts`. Nothing was intentionally left half-done in Phase 9 itself
-  — Timeline integration (Phase 10), Ask Bragi awareness of a derived
-  artifact as a distinct entity (Phase 11), and dedicated section-level
-  provenance beyond labs/medications (Phase 12) are the NEXT phases'
-  own jobs, not gaps in Phase 9.
+  new tests). If future work needs a genuinely NEW reader/Documents
+  capability this doesn't have, extend the existing components/
+  endpoints additively and add a regression test — do not build a
+  second lab-report route or duplicate the derived-artifact resolution
+  logic already in `app/main.py::resolve_derived_artifact_contexts`.
+  Ask Bragi awareness of a derived artifact as a distinct entity (Phase
+  11) and dedicated section-level provenance beyond labs/medications
+  (Phase 12) are the NEXT phases' own jobs, not gaps in Phase 9.
 - Do not re-attempt Phase 8 — the discharge/clinical-document reader
   rebuild is complete and tested (section 9g): the new reader API
   contract (17 backend tests), the rebuilt page and 7 reusable
@@ -2419,7 +2841,7 @@ Then:
   sequencing reasoning as every phase since 4 — see section 9b, and
   section 9g's own detailed "why the write-side switch is still
   deferred" paragraph for the Phase-8-specific reasoning, unchanged by
-  Phase 9).
+  Phases 9-10).
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing

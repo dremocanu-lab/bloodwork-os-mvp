@@ -252,3 +252,38 @@ reimplemented per route. `serialize_document_card` itself stays a pure
 per-row serializer — it accepts the pre-resolved `parent_document`/
 `has_abnormal_override` as optional keyword params rather than querying
 inside the loop.
+
+## `PatientEvent` as a projection target, not a second source of truth (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 10 needed canonical medication
+state changes (`PatientMedication`, Phase 7) to appear on the patient's
+Timeline, which is persisted exclusively via the pre-existing
+`PatientEvent` table (previously written only by the doctor-driven
+`POST /patient-events` route). Rather than adding a second Timeline
+table or copying medication data into `PatientEvent`'s free-text fields,
+`app/services/clinical_document/timeline_projection.py::project_
+clinical_document_to_timeline(db, document)` treats `PatientEvent` as a
+PROJECTION target: it reads a document's own already-canonical
+`PatientMedication` rows and idempotently creates/updates/retracts
+`PatientEvent` rows that reference them via two new additive, nullable
+FK columns — `source_document_id` (`ondelete="SET NULL"`, mirroring
+`PatientMedication.source_document_id`'s own Phase 7 choice: the fact
+survives its source document's deletion) and `source_medication_id`
+(`ondelete="CASCADE"` — the projection is deleted once the fact it
+represents is). A manually-created event has both columns `null`; that
+alone distinguishes "manual" from "projected," no separate boolean flag.
+This is the pattern to follow for any future canonical-fact-to-Timeline
+projection: add a nullable FK from `PatientEvent` to the canonical
+table, key idempotency off that FK (never `created_at`), and give the
+`ondelete` rule the SAME independent-meaningfulness semantics the
+canonical fact's own provenance FK already has — never invent a new one.
+
+A deliberate, explicitly-recorded non-decision worth knowing before
+extending this further: a `Document` (including a Phase 6 derived lab
+artifact) is NOT projected this way, because it already appears on the
+Timeline via a separate, pre-existing mechanism — `frontend/app/
+my-records/timeline/page.tsx`/`patients/[id]/timeline/page.tsx` fuse
+`GET /my/profile`'s document list directly into the rendered Timeline
+client-side. Projecting a `PatientEvent` for the same document would
+duplicate it. See `timeline_projection.py`'s own module docstring for
+the full reasoning.
