@@ -5,13 +5,10 @@
  * authoritative definition; keep this file in sync with it by hand,
  * there is no codegen step for this yet).
  *
- * NOT CONSUMED ANYWHERE YET. This file exists so Phase 3 satisfies the
- * V3 contract's "prefer Pydantic/dataclass + TS equivalent" instruction
- * without prematurely touching any frontend page/component — the
- * discharge reader rebuild that will actually import and render this
- * shape is Phase 8, still not started (see
- * docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md). Do not
- * wire this into a page as part of an earlier phase.
+ * Consumed by the Phase 8 discharge/clinical-document reader
+ * (`frontend/app/documents/[id]/discharge/page.tsx` and its
+ * components) via `GET /documents/{id}/clinical-reader`'s
+ * `ClinicalReaderResponse` shape, defined at the bottom of this file.
  */
 
 export const CANONICAL_SECTION_KEYS = [
@@ -170,6 +167,9 @@ export interface DerivedArtifactRef {
   document_id: number | null;
   source_section_id: string | null;
   lab_result_ids: number[];
+  /** Phase 6's deterministic coherent-report identity — distinguishes
+   * multiple derived artifacts sharing the same source_section_id. */
+  group_key: string | null;
 }
 
 export interface ClinicalDocumentMetadata {
@@ -197,4 +197,97 @@ export interface StructuredClinicalDocument {
   dated_events: ClinicalEvent[];
   derived_artifacts: DerivedArtifactRef[];
   warnings: string[];
+}
+
+// ── Outline labels (Phase 8E) — canonical navigation, never the raw
+// source heading. "other" is deliberately included (a section can
+// genuinely need it) but the reader only shows it in the outline when
+// it actually has content, same rule as every other canonical key.
+export const CANONICAL_SECTION_LABELS: Record<CanonicalSectionKey, string> = {
+  overview: "Overview",
+  administrative_information: "Administrative information",
+  encounter_details: "Encounter",
+  diagnoses: "Diagnoses",
+  medical_history: "Medical history",
+  examination: "Examination",
+  clinical_course: "Clinical course",
+  investigations: "Investigations",
+  laboratory_results: "Laboratory results",
+  imaging: "Imaging",
+  procedures: "Procedures",
+  treatment: "Treatment",
+  medications: "Medications",
+  discharge_medications: "Discharge medications",
+  recommendations: "Recommendations",
+  follow_up: "Follow-up",
+  prescriptions: "Prescriptions",
+  signatures: "Signatures",
+  other: "Other",
+};
+
+// ── Phase 8 reader API contract — GET /documents/{id}/clinical-reader.
+// See backend/app/api/routers/documents.py::get_clinical_reader_payload
+// for the authoritative response shape this mirrors.
+
+export interface ReaderLabResult {
+  id: number;
+  raw_test_name: string | null;
+  canonical_name: string | null;
+  display_name: string | null;
+  category: string | null;
+  source_section: string | null;
+  value: string | null;
+  flag: string | null;
+  reference_range: string | null;
+  unit: string | null;
+  observation_datetime: string | null;
+  verification_state: string | null;
+  source_evidence_id: number | null;
+}
+
+export interface ReaderMedication {
+  id: number;
+  name: string;
+  dose_strength: string | null;
+  frequency: string | null;
+  route_form: string | null;
+  status: string;
+  is_uncertain: boolean;
+  start_date: string | null;
+  stop_date: string | null;
+  /** "explicit" | "derived" | "explicit_with_derived_conflict" | null —
+   * see backend models.py's PatientMedication.stop_date_basis docstring.
+   * NEVER render a "derived" stop_date as if the source wrote it. */
+  stop_date_basis: string | null;
+  extra_info: string | null;
+  source_segment_id: string | null;
+  source_evidence_id: number | null;
+}
+
+export interface ReaderDocumentMeta {
+  id: number;
+  public_id: string | null;
+  filename: string;
+  content_type: string | null;
+  document_type: string | null;
+  report_name: string | null;
+  report_type: string | null;
+  source_language: string | null;
+  test_date: string | null;
+  created_at: string | null;
+  is_verified: boolean;
+  /** Always present — a document-level SourceEvidence anchor for the
+   * header's "View original" / "Open original file" action. Never a
+   * fabricated PDF page/bbox; see ensure_document_level_evidence. */
+  document_level_source_evidence_id: number;
+}
+
+export interface ClinicalReaderResponse {
+  document: ReaderDocumentMeta;
+  /** null only if note_body is empty/unparseable/genuinely not a
+   * clinical document at all — the reader must show an honest "no
+   * structured content" state, never crash. */
+  structured_document: StructuredClinicalDocument | null;
+  labs: ReaderLabResult[];
+  medications: ReaderMedication[];
 }
