@@ -155,8 +155,13 @@ test.describe("Clinical reader — rebuilt discharge document (Phase 8)", () => 
 
       // The canonical display name renders (resolve_analyte()'s resolved
       // name), not the raw "WBC" abbreviation — correct, clinician-
-      // friendly behavior, not a bug.
-      await expect(page.getByText("White Blood Cell Count")).toBeVisible();
+      // friendly behavior, not a bug. `.first()` because the fixture
+      // (Phase 9) now seeds a SECOND, separate coherent lab group on
+      // this same parent document (a different request/date — see
+      // seed_e2e_discharge_document.py) so its own WBC row legitimately
+      // appears here too; the parent's embedded lab view intentionally
+      // shows every LabResult row attached to it, not one group only.
+      await expect(page.getByText("White Blood Cell Count").first()).toBeVisible();
       await expect(page.getByText("349")).toBeVisible(); // PLT value
 
       // Both conflicting MCH observations are shown, each flagged — two

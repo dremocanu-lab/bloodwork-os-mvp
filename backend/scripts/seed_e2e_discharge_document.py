@@ -138,7 +138,46 @@ def main() -> None:
             segment_id="seg-000-laborator", index=0, raw_heading="EXAMENE DE LABORATOR", raw_text=HEMATOLOGY_FIXTURE_TEXT
         )
         lab_candidates = extract_lab_candidates_from_segment(lab_segment)
-        persist_lab_candidates(db, document=doc, candidates=lab_candidates)
+        lab_result = persist_lab_candidates(db, document=doc, candidates=lab_candidates)
+        derived_document_id = lab_result.groups[0].derived_document_id if lab_result.groups else None
+
+        # A second, separate coherent lab group (different request/date) —
+        # Clinical Document Intelligence V3 Phase 9's Playwright coverage
+        # needs a SECOND derived artifact on the same parent to prove
+        # multiple derived reports stay distinct in Documents, not merged.
+        second_lab_segment = SourceSegment(
+            segment_id="seg-004-laborator",
+            index=4,
+            raw_heading="EXAMENE DE LABORATOR",
+            raw_text="Nr. cerere: LAB-2026-0092\nData recoltarii: 18.01.2026\n\nWBC 6.1 10^3/uL (4.0-10.0)\n",
+        )
+        second_lab_result = persist_lab_candidates(
+            db, document=doc, candidates=extract_lab_candidates_from_segment(second_lab_segment)
+        )
+        second_derived_document_id = second_lab_result.groups[0].derived_document_id if second_lab_result.groups else None
+
+        # A plain Reducto Split child — uses parent_document_id exactly like
+        # a derived artifact does, but must NEVER be mislabeled as one (no
+        # derived_artifact_kind). Proves Documents/patients pages tell the
+        # two apart correctly.
+        split_child = models.Document(
+            patient_id=patient.id,
+            uploaded_by_user_id=user.id,
+            section="discharge_summary",
+            filename="discharge.pdf",
+            content_type="application/pdf",
+            document_type="discharge_summary",
+            parent_document_id=doc.id,
+            derived_artifact_kind=None,
+            page_range_start=1,
+            page_range_end=2,
+            created_at="2026-01-20T00:00:00Z",
+            is_verified=True,
+            public_id=f"brg-doc-e2e-split-{suffix}",
+        )
+        db.add(split_child)
+        db.flush()
+        split_child_id = split_child.id
 
         med_candidates = [
             MedicationCandidate(
@@ -193,6 +232,9 @@ def main() -> None:
                     "user": {"id": user.id, "email": email, "full_name": user.full_name, "role": "patient"},
                     "patient_id": patient.id,
                     "document_id": doc.id,
+                    "derived_document_id": derived_document_id,
+                    "second_derived_document_id": second_derived_document_id,
+                    "split_child_id": split_child_id,
                 }
             )
         )
