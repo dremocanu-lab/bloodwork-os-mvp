@@ -33,12 +33,12 @@ Hard security invariants, enforced here, not just documented:
 from __future__ import annotations
 
 import json
-from datetime import UTC, datetime
 from typing import Any, Callable
 
 from sqlalchemy import or_
 
 from app import models
+from app.services import source_evidence as source_evidence_service
 from app.services.ai_minimization import minimize_patient_context
 from app.services.lab_catalog import find_lab_definition
 from app.services.lab_resolver import resolve_analyte
@@ -157,45 +157,17 @@ def _ensure_document_level_evidence(ctx: AskBragiContext, document) -> int | Non
     "Remaining limitations"). Without this, a narrative-grounded Ask
     Bragi answer would carry 0 citations even when accurate.
 
-    This creates (once, idempotently — checked first) a DOCUMENT-LEVEL
-    evidence row: `lab_result_id=None`, `page_number=1` if the document's
-    own extraction reasonably implies page 1 is where its content
-    starts, `bbox_*` and `source_text` left null. The existing precision
-    hierarchy in `GET /source-evidence/{id}/view` (see main.py) already
-    reports this honestly as `"page_only"` — NEVER `"exact_bbox"` or
-    `"text_only"` — because those fields are genuinely absent, not
-    because anything here pretends otherwise. Precision hierarchy
-    preserved: exact bbox > page-level > document-level; this function
-    only ever produces the bottom two, never fakes the top one.
+    Thin wrapper over the shared `app/services/source_evidence.py`
+    helper (extracted in Clinical Document Intelligence V3 Phase 8,
+    which needed the exact same document-level-evidence mechanism for
+    the discharge reader's "View original" action) — passes this call
+    site's own historical `provider` label explicitly so existing
+    stored/tested values are unchanged. See that module for the full
+    precision-hierarchy reasoning.
     """
-    existing = (
-        ctx.db.query(models.SourceEvidence)
-        .filter(
-            models.SourceEvidence.document_id == document.id,
-            models.SourceEvidence.lab_result_id.is_(None),
-        )
-        .order_by(models.SourceEvidence.id.asc())
-        .first()
+    evidence = source_evidence_service.ensure_document_level_evidence(
+        ctx.db, document, provider="ask_bragi_document_level"
     )
-    if existing:
-        return existing.id
-
-    # Any existing lab-result-linked evidence already proves this
-    # document has real page geometry — page 1 is a safe, honest
-    # default for a document-level (not field-level) citation on a
-    # narrative document; never asserted for a document Bragi never
-    # actually parsed into pages (nothing here invents a page count).
-    evidence = models.SourceEvidence(
-        document_id=document.id,
-        lab_result_id=None,
-        page_number=1,
-        source_text=None,
-        provider="ask_bragi_document_level",
-        created_at=datetime.now(UTC).isoformat(),
-    )
-    ctx.db.add(evidence)
-    ctx.db.commit()
-    ctx.db.refresh(evidence)
     return evidence.id
 
 

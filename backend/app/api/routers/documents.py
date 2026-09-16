@@ -75,6 +75,7 @@ from app.policies.access import (
     get_patient_for_user,
 )
 from app.rate_limit import RateLimiter
+from app.services import source_evidence as source_evidence_service
 from app.services.document_taxonomy import (
     AUTO_CLASSIFY_SECTION,
     document_type_choices,
@@ -814,6 +815,126 @@ def get_document(
     audit_logs = db.query(models.AuditLog).filter(models.AuditLog.document_id == document.id).all()
 
     return get_document_payload(db, document, labs, audit_logs, current_user)
+
+
+@router.get("/documents/{document_id}/clinical-reader")
+def get_clinical_reader_payload(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Clinical Document Intelligence V3, Phase 8: the one deliberate
+    reader payload for the rebuilt discharge/clinical-document reader —
+    a validated `StructuredClinicalDocument` (via the sanctioned
+    `parse_structured_document` read path, which transparently
+    upconverts an existing LEGACY discharge `note_body` payload in
+    memory, so old documents render through the exact same contract as
+    a real one without any reprocessing) plus every canonical fact it
+    references: `LabResult` rows (Phase 6), `PatientMedication` rows
+    (Phase 7), and a source-evidence id per fact for the existing
+    `openSourceEvidence` viewer. Never a copy of clinical judgement —
+    every value here is read straight from the canonical tables that
+    already own it.
+
+    Authorization is IDENTICAL to `GET /documents/{document_id}` above
+    (same two-branch care_partner/can_access_patient check) — this is a
+    read-shape difference, not a new access rule.
+    """
+    from app.services.clinical_document.persistence import parse_structured_document
+
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if current_user.role == "care_partner":
+        if not care_partner_can_access_document(db, current_user.id, document_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    structured_document = parse_structured_document(document.note_body)
+
+    labs = (
+        db.query(models.LabResult)
+        .filter(models.LabResult.document_id == document.id)
+        .order_by(models.LabResult.id.asc())
+        .all()
+    )
+    medications = (
+        db.query(models.PatientMedication)
+        .filter(models.PatientMedication.source_document_id == document.id)
+        .order_by(models.PatientMedication.id.asc())
+        .all()
+    )
+
+    lab_payload = [
+        {
+            "id": lab.id,
+            "raw_test_name": lab.raw_test_name,
+            "canonical_name": lab.canonical_name,
+            "display_name": lab.display_name,
+            "category": lab.category,
+            "source_section": lab.source_section,
+            "value": lab.value,
+            "flag": lab.flag,
+            "reference_range": lab.reference_range,
+            "unit": lab.unit,
+            "observation_datetime": lab.observation_datetime,
+            "verification_state": lab.verification_state,
+            "source_evidence_id": source_evidence_service.first_source_evidence_id(db, lab_result_id=lab.id),
+        }
+        for lab in labs
+    ]
+
+    medication_payload = [
+        {
+            "id": med.id,
+            "name": med.name,
+            "dose_strength": med.dose_strength,
+            "frequency": med.frequency,
+            "route_form": med.route_form,
+            "status": med.status,
+            "is_uncertain": bool(med.is_uncertain),
+            "start_date": med.start_date,
+            "stop_date": med.stop_date,
+            "stop_date_basis": med.stop_date_basis,
+            "extra_info": med.extra_info,
+            "source_segment_id": med.source_segment_id,
+            "source_evidence_id": source_evidence_service.first_source_evidence_id(db, medication_id=med.id),
+        }
+        for med in medications
+    ]
+
+    # A document-level evidence anchor — the discharge reader's "View
+    # original"/"Open original file" header action resolves through this
+    # id, exactly like every other openSourceEvidence() call site. Never
+    # a fabricated PDF page/bbox: see ensure_document_level_evidence's
+    # own docstring for the honest page_only/document_only precision
+    # this always produces.
+    document_level_evidence = source_evidence_service.ensure_document_level_evidence(
+        db, document, provider="clinical_reader"
+    )
+
+    return {
+        "document": {
+            "id": document.id,
+            "public_id": document.public_id,
+            "filename": document.filename,
+            "content_type": document.content_type,
+            "document_type": document.document_type,
+            "report_name": document.report_name,
+            "report_type": document.report_type,
+            "source_language": document.source_language,
+            "test_date": document.test_date,
+            "created_at": document.created_at,
+            "is_verified": bool(document.is_verified),
+            "document_level_source_evidence_id": document_level_evidence.id,
+        },
+        "structured_document": structured_document.model_dump() if structured_document else None,
+        "labs": lab_payload,
+        "medications": medication_payload,
+    }
 
 
 # ── Public-ID lookup endpoints (pretty URL resolution) ────────────────────────
