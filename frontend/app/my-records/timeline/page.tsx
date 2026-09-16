@@ -42,17 +42,38 @@ type DocumentCard = {
   document_type?: string | null;
   is_verified: boolean;
   uploaded_by?: UploadedBy | null;
+  /** Clinical Document Intelligence V3 Phase 9 — set only for a derived
+   * lab-report artifact; lets the Timeline show the same restrained
+   * "Laboratory report" / "Derived from: [parent]" framing Documents
+   * already uses, instead of the artifact's verbose internal
+   * report_name/report_type. */
+  derived_artifact_kind?: string | null;
+  parent_document?: {
+    id: number;
+    report_name?: string | null;
+    filename?: string | null;
+  } | null;
 };
 
 type PatientEvent = {
   id: number;
   status: string;
   title: string;
+  description?: string | null;
   hospital_name?: string | null;
   department?: string | null;
   admitted_at: string;
   discharged_at?: string | null;
   doctor_name?: string | null;
+  /** Clinical Document Intelligence V3 Phase 10 — "hospitalization" (or
+   * absent, for a legacy row) for a manually-created event;
+   * "medication_started"/"medication_stopped" for a projected one (see
+   * timeline_projection.py). `source_medication_id` is set only for the
+   * latter and is what the Timeline uses to route to that medication's
+   * own detail page. */
+  event_type?: string | null;
+  source_document_id?: number | null;
+  source_medication_id?: number | null;
 };
 
 type MyProfileResponse = {
@@ -79,16 +100,27 @@ type MyProfileResponse = {
 
 type TimelineItem = {
   id: string;
-  type: "document" | "event";
+  type: "document" | "event" | "medication";
   date: string;
   title: string;
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  medicationId?: number;
   section?: string;
   documentType?: string | null;
   children?: TimelineItem[];
 };
+
+/** Clinical Document Intelligence V3 Phase 10 — only a manually-created
+ * event (no event_type, or "hospitalization") acts as an admission
+ * grouping PARENT (its own date window can swallow other documents). A
+ * projected medication event never does — it has a single point-in-time
+ * date with no window, so treating it as a parent would incorrectly
+ * group every later record under it. */
+function isMedicationEvent(event: PatientEvent) {
+  return event.event_type === "medication_started" || event.event_type === "medication_stopped";
+}
 
 type AdmissionTimelineItem = TimelineItem & {
   admissionStart?: string | null;
@@ -213,8 +245,28 @@ function getDocumentDateLabel(doc: DocumentCard) {
   return "No date";
 }
 
+function isDerivedLabArtifact(doc: DocumentCard) {
+  return doc.derived_artifact_kind === "lab_report";
+}
+
 function getDocumentTitle(doc: DocumentCard) {
+  if (isDerivedLabArtifact(doc)) return "Laboratory report";
   return doc.report_name || doc.filename || `Document ${doc.id}`;
+}
+
+function getDocumentSubtitleParts(doc: DocumentCard, t: (key: string) => string): string[] {
+  if (isDerivedLabArtifact(doc)) {
+    const parentName = doc.parent_document?.report_name || doc.parent_document?.filename;
+    return [getDocumentDateLabel(doc), parentName ? `Derived from: ${parentName}` : null].filter(
+      (part): part is string => Boolean(part)
+    );
+  }
+  return [
+    getDocumentDateLabel(doc),
+    sectionLabel(doc.section),
+    getUploaderText(doc),
+    doc.is_verified ? t("verified") : t("unverified"),
+  ];
 }
 
 function getUploaderText(doc: DocumentCard) {
@@ -269,7 +321,9 @@ function buildTimelineItems(
       admissionEnd: doc.reported_on,
       parentRank: 1,
     }));
-  const eventParents: AdmissionTimelineItem[] = events.map((event) => ({
+  const hospitalizationEvents = events.filter((event) => !isMedicationEvent(event));
+  const medicationEvents = events.filter(isMedicationEvent);
+  const eventParents: AdmissionTimelineItem[] = hospitalizationEvents.map((event) => ({
     id: `event-${event.id}`,
     type: "event",
     date: event.discharged_at || event.admitted_at || "",
@@ -295,13 +349,30 @@ function buildTimelineItems(
     type: "document",
     date: getDocumentClinicalDate(doc),
     title: getDocumentTitle(doc),
-    subtitle: `${getDocumentDateLabel(doc)} · ${sectionLabel(doc.section)} · ${getUploaderText(doc)} · ${
-      doc.is_verified ? t("verified") : t("unverified")
-    }`,
+    subtitle: getDocumentSubtitleParts(doc, t).join(" · "),
     documentId: doc.id,
     section: doc.section,
     documentType: doc.document_type,
   });
+  // Clinical Document Intelligence V3 Phase 10 — a projected medication
+  // event is a single point-in-time moment, never an admission-grouping
+  // parent (see isMedicationEvent's own docstring); it always renders as
+  // a flat, standalone Timeline item.
+  const medicationTimelineItems: TimelineItem[] = medicationEvents.map((event) => ({
+    id: `medication-${event.id}`,
+    type: "medication",
+    date: event.admitted_at,
+    title: event.title,
+    subtitle: [
+      event.event_type === "medication_started" ? "Medication started" : "Medication completed",
+      event.description || null,
+    ]
+      .filter((part): part is string => Boolean(part))
+      .join(" · "),
+    eventId: event.id,
+    medicationId: event.source_medication_id ?? undefined,
+    section: "medications",
+  }));
   for (const parent of admissionParents) {
     const children = sortedDocuments
       .filter((doc) => {
@@ -322,7 +393,7 @@ function buildTimelineItems(
     .filter((doc) => !usedDocumentIds.has(doc.id))
     .filter((doc) => !parentDocumentIds.has(doc.id))
     .map(documentToTimelineItem);
-  return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+  return [...admissionParents, ...standaloneDocuments, ...medicationTimelineItems].sort((a, b) =>
     compareDatesDescending(a.date, b.date)
   );
 }
@@ -470,6 +541,10 @@ export default function MyRecordsTimelinePage() {
       return;
     }
     router.push(`/documents/${documentId}`);
+  }
+
+  function openTimelineMedication(medicationId: number) {
+    router.push(`/my-records/medications/${medicationId}`);
   }
 
   if (loading || !currentUser || !profile) {
@@ -657,6 +732,7 @@ export default function MyRecordsTimelinePage() {
           <ClinicalTimeline
             items={filteredTimelineItems}
             onOpenDocument={openTimelineDocument}
+            onOpenMedication={openTimelineMedication}
             emptyText={
               hasActiveFilters
                 ? "No records match your filters. Try adjusting or clearing them."

@@ -144,6 +144,9 @@ type PatientEvent = {
   admitted_at: string;
   discharged_at?: string | null;
   doctor_name?: string | null;
+  /** Clinical Document Intelligence V3 Phase 10 — set only for a
+   * projected medication event (see timeline_projection.py). */
+  source_medication_id?: number | null;
 };
 
 type PatientProfileResponse = {
@@ -171,12 +174,13 @@ type PatientProfileResponse = {
 
 type TimelineItem = {
   id: string;
-  type: "document" | "event";
+  type: "document" | "event" | "medication";
   date: string;
   title: string;
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  medicationId?: number;
   section?: string;
   documentType?: string | null;
   children?: TimelineItem[];
@@ -187,6 +191,13 @@ type AdmissionTimelineItem = TimelineItem & {
   admissionEnd?: string | null;
   parentRank: number;
 };
+
+/** Clinical Document Intelligence V3 Phase 10 — only a manually-created
+ * event acts as an admission grouping PARENT; a projected medication
+ * event (single point-in-time date, no window) never does. */
+function isMedicationEvent(event: PatientEvent) {
+  return event.event_type === "medication_started" || event.event_type === "medication_stopped";
+}
 
 type Medication = {
   id: number;
@@ -646,7 +657,10 @@ export default function PatientChartPage() {
         parentRank: 1,
       }));
 
-    const eventParents: AdmissionTimelineItem[] = (profile.events || []).map((event) => ({
+    const hospitalizationEvents = (profile.events || []).filter((event) => !isMedicationEvent(event));
+    const medicationEvents = (profile.events || []).filter(isMedicationEvent);
+
+    const eventParents: AdmissionTimelineItem[] = hospitalizationEvents.map((event) => ({
       id: `event-${event.id}`,
       type: "event" as const,
       date: event.discharged_at || event.admitted_at || "",
@@ -664,6 +678,24 @@ export default function PatientChartPage() {
       parentRank: 2,
     }));
 
+    // Clinical Document Intelligence V3 Phase 10 — a single point-in-time
+    // moment, never an admission-grouping parent (see isMedicationEvent).
+    const medicationTimelineItems: TimelineItem[] = medicationEvents.map((event) => ({
+      id: `medication-${event.id}`,
+      type: "medication",
+      date: event.admitted_at,
+      title: event.title,
+      subtitle: [
+        event.event_type === "medication_started" ? "Medication started" : "Medication completed",
+        event.description || null,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(" · "),
+      eventId: event.id,
+      medicationId: event.source_medication_id ?? undefined,
+      section: "medications",
+    }));
+
     const admissionParents = [...dischargeParents, ...eventParents]
       .filter((parent) => parent.admissionStart || parent.admissionEnd)
       .sort((a, b) => {
@@ -678,7 +710,11 @@ export default function PatientChartPage() {
       title: getDocumentTitle(doc),
       // The timeline row renders the category itself, so it is not repeated
       // here - the subtitle carries only verification state and source.
-      subtitle: `${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
+      subtitle: isDerivedLabArtifact(doc)
+        ? doc.parent_document
+          ? `Derived from: ${doc.parent_document.report_name || doc.parent_document.filename}`
+          : ""
+        : `${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
       documentId: doc.id,
       section: doc.section,
       documentType: doc.document_type,
@@ -708,7 +744,7 @@ export default function PatientChartPage() {
       .filter((doc) => !usedDocumentIds.has(doc.id) && !parentDocumentIds.has(doc.id))
       .map(documentToTimelineItem);
 
-    return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+    return [...admissionParents, ...standaloneDocuments, ...medicationTimelineItems].sort((a, b) =>
       compareDatesDescending(a.date, b.date)
     );
   }, [profile, allDocuments]);
@@ -766,7 +802,7 @@ export default function PatientChartPage() {
       hospitalizations:
         getSectionDocuments(profile, "discharge_summary").length +
         getSectionDocuments(profile, "hospitalizations").length +
-        (profile.events || []).length,
+        (profile.events || []).filter((event) => !isMedicationEvent(event)).length,
       needsReview: allDocuments.filter(needsDoctorReview).length,
       abnormal: sortedTrends.filter(isTrendAbnormal).length,
     };
@@ -793,6 +829,10 @@ export default function PatientChartPage() {
   function openTimelineDocument(documentId: number) {
     const doc = documentById.get(documentId);
     router.push(doc ? getStructuredDocumentPath(doc, documentId) : `/documents/${documentId}`);
+  }
+
+  function openTimelineMedication(medicationId: number) {
+    router.push(`/patients/${patientId}/medications/${medicationId}`);
   }
 
   async function openOriginal(documentId: number) {
@@ -1320,6 +1360,7 @@ export default function PatientChartPage() {
                   items={timelineItems}
                   maxItems={6}
                   onOpenDocument={openTimelineDocument}
+                  onOpenMedication={openTimelineMedication}
                   onSeeFullTimeline={() => setTab("timeline")}
                   showSeeFullTimeline={false}
                   emptyText="No timeline activity yet."
@@ -1476,6 +1517,7 @@ export default function PatientChartPage() {
                 items={timelineItems}
                 maxItems={60}
                 onOpenDocument={openTimelineDocument}
+                onOpenMedication={openTimelineMedication}
                 onSeeFullTimeline={() => router.push(`/patients/${patientId}/timeline`)}
                 showSeeFullTimeline
                 emptyText="No timeline activity yet."

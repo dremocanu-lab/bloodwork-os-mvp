@@ -157,16 +157,30 @@ export default function PatientHospitalizationsPage() {
     }
   }
 
-  const activeEvents = useMemo(() => {
-    return (profile?.events || []).filter((event) => event.status === "active");
+  // Clinical Document Intelligence V3 Phase 10 — this page is a
+  // hospitalization-admission-only management view; a projected
+  // medication start/stop event (event_type "medication_started"/
+  // "medication_stopped" — see timeline_projection.py) is NOT a
+  // hospitalization and must never appear here, even though it shares
+  // the same PatientEvent table and a `status` field. Every existing
+  // manually-created event has event_type "hospitalization" (or, for a
+  // legacy row, no event_type at all).
+  const hospitalizationEvents = useMemo(() => {
+    return (profile?.events || []).filter(
+      (event) => event.event_type !== "medication_started" && event.event_type !== "medication_stopped"
+    );
   }, [profile]);
+
+  const activeEvents = useMemo(() => {
+    return hospitalizationEvents.filter((event) => event.status === "active");
+  }, [hospitalizationEvents]);
 
   const pastEvents = useMemo(() => {
-    return (profile?.events || []).filter((event) => event.status !== "active");
-  }, [profile]);
+    return hospitalizationEvents.filter((event) => event.status !== "active");
+  }, [hospitalizationEvents]);
 
   const filteredEvents = useMemo(() => {
-    const events = profile?.events || [];
+    const events = hospitalizationEvents;
 
     const filtered =
       filterMode === "active"
@@ -184,11 +198,11 @@ export default function PatientHospitalizationsPage() {
 
   const stats = useMemo(() => {
     return {
-      all: profile?.events.length || 0,
+      all: hospitalizationEvents.length,
       active: activeEvents.length,
       past: pastEvents.length,
     };
-  }, [profile, activeEvents, pastEvents]);
+  }, [hospitalizationEvents, activeEvents, pastEvents]);
 
   if (loading || !currentUser || !profile) {
     return (

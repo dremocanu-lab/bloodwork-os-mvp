@@ -128,6 +128,9 @@ type PatientEvent = {
   admitted_at: string;
   discharged_at?: string | null;
   doctor_name?: string | null;
+  /** Clinical Document Intelligence V3 Phase 10 — set only for a
+   * projected medication event (see timeline_projection.py). */
+  source_medication_id?: number | null;
 };
 
 type MyProfileResponse = {
@@ -177,12 +180,13 @@ type BloodworkTrend = {
 
 type TimelineItem = {
   id: string;
-  type: "document" | "event";
+  type: "document" | "event" | "medication";
   date: string;
   title: string;
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  medicationId?: number;
   section?: string;
   documentType?: string | null;
   children?: TimelineItem[];
@@ -193,6 +197,15 @@ type AdmissionParent = TimelineItem & {
   admissionEnd?: string | null;
   parentRank: number;
 };
+
+/** Clinical Document Intelligence V3 Phase 10 — only a manually-created
+ * event acts as an admission grouping PARENT; a projected medication
+ * event (single point-in-time date, no window) never does — see
+ * frontend/app/my-records/timeline/page.tsx's own copy of this
+ * function for the full reasoning. */
+function isMedicationEvent(event: PatientEvent) {
+  return event.event_type === "medication_started" || event.event_type === "medication_stopped";
+}
 
 type Medication = {
   id: number;
@@ -666,7 +679,10 @@ export default function MyRecordsPage() {
         parentRank: 1,
       }));
 
-    const eventParents: AdmissionParent[] = (profile.events || []).map((event) => ({
+    const hospitalizationEvents = (profile.events || []).filter((event) => !isMedicationEvent(event));
+    const medicationEvents = (profile.events || []).filter(isMedicationEvent);
+
+    const eventParents: AdmissionParent[] = hospitalizationEvents.map((event) => ({
       id: `event-${event.id}`,
       type: "event",
       date: getEventDate(event),
@@ -684,6 +700,24 @@ export default function MyRecordsPage() {
       parentRank: 2,
     }));
 
+    // Clinical Document Intelligence V3 Phase 10 — a single point-in-time
+    // moment, never an admission-grouping parent (see isMedicationEvent).
+    const medicationTimelineItems: TimelineItem[] = medicationEvents.map((event) => ({
+      id: `medication-${event.id}`,
+      type: "medication",
+      date: event.admitted_at,
+      title: event.title,
+      subtitle: [
+        event.event_type === "medication_started" ? "Medication started" : "Medication completed",
+        event.description || null,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(" · "),
+      eventId: event.id,
+      medicationId: event.source_medication_id ?? undefined,
+      section: "medications",
+    }));
+
     const admissionParents = [...dischargeParents, ...eventParents]
       .filter((parent) => parent.admissionStart || parent.admissionEnd)
       .sort((a, b) => {
@@ -695,9 +729,18 @@ export default function MyRecordsPage() {
       id: `doc-${doc.id}`,
       type: "document",
       date: getDocumentClinicalDate(doc),
-      title: valueOrDash(doc.report_name || doc.filename),
+      title: isDerivedLabArtifact(doc) ? t("laboratoryReport") : valueOrDash(doc.report_name || doc.filename),
       // Category is rendered by the timeline row, so it is not repeated here.
-      subtitle: `${getDocumentDateLabel(doc)} · ${uploaderSubtitle(doc)}`,
+      subtitle: isDerivedLabArtifact(doc)
+        ? [
+            getDocumentDateLabel(doc),
+            doc.parent_document
+              ? `${t("derivedFrom")}: ${doc.parent_document.report_name || doc.parent_document.filename}`
+              : null,
+          ]
+            .filter((part): part is string => Boolean(part))
+            .join(" · ")
+        : `${getDocumentDateLabel(doc)} · ${uploaderSubtitle(doc)}`,
       documentId: doc.id,
       section: doc.section,
       documentType: doc.document_type,
@@ -728,7 +771,7 @@ export default function MyRecordsPage() {
       .filter((doc) => !usedDocumentIds.has(doc.id) && !parentDocumentIds.has(doc.id))
       .map(documentToTimelineItem);
 
-    return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+    return [...admissionParents, ...standaloneDocuments, ...medicationTimelineItems].sort((a, b) =>
       compareDatesDescending(a.date, b.date)
     );
   }, [profile, allDocuments, t]);
@@ -893,6 +936,10 @@ export default function MyRecordsPage() {
   function openTimelineDocument(documentId: number) {
     const found = allDocuments.find((doc) => doc.id === documentId);
     router.push(found ? getStructuredDocumentPath(found, documentId) : `/documents/${documentId}`);
+  }
+
+  function openTimelineMedication(medicationId: number) {
+    router.push(`/my-records/medications/${medicationId}`);
   }
 
   /* --- Columns --------------------------------------------------------- */
@@ -1366,6 +1413,7 @@ export default function MyRecordsPage() {
                   items={myTimeline}
                   maxItems={6}
                   onOpenDocument={openTimelineDocument}
+                  onOpenMedication={openTimelineMedication}
                   emptyText={t("noTimelineActivity")}
                 />
               </div>
@@ -1489,6 +1537,7 @@ export default function MyRecordsPage() {
                 items={myTimeline}
                 maxItems={50}
                 onOpenDocument={openTimelineDocument}
+                onOpenMedication={openTimelineMedication}
                 onSeeFullTimeline={() => router.push("/my-records/timeline")}
                 showSeeFullTimeline
                 emptyText={t("noTimelineActivity")}
