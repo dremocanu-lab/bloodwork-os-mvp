@@ -185,7 +185,7 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
-## Clinical Document Intelligence V3 — PARTIAL (Phases 0-7 of 21)
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-8 of 21)
 
 Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
 the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
@@ -205,7 +205,7 @@ canonical `LabResult` rows — feeding the existing
 `lab_resolver.resolve_analyte()`, never a private alias dictionary or a
 second lab datastore — plus one derived "lab_report" `Document` artifact
 per coherent source report, with real deletion-cascade and idempotency
-guarantees, DB-proven with 44 new tests. Phase 7 (NEW) added medication
+guarantees, DB-proven with 44 new tests. Phase 7 added medication
 extraction/context classification from a discharge's medication-bearing
 sections into REAL, canonical `PatientMedication` rows — feeding the
 existing status vocabulary, never a second medication table — with
@@ -213,11 +213,26 @@ deterministic Romanian/English duration parsing, real calendar-month
 end-date derivation, an exact 4-tier start-date priority that never uses
 an upload/ingestion timestamp, and explicit preservation of same-drug
 conflicts and explicit-vs-derived date disagreements, DB-proven with 81
-new tests. **None of Phases 3-7's production code is wired into the live
-discharge upload write path yet — deliberate, not an oversight (the
-frontend discharge reader still consumes the old payload shape; see the
-handoff's sequencing note). Phases 8-21 of the originating contract (the
-frontend rebuild, Timeline/Ask-Bragi integration, and everything
+new tests. **Phase 8 (NEW) rebuilt the discharge/clinical-document
+reader** around the canonical `StructuredClinicalDocument` contract: a
+new `GET /documents/{id}/clinical-reader` API, a rewritten reader page,
+and 7 new reusable frontend components (a canonical section outline,
+ONE `StructuredLabReport` component for both embedded and standalone
+use, a Clinical Course chronological event timeline that never
+"corrects" a suspicious source date, honest PDF/non-PDF provenance
+reusing the existing source-viewer system, and derived-vs-explicit
+medication end-date UX with honest conflict presentation) — proven with
+17 new backend tests and 6 new real-browser Playwright tests against a
+synthetic discharge fixture, and confirmed to render BOTH an old legacy
+discharge document and a real forward-parsed one through the exact same
+contract. **None of Phases 3-8's EXTRACTION/PERSISTENCE code is wired
+into the live discharge upload write path yet — deliberate, not an
+oversight (a brand-new upload today still renders correctly through
+Phase 8's reader, just without labs/medications attached yet, since
+nothing has extracted them for it; see the handoff's sequencing note
+and Phase 8's own detailed reasoning for keeping this deferred). Phases
+9-21 of the originating contract (making derived lab artifacts appear
+in Documents, Timeline/Ask-Bragi integration, and everything
 downstream) are entirely unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
 full, section-by-section honest accounting and how to continue.

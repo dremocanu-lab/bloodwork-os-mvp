@@ -1,6 +1,6 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0 through 7 of the 21-phase contract are
+**Status: PARTIAL. Phases 0 through 8 of the 21-phase contract are
 COMPLETE and verified. Phases 0-5: the full structural reconstruction
 layer (typed segments, canonical section consolidation, real Clinical
 Course dated-event extraction with chronology sanity checking) and a
@@ -11,19 +11,28 @@ from a discharge's `laboratory_results` section into real, canonical
 `LabResult` rows — feeding the EXISTING `resolve_analyte()` resolver, no
 private alias dictionary, no second lab datastore — plus a real derived
 "lab_report" artifact `Document` per coherent source report. See section
-9e. Phase 7 (NEW this checkpoint): medication extraction/context
-classification + deterministic duration/end-date derivation, persisted
-into the EXISTING `PatientMedication` model/status vocabulary — no
-second medication datastore. See section 9f. None of Phases 3-7's code
-is wired into the live ingestion pipeline yet — this is deliberate, not
-an oversight; see section 9b's sequencing note (switching the write path
-before Phase 8 rebuilds the frontend discharge reader would break it).
-Phase 6's and Phase 7's own persistence services (`lab_persistence.py`,
-`medication_persistence.py`) ARE fully callable and DB-tested standalone
-in the meantime (see sections 9e/9f). Phases 8–21 are NOT STARTED.**
-This document exists specifically so a future Claude session with zero
-memory of this conversation can pick this up correctly — read section 23
-("HOW TO CONTINUE") first if that's you.
+9e. Phase 7: medication extraction/context classification +
+deterministic duration/end-date derivation, persisted into the EXISTING
+`PatientMedication` model/status vocabulary — no second medication
+datastore. See section 9f. **Phase 8 (NEW this checkpoint): the
+discharge/clinical-document reader was rebuilt from scratch around
+`StructuredClinicalDocument`** — a new `GET /documents/{id}/clinical-
+reader` backend contract, a rebuilt frontend page and 7 new reusable
+components (canonical outline, one `StructuredLabReport` for both
+embedded/standalone use, a Clinical Course event timeline, honest
+PDF/non-PDF provenance, derived-vs-explicit medication date UX,
+lab/medication conflict presentation), and real Playwright coverage
+against a synthetic fixture. See section 9g. None of Phases 3-8's
+EXTRACTION/PERSISTENCE code is wired into the live discharge UPLOAD
+write path yet — this remains deliberate, not an oversight (see section
+9b's sequencing note, and section 9g's own "why the write-side switch is
+still deferred" reasoning — Phase 8's READ side is now proven fully
+dual-compatible with both old and new document shapes, which is a
+distinct, already-completed milestone from the write-side switch).
+Phases 9–21 are NOT STARTED.** This document exists specifically so a
+future Claude session with zero memory of this conversation can pick
+this up correctly — read section 23 ("HOW TO CONTINUE") first if
+that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -35,52 +44,51 @@ can open, or a test you can execute.
 - **HEAD SHA: check `git log --oneline -1`** (this line is updated by
   hand at each checkpoint and can lag a moment behind an in-progress
   session; the git log is always the final authority). As of this
-  checkpoint, the last five commits are (newest first): a handoff
-  checkpoint commit for this section, `cabe297` (Phase 7 persistence +
-  provenance + migration), `c3b38d2` (Phase 7 extraction + duration),
-  `a026fa0` (Phase 6 handoff checkpoint), `9a085ca` (Phase 6 persistence
-  + derived artifact semantics + migration) — on top of the Phase 0-5
-  checkpoint at `ea3d795`.
-- **Pushed to `origin/fix/clinical-document-intelligence-v3`**: the four
-  Phase 6 commits (through `a026fa0`) were explicitly authorized and
-  pushed at the START of this Phase 7 session — confirmed synchronized
-  (`git log origin/...\..HEAD --oneline` returned empty immediately
-  after). The Phase 7 commits above (`c3b38d2`, `cabe297`, and this
-  handoff commit) are pushed at the END of this session, per the same
-  explicit authorization — check `git log origin/fix/clinical-document-
-  intelligence-v3..HEAD --oneline` to confirm empty before trusting this
-  line.
+  checkpoint, the last four commits are (newest first): a handoff
+  checkpoint commit for this section, `d39f5fb` (Phase 8 Playwright
+  coverage), `def2079` (Phase 8 frontend rebuild), `60ff9b1` (Phase 8
+  reader API contract) — on top of the Phase 0-7 checkpoint at
+  `45ce7f3`.
+- **Pushed to `origin/fix/clinical-document-intelligence-v3`**: the
+  three Phase 7 commits plus its handoff (through `45ce7f3`) were
+  explicitly authorized and pushed at the START of this Phase 8
+  session — confirmed synchronized (`git log origin/...\..HEAD
+  --oneline` returned empty immediately after). The four commits above
+  are pushed at the END of this session, per the same explicit
+  authorization — check `git log origin/fix/clinical-document-
+  intelligence-v3..HEAD --oneline` to confirm empty before trusting
+  this line.
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing) once this handoff commit lands.
 - **No PR opened.**
-- **Phases 4, 5, 6, and 7 are now COMPLETE.** Phases 4/5: segments,
+- **Phases 4 through 8 are now COMPLETE.** Phases 4/5: segments,
   canonical section consolidation, real Clinical Course event
   extraction, chronology sanity checking, full end-to-end orchestration
   in `discharge_parser.py` (sections 9b/9c/9d). Phase 6: embedded lab
   extraction/grouping/canonical persistence + derived lab artifact
-  backend semantics (section 9e). Phase 7 (NEW): medication extraction/
+  backend semantics (section 9e). Phase 7: medication extraction/
   context classification, deterministic duration parsing, and
   start/end-date derivation, persisted into the EXISTING
-  `PatientMedication` model (section 9f). None of Phases 3-7's own
-  production code is wired into the live discharge ingestion write path
-  yet (deliberate — see section 9b's sequencing note, which now also
-  covers Phase 7); Phase 6's and Phase 7's persistence SERVICES
-  (`lab_persistence.py`, `medication_persistence.py`) are both fully
-  callable and DB-tested standalone right now, distinct from "wired into
-  the live pipeline" — see sections 9e/9f for the precise distinction.
-- **Immediate next step: Phase 8 — discharge reader frontend rebuild.**
-  This is the first phase that touches the frontend at all since Phase
-  0-2 (the RightWorkspace Playwright fix). Consume
-  `StructuredClinicalDocument`, eliminate the old repetitive EPICRIZĂ/
-  card-heavy reader, introduce one reusable `StructuredLabReport`
-  component (embedded + standalone modes, per the contract's own
-  constraint), handle medications via canonical `PatientMedication`
-  references (never a copy of medication data in the frontend schema),
-  handle DOCX/non-PDF original-source behavior honestly, and preserve
-  compatibility during the still-deferred live-ingestion transition.
-  Per the contract's own stop condition: do not start Phase 8 unless
-  context is still comfortably small — it is a substantial frontend
-  effort and deserves a fresh session's full budget.
+  `PatientMedication` model (section 9f). **Phase 8 (NEW): the
+  discharge/clinical-document reader frontend rebuild — a new reader
+  API contract, a rebuilt page, 7 new reusable components, real
+  Playwright coverage (section 9g).** None of Phases 3-8's EXTRACTION/
+  PERSISTENCE code is wired into the live discharge ingestion write
+  path yet (deliberate — see section 9b's sequencing note, and section
+  9g's own detailed reasoning for why the write-side switch stayed
+  deferred even though Phase 8's READ side is now proven fully
+  dual-compatible). All of Phase 6's/7's/8's own backend SERVICES are
+  fully callable and DB-tested standalone right now, distinct from
+  "wired into the live pipeline" — see sections 9e/9f/9g for the
+  precise distinction in each case.
+- **Immediate next step: Phase 9 — derived lab artifact in Documents.**
+  Make Phase 6's derived "lab_report" `Document` rows appear properly
+  in the Documents list/page with "Derived from: [parent]" and correct
+  routing/relationship UI, using `StructuredLabReport(mode=
+  "standalone")` (built and tested in Phase 8, not yet routed to
+  anywhere). Do not redesign the Documents page broadly — scope this
+  narrowly to the derived-artifact relationship, per the contract's own
+  instruction.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -283,16 +291,37 @@ in the original text, not reproduced here).
       documented stale comment in `ask_bragi/tools.py` (claimed
       `"discontinued"` was a valid medication status; it never was).
       31 new tests (real DB). See section 9f.
-  24. Check `git log --oneline -20` for anything added after this
+  24. `45ce7f3` — handoff checkpoint for Phase 7's completion (this
+      file, `CURRENT_STATE.md`, `KNOWN_GAPS.md`, `ARCHITECTURE.md`
+      only) — full backend suite reran clean at 555/555 at this point;
+      no functional code change. Explicitly pushed to origin at the
+      START of the Phase 8 session (user-approved) before any Phase 8
+      work began.
+  25. `60ff9b1` — **Phase 8 increment 1**: `GET /documents/{id}/
+      clinical-reader` (new) — the one deliberate reader payload;
+      `app/services/source_evidence.py` (new, extracted from
+      `ask_bragi/tools.py`); `serialize_medication` extended with
+      Phase 7's provenance fields. 18 new tests. See section 9g.
+  26. `def2079` — **Phase 8 increment 2**: the discharge reader page
+      rewritten in full around the new contract; 7 new reusable
+      components (`frontend/components/clinical-reader/`); 2 confirmed-
+      dead legacy frontend files deleted. TypeScript/ESLint/build all
+      clean. See section 9g.
+  27. `d39f5fb` — **Phase 8 COMPLETE**: `backend/scripts/seed_e2e_
+      discharge_document.py` (new) + `frontend/e2e/clinical-reader.
+      spec.ts` (new) — 6 new Playwright tests against a real synthetic
+      discharge document, verified against both dev and a real
+      production build. See section 9g.
+  28. Check `git log --oneline -20` for anything added after this
       checkpoint — this list is updated by hand and can lag a live
       session.
 - **Push status**: check `git log origin/fix/clinical-document-
-  intelligence-v3..HEAD --oneline` — empty means fully pushed. The four
-  Phase 6 commits (through `a026fa0`) were pushed at the start of this
-  Phase 7 session (explicit user authorization). The three commits above
-  (`c3b38d2`, `cabe297`, and this handoff commit) are pushed at the end
-  of this same session, per that same explicit authorization. No PR
-  opened.
+  intelligence-v3..HEAD --oneline` — empty means fully pushed. The three
+  Phase 7 commits plus its handoff (through `45ce7f3`) were pushed at
+  the start of this Phase 8 session (explicit user authorization). The
+  three commits above (`60ff9b1`, `def2079`, `d39f5fb`) plus this
+  handoff commit are pushed at the end of this same session, per that
+  same explicit authorization. No PR opened.
 
 ## 2. Deliberate architectural decision made this session (documented per the contract's own escape hatch)
 
@@ -1195,6 +1224,293 @@ was NOT extended to surface `stop_date_basis`/provenance — deliberately
 out of scope (Phase 11's job), only its stale comment was fixed. No
 frontend surfaces any of this (Phase 7's own explicit instruction).
 
+## 9g. Phase 8 — discharge reader frontend rebuild (COMPLETE)
+
+**What exists — a real, deliberate reader API contract; a rebuilt
+frontend page; 7 new reusable components; real Playwright coverage**:
+
+- **Reader API contract**: `GET /documents/{document_id}/clinical-reader`
+  (`app/api/routers/documents.py::get_clinical_reader_payload`) — the
+  ONE deliberate payload the reader needs, not a dozen internal
+  endpoints. Returns `{document, structured_document, labs,
+  medications}`:
+  - `structured_document` — via `parse_structured_document(document.
+    note_body)`, the SAME sanctioned read path Phase 3 built. This is
+    what makes the reader genuinely dual-compatible: an OLD legacy
+    discharge `note_body` upconverts in memory (never rewritten on
+    disk); a real forward-parsed payload (once Phase 8's own future
+    write-side wiring exists) reads natively. Both produce the exact
+    same `StructuredClinicalDocument` shape the frontend consumes —
+    proven by `test_legacy_discharge_note_body_upconverts_into_reader_
+    payload`/`test_native_structured_document_returns_same_reader_
+    contract`.
+  - `labs`/`medications` — queried directly from `LabResult`/
+    `PatientMedication` by `document_id`/`source_document_id` (Phase
+    6/7's own ownership rule), each carrying a `source_evidence_id`
+    (via the new shared `app/services/source_evidence.py::first_
+    source_evidence_id`) so the frontend never needs a second round
+    trip before opening the source viewer.
+  - `document.document_level_source_evidence_id` — always present, via
+    the new shared `ensure_document_level_evidence(db, document,
+    provider=)` helper, extracted from `ask_bragi/tools.py`'s own
+    prior `_ensure_document_level_evidence` (which is now a thin
+    wrapper over it, passing its own historical `provider=
+    "ask_bragi_document_level"` explicitly so nothing about its
+    existing behavior/tests changed — proven by all 50 Ask Bragi tests
+    staying green unchanged). This is the header's "View
+    original"/"Open original file" action's anchor.
+  - Authorization is IDENTICAL to the existing `GET /documents/{id}`
+    (same two-branch `care_partner_can_access_document`/
+    `can_access_patient` check, same 404-before-403 ordering) — a
+    read-SHAPE difference, not a new access rule. Proven by
+    `test_unauthenticated_user_cannot_access_reader_payload`/
+    `test_cross_patient_document_access_denied`.
+  - Never crashes on a dangling reference: a `LabReportReferenceBlock`/
+    `MedicationListBlock` pointing at a nonexistent id (Phase 6/7
+    never actually populate these yet, but the contract must survive a
+    FUTURE case where they do and a row was later deleted) simply
+    yields an empty `labs`/`medications` array for that reference —
+    proven by `test_missing_referenced_lab_does_not_crash_whole_
+    document`/`test_missing_referenced_medication_does_not_crash_
+    whole_document`.
+- **`app/api/routers/medications.py::serialize_medication`** extended
+  (additively) with `stop_date_basis`/`source_document_id`/
+  `source_segment_id` — Phase 7 added these `PatientMedication` columns
+  but the existing medication-list serializer was never updated to
+  expose them; fixed now since Phase 8 needed them. Every EXISTING
+  consumer of this serializer is unaffected (additive keys only) — all
+  84 medication-related backend tests confirmed unchanged/passing.
+- **Frontend TS schema** (`frontend/lib/clinical-document-schema.ts`):
+  fixed real drift — `DerivedArtifactRef.group_key` (added to the
+  backend in Phase 6, never mirrored here) — plus new
+  `CANONICAL_SECTION_LABELS` (Phase 8E's exact outline label mapping)
+  and the `ClinicalReaderResponse`/`ReaderLabResult`/`ReaderMedication`/
+  `ReaderDocumentMeta` types mirroring the new endpoint's response
+  shape exactly.
+- **7 new reusable components** (`frontend/components/clinical-reader/`):
+  - `reader-source-action.tsx` — the ONE "View source" action every
+    lab/medication row and the document header use, reusing the
+    EXISTING `openSourceEvidence`/`RightWorkspace` system (never a
+    second viewer). `isPdfContentType()` gates it: for a genuinely
+    non-PDF document (the shared viewer is PDF.js-only, with zero
+    non-PDF rendering path anywhere in this codebase — confirmed
+    before writing any code), the action degrades to an honest
+    "Source text" label instead of attempting to open a viewer that
+    would fail or show a fabricated/blank state.
+  - `structured-lab-report.tsx` — `StructuredLabReport({labs,
+    documentContentType, mode: "embedded" | "standalone"})`, the ONE
+    contract-mandated reusable component (never two). Groups by
+    `category` (never a fabricated panel), flags a genuine same-
+    analyte/same-date conflict (two DIFFERENT values) by comparing
+    every row pairwise — the MCH conflict renders as two full rows,
+    each with a "Requires review" indicator, never collapsed to one.
+    `mode="standalone"` is implemented and ready but not yet routed to
+    anywhere (Phase 9's own explicit job — see "what does NOT exist
+    yet" below).
+  - `medication-list.tsx` — canonical `PatientMedication` rows only,
+    never a raw-string re-parse. `stop_date_basis === "derived"`
+    renders an explicit "Calculated from a documented course (...)"
+    explanation under the date — a derived date can NEVER read as if
+    the source itself wrote it. A same-drug cross-source status
+    conflict (client-computed the same way as the lab conflict check)
+    renders a restrained "Conflicting status across sources (...)"
+    note on every involved row, never silently resolved.
+  - `clinical-course-timeline.tsx` — renders `StructuredClinicalDocument.
+    dated_events` chronologically BY `normalized_date` — an event with
+    a suspicious-but-real date (the 3036 fixture case) sorts by its
+    REAL value, never "corrected" into a more plausible position, and
+    its own warnings render inline (via `IconAlert`, never color-only).
+    An event with no `normalized_date` at all keeps document order,
+    appended last, rather than being guessed into a position.
+  - `document-outline.tsx` — built from `ClinicalSection.canonical_key`
+    via the new `CANONICAL_SECTION_LABELS` map, never the raw source
+    heading. The reader API only ever returns sections that survived
+    `consolidate_segments`'s existing "drop non-substantive sections"
+    rule (Phase 4), so no client-side emptiness filtering was needed —
+    confirmed by `test_empty_sections_not_exposed_prominently`.
+  - `document-header.tsx` — compact (no hero card), `Status` pill for
+    verification state, `ReaderSourceAction` for a PDF source or a
+    direct "Open original file" action (reusing the exact
+    fetch-blob-and-`window.open` pattern the OLD page's `openOriginal()`
+    used, just properly scoped as a compact header action and only
+    shown for a genuinely non-PDF `content_type`) for a non-PDF one.
+  - `clinical-block-renderer.tsx` — the generic `ClinicalBlock`
+    discriminated-union renderer (Phase 8K): paragraph/key_value/
+    bullet_list/table/warning render directly; `dated_event_group`/
+    `lab_report_reference`/`medication_list` filter the already-fetched
+    canonical lists by id and hand off to the components above — never
+    a copy of referenced data.
+- **The discharge page itself
+  (`frontend/app/documents/[id]/discharge/page.tsx`) was rewritten in
+  full**, not patched — matching the "ONE reader, not
+  legacyDischargeReader + newDischargeReader" requirement exactly,
+  since the new reader API's legacy-upconversion path already makes
+  every existing discharge document renderable through the same
+  contract. Removed (confirmed to have ZERO other callers — a repo-wide
+  grep before deletion, not an assumption): the old flat
+  `DischargeSection`/`parseDischargePayload` parsing (`mergeFirstPageSections`
+  was already a no-op before this session — real dedup now happens
+  server-side, in `consolidate_segments`, which this session's own
+  earlier phases already built), the font-size control (tied to the old
+  `<pre>`-based prose panel this structured, block-based UI no longer
+  has), and — DELETED as genuinely dead files, not just unused imports —
+  `frontend/components/original-layout-viewer.tsx` and `frontend/lib/
+  discharge-epicriza-formatter.ts`. Both were already confirmed dead
+  BEFORE this phase (`Document.original_layout_json` is not a real
+  column — `CURRENT_PIPELINE_MAP.md` §17 — so `OriginalLayoutViewer`
+  never rendered anything real in production); this phase's rewrite
+  simply removed their one remaining caller, and a repo-wide search
+  confirmed no other file imports either afterward.
+- **Provenance**: real PDF page/bbox is used when it genuinely exists
+  (unchanged — reuses the existing viewer exactly); a non-PDF document
+  never gets a fabricated viewer attempt (`isPdfContentType()` gates
+  every source action, including the document header's own). DOCX/non-
+  PDF sources are honestly labeled ("Open original file"/"Source text")
+  rather than showing a blank "Original Layout" panel waiting for data
+  that was never real (the OLD page's exact anti-pattern, now removed).
+- **RightWorkspace**: NOT modified at all — the rebuilt reader calls the
+  SAME `useSourceViewer()`/`openSourceEvidence`/`AskBragiSideTab` hooks
+  every other page already uses, composed by the SAME root-level
+  `AppShellWithSourceViewer`. The pre-existing `right-workspace-
+  geometry.spec.ts` regression (2 tests) was re-run and stays green,
+  unchanged.
+- **Responsive**: one deliberate breakpoint (900px, matching the OLD
+  discharge page's own established sidebar-collapse convention, chosen
+  over the shared shell's 1025px split-view breakpoint since this is
+  the SAME page being replaced, not a new surface) — below it, the
+  outline becomes a `<select>` (Phase 8Q's own "dropdown/sheet" guidance
+  for mobile section navigation), content stays full-width. Manually
+  verified end-to-end at 1440×900 (desktop, Playwright) and 390×844
+  (mobile, Playwright) — the full 1920×1080/1280×800/1024×768/768×1024
+  matrix from the task's own "target viewports" list was NOT
+  individually screenshotted this phase (Phase 19 owns the formal
+  screenshot matrix); the two viewports actually tested cover the two
+  structurally distinct layouts (three-column desktop vs. single-column
+  mobile) this page has.
+- **Accessibility**: semantic `<h1>`/`<h2>`/`<h3>` hierarchy, real
+  `<button>`/`<table>`/`<th>` elements throughout (never a styled
+  `<div>` pretending to be one), `aria-current` on the active outline
+  item, `aria-label` on the outline `<nav>` and the mobile `<select>`,
+  warnings rendered with an icon (`IconAlert`) alongside text — never
+  color-only. Keyboard: every interactive element is a real, natively
+  focusable `<button>`/`<select>`, so Tab/Enter work without any custom
+  key handling. Not run through an automated axe scan this phase
+  (`qa/a11y.mjs` exists in this repo already — not wired into this
+  specific page's verification this session; a reasonable Phase 20
+  follow-up, not attempted here since Phase 20 owns the formal
+  accessibility pass).
+- **Live ingestion — DEFERRED, with exact reasoning**: `discharge_
+  summary_pipeline.py`'s write path is completely unchanged — a brand
+  NEW discharge upload today still writes the OLD ad-hoc JSON shape to
+  `note_body` (confirmed by reading `process_uploaded_discharge_
+  summary`, line 824, before making this decision), and nothing in the
+  live upload pipeline calls `lab_persistence.persist_lab_candidates`/
+  `medication_persistence.persist_medication_candidates`. This means a
+  BRAND NEW discharge document today renders through the rebuilt reader
+  with real, correct SECTIONS (via legacy upconversion) but an EMPTY
+  `labs`/`medications` array (nothing has extracted them for that
+  document yet) — an old, already-processed document with Phase 6/7
+  data attached some other way (e.g. this session's own Playwright
+  fixture) renders with real labs/medications; a genuinely fresh upload
+  does not, today. This was a deliberate choice, per the task's own
+  explicit "IMPORTANT DECISION RULE": wiring the write path would mean
+  touching the live upload pipeline's error handling, idempotency
+  behavior on a REAL multi-stage upload (Reducto/OCR/security-scan/
+  classification), and would need real-Reducto-processed test coverage
+  this environment cannot produce (no `OPENAI_API_KEY`/`REDUCTO_API_KEY`
+  configured, per every prior phase's own honest accounting) — exactly
+  the "significant new backend complexity, bleeding into Phases 9-13"
+  case the contract says to defer rather than force. A verified,
+  dual-compatible READER (this phase's actual deliverable) is complete
+  and real; the write-side switch remains a distinct, separately-
+  verifiable future increment — likely paired with Phase 13's
+  idempotency proof, since that is exactly where "does reprocessing/
+  live-processing a real upload produce correct, non-duplicated
+  Lab/Medication rows" needs to be proven end-to-end anyway.
+
+**A real bug found and fixed before shipping** (not a product bug — a
+test-authoring one, but worth recording honestly per this project's own
+bug-discipline convention): an early version of the Playwright spec
+asserted the literal text "WBC" would appear after opening Laboratory
+Results — it does not, by DESIGN: the reader correctly shows the
+canonical resolved display name ("White Blood Cell Count") from Phase
+6's own `resolve_analyte()`, not the raw abbreviation. Chasing this
+looked at first like a serious "first click after page load is
+swallowed" timing bug (reproduced twice under system load, including
+once against a clean production build) before the actual screenshot
+revealed the real content was rendering completely correctly all along
+— just under a different, better name than the test expected. Fixed by
+correcting the assertion, not the app. A genuinely more subtle related
+finding kept from this investigation: `getByRole(..., {name: "..."})`
+without `exact: true` does SUBSTRING matching in Playwright, so
+"Clinical course" also matched a "Clinical course timeline" sub-heading
+and "Medications" also matched "Discharge medications" — both fixed
+with explicit `exact: true`, a real Playwright-authoring lesson worth
+keeping in mind for any future spec touching this outline.
+
+**Requirements checklist** (all met): consumes canonical backend facts,
+never parses/re-interprets clinical text in the browser ✓; ONE reader
+for legacy and native document shapes ✓; canonical outline from
+`canonical_key`, never raw headings, empty sections never shown ✓;
+Clinical Course from real `dated_events`, suspicious dates/warnings
+preserved verbatim, never reordered into a "corrected" position ✓; ONE
+`StructuredLabReport` for embedded AND standalone modes ✓; lab/
+medication conflicts shown honestly, neither collapsed nor silently
+resolved ✓; derived vs. explicit medication end date always
+distinguishable in the UI text itself ✓; provenance via the EXISTING
+`openSourceEvidence` system only, honest non-PDF degradation, no second
+viewer built ✓; RightWorkspace untouched, its own regression stays
+green ✓; responsive at the two structurally distinct breakpoints this
+page has ✓; semantic accessibility markup throughout ✓; dead legacy
+frontend code actually removed, not just unwired ✓; live ingestion
+write path deliberately, honestly NOT switched, with the exact reason
+recorded ✓.
+
+**Tests**:
+- Backend: 17 new focused tests
+  (`test_clinical_document_reader_api.py`, one per item in the task's
+  own required 17-item backend-contract list) — all passing, real DB.
+  The full-suite net delta over the 555 baseline is +18, not +17 — see
+  section 19 for that honestly-unreconciled ±1 discrepancy (the same
+  kind already seen and flagged at the Phase 6 checkpoint).
+- Frontend Playwright: 6 new tests (`e2e/clinical-reader.spec.ts`) — 
+  header/outline/diagnoses/repeated-heading-consolidation, dated
+  events + suspicious-date/vital preservation, lab table + MCH
+  conflict, medications + derived-date label + PRN + status conflict,
+  source action opens RightWorkspace, and mobile `<select>` navigation
+  — all passing, against a real, seeded, deterministic synthetic
+  discharge document (`backend/scripts/seed_e2e_discharge_document.py`,
+  the same zero-external-cost ORM-direct pattern as `seed_e2e_lab_
+  document.py`). Re-verified against BOTH `next dev` and a real
+  production build (`next start`) — genuinely reproducible flakiness
+  was chased down to real causes (see "bug found" above), not
+  papered over with retries. The pre-existing `right-workspace-
+  geometry.spec.ts` (2 tests) was re-run and stays green, unchanged.
+- No new frontend unit-test framework was introduced — this repo has
+  none today (confirmed by reading `package.json` before deciding),
+  and the task's own instruction is not to add one for this phase;
+  TypeScript's own strictness (zero errors across the whole rebuild)
+  and this real Playwright coverage are the two verification
+  mechanisms actually used.
+
+**What does NOT exist yet** (explicitly deferred, not a Phase 8 gap):
+`StructuredLabReport(mode="standalone")` has no ROUTE to reach it yet —
+Phase 9's own explicit job ("Derived lab artifact in Documents... Do
+NOT redesign the Documents page in Phase 8"), the component itself is
+ready and tested. `schema.MedicationListBlock.medication_ids`/
+`LabReportReferenceBlock.lab_result_ids`/`PrescriptionRow.medication_id`
+are still never populated by any real parser (Phase 6/7's own
+persistence results are never wired back into a `StructuredClinical
+Document`'s own blocks) — the generic block renderer already handles
+them correctly WHEN they exist (proven by the "missing reference"
+tests), but nothing produces one in practice today; this is the same
+"persistence service exists, orchestration wiring deferred" shape as
+every phase since Phase 6, not new to Phase 8. The formal 6-viewport
+responsive screenshot matrix and an automated accessibility (axe) scan
+are Phase 19/20's own jobs, not attempted here beyond the 2 viewports
+and manual semantic-markup review described above. Live discharge
+upload ingestion is unchanged (see the dedicated paragraph above).
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs — see section 9e for
@@ -1480,6 +1796,17 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   tests were also individually reconfirmed passing per-file immediately
   beforehand (the two pure, no-DB files together: 50/50; the real-DB
   file: 31/31 on its own run right after writing it).
+  → **573 CONFIRMED after Phase 8 COMPLETION** (net +18 over the 555
+  baseline; `test_clinical_document_reader_api.py` itself contains 17
+  test functions — `grep -c "^def test_"` confirms this precisely —
+  one more than the net delta suggests, the same kind of ±1
+  reconciliation gap already seen and flagged honestly at the Phase 6
+  checkpoint; not re-derived from a byte-for-byte prior count in this
+  session, so not chased further here). **Full suite reran clean: `573
+  passed, 5 warnings in 1237.14s (0:20:37)` — zero failures, zero
+  errors, no Neon flake this run.** All 17 reader-API tests were also
+  individually reconfirmed passing on their own run immediately after
+  writing them.
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -1516,21 +1843,31 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   real bug. Always re-run `pytest -q` and trust its own summary line
   over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
-  `right-workspace-geometry.spec.ts`) — unchanged by Phases 3-7 (no
-  frontend application behavior changed).
-- OpenAPI routes: unchanged, 117 routes / 99 paths (Phases 3-7 added no
-  route — Phase 6's DB-visible surface was the additive
-  `documents.derived_artifact_kind` column; Phase 7's is the three
-  additive `patient_medications`/`source_evidence` columns — both only
-  via `DELETE /documents/{id}`, an EXISTING route with no new endpoint).
-- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 7 — zero
+  `right-workspace-geometry.spec.ts`) → 11 after Phase 8 (+6,
+  `clinical-reader.spec.ts`) — unchanged by Phases 3-7 (no frontend
+  application behavior changed in those phases). All 11 confirmed
+  passing together in the same run (section 20).
+- OpenAPI routes: 117 → **118** after Phase 8 (+1, `GET /documents/
+  {id}/clinical-reader` — the first NEW route since Phase 4's own
+  backend-modularization baseline; Phases 3-7 added none, only additive
+  DB columns via existing routes).
+- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 8 — zero
   findings (only benign "Test in comment" collector warnings unrelated
   to any real issue, same as every prior checkpoint).
-- Migration drift (`python scripts/check_migration_drift.py`): clean
-  after Phase 7's migration — "No migration drift detected (8
-  known/tolerated legacy-index difference(s) ignored)", same 8 as every
-  prior checkpoint, plus `ff84f15530a9_phase7_medication_provenance.py`
-  applied and confirmed via `alembic upgrade head`.
+- Migration drift (`python scripts/check_migration_drift.py`): clean —
+  Phase 8 added NO migration (no schema change) — "No migration drift
+  detected (8 known/tolerated legacy-index difference(s) ignored)",
+  same 8 as every prior checkpoint, last real migration still
+  `ff84f15530a9_phase7_medication_provenance.py` from Phase 7.
+- TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
+  Phase 8's rewrite.
+- ESLint (`npm run lint`): zero errors/warnings in any file Phase 8
+  touched or added; 29 errors/25 warnings exist elsewhere in the repo
+  (pre-existing, confirmed via file-list disjointness before this
+  checkpoint — not introduced by this session, not fixed by it either,
+  out of scope per "do not fold unrelated refactors into this phase").
+- Frontend production build (`npm run build`): succeeds, `/documents/
+  [id]/discharge` listed among the compiled routes.
 
 ## 20. Playwright coverage (what exists now)
 
@@ -1546,8 +1883,25 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   regression test and not one that would pass regardless of the fix.
   Restored and reverified green afterward.
 
-None of Phase 16's document/derived-lab/timeline/medication Playwright
-coverage exists yet — those need Phases 4-13 to exist first.
+- `clinical-reader.spec.ts` (NEW, Phase 8): 6 tests against the
+  rebuilt discharge/clinical-document reader — header/canonical
+  outline/diagnoses/repeated-EPICRIZĂ consolidation, dated Clinical
+  Course events with the suspicious-date/vital-sign warnings preserved
+  (never "corrected"), the canonical lab table with the MCH conflict
+  preserved (not collapsed), medications with the derived-end-date
+  label/PRN/BESREMI status conflict, a lab row's source action opening
+  the shared RightWorkspace, and mobile `<select>` section navigation.
+  Seeds via `backend/scripts/seed_e2e_discharge_document.py` (real
+  Phase 4-7 parser/extraction/persistence, zero external API cost).
+  Verified against both `next dev` and a real production build
+  (`next start`) — see section 9g for a real, if narrow, lesson from
+  chasing an apparent flake down to a wrong test assertion rather than
+  a real app bug.
+
+This is the FIRST Playwright coverage for the actual clinical-document
+reader product surface — Phase 16's broader document/derived-lab/
+timeline/medication flow coverage (beyond this one page) still needs
+Phases 9-13 to exist first.
 
 ## 21. Real bugs found (this session)
 
@@ -1586,44 +1940,61 @@ coverage exists yet — those need Phases 4-13 to exist first.
    before this checkpoint; fixed now (comment-only, zero behavior
    change) since Phase 7 was directly working with this exact
    vocabulary.
+5. **Not an application bug — a Playwright-authoring lesson worth
+   recording anyway** (Phase 8) — see section 9g. An early spec
+   assertion expected the literal text "WBC" to render after opening
+   Laboratory Results; the app was already correctly rendering the
+   canonical resolved display name ("White Blood Cell Count") instead.
+   Chasing this looked at first like a serious "first click after page
+   load is swallowed" race (reproduced twice under real conditions,
+   including once against a clean production build, before the actual
+   screenshot showed the content was correct all along, just under a
+   different name). Fixed by correcting the test assertion, not the
+   app. A second, genuinely real Playwright lesson from the same
+   investigation: `getByRole(role, {name: "..."})` does SUBSTRING
+   matching without `exact: true` — "Clinical course" also matched a
+   "Clinical course timeline" sub-heading, "Medications" also matched
+   "Discharge medications" — both fixed with explicit `exact: true`.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phases 3 through 7 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f) —
-real, tested segmentation, canonical section consolidation, Clinical
-Course event extraction (including chronology and vital-sign
+Phases 3 through 8 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f,
+9g) — real, tested segmentation, canonical section consolidation,
+Clinical Course event extraction (including chronology and vital-sign
 plausibility checks), embedded lab extraction/grouping/canonical
-persistence, and medication extraction/context classification/duration/
-end-date derivation all exist and are proven against every relevant V3
-contract example, including all three required suspicious-data fixtures
-(Phase 5) and the synthetic hematology fixture (Phase 6). None of
-Phases 4-7's production code is wired into the real live discharge
-INGESTION pipeline yet (deliberate — section 9b's sequencing note, which
-now also governs Phases 6 and 7); Phase 6's and Phase 7's own
-persistence SERVICES (`lab_persistence.py`, `medication_persistence.py`)
-are however both fully callable and DB-tested standalone today — a real
-distinction, not a contradiction (see sections 9e/9f). Table/key-value
-block construction from real per-section content (beyond
-`ParagraphBlock`) still does not exist for the STRUCTURED-DOCUMENT
-schema's own blocks (`TableBlock`/`MedicationListBlock`/
+persistence, medication extraction/context classification/duration/
+end-date derivation, and the discharge reader frontend rebuild all
+exist and are proven against every relevant V3 contract example,
+including all three required suspicious-data fixtures (Phase 5) and
+the synthetic hematology/discharge fixtures (Phases 6/8). None of
+Phases 4-8's EXTRACTION/PERSISTENCE code is wired into the real live
+discharge INGESTION pipeline yet (deliberate — section 9b's sequencing
+note, which now also governs Phase 8; see section 9g for the exact
+reasoning specific to Phase 8's own decision); the backend persistence
+SERVICES (`lab_persistence.py`, `medication_persistence.py`) and now
+the entire READER SIDE (`GET /documents/{id}/clinical-reader` + the
+rebuilt frontend) are however all fully callable/renderable and tested
+today — a real distinction, not a contradiction (see sections 9e/9f/9g).
+Table/key-value block construction from real per-section content
+(beyond `ParagraphBlock`) still does not exist for the STRUCTURED-
+DOCUMENT schema's own blocks (`TableBlock`/`MedicationListBlock`/
 `PrescriptionTableBlock` etc. — Phases 6/7 produce real structured
-candidates, but neither yet emits a block back into a section's own
-`blocks[]`, since nothing wires either phase into `discharge_parser.py`'s
-orchestration yet). `ClinicalEvent.structured_observations`/
-`medication_changes`/`procedures` are STILL not independently populated
-(captured only in each event's `raw_text`) — Phase 7 consumed
-`treatment_change` events for its OWN extraction but did not retrofit
-`ClinicalEvent` itself to carry structured medication-change data; a
-reasonable future increment, not attempted. Everything from Phase 8
-onward through Phase 21 of the original contract is **entirely
-unimplemented**:
+candidates, and Phase 8's frontend can already RENDER these block types
+correctly when they exist, but nothing PRODUCES one yet, since nothing
+wires Phase 6/7 into `discharge_parser.py`'s orchestration). `Clinical
+Event.structured_observations`/`medication_changes`/`procedures` are
+STILL not independently populated (captured only in each event's
+`raw_text`) — a reasonable future increment, not attempted. Everything
+from Phase 9 onward through Phase 21 of the original contract is
+**entirely unimplemented**:
 
-- Phase 8: discharge reader frontend rebuild (header/outline/canvas/
-  workspace), `StructuredLabReport` component.
-- Phase 9: Documents page derived-artifact relationship UI.
+- Phase 9: Documents page derived-artifact relationship UI
+  (`StructuredLabReport(mode="standalone")` is built and tested — Phase
+  8's own explicit deliverable — but has no route to reach it yet;
+  that routing/relationship UI is this phase's job).
 - Phase 10: Timeline integration for derived labs/medication events.
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation
@@ -1656,13 +2027,21 @@ unimplemented**:
   list (heading normalization, date extraction, lab/medication dedup,
   etc.).
 - Phase 18: the 75-100-case deterministic retrieval benchmark.
-- Phase 19: responsive QA screenshots at 7 viewports.
-- Phase 20: accessibility verification.
+- Phase 19 (partial — Phase 8 manually verified 2 of the 7 target
+  viewports, 1440×900 and 390×844, covering the reader's two
+  structurally distinct layouts, section 9g — the full 6/7-viewport
+  formal screenshot matrix does not exist yet): responsive QA
+  screenshots at 7 viewports.
+- Phase 20 (partial — Phase 8's reader uses real semantic markup
+  throughout, section 9g's own checklist — no automated axe scan was
+  run against it yet): accessibility verification.
 - Phase 21 (full): the final full regression across all of the above —
   the full backend suite HAS been re-run clean at every checkpoint
-  through Phase 7 (555/555 as of this one, section 19), but that is
-  verification of Phases 0-7's own code, not a certification that
-  Phases 8-21's (still nonexistent) code passes anything.
+  through Phase 8 (573/573 as of this one, section 19), and Phase 8
+  also added the first-ever Playwright coverage for the actual reader
+  product surface (11/11 passing, section 20), but that is verification
+  of Phases 0-8's own code, not a certification that Phases 9-21's
+  (still nonexistent) code passes anything.
 
 This is a large, honest scope gap. The contract's own framing (21
 phases, dozens of named sub-requirements, a 26-section handoff, a 75-
@@ -1695,51 +2074,51 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start Phase 8 (discharge reader frontend rebuild) — Phases 3 through 7
-  are ALL done: `app/services/clinical_document/schema.py`/
+- Start Phase 9 (derived lab artifact in Documents) — Phases 3 through
+  8 are ALL done: `app/services/clinical_document/schema.py`/
   `persistence.py` (Phase 3), `segments.py`/`canonical_headings.py`
   (Phase 4), `dates.py`/`events.py`/`discharge_parser.py` (Phase 5),
   `lab_extraction.py`/`lab_grouping.py`/`lab_persistence.py` (Phase 6),
   `medication_extraction.py`/`medication_duration.py`/`medication_
-  persistence.py` (Phase 7) — use them all as-is (sections
-  9/9b/9c/9d/9e/9f), extend additively if a real gap is found, do not
-  redesign or duplicate any of them. This is the FIRST phase since 0-2
-  that touches the frontend — re-read the V3 contract's exact Phase 8
-  requirements in full before starting (this handoff does not
-  summarize them the way it does the backend phases' hard constraints,
-  since Phase 8 was never attempted this session). Known landmines
-  going in: `frontend/app/documents/[id]/discharge/page.tsx`'s
-  `parseDischargePayload` only understands the OLD, pre-Phase-3 JSON
-  shape (see `CURRENT_PIPELINE_MAP.md` §15) — the live write path is
-  STILL not switched to produce `StructuredClinicalDocument` (section
-  9b's sequencing note), so Phase 8 needs its own honest read-time
-  upconversion strategy (e.g. reading via `persistence.parse_structured_
-  document` against existing `note_body` rows) rather than assuming new
-  uploads already produce the new shape. One reusable
-  `StructuredLabReport` component for both embedded and standalone
-  modes (contract's own explicit constraint) — not two components.
-  Medications must be surfaced via real `PatientMedication` references
-  (`schema.MedicationListBlock.medication_ids`/`PrescriptionRow.
-  medication_id` — currently always empty; Phase 8 is a reasonable place
-  to finally wire discharge_parser.py to call Phase 7's extraction and
-  populate these, OR that wiring could be its own preceding increment —
-  a decision for whoever picks this up, not made unilaterally here).
-- Do not re-attempt Phase 7 — medication extraction/context
-  classification/duration/end-date derivation/persistence is complete
-  and DB-tested (section 9f), including all 40 required test
-  categories from the contract's own Phase 7 test list. If Phase 8 (or
-  later work) needs a genuinely NEW medication-extraction capability
-  this module doesn't have, extend `medication_extraction.py`/
-  `medication_duration.py`/`medication_persistence.py` additively and
-  add a regression test — do not build a second medication-candidate
-  parser or a second persistence path. The one thing intentionally left
-  for a LATER phase, not a gap in Phase 7 itself: wiring
-  `medication_persistence.persist_medication_candidates` into the live
-  discharge upload write path (still deliberately deferred, same
-  sequencing reasoning as Phases 4-6 — see section 9b), and populating
-  `schema.MedicationListBlock`/`PrescriptionRow.medication_id` from a
-  real extraction pass (see the Phase 8 note above — likely Phase 8's
-  own first step, not Phase 7's).
+  persistence.py` (Phase 7), the `GET /documents/{id}/clinical-reader`
+  API + rebuilt discharge reader page + 7 reusable components under
+  `frontend/components/clinical-reader/` (Phase 8) — use them all as-is
+  (sections 9/9b/9c/9d/9e/9f/9g), extend additively if a real gap is
+  found, do not redesign or duplicate any of them. Phase 9's own scope
+  per the contract: make Phase 6's derived "lab_report" `Document` rows
+  appear in the Documents list/page with "Derived from: [parent]" and
+  correct routing/relationship UI, using `StructuredLabReport(mode=
+  "standalone")` — already built and tested in Phase 8, genuinely ready
+  to route to, not a stub. Do NOT redesign the Documents page broadly —
+  the contract's own explicit instruction, and Phase 8 deliberately
+  stopped short of this exact scope for the same reason. A reasonable
+  starting question for whoever does this: does a derived artifact need
+  its OWN route (e.g. `/documents/{id]/lab-report`) or can the EXISTING
+  `/documents/{id}` generic page detect `derived_artifact_kind` and
+  render `StructuredLabReport(mode="standalone")` directly — a decision
+  for that session to make deliberately, not decided here.
+- Do not re-attempt Phase 8 — the discharge/clinical-document reader
+  rebuild is complete and tested (section 9g): the new reader API
+  contract (17 backend tests), the rebuilt page and 7 reusable
+  components (TypeScript/ESLint/build all clean), and real Playwright
+  coverage (6 new tests, verified against both dev and a production
+  build). If Phase 9 (or later work) needs a genuinely NEW reader
+  capability this doesn't have, extend the existing components/
+  endpoint additively and add a regression test — do not build a
+  second reader page or a second lab-report component. The one thing
+  intentionally left for LATER phases, not a gap in Phase 8 itself:
+  `StructuredLabReport(mode="standalone")` has no route yet (Phase 9's
+  own job, see above); `schema.MedicationListBlock.medication_ids`/
+  `LabReportReferenceBlock.lab_result_ids`/`PrescriptionRow.
+  medication_id` are still never populated by any real parser (nothing
+  wires Phase 6/7's persistence results back into a
+  `StructuredClinicalDocument`'s own blocks — the generic block
+  renderer already handles them correctly when they exist, proven by
+  the "missing reference" tests, but nothing produces one in practice
+  yet); live discharge upload ingestion is still unchanged (same
+  sequencing reasoning as every phase since 4 — see section 9b, and
+  section 9g's own detailed "why the write-side switch is still
+  deferred" paragraph for the Phase-8-specific reasoning).
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing

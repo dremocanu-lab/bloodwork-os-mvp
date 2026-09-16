@@ -208,3 +208,24 @@ design reasoning, including why `source_document_id` deliberately uses
 Phase 6 used for its derived lab artifact (a medication fact stays
 independently meaningful once its source document is gone; a
 pointer-only derived artifact does not).
+
+## One deliberate reader payload, not N internal endpoints (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 8 added `GET /documents/{id}/
+clinical-reader` — the first genuinely new route since the Phase 4
+backend-modularization baseline (117 → 118 routes). It exists
+specifically so the frontend discharge/clinical-document reader fetches
+ONE deliberate, purpose-built payload (`{document, structured_document,
+labs, medications}`, each fact already carrying its own
+`source_evidence_id`) instead of composing several existing internal
+endpoints client-side — see `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 9g for the full
+design. This is the pattern to follow for any future reader-shaped
+surface in this app (Phase 9's derived-artifact view, Phase 10's
+Timeline integration): a dedicated read endpoint assembling canonical
+facts server-side, not a frontend-side join across multiple generic
+endpoints. Also extracted `app/services/source_evidence.py`
+(`ensure_document_level_evidence`, `first_source_evidence_id`) from
+logic that used to live only inside `ask_bragi/tools.py` — both that
+module and the new reader endpoint now share it, proven equivalent by
+the existing Ask Bragi test suite staying green unchanged.
