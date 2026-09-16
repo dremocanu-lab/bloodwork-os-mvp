@@ -108,6 +108,11 @@ type DocumentResponse = {
   saved_to?: string | null;
   section: string;
   document_type?: string | null;
+  /** Clinical Document Intelligence V3 Phase 9 — "lab_report" for a
+   * derived lab artifact; this page immediately redirects those to the
+   * dedicated standalone reader (it has no LabResult rows of its own to
+   * render via the fallback lab-table logic below). */
+  derived_artifact_kind?: string | null;
   structured_sections?: Record<string, string>;
   uploaded_by_user_id?: number | null;
   uploaded_by?: UploadedBy | null;
@@ -661,6 +666,11 @@ export default function DocumentStructuredPage() {
 
     if (!documentResponse.data?.parsed_data) {
       throw new Error("Document loaded, but parsed_data is missing.");
+    }
+
+    if (documentResponse.data.derived_artifact_kind === "lab_report") {
+      router.replace(`/documents/${documentId}/lab-report`);
+      return;
     }
 
     const isDischargeSummary =

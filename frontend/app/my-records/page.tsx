@@ -88,7 +88,23 @@ type DocumentCard = {
   document_type?: string | null;
   is_verified: boolean;
   uploaded_by?: UploadedBy | null;
+  /** Clinical Document Intelligence V3 Phase 9 — set only for a derived
+   * lab-report artifact ("lab_report"); null for every ordinary upload
+   * AND for a Reducto Split child (which also has parent_document_id but
+   * never sets this marker). */
+  derived_artifact_kind?: string | null;
+  parent_document_id?: number | null;
+  parent_document?: {
+    id: number;
+    report_name?: string | null;
+    filename?: string | null;
+    document_type?: string | null;
+  } | null;
 };
+
+function isDerivedLabArtifact(doc: DocumentCard) {
+  return doc.derived_artifact_kind === "lab_report";
+}
 
 type DoctorAccess = {
   doctor_user_id: number;
@@ -358,6 +374,9 @@ function isDischargeDocument(doc: DocumentCard | TimelineItem) {
 }
 
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
+  if ("derived_artifact_kind" in doc && doc.derived_artifact_kind === "lab_report") {
+    return `/documents/${documentId}/lab-report`;
+  }
   if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
   return `/documents/${documentId}`;
 }
@@ -884,19 +903,29 @@ export default function MyRecordsPage() {
         key: "doc",
         header: "Document",
         sortable: true,
-        sortValue: (row) => row.report_name || row.filename,
-        render: (row) => (
-          <CellPrimary
-            title={valueOrDash(row.report_name || row.filename)}
-            sub={
-              <>
-                {documentTypeOrSectionLabel(row.document_type, sectionLabels[row.section] || row.section, language)}
-                {row.lab_name ? ` · ${row.lab_name}` : ""}
-                {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
-              </>
-            }
-          />
-        ),
+        sortValue: (row) => (isDerivedLabArtifact(row) ? t("laboratoryReport") : row.report_name || row.filename),
+        render: (row) =>
+          isDerivedLabArtifact(row) ? (
+            <CellPrimary
+              title={t("laboratoryReport")}
+              sub={
+                row.parent_document
+                  ? `${t("derivedFrom")}: ${row.parent_document.report_name || row.parent_document.filename}`
+                  : undefined
+              }
+            />
+          ) : (
+            <CellPrimary
+              title={valueOrDash(row.report_name || row.filename)}
+              sub={
+                <>
+                  {documentTypeOrSectionLabel(row.document_type, sectionLabels[row.section] || row.section, language)}
+                  {row.lab_name ? ` · ${row.lab_name}` : ""}
+                  {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
+                </>
+              }
+            />
+          ),
       },
       {
         key: "date",
@@ -948,11 +977,13 @@ export default function MyRecordsPage() {
             >
               {t("open")}
             </button>
-            <Menu label="More actions">
-              <MenuItem icon={<IconExternal size={13} />} onClick={() => openOriginal(row.id)}>
-                {t("openOriginal")}
-              </MenuItem>
-            </Menu>
+            {!isDerivedLabArtifact(row) ? (
+              <Menu label="More actions">
+                <MenuItem icon={<IconExternal size={13} />} onClick={() => openOriginal(row.id)}>
+                  {t("openOriginal")}
+                </MenuItem>
+              </Menu>
+            ) : null}
           </div>
         ),
       },

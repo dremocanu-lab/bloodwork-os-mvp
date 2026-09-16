@@ -113,7 +113,23 @@ type DocumentCard = {
   uploaded_by?: UploadedBy | null;
   note_preview?: string | null;
   can_edit_note?: boolean;
+  /** Clinical Document Intelligence V3 Phase 9 — set only for a derived
+   * lab-report artifact ("lab_report"); null for every ordinary upload
+   * AND for a Reducto Split child (which also has parent_document_id but
+   * never sets this marker). */
+  derived_artifact_kind?: string | null;
+  parent_document_id?: number | null;
+  parent_document?: {
+    id: number;
+    report_name?: string | null;
+    filename?: string | null;
+    document_type?: string | null;
+  } | null;
 };
+
+function isDerivedLabArtifact(doc: DocumentCard) {
+  return doc.derived_artifact_kind === "lab_report";
+}
 
 type PatientEvent = {
   id: number;
@@ -347,6 +363,9 @@ function isDischargeDocument(doc: DocumentCard | TimelineItem) {
 }
 
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
+  if ("derived_artifact_kind" in doc && doc.derived_artifact_kind === "lab_report") {
+    return `/documents/${documentId}/lab-report`;
+  }
   if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
   return `/documents/${documentId}`;
 }
@@ -803,25 +822,35 @@ export default function PatientChartPage() {
         key: "doc",
         header: "Document",
         sortable: true,
-        sortValue: (row) => getDocumentTitle(row),
-        render: (row) => (
-          <CellPrimary
-            title={getDocumentTitle(row)}
-            sub={
-              <>
-                {sectionLabel(row.section)}
-                {row.lab_name ? ` · ${row.lab_name}` : ""}
-                {row.sample_type ? ` · ${row.sample_type}` : ""}
-                {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
-                {row.section === "notes" && row.note_preview
-                  ? ` · "${row.note_preview.slice(0, 60)}${
-                      row.note_preview.length > 60 ? "…" : ""
-                    }"`
-                  : ""}
-              </>
-            }
-          />
-        ),
+        sortValue: (row) => (isDerivedLabArtifact(row) ? "Laboratory report" : getDocumentTitle(row)),
+        render: (row) =>
+          isDerivedLabArtifact(row) ? (
+            <CellPrimary
+              title="Laboratory report"
+              sub={
+                row.parent_document
+                  ? `Derived from: ${row.parent_document.report_name || row.parent_document.filename}`
+                  : undefined
+              }
+            />
+          ) : (
+            <CellPrimary
+              title={getDocumentTitle(row)}
+              sub={
+                <>
+                  {sectionLabel(row.section)}
+                  {row.lab_name ? ` · ${row.lab_name}` : ""}
+                  {row.sample_type ? ` · ${row.sample_type}` : ""}
+                  {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
+                  {row.section === "notes" && row.note_preview
+                    ? ` · "${row.note_preview.slice(0, 60)}${
+                        row.note_preview.length > 60 ? "…" : ""
+                      }"`
+                    : ""}
+                </>
+              }
+            />
+          ),
       },
       {
         key: "date",
@@ -879,23 +908,25 @@ export default function PatientChartPage() {
                 Open
               </button>
 
-              <Menu label="More document actions">
-                {!isNote ? (
-                  <MenuItem
-                    icon={<IconExternal size={13} />}
-                    onClick={() => openOriginal(row.id)}
-                  >
-                    {openingId === row.id ? "Opening…" : "View original"}
-                  </MenuItem>
-                ) : null}
-                {editableNote ? (
-                  <MenuItem
-                    onClick={() => router.push(`/patients/${patientId}/notes/${row.id}/edit`)}
-                  >
-                    Edit note
-                  </MenuItem>
-                ) : null}
-              </Menu>
+              {!isDerivedLabArtifact(row) ? (
+                <Menu label="More document actions">
+                  {!isNote ? (
+                    <MenuItem
+                      icon={<IconExternal size={13} />}
+                      onClick={() => openOriginal(row.id)}
+                    >
+                      {openingId === row.id ? "Opening…" : "View original"}
+                    </MenuItem>
+                  ) : null}
+                  {editableNote ? (
+                    <MenuItem
+                      onClick={() => router.push(`/patients/${patientId}/notes/${row.id}/edit`)}
+                    >
+                      Edit note
+                    </MenuItem>
+                  ) : null}
+                </Menu>
+              ) : null}
             </div>
           );
         },

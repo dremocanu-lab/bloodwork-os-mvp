@@ -278,16 +278,43 @@ export interface ReaderDocumentMeta {
   is_verified: boolean;
   /** Always present — a document-level SourceEvidence anchor for the
    * header's "View original" / "Open original file" action. Never a
-   * fabricated PDF page/bbox; see ensure_document_level_evidence. */
+   * fabricated PDF page/bbox; see ensure_document_level_evidence. For a
+   * derived artifact this anchor points at the PARENT's real file, since
+   * the derived artifact itself has no upload of its own. */
   document_level_source_evidence_id: number;
+  /** Phase 9 — "lab_report" for a derived lab artifact, null for every
+   * ordinary document (and for a Reducto Split child, which also uses
+   * parent_document_id but never sets this marker). */
+  derived_artifact_kind: string | null;
+}
+
+/** Phase 9 — present only when `document.derived_artifact_kind` is set.
+ * Resolved server-side from the derived artifact's own note_body pointer
+ * (group_key/source_section_id/lab_result_ids) plus its parent row — never
+ * a copy of parent data, just enough to render "Derived from: X" and a
+ * working parent-navigation link. */
+export interface ReaderDerivedArtifact {
+  kind: string;
+  group_key: string | null;
+  source_section_id: string | null;
+  parent_document_id: number | null;
+  parent_report_name: string | null;
+  parent_filename: string | null;
+  parent_document_type: string | null;
+  /** The parent's real content_type — ReaderSourceAction's PDF-vs-non-PDF
+   * check must gate on this, never the derived artifact's own (it has no
+   * file of its own; "View source" always opens the parent's file). */
+  parent_content_type: string | null;
 }
 
 export interface ClinicalReaderResponse {
   document: ReaderDocumentMeta;
   /** null only if note_body is empty/unparseable/genuinely not a
    * clinical document at all — the reader must show an honest "no
-   * structured content" state, never crash. */
+   * structured content" state, never crash. Always null for a derived
+   * lab artifact (it has no StructuredClinicalDocument of its own). */
   structured_document: StructuredClinicalDocument | null;
   labs: ReaderLabResult[];
   medications: ReaderMedication[];
+  derived_artifact: ReaderDerivedArtifact | null;
 }
