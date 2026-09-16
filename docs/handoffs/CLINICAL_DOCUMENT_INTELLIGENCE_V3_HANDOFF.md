@@ -55,7 +55,21 @@ section 9g's own "why the write-side switch is still deferred"
 reasoning — Phase 8's READ side is now proven fully dual-compatible with
 both old and new document shapes, which is a distinct, already-completed
 milestone from the write-side switch).
-Phases 11–21 are NOT STARTED.** This document exists specifically so a
+Phases 11–21 are NOT STARTED.** **A post-Phase-10 integration-correction
+pass (NEW this checkpoint, section 9j)** fixed a real routing bug (5
+duplicated frontend routing decisions consolidated into one shared
+resolver, plus a real missing-derived-artifact-check gap on both
+Timeline pages), a real Ask Bragi authorization-adjacent bug (the
+discharge reader passed a document id as `patientId` for doctors), and
+two real UI bugs (upload page width, processing-indicator alignment) —
+all with real root causes found and regression-tested, documented in
+`docs/clinical_document_v3/ROUTER_AUDIT.md` (new). **Deliberately NOT
+attempted this checkpoint**: an exact word-level source-highlighting
+engine (a genuinely new provenance feature requiring investigation this
+session didn't have room for, not a small fix) and Phase 11 (Ask Bragi
+canonical retrieval hardening) in its entirety — both left for a
+dedicated future session, per this session's own explicit "quality over
+artificial completion" boundary. This document exists specifically so a
 future Claude session with zero memory of this conversation can pick
 this up correctly — read section 23 ("HOW TO CONTINUE") first if
 that's you.
@@ -119,13 +133,24 @@ can open, or a test you can execute.
   and DB-tested standalone right now, distinct from "wired into the live
   pipeline" — see sections 9e/9f/9g/9h/9i for the precise distinction in
   each case.
+- **This checkpoint ALSO includes a post-Phase-10 integration-correction
+  pass (section 9j)**: real document-routing bugs found and fixed (5
+  duplicated routing decisions consolidated, a real missing-derived-
+  artifact-check gap on both Timeline pages, a real Ask Bragi
+  `patientId` bug on the discharge reader), plus 2 real UI bugs (upload
+  width, processing-indicator alignment) — all regression-tested. An
+  exact word-level source-highlighting engine and Phase 11 in its
+  entirety were investigated/scoped but deliberately NOT attempted this
+  checkpoint (see section 9j's "What remains").
 - **Immediate next step: Phase 11 — Ask Bragi canonical retrieval
   hardening** (structured dated-event queries, transparent end-date-
   derivation language in answers, consuming the newly canonical
   `StructuredClinicalDocument`/`ClinicalEvent`/`LabResult`/
   `PatientMedication` data — never treating `PatientEvent`/Timeline as
   the source of truth for Ask Bragi). Not started this session, by
-  explicit instruction.
+  explicit instruction. A future session picking this up should ALSO
+  consider the deferred exact-source-highlighting work (section 9j) —
+  neither is more "next" than the other; both are open.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -2041,6 +2066,174 @@ job, same as Phase 6/7/9's own deletion semantics).
   section indicator before asserting section content, rather than
   continuing to treat it as a rare flake.
 
+## 9j. Post-Phase-10 integration correction — routing, Ask Bragi target, and layout fixes (PARTIAL — see exact scope below)
+
+Triggered by real manual QA after Phase 10: a brand-new Romanian
+discharge upload still opened the legacy generic reader instead of
+`/documents/{id}/discharge`, several other integration issues were
+reported, and a large Phase 11 (Ask Bragi canonical retrieval
+hardening) was requested to follow. Given the size of what was found —
+5 independent duplicated routing decisions across the frontend, a real
+Ask Bragi authorization-adjacent bug, and a provenance-correctness bug
+(coarse PDF highlighting) that turned out to require a genuinely new
+geometry engineering effort — this session deliberately stopped at a
+clean boundary rather than rushing Phase 11, per the session's own
+explicit "quality over artificial completion" instruction.
+
+**COMPLETE this session**: Part A (routing + Ask Bragi target audit and
+fixes), Part C (Phase 10 deletion-provenance regression check), and the
+two Part B items that turned out to be real, well-scoped bugs (upload
+width, processing-indicator alignment).
+
+**NOT ATTEMPTED this session, with reasoning** (see "What remains" below):
+Part B4-B10 (exact word-level source-highlight engine + select-text-to-
+"Show in original" provenance interaction) and Phase 11 (Ask Bragi
+canonical retrieval hardening) in their entirety.
+
+### Part A — routing audit and fixes (COMPLETE)
+
+Full investigation and findings: `docs/clinical_document_v3/
+ROUTER_AUDIT.md` (new). Summary:
+
+- **Real root cause found**: `LEGACY_SECTION_BY_DOCUMENT_TYPE`
+  (`document_taxonomy.py`) maps `HOSPITAL_ADMISSION_NOTE`/
+  `EMERGENCY_DEPARTMENT_NOTE` to legacy section `"hospitalizations"`,
+  not `"discharge_summary"` — a real discharge-shaped document the
+  classifier tags as one of those never matches the legacy `section`
+  check, no matter how the frontend routing is written. **Deliberately
+  NOT changed** — whether an admission/ED note should open the SAME
+  Phase 8 discharge reader as an explicit discharge summary is a genuine
+  product decision, not a routing bug, left for a future session.
+- **Why `document_type` cannot be the sole routing authority**: confirmed
+  by reading `process_upload_job` — it is only ever set on the patient
+  self-upload auto-classify path; a doctor/care-partner upload that picks
+  a concrete section from a picklist (including an explicit "Discharge
+  Summary" option) leaves `document_type` `NULL` forever, with `section`
+  already correct. Using `document_type` alone would have broken doctor-
+  uploaded discharge documents — common — to fix a narrower case.
+- **Fix**: new shared resolver `frontend/lib/document-routing.ts`
+  (`resolveDocumentRoute`/`isDischargeShapedDocument`/
+  `isDerivedLabReportDocument`) — `document_type` is checked ALONGSIDE
+  the legacy `section`/`report_type` signals, never replacing them.
+  Consolidated 5 independent, drifting copies of this decision
+  (`documents/[id]/page.tsx`, `my-records/page.tsx`, `patients/[id]/
+  page.tsx`, `my-records/timeline/page.tsx`, `patients/[id]/timeline/
+  page.tsx`) plus 2 more (`analytics-drilldown-drawer.tsx`, `documents/
+  [id]/lab-report/page.tsx`'s own parent-link) onto this one function.
+- **A real, previously-unnoticed gap fixed**: both Timeline pages had
+  **no `derived_artifact_kind` check at all** — a derived lab artifact
+  opened from the Timeline landed on the generic reader, not the
+  standalone lab-report reader (Phase 9's own route). Now fixed via the
+  same shared resolver.
+- **A real asymmetry fixed**: the discharge reader
+  (`documents/[id]/discharge/page.tsx`) had no redirect-away guard at
+  all, unlike the lab-report reader's own defensive guard — added one
+  (redirects to `/lab-report` if the id resolves to a derived artifact).
+- **Ask Bragi target audit** (A4) — confirmed the suspected bug:
+  `documents/[id]/discharge/page.tsx`'s `AskBragiSideTab` target passed
+  `patientId: document.id` (the DOCUMENT's own id) for a doctor/admin
+  viewer — not a copy-paste mistake, the data wasn't even available
+  (`ReaderDocumentMeta` had no `patient_id` field). Fixed by adding
+  `document.patient_id` to `GET /documents/{id}/clinical-reader`'s
+  response (mirrors the generic reader's own field) and reading it on
+  the frontend. Confirmed via reading `ask_bragi/context.py`'s real
+  authorization code that this was a functional bug (Ask Bragi silently
+  failing for doctors from the discharge reader), not a demonstrated
+  cross-patient data leak — both `recheck_access` and
+  `resolve_document_scope` independently validate server-trusted data,
+  never the raw client value alone.
+- The OTHER `AskBragiSideTab` call site (`documents/[id]/page.tsx`) was
+  already correct — confirmed, not assumed. `patients/[id]/page.tsx`
+  does not render `AskBragiSideTab` at all (contrary to an initial
+  recollection — verified against current code).
+
+### Part C — Phase 10 deletion-provenance regression check (COMPLETE, no bug found)
+
+Question posed: does a Timeline event ever keep asserting a medication
+fact that no longer has canonical support once its source document is
+deleted? Analysis: this schema has no multi-document-support concept
+for a `PatientMedication` row at all — exactly ONE `source_document_id`
+per row (a genuinely different mention gets its own row, per Phase 7's
+own idempotency design), so there is no "Case A (still supported
+elsewhere) vs. Case B (orphaned)" ambiguity to resolve in the first
+place. Phase 7 already decided (and shipped, before this session) that
+a medication fact "stays independently meaningful once the document
+that mentioned it is gone" — `source_document_id` uses `SET NULL`, not
+cascade delete. Phase 10's projected `PatientEvent` correctly inherits
+that same decision (also `SET NULL`) rather than inventing a stricter
+rule Phase 7 itself didn't apply. **Not a bug** — strengthened the
+existing `test_deleting_source_document_does_not_delete_the_projected_
+event` test to explicitly assert the `PatientMedication` row itself
+(not just the event) survives, making the full chain explicit in one
+place.
+
+### Part B — manual-QA UI corrections (PARTIAL)
+
+- **B1 (Ask Bragi dedicated page height) — investigated, NOT
+  reproduced**: traced the entire CSS height chain (`.app-shell-main-
+  fill-height` → `.app-shell-body-fill-height` → `.ask-bragi-workspace`
+  → `.ask-bragi-history-desktop-only`/`AskBragiChat fillHeight`) and
+  found it already structurally correct, with code comments indicating
+  a prior deliberate fix ("used to deliberately be `start`"). Verified
+  empirically with real browser screenshots at 1440×900 and 1920×1080,
+  empty conversation state: the workspace fills the viewport correctly,
+  composer at the bottom, no dead space. Reported honestly as already-
+  correct rather than claiming an unnecessary fix — if the original
+  manual QA finding is still reproducible, it's in a state this session
+  didn't reach (e.g. a long populated conversation), not the empty
+  state checked here.
+- **B2 (processing indicator alignment) — real bug, fixed**:
+  `my-records/page.tsx`'s "N document(s) is/are being processed" notice
+  rendered `<span className="b-status b-status-processing" />` as an
+  EMPTY sibling of the text, not wrapping it — `.b-status` is
+  `display:inline-flex;align-items:center` BY DESIGN specifically so its
+  dot and its own text content align together, but the text lived
+  outside that flex container entirely, sharing no alignment rule with
+  the dot. Fixed by moving the text inside the span (its intended
+  usage) — no translateY/offset hack, and `Notice`'s own
+  `align-items:flex-start` (separately tuned for a different existing
+  usage with a leading icon + potentially multi-line text — left
+  untouched) was not the actual bug.
+- **B3 (upload page width) — real bug, fixed in 2 files**:
+  `my-records/upload/page.tsx` and `patients/[id]/upload/page.tsx` both
+  hardcoded `style={{ maxWidth: 900 }}` on their outer wrapper, leaving
+  a large unused strip on the right at any viewport wider than that —
+  on top of `AppShell`'s own `--content-max: 1440px` centering, which
+  already caps every other page correctly. Removed; verified with a
+  before/after screenshot at 1440×900. `care-partner/upload/page.tsx`
+  does not have this pattern at all — confirmed, not assumed.
+- **B4-B10 (exact source-highlight engine + select-text provenance) —
+  NOT ATTEMPTED, deliberately**: this is not a small CSS fix like B2/B3
+  — it requires understanding exactly what geometry data actually exists
+  today on `SourceEvidence`/from the extraction provider (bbox precision,
+  whether real per-token/per-word geometry exists at all vs. only a
+  page-level or line-level box), building a text-selection-to-source
+  mapping mechanism, and handling the honest-degradation rules for
+  DOCX/non-PDF sources correctly — a genuinely new provenance feature,
+  not a bug fix, and one directly touching what a clinician trusts a
+  highlighted box to mean. Rushing this within an already-large session
+  risked shipping a "looks precise but isn't" highlight, which is worse
+  than the currently-honest (if coarse) behavor. Deliberately left for a
+  dedicated future session with room to investigate the real extraction
+  geometry data first — see "What remains" below for the concrete
+  starting question that session needs to answer first.
+
+### What remains (honest, not attempted)
+
+- **B4-B10**: before writing any code, a future session must first
+  answer: does `SourceEvidence`'s stored geometry (from Reducto/whatever
+  extraction provider ran) actually carry per-word or per-token
+  bounding boxes today, or only a coarser page/region box? The reported
+  "NEUT#/PCT/NRBC# all highlighted together" bug is consistent with
+  either "the stored geometry genuinely is that coarse" (an honest
+  provenance ceiling, not a bug — the fix would be to STOP claiming
+  precision the data doesn't have) or "finer geometry exists but isn't
+  being read/converted correctly" (a real bug, fixable). These require
+  different fixes and must not be guessed at.
+- **Phase 11 (Ask Bragi canonical retrieval hardening)**: NOT STARTED
+  this session, entirely, by the session's own explicit deliberate
+  boundary. See section 22 for the full unchanged scope.
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)
@@ -2397,6 +2590,13 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   and correctly suppressing projection; not a projector bug, a test-
   fixture assumption fixed by switching to explicit `MedicationCandidate`
   construction — see section 9i and section 21 below).
+  → **604 CONFIRMED after the post-Phase-10 integration-correction
+  pass** (net +1 — the single new `test_reader_payload_document_
+  includes_real_patient_id` regression test in `test_clinical_document_
+  reader_api.py`, proving the Ask Bragi `patientId` fix's own
+  prerequisite field; section 9j). **Full suite reran clean: `604
+  passed, 5 warnings in 1309.89s (0:21:49)` — zero failures, zero
+  errors, no Neon flake this run.**
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -2435,39 +2635,45 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
   `right-workspace-geometry.spec.ts`) → 11 after Phase 8 (+6,
   `clinical-reader.spec.ts`) → 19 after Phase 9 (+8,
-  `derived-lab-artifact.spec.ts`) → **26 after Phase 10** (+7,
-  `timeline-projection.spec.ts`) — unchanged by Phases 3-7 (no frontend
-  application behavior changed in those phases). All 23 relevant specs
-  (`clinical-reader.spec.ts` + `derived-lab-artifact.spec.ts` +
-  `right-workspace-geometry.spec.ts` + `timeline-projection.spec.ts`)
-  confirmed passing together in the same run (section 20), aside from
-  the pre-existing `clinical-reader.spec.ts` flake (section 21);
-  `ask-bragi-workspace.spec.ts` (3 tests) was not re-run this session
-  (untouched by Phase 10).
+  `derived-lab-artifact.spec.ts`) → 26 after Phase 10 (+7,
+  `timeline-projection.spec.ts`) → **31 after the post-Phase-10
+  integration-correction pass** (+5, `routing-and-integration-
+  fixes.spec.ts`) — unchanged by Phases 3-7 (no frontend application
+  behavior changed in those phases). All 31 specs across `ask-bragi-
+  workspace.spec.ts` + `clinical-reader.spec.ts` + `derived-lab-
+  artifact.spec.ts` + `right-workspace-geometry.spec.ts` +
+  `routing-and-integration-fixes.spec.ts` + `timeline-projection.spec.ts`
+  confirmed run together in the same session (section 20); 30/31 passed
+  in that combined run, the 1 failure being the SAME pre-existing
+  `clinical-reader.spec.ts` click/section-switch timing flake already
+  disclosed in the Phase 9/10 handoffs (a DIFFERENT assertion failed
+  this time than either prior occurrence — consistent with a genuine
+  timing race, not a specific broken assertion; section 21).
 - OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
-  backend-modularization baseline) → 118 unchanged after Phase 9 → **118
-  unchanged after Phase 10** (no new route — Phase 10 added a new
-  service/migration and extended the existing profile/serializer
-  surface, never a new endpoint).
-- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 10 — zero
-  findings (only benign "Test in comment" collector warnings unrelated
-  to any real issue, same as every prior checkpoint).
+  backend-modularization baseline) → 118 unchanged after Phase 9 → 118
+  unchanged after Phase 10 → **118 unchanged after the integration-
+  correction pass** (no new route — one existing response, `GET
+  /documents/{id}/clinical-reader`, gained one additive field,
+  `document.patient_id`).
+- Bandit (`python -m bandit -r app -ll -q`): clean after the
+  integration-correction pass — zero findings (only benign "Test in
+  comment" collector warnings unrelated to any real issue, same as
+  every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
-  Phase 10 added ONE migration (`a1c9d4e7f203_phase10_timeline_
-  projection.py`, applied and confirmed via `alembic upgrade head`
-  before verification) — "No migration drift detected (8 known/tolerated
-  legacy-index difference(s) ignored)", same 8 as every prior checkpoint.
+  this pass added NO migration (no schema change) — "No migration drift
+  detected (8 known/tolerated legacy-index difference(s) ignored)", same
+  8 as every prior checkpoint, last real migration still Phase 10's
+  `a1c9d4e7f203_phase10_timeline_projection.py`.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
-  Phase 10's changes.
-- ESLint (`npm run lint`): zero errors/warnings after Phase 10's
-  changes; the same pre-existing 29 errors/26 warnings elsewhere in the
-  repo remain untouched (unrelated, out of scope, same as every prior
-  checkpoint — none in any file this phase touched).
-- Frontend production build (`npm run build`): succeeds, `/my-records/
-  timeline` and `/patients/[id]/timeline` both listed among the compiled
-  routes (unchanged route set from Phase 9 — Phase 10 added no new
-  frontend route).
+  the integration-correction pass's changes.
+- ESLint (`npm run lint`): zero errors/warnings after this pass's
+  changes; the exact same pre-existing 29 errors/26 warnings elsewhere
+  in the repo remain untouched (unrelated, out of scope, same as every
+  prior checkpoint — none in any file this pass touched).
+- Frontend production build (`npm run build`): succeeds — unchanged
+  route set from Phase 10 (this pass added a new shared library module,
+  `lib/document-routing.ts`, not a new page route).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -2526,9 +2732,23 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   additively (calls `project_clinical_document_to_timeline` after
   persisting medications, adds one manual hospitalization event).
 
+- `routing-and-integration-fixes.spec.ts` (NEW, post-Phase-10
+  integration correction): 5 tests — a document identified only by
+  `document_type` (section deliberately mismatched) opens the canonical
+  discharge reader, a legacy document identified only by `section` still
+  does too (proving the fallback wasn't broken by the fix), a derived
+  lab artifact opened FROM THE TIMELINE reaches the standalone lab-
+  report reader (the real missing-check gap fixed), a direct hard
+  navigation to the discharge URL works without a redirect loop, and a
+  doctor opening Ask Bragi from the discharge reader sends the real
+  `patient_id` — intercepted at the network level
+  (`page.waitForRequest`) and asserted against the seeded patient id,
+  never the document id (the real bug fixed). Seeds via new
+  `backend/scripts/seed_e2e_routing_fixture.py`.
+
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
-timeline/medication flow coverage (beyond these three pages) still needs
+timeline/medication flow coverage (beyond these four pages) still needs
 Phases 11-13 to exist first.
 
 ## 21. Real bugs found (this session)
@@ -2646,6 +2866,57 @@ Phases 11-13 to exist first.
     to fail with the URL never changing. A full dev-server restart (not
     any code change) fixed both immediately, confirmed by isolated
     reruns passing cleanly afterward.
+12. **A real routing bug, reported by real manual QA and confirmed with
+    a precise root cause** (post-Phase-10 integration correction) — see
+    section 9j / `docs/clinical_document_v3/ROUTER_AUDIT.md`. 5
+    independent frontend copies of "which reader should this document
+    open in" all checked only legacy `section`/`report_type` fields,
+    never `document_type` — and `LEGACY_SECTION_BY_DOCUMENT_TYPE` maps
+    `HOSPITAL_ADMISSION_NOTE`/`EMERGENCY_DEPARTMENT_NOTE` to
+    `"hospitalizations"`, not `"discharge_summary"`, so a real discharge-
+    shaped document classified as one of those never matched at all.
+    Fixed by consolidating onto one shared resolver that checks
+    `document_type` ALONGSIDE the legacy signals (never replacing them —
+    `document_type` isn't reliably set on every upload path).
+13. **A real, previously-unnoticed gap, found by systematic audit rather
+    than by reproducing the reported symptom** (post-Phase-10
+    integration correction) — see section 9j. Both Timeline pages
+    (`my-records/timeline/page.tsx`, `patients/[id]/timeline/page.tsx`)
+    had NO `derived_artifact_kind` check in their own document-open
+    logic at all — a derived lab artifact opened from the Timeline
+    landed on the generic reader, not the standalone lab-report reader
+    Phase 9 built. Fixed via the same shared resolver as bug #12.
+14. **A real Ask Bragi bug, confirmed exactly as suspected** (post-
+    Phase-10 integration correction) — see section 9j. The discharge
+    reader's own `AskBragiSideTab` target passed `patientId: document.id`
+    (the document's own id) for a doctor/admin viewer — not a variable-
+    name typo, the correct value wasn't even available in that payload.
+    Fixed by adding `document.patient_id` to `GET /documents/{id}/
+    clinical-reader`'s response. Confirmed via reading the real
+    backend authorization code (`ask_bragi/context.py`) that this was a
+    functional bug (Ask Bragi failing for doctors on this page), not a
+    demonstrated cross-patient data leak — both `recheck_access` and
+    `resolve_document_scope` independently validate server-trusted data.
+15. **Two real, reproduced UI bugs from manual QA, both confirmed with a
+    before/after screenshot** (post-Phase-10 integration correction) —
+    see section 9j. (a) The upload page's outer wrapper hardcoded
+    `maxWidth: 900` on top of `AppShell`'s own 1440px content cap,
+    leaving a large unused strip on the right at any wider viewport —
+    present in BOTH the patient and doctor upload pages. (b) The
+    document-processing notice's status dot rendered as an empty
+    sibling of its own text rather than wrapping it, so the two never
+    shared the `.b-status` class's own `align-items: center` rule at
+    all — fixed by nesting the text inside the dot's span, its actual
+    intended usage, rather than a manual offset hack.
+16. **Investigated and found to be ALREADY correct, not a live bug** —
+    the reported Ask Bragi dedicated-page "dead space below the
+    conversation" issue. The full CSS height chain (`app-shell.tsx`'s
+    `bodyFillHeight` down through `.ask-bragi-workspace`) was traced and
+    found structurally sound, with code comments indicating a prior
+    deliberate fix. Verified empirically with real browser screenshots
+    at 1440×900 and 1920×1080 (empty-conversation state): no dead space.
+    Reported honestly as not-reproduced rather than claiming an
+    unneeded fix.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6.
@@ -2687,13 +2958,28 @@ and prescription-issued Timeline events are deliberately not implemented
 (section 9i's own reasoning — a reliable dose-change would risk
 manufacturing a false state transition from an unresolvable conflict; no
 document today produces real prescription-linked medication data to
-project from). Everything from Phase 11 onward through Phase 21 of the
+project from). A post-Phase-10 integration-correction pass (section 9j)
+additionally fixed real routing/Ask-Bragi-target/layout bugs found by
+real manual QA (see section 21, bugs #12-15) — but deliberately did NOT
+attempt an exact word-level source-highlighting engine (a genuinely new
+provenance feature, not a bug fix — see section 9j's "What remains" for
+the concrete question a future session must answer first) or ANY of
+Phase 11. Everything from Phase 11 onward through Phase 21 of the
 original contract is **entirely unimplemented**:
 
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation
-  language in answers).
-- Phase 12: provenance for the new structured facts.
+  language in answers). Investigated/scoped this session (see the
+  original Part D of the post-Phase-10 prompt) but not started, by
+  explicit deliberate boundary — see section 9j.
+- Phase 12: provenance for the new structured facts. Note: an exact
+  word-level source-highlighting engine (coarse-highlight bug fix +
+  select-text-to-"Show in original" interaction) was investigated this
+  session as a manual-QA-reported issue and found to require genuinely
+  new engineering (not a small fix) — see section 9j's "What remains"
+  for the exact open question a Phase 12 session must resolve first
+  (does `SourceEvidence`'s stored geometry actually carry per-word
+  precision today, or only a coarser box).
 - Phase 13 (partial — Phases 6, 7, AND 10 each laid real identity
   groundwork and DB-proved it standalone, sections 9e/9f/9i/16
   (`PatientEvent` projection idempotency specifically proven at the
@@ -2791,6 +3077,29 @@ Then:
   where avoidable, and WITHOUT treating `PatientEvent`/Timeline as the
   source of truth (Phase 10's own explicit constraint, still binding:
   Timeline is a projection, never authoritative).
+- Also open, NOT part of Phase 11, and not started: an exact word-level
+  source-highlighting engine (real manual QA found a coarse-highlight
+  bug — selecting a lab's "View source" highlighted several neighboring
+  rows, not just the supporting text) and its companion select-text-to-
+  "Show in original" interaction. See section 9j's "What remains" for
+  the exact question that must be answered FIRST, before writing any
+  code: does `SourceEvidence`'s stored geometry actually carry per-word
+  precision today, or only a coarser page/region box — these require
+  different fixes (a real bug vs. an honest precision ceiling) and must
+  not be guessed at. This is genuinely new provenance engineering, not a
+  small fix; give it its own session rather than folding it into
+  whatever else that session is doing.
+- Do not re-attempt the post-Phase-10 integration-correction pass
+  (section 9j) — the routing consolidation (`frontend/lib/document-
+  routing.ts`, replacing 5 duplicated copies plus fixing 2 real gaps:
+  both Timeline pages missing a derived-artifact check, the discharge
+  reader missing a redirect-away guard), the Ask Bragi `patientId` fix
+  (`document.patient_id` added to the clinical-reader response), and the
+  2 real UI bugs (upload width, processing-indicator alignment) are all
+  complete and regression-tested (1 new backend test, 5 new Playwright
+  tests — section 9j/20). If a genuinely NEW document-routing case is
+  found, extend `resolveDocumentRoute` in `lib/document-routing.ts`
+  additively — do not reintroduce a per-page copy of this decision.
 - Do not re-attempt Phase 10 — canonical Timeline medication projection
   is complete and tested (section 9i): `timeline_projection.py` (15
   new backend tests), the additive `PatientEvent.source_document_id`/

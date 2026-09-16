@@ -185,8 +185,23 @@ PERSISTENCE/PROJECTION code is wired into the live discharge upload
 write path yet (deliberate sequencing, not an oversight — a brand-new
 upload today still renders correctly through Phase 8's reader, just
 without labs/medications attached until that write-side switch
-happens). Ask-Bragi retrieval hardening for the new canonical data
-(Phase 11), the exhaustive real-Postgres idempotency/deletion test
+happens). A subsequent post-Phase-10 integration-correction pass fixed
+real bugs found by manual QA — 5 duplicated frontend document-routing
+decisions consolidated into one shared resolver (a real classification-
+taxonomy root cause found: `HOSPITAL_ADMISSION_NOTE`/`EMERGENCY_
+DEPARTMENT_NOTE` map to the legacy `"hospitalizations"` section, not
+`"discharge_summary"` — deliberately NOT changed, a product decision),
+a real gap where both Timeline pages had no derived-artifact routing
+check, a real Ask Bragi bug (the discharge reader sent a document id as
+`patientId` for doctors), and two real UI bugs (upload-page width,
+processing-indicator alignment) — see `docs/clinical_document_v3/
+ROUTER_AUDIT.md`. An exact word-level source-highlighting engine (a
+real coarse-highlight bug found by manual QA) was investigated and found
+to require genuinely new provenance engineering — not attempted, with
+the exact open question recorded for whoever picks it up (does
+`SourceEvidence`'s stored geometry carry per-word precision today, or
+only a coarser box). Ask-Bragi retrieval hardening for the new canonical
+data (Phase 11), the exhaustive real-Postgres idempotency/deletion test
 suites (Phases 6-10 each laid real groundwork but the full 1x/2x/10x/
 exhaustive-cascade proofs remain open), the deterministic retrieval
 benchmark, the full 7-viewport responsive screenshot matrix (Phase 8

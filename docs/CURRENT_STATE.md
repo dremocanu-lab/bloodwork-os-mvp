@@ -257,9 +257,21 @@ Phase 10 fixed that mechanism's derived-artifact title instead of
 building a redundant path, and along the way found and fixed a real bug
 that would have made a projected medication event corrupt the existing
 admission-grouping logic across four frontend files — proven with 15 new
-backend tests and 7 new real-browser Playwright tests. Phases 11-21 of
-the originating contract (Ask-Bragi retrieval hardening and everything
-downstream) are entirely unimplemented** — see
+backend tests and 7 new real-browser Playwright tests. **A post-Phase-10
+integration-correction pass (NEW)** fixed real bugs real manual QA
+found: 5 duplicated frontend document-routing decisions consolidated
+into one shared resolver (`lib/document-routing.ts`) — checking
+`document_type` alongside the legacy `section`/`report_type` signals,
+never replacing them — plus a real gap where both Timeline pages had no
+derived-artifact check at all; a real Ask Bragi bug where the discharge
+reader passed a document id as `patientId` for doctors; and two real UI
+bugs (an upload-page width cap, a misaligned processing-indicator dot).
+Deliberately NOT attempted: an exact word-level source-highlighting
+engine (found to require genuinely new provenance engineering, not a
+small fix — see the handoff for the exact open question) and Phase 11
+in its entirety. Phases 11-21 of the originating contract (Ask-Bragi
+retrieval hardening and everything downstream) are entirely
+unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
 full, section-by-section honest accounting and how to continue.
 
