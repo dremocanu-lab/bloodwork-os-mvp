@@ -185,7 +185,7 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
-## Clinical Document Intelligence V3 — PARTIAL (Phases 0-8 of 21)
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-9 of 21)
 
 Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
 the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
@@ -230,9 +230,20 @@ into the live discharge upload write path yet — deliberate, not an
 oversight (a brand-new upload today still renders correctly through
 Phase 8's reader, just without labs/medications attached yet, since
 nothing has extracted them for it; see the handoff's sequencing note
-and Phase 8's own detailed reasoning for keeping this deferred). Phases
-9-21 of the originating contract (making derived lab artifacts appear
-in Documents, Timeline/Ask-Bragi integration, and everything
+and Phase 8's own detailed reasoning for keeping this deferred).
+**Phase 9 (NEW) made a derived "lab_report" `Document` a real,
+independently openable Documents entry**: a new standalone
+`/documents/{id}/lab-report` route renders `StructuredLabReport(mode=
+"standalone")` — reused verbatim from Phase 8, never duplicated —
+against the SAME canonical `LabResult` rows Phase 6 created, never a
+copy; Documents/patient-profile cards show a restrained "Derived from:
+[parent]" line (no badge, no alarming styling); direct deletion of a
+derived artifact is now rejected (still removable only via its
+parent's cascade); a genuine Phase-6 gap (the derived artifact's own
+`lab_result_ids` pointer was declared but never populated) was
+completed to make all of this possible — proven with 15 new backend
+tests and 8 new real-browser Playwright tests. Phases 10-21 of the
+originating contract (Timeline/Ask-Bragi integration and everything
 downstream) are entirely unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
 full, section-by-section honest accounting and how to continue.

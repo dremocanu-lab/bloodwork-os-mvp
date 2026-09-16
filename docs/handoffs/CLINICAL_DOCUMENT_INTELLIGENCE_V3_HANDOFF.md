@@ -1,6 +1,6 @@
 # Clinical Document Intelligence V3 — Handoff
 
-**Status: PARTIAL. Phases 0 through 8 of the 21-phase contract are
+**Status: PARTIAL. Phases 0 through 9 of the 21-phase contract are
 COMPLETE and verified. Phases 0-5: the full structural reconstruction
 layer (typed segments, canonical section consolidation, real Clinical
 Course dated-event extraction with chronology sanity checking) and a
@@ -22,14 +22,24 @@ components (canonical outline, one `StructuredLabReport` for both
 embedded/standalone use, a Clinical Course event timeline, honest
 PDF/non-PDF provenance, derived-vs-explicit medication date UX,
 lab/medication conflict presentation), and real Playwright coverage
-against a synthetic fixture. See section 9g. None of Phases 3-8's
+against a synthetic fixture. See section 9g. **Phase 9 (NEW this
+checkpoint): a coherent lab report embedded inside a discharge document
+now appears in Documents as a real, independently openable clinical
+artifact** — `StructuredLabReport(mode="standalone")` (built and tested
+in Phase 8, unrouted until now) is reachable at a new dedicated route,
+Documents/patient-profile cards show a restrained "Derived from:
+[parent]" line, deletion is blocked directly on a derived artifact
+(only removable via its parent's cascade), and a genuine Phase-6 gap
+(`DerivedArtifactRef.lab_result_ids`/the derived document's own
+note_body pointer was declared but never populated) was completed
+additively to make this possible. See section 9h. None of Phases 3-8's
 EXTRACTION/PERSISTENCE code is wired into the live discharge UPLOAD
 write path yet — this remains deliberate, not an oversight (see section
 9b's sequencing note, and section 9g's own "why the write-side switch is
 still deferred" reasoning — Phase 8's READ side is now proven fully
 dual-compatible with both old and new document shapes, which is a
 distinct, already-completed milestone from the write-side switch).
-Phases 9–21 are NOT STARTED.** This document exists specifically so a
+Phases 10–21 are NOT STARTED.** This document exists specifically so a
 future Claude session with zero memory of this conversation can pick
 this up correctly — read section 23 ("HOW TO CONTINUE") first if
 that's you.
@@ -44,24 +54,22 @@ can open, or a test you can execute.
 - **HEAD SHA: check `git log --oneline -1`** (this line is updated by
   hand at each checkpoint and can lag a moment behind an in-progress
   session; the git log is always the final authority). As of this
-  checkpoint, the last four commits are (newest first): a handoff
-  checkpoint commit for this section, `d39f5fb` (Phase 8 Playwright
-  coverage), `def2079` (Phase 8 frontend rebuild), `60ff9b1` (Phase 8
-  reader API contract) — on top of the Phase 0-7 checkpoint at
-  `45ce7f3`.
+  checkpoint, the last commits are (newest first): a handoff checkpoint
+  commit for this section, then this session's Phase 9 commits (backend
+  derived-artifact wiring, frontend standalone route + Documents cards,
+  Playwright coverage) — on top of the Phase 0-8 checkpoint at `622ff67`
+  (itself on top of `d39f5fb`/`def2079`/`60ff9b1`/Phase 0-7's `45ce7f3`).
 - **Pushed to `origin/fix/clinical-document-intelligence-v3`**: the
-  three Phase 7 commits plus its handoff (through `45ce7f3`) were
-  explicitly authorized and pushed at the START of this Phase 8
-  session — confirmed synchronized (`git log origin/...\..HEAD
-  --oneline` returned empty immediately after). The four commits above
-  are pushed at the END of this session, per the same explicit
-  authorization — check `git log origin/fix/clinical-document-
+  Phase 8 commits plus its handoff (through `622ff67`) were explicitly
+  authorized and pushed at the END of that session. This session's
+  Phase 9 commits are pushed at the END of this session, per the same
+  standing authorization — check `git log origin/fix/clinical-document-
   intelligence-v3..HEAD --oneline` to confirm empty before trusting
   this line.
 - Working tree at this checkpoint: **clean, zero uncommitted changes**
   (`git status --short` returns nothing) once this handoff commit lands.
 - **No PR opened.**
-- **Phases 4 through 8 are now COMPLETE.** Phases 4/5: segments,
+- **Phases 4 through 9 are now COMPLETE.** Phases 4/5: segments,
   canonical section consolidation, real Clinical Course event
   extraction, chronology sanity checking, full end-to-end orchestration
   in `discharge_parser.py` (sections 9b/9c/9d). Phase 6: embedded lab
@@ -69,26 +77,26 @@ can open, or a test you can execute.
   backend semantics (section 9e). Phase 7: medication extraction/
   context classification, deterministic duration parsing, and
   start/end-date derivation, persisted into the EXISTING
-  `PatientMedication` model (section 9f). **Phase 8 (NEW): the
-  discharge/clinical-document reader frontend rebuild — a new reader
-  API contract, a rebuilt page, 7 new reusable components, real
-  Playwright coverage (section 9g).** None of Phases 3-8's EXTRACTION/
-  PERSISTENCE code is wired into the live discharge ingestion write
-  path yet (deliberate — see section 9b's sequencing note, and section
-  9g's own detailed reasoning for why the write-side switch stayed
-  deferred even though Phase 8's READ side is now proven fully
-  dual-compatible). All of Phase 6's/7's/8's own backend SERVICES are
-  fully callable and DB-tested standalone right now, distinct from
-  "wired into the live pipeline" — see sections 9e/9f/9g for the
-  precise distinction in each case.
-- **Immediate next step: Phase 9 — derived lab artifact in Documents.**
-  Make Phase 6's derived "lab_report" `Document` rows appear properly
-  in the Documents list/page with "Derived from: [parent]" and correct
-  routing/relationship UI, using `StructuredLabReport(mode=
-  "standalone")` (built and tested in Phase 8, not yet routed to
-  anywhere). Do not redesign the Documents page broadly — scope this
-  narrowly to the derived-artifact relationship, per the contract's own
-  instruction.
+  `PatientMedication` model (section 9f). Phase 8: the discharge/
+  clinical-document reader frontend rebuild — a new reader API
+  contract, a rebuilt page, 7 new reusable components, real Playwright
+  coverage (section 9g). **Phase 9 (NEW): a derived lab artifact is now
+  a real, independently openable Documents entry** — a new standalone
+  route, restrained "Derived from: [parent]" Documents-card framing,
+  correct authorization/deletion/provenance semantics, and 15 new
+  backend + 8 new Playwright tests (section 9h). None of Phases 3-8's
+  EXTRACTION/PERSISTENCE code is wired into the live discharge ingestion
+  write path yet (deliberate — see section 9b's sequencing note, and
+  section 9g's own detailed reasoning for why the write-side switch
+  stayed deferred even though Phase 8's READ side is now proven fully
+  dual-compatible; Phase 9 does not change this). All of Phase 6's/7's/
+  8's/9's own backend SERVICES are fully callable and DB-tested
+  standalone right now, distinct from "wired into the live pipeline" —
+  see sections 9e/9f/9g/9h for the precise distinction in each case.
+- **Immediate next step: Phase 10 — Timeline integration for derived
+  labs/medication events.** Not started this session, by explicit
+  instruction (Phase 9 was scoped narrowly to the Documents-list/reader
+  relationship, not Timeline).
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -1511,10 +1519,230 @@ are Phase 19/20's own jobs, not attempted here beyond the 2 viewports
 and manual semantic-markup review described above. Live discharge
 upload ingestion is unchanged (see the dedicated paragraph above).
 
+## 9h. Phase 9 — derived lab artifact in Documents (COMPLETE)
+
+**Goal (verbatim intent): a coherent lab report embedded inside a
+discharge document appears in Documents as a real, independently
+openable clinical artifact** — "Laboratory report / 04 Mar 2026 /
+Derived from: Discharge Summary — Fundeni", opening it renders
+`StructuredLabReport(mode="standalone")` against the SAME canonical
+`LabResult` rows Phase 6 created. Not another uploaded file, not a copy
+of the lab data, not a fake PDF, not an independent source document, not
+a second lab datastore.
+
+**The one real gap found and fixed first (a completion of Phase 6's own
+declared design, not a redesign)**: `DerivedArtifactRef.lab_result_ids`
+(schema.py, Phase 3) and the derived document's own note_body pointer
+JSON (`lab_persistence.py`'s `_build_derived_document_note_body`) both
+existed but `lab_result_ids` was always written as `[]` and never
+updated after the group's LabResult rows were actually persisted — so
+there was no reliable way to resolve "which canonical LabResult rows
+belong to THIS derived artifact" without re-deriving grouping from raw
+text on every read (fragile, expensive, and not what the pointer field
+was for). Fixed with a **minimal, additive** change:
+`_build_derived_document_note_body` now accepts `lab_result_ids: list[int]`
+and includes it in the JSON; at the end of each group's persistence
+loop in `persist_lab_candidates`, the derived document's `note_body` is
+rewritten with the group's fully-accumulated `lab_result_ids` (sorted,
+deterministic). Verified non-breaking: all 18 pre-existing
+`test_clinical_document_lab_persistence.py` tests pass unchanged.
+
+**Backend**:
+- `lab_persistence.py` — the fix above. No other Phase 6 logic touched.
+- `app/main.py::serialize_document_card` — extended with two new
+  optional keyword params (`parent_document`, `has_abnormal_override`)
+  rather than querying inside the function, so every card list stays
+  N+1-free; plus new `derived_artifact_kind`/`parent_document` output
+  keys. `has_abnormal`/`has_abnormal_labs` previously called
+  `document_has_abnormal_labs(db, document.id)` unconditionally — for a
+  derived artifact this is ALWAYS `False` (every LabResult row lives on
+  the PARENT's id, per Phase 6's own ownership rule, never the derived
+  artifact's), a real bug that would have made every abnormal derived
+  lab report silently show as normal. Fixed by letting the caller pass
+  a precomputed override for derived artifacts only.
+- `app/main.py::resolve_derived_artifact_contexts` (new, shared) —
+  given the FULL document list a card listing is already about to
+  render, resolves every derived artifact's parent metadata (a dict
+  index into that same list — zero extra queries) and its abnormal-flag
+  status via exactly ONE batched `LabResult.id.in_(...)` query across
+  every derived artifact's own `lab_result_ids`, no matter how many
+  derived artifacts exist. Used by both call sites of
+  `serialize_document_card` (`patients.py::build_patient_profile_
+  response` — patient's own `/my/profile` and the doctor/admin
+  `/patients/{id}/profile`; `documents.py::get_patient_documents` — the
+  doctor/admin `GET /patients/{id}/documents`), so the "Derived from"/
+  abnormal-flag behavior is identical everywhere a document card
+  renders, not reimplemented per route.
+- `app/main.py::get_document_payload` — added `derived_artifact_kind`,
+  the ONE key the generic `/documents/{id}` page's redirect logic
+  needs to detect a derived artifact and hand off to the standalone
+  reader instead of rendering an empty fallback lab table (which
+  queries `LabResult.document_id == document.id`, always empty for a
+  derived artifact).
+- `documents.py::get_clinical_reader_payload` (Phase 8's endpoint,
+  extended, not duplicated) — branches on `document.derived_artifact_kind`:
+  a derived artifact's `structured_document` is always `null` (it has
+  none of its own), its `labs` are resolved via the note_body pointer's
+  `lab_result_ids` (never `LabResult.document_id == document.id`, which
+  is empty), `medications` is always `[]`, and a new `derived_artifact`
+  response field carries `{kind, group_key, source_section_id,
+  parent_document_id, parent_report_name, parent_filename,
+  parent_document_type, parent_content_type}` — resolved from the
+  parent row, never copied clinical data. The document-level
+  `SourceEvidence` anchor (`ensure_document_level_evidence`) is
+  deliberately created against the PARENT document for a derived
+  artifact, not the artifact's own id — the artifact has no
+  `saved_to`/real file of its own (it's a pointer row, see
+  `_get_or_create_derived_document`), so anchoring to its own id would
+  create a phantom evidence row pointing at nothing; "View source"
+  for a derived artifact always resolves against the parent's real file.
+  A missing/dangling `lab_result_ids` entry or a `parent_document_id`
+  pointing at nothing both degrade to `null`/`[]` fields, never a 500 —
+  proven by dedicated tests.
+- `documents.py::delete_document` — added a guard: a request to delete
+  a document with `derived_artifact_kind` set is rejected (400,
+  "Derived artifacts cannot be deleted directly — delete the source
+  document instead"). A derived artifact is still removed as a side
+  effect of deleting its PARENT (Phase 6's own cascade, a few lines
+  below, unchanged) — this guard only blocks deleting the pointer row
+  on its own, which would desynchronize Documents from the parent's
+  real content without removing any actual clinical data.
+- **Authorization: zero changes needed.** `app/policies/access.py`'s
+  `can_access_patient`/`care_partner_can_access_document` check only a
+  document's OWN `patient_id` — a derived artifact already inherits
+  `patient_id` from its parent at creation time (Phase 6), so the
+  existing checks work correctly as-is; proven by
+  `test_unauthorized_cross_patient_access_to_derived_artifact_is_denied`/
+  `test_doctor_with_patient_access_can_see_derived_artifact_via_parent_policy`.
+- **No migration** — every change above is serializer/route logic over
+  EXISTING columns (`derived_artifact_kind`, `parent_document_id`,
+  `note_body` all already existed from Phase 6). Confirmed by
+  `scripts/check_migration_drift.py` staying clean.
+
+**Frontend**:
+- `frontend/lib/clinical-document-schema.ts` — `ClinicalReaderResponse`
+  gained `derived_artifact: ReaderDerivedArtifact | null` and
+  `ReaderDocumentMeta` gained `derived_artifact_kind`, mirroring the
+  extended backend contract exactly (including `parent_content_type`,
+  needed so `ReaderSourceAction`'s PDF-vs-non-PDF honesty check gates
+  on the PARENT's real file type, never the derived artifact's own
+  — it has none).
+- **New standalone route**: `frontend/app/documents/[id]/lab-report/
+  page.tsx` — fetches the SAME `GET /documents/{id}/clinical-reader`
+  Phase 8 built (no second endpoint), guards on
+  `derived_artifact_kind !== "lab_report"` (hands off to the generic
+  page if the id resolves to an ordinary document), and renders
+  `StructuredLabReport(mode="standalone")` — the exact component Phase
+  8 built and left unrouted, reused verbatim, never duplicated. Header
+  shows a restrained "Derived from: [parent]" line (no badge, no
+  alarming styling — matches the V3 contract's explicit style
+  constraint) and an "Open source document" action that navigates to
+  the parent's own reader (discharge route for a discharge parent,
+  generic route otherwise). No delete action is rendered at all
+  (deletion is blocked server-side anyway; omitting it from the UI
+  avoids offering an action that only errors).
+- **`/documents/{id}` generic page** — one new redirect check
+  (`derived_artifact_kind === "lab_report"` → `router.replace(
+  /documents/{id}/lab-report)`), placed alongside the existing
+  discharge-summary redirect, before the fallback lab-table logic that
+  would otherwise render empty for a derived artifact.
+- **Documents-list cards** (`my-records/page.tsx` patient view,
+  `patients/[id]/page.tsx` doctor/admin view — both updated
+  identically): `DocumentCard` gained `derived_artifact_kind`/
+  `parent_document_id`/`parent_document`; a derived artifact's card
+  shows a clean "Laboratory report" title (never the internal
+  `report_type: "derived-lab-report:<group_key>"` string or the verbose
+  `report_name`) with a "Derived from: [parent]" subtitle line — same
+  visual language as every other card, no badge; its row-level "Open
+  original"/"View original" menu action is hidden (the artifact has no
+  file of its own to open); `getStructuredDocumentPath` routes it to
+  the new `/lab-report` route instead of the generic/discharge routes.
+- **A real Playwright-authoring lesson repeated from Phase 8** (section
+  9g documented this exact class of gotcha once already): the new
+  "Open source document" (parent-navigation) button was initially
+  labeled "View source document" — a STRING THAT CONTAINS "View source"
+  (the per-lab-row provenance action's own accessible name) as a
+  substring, so Playwright's non-exact `getByRole(..., {name:})`
+  matched both ambiguously. Fixed by renaming the button's copy (not
+  just patching the test) to "Open source document"/"Deschide
+  documentul sursă" — avoids the same ambiguity for any future test or
+  assistive-tech query, not merely this one spec.
+
+**Requirements checklist** (all met): derived artifact is a real
+Documents-list entry, never a second upload/copy/fake-PDF/independent
+source/second datastore ✓; opens `StructuredLabReport(mode=
+"standalone")` against the SAME canonical LabResult rows ✓; restrained
+"Derived from: [parent]" framing, no badge/alarming styling ✓; parent
+navigation works ✓; provenance ("View source" on a lab row) resolves
+against the parent's real file ✓; multiple derived artifacts on one
+parent stay distinct ✓; a plain Reducto Split child is never mislabeled
+✓; direct deletion of a derived artifact is rejected, parent-cascade
+deletion still works ✓; authorization identical to the parent's own
+rule, no changes needed ✓; missing/dangling references degrade safely,
+never a 500 ✓; N+1-free at every list call site ✓; live discharge
+ingestion untouched ✓.
+
+**Tests**:
+- Backend: 15 new focused tests
+  (`test_clinical_document_derived_lab_artifacts.py`) — listing
+  presence, `derived_artifact_kind`/`parent_document_id`/parent-metadata
+  correctness, ordinary documents unaffected, Reducto Split child never
+  mislabeled, multiple derived artifacts stay distinct, detail endpoint
+  returns canonical (never copied) LabResult values, a dangling/empty
+  `lab_result_ids` or missing parent never crashes, cross-patient access
+  denied, doctor access via the parent's own policy, direct deletion
+  rejected, parent-cascade deletion still works end-to-end through the
+  real route. All passing, real DB — full suite reran clean: `588
+  passed, 5 warnings in 1113.59s (0:18:33)` (net +15 over the Phase 8
+  573 baseline, an exact match, no reconciliation gap this time).
+- Frontend Playwright: 8 new tests (`e2e/derived-lab-artifact.spec.ts`)
+  — Documents-list presence with "Derived from" framing, standalone
+  reader renders the same canonical values the embedded Phase 8 view
+  shows (including the MCH conflict, still preserved here), a lab row's
+  source action opens the shared RightWorkspace against the PARENT's
+  real file, parent navigation, multiple derived reports stay distinct,
+  a plain Reducto Split child is never mislabeled, no delete action is
+  exposed, mobile viewport stays usable. `backend/scripts/
+  seed_e2e_discharge_document.py` (Phase 8's fixture) extended
+  additively: a second, separate coherent lab group on the same parent
+  (proves "multiple derived reports distinct") and one plain Reducto
+  Split child (proves "never mislabeled"), plus the derived/split ids
+  in its JSON output. All 16 tests across `clinical-reader.spec.ts` +
+  `derived-lab-artifact.spec.ts` + `right-workspace-geometry.spec.ts`
+  confirmed passing together in the same run.
+  **A genuine, reproducible pre-existing flake, NOT introduced by this
+  session** (confirmed by isolating it, and by the fact it fails at a
+  DIFFERENT assertion each time — once on "Amoxicilina", once on
+  "BESREMI" — always immediately after clicking a different outline
+  section button): `clinical-reader.spec.ts`'s "medications: derived
+  end date..." test occasionally fails to see the newly active
+  section's content render before its next assertion. Reproduced twice,
+  passed cleanly on immediate isolated rerun both times (1/1, then
+  16/16 in a full combined run) — a real click/section-switch timing
+  race in the test, not a data or application bug (the same fixture's
+  `GET .../clinical-reader` response was independently verified via a
+  direct API call to contain all 4 medications correctly). Left as-is,
+  same honest-disclosure treatment Phase 8 gave its own flake — not
+  Phase 9's to fix, but worth a future session hardening this spec with
+  an explicit wait for the outline's active-section indicator before
+  asserting section content.
+
+**What does NOT exist yet** (explicitly deferred, not a Phase 9 gap):
+Timeline integration for a derived lab artifact (Phase 10's own job — a
+derived artifact does not yet appear anywhere in the Timeline view).
+Ask Bragi is not specifically aware of a derived artifact as a distinct
+entity (it already sees the underlying LabResult rows through the
+existing patient-context resolution, unchanged). The formal responsive
+screenshot matrix and an automated accessibility scan remain Phase 19/
+20's jobs, same as every other phase. Live discharge upload ingestion
+is still unchanged (same deferred write-side switch as every phase
+since 4 — see section 9b).
+
 ## 10. Lab artifact semantics
 
-**Phase 6 COMPLETE for embedded-discharge labs — see section 9e for
-full detail.** Embedded labs inside a discharge document's
+**Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)
+— see section 9e. Phase 9 COMPLETE for the derived artifact's Documents/
+reader presence — see section 9h.** Embedded labs inside a discharge document's
 `laboratory_results` section are now extracted (`lab_extraction.py`),
 grouped into coherent source reports (`lab_grouping.py`), and persisted
 as real, canonical `LabResult` rows plus one derived "lab_report"
@@ -1523,9 +1751,12 @@ as real, canonical `LabResult` rows plus one derived "lab_report"
 a second lab datastore. This is a real, DB-tested, callable service —
 **not yet wired into the live discharge upload write path**
 (`discharge_summary_pipeline.py` is unchanged; see section 9b's
-sequencing note, which now also governs Phase 6's wiring). Not yet
-surfaced anywhere in the frontend (deliberately deferred to Phases 8/9).
-Not yet reachable from `/patients/{id}/bloodwork-trends`
+sequencing note, which now also governs Phase 6's wiring). **Now
+surfaced in the frontend as a real, independently openable Documents
+entry** (Phase 9, section 9h) — `StructuredLabReport(mode="standalone")`
+at `/documents/{id}/lab-report`, with restrained "Derived from:
+[parent]" card framing in Documents/patient-profile lists. Not yet
+reachable from `/patients/{id}/bloodwork-trends`
 (`app/api/routers/labs.py`) even once wired: that route filters
 `Document.section == "bloodwork"`, but an embedded lab's `LabResult.
 document_id` is the discharge document (`section="discharge_summary"`,
@@ -1728,6 +1959,14 @@ real behavior changes across these two checkpoints:
   document_id`'s `NOT NULL` constraint. Scoped to `lab_result_id IS
   NULL AND medication_id IS NOT NULL` only — lab-linked evidence is
   unaffected (already covered by the `LabResult` cascade).
+- **Phase 9** (section 9h): a request to delete a document with
+  `derived_artifact_kind` set directly is now rejected (400) instead of
+  silently succeeding — previously nothing stopped a caller from
+  deleting a derived artifact's pointer row on its own, desynchronizing
+  Documents from the parent's real content without removing any actual
+  clinical data. The parent-deletion cascade (hard-deletes the derived
+  artifact, Phase 6, described above) is completely unaffected — the
+  new guard only blocks the DIRECT single-artifact case.
 
 Everything else — the pre-existing asymmetry between this route and
 `DELETE /my/account` documented in `docs/clinical_document_v3/
@@ -1807,6 +2046,15 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   errors, no Neon flake this run.** All 17 reader-API tests were also
   individually reconfirmed passing on their own run immediately after
   writing them.
+  → **588 CONFIRMED after Phase 9 COMPLETION** (net +15 over the 573
+  baseline — an EXACT match, no reconciliation gap this time: 15 new
+  test functions in `test_clinical_document_derived_lab_artifacts.py`,
+  `grep -c "^def test_"` confirms this precisely). **Full suite reran
+  clean: `588 passed, 5 warnings in 1113.59s (0:18:33)` — zero failures,
+  zero errors, no Neon flake this run.** All 15 new tests were also
+  individually reconfirmed passing on their own run immediately after
+  writing them (once, after fixing a missing `import json` in
+  `documents.py` caught by that very run).
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -1844,30 +2092,36 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   over any number in this file if they ever disagree.
 - Frontend Playwright: 3 (existing) → 5 after Phase 2 (+2,
   `right-workspace-geometry.spec.ts`) → 11 after Phase 8 (+6,
-  `clinical-reader.spec.ts`) — unchanged by Phases 3-7 (no frontend
-  application behavior changed in those phases). All 11 confirmed
-  passing together in the same run (section 20).
-- OpenAPI routes: 117 → **118** after Phase 8 (+1, `GET /documents/
+  `clinical-reader.spec.ts`) → **19 after Phase 9** (+8,
+  `derived-lab-artifact.spec.ts`) — unchanged by Phases 3-7 (no frontend
+  application behavior changed in those phases). All 16 relevant specs
+  (`clinical-reader.spec.ts` + `derived-lab-artifact.spec.ts` +
+  `right-workspace-geometry.spec.ts`) confirmed passing together in the
+  same run (section 20); `ask-bragi-workspace.spec.ts` (3 tests) was not
+  re-run this session (untouched by Phase 9).
+- OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
-  backend-modularization baseline; Phases 3-7 added none, only additive
-  DB columns via existing routes).
-- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 8 — zero
+  backend-modularization baseline) → **118 unchanged after Phase 9**
+  (no new route — Phase 9 extended the existing reader/documents/delete
+  routes additively, never adding a new endpoint).
+- Bandit (`python -m bandit -r app -ll -q`): clean after Phase 9 — zero
   findings (only benign "Test in comment" collector warnings unrelated
   to any real issue, same as every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
-  Phase 8 added NO migration (no schema change) — "No migration drift
-  detected (8 known/tolerated legacy-index difference(s) ignored)",
-  same 8 as every prior checkpoint, last real migration still
+  Phase 9 added NO migration (no schema change — every new field reads
+  an EXISTING column) — "No migration drift detected (8 known/tolerated
+  legacy-index difference(s) ignored)", same 8 as every prior
+  checkpoint, last real migration still
   `ff84f15530a9_phase7_medication_provenance.py` from Phase 7.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
-  Phase 8's rewrite.
-- ESLint (`npm run lint`): zero errors/warnings in any file Phase 8
-  touched or added; 29 errors/25 warnings exist elsewhere in the repo
-  (pre-existing, confirmed via file-list disjointness before this
-  checkpoint — not introduced by this session, not fixed by it either,
-  out of scope per "do not fold unrelated refactors into this phase").
+  Phase 9's changes.
+- ESLint (`npm run lint`): zero errors/warnings after Phase 9's
+  changes; the same pre-existing 29 errors/25 warnings elsewhere in the
+  repo remain untouched (unrelated, out of scope, same as every prior
+  checkpoint).
 - Frontend production build (`npm run build`): succeeds, `/documents/
-  [id]/discharge` listed among the compiled routes.
+  [id]/discharge` and the new `/documents/[id]/lab-report` both listed
+  among the compiled routes.
 
 ## 20. Playwright coverage (what exists now)
 
@@ -1898,10 +2152,23 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   chasing an apparent flake down to a wrong test assertion rather than
   a real app bug.
 
+- `derived-lab-artifact.spec.ts` (NEW, Phase 9): 8 tests against the
+  new standalone derived-lab-artifact reader and its Documents-list
+  presence — the artifact appears in Documents with restrained "Derived
+  from: [parent]" framing, opening it renders the SAME canonical values
+  the Phase 8 embedded view shows (MCH conflict included), a lab row's
+  source action opens the shared RightWorkspace against the PARENT's
+  real file, "Open source document" navigates to the real parent
+  discharge reader, multiple derived reports on one parent stay
+  distinct, a plain Reducto Split child is never mislabeled, no delete
+  action is exposed, and the mobile viewport stays usable. Seeds via
+  the same `seed_e2e_discharge_document.py` Phase 8 uses, extended
+  additively (a second coherent lab group + one Reducto Split child).
+
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
-timeline/medication flow coverage (beyond this one page) still needs
-Phases 9-13 to exist first.
+timeline/medication flow coverage (beyond these two pages) still needs
+Phases 10-13 to exist first.
 
 ## 21. Real bugs found (this session)
 
@@ -1955,32 +2222,57 @@ Phases 9-13 to exist first.
    matching without `exact: true` — "Clinical course" also matched a
    "Clinical course timeline" sub-heading, "Medications" also matched
    "Discharge medications" — both fixed with explicit `exact: true`.
+6. **A genuine, pre-existing product gap completed, not a regression**
+   (Phase 9) — see section 9h. `DerivedArtifactRef.lab_result_ids`/the
+   derived document's own note_body pointer field existed since Phase 6
+   but was never populated (`[]` forever), and
+   `document_has_abnormal_labs(db, document.id)` — called unconditionally
+   by `serialize_document_card` — would have ALWAYS returned `False` for
+   a derived artifact once one became visible in Documents (every
+   LabResult row lives on the PARENT's id, never the derived artifact's
+   own). Neither was reachable/observable before Phase 9 gave derived
+   artifacts a UI presence, so neither was a live bug until this phase
+   — but both were real, would have shipped silently wrong (an abnormal
+   lab report reading as normal) had Phase 9 not fixed them. Fixed via
+   the note_body population fix and an optional `has_abnormal_override`
+   parameter respectively; both proven by dedicated tests.
+7. **Another Playwright substring-matching case, same class as #5 above**
+   (Phase 9) — see section 9h. The new derived-artifact reader's parent-
+   navigation button was initially labeled "View source document" — a
+   string CONTAINING "View source" (the per-lab-row provenance action's
+   own accessible name) as a substring, making `getByRole(..., {name:
+   "View source"})` ambiguously match both without `exact: true`. Fixed
+   by renaming the button's actual copy (not just the test), since the
+   ambiguity would affect any future test or assistive-tech query, not
+   only this one spec.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
-Phases 3 through 8 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f,
-9g) — real, tested segmentation, canonical section consolidation,
+Phases 3 through 9 are ALL COMPLETE (sections 9, 9b, 9c, 9d, 9e, 9f,
+9g, 9h) — real, tested segmentation, canonical section consolidation,
 Clinical Course event extraction (including chronology and vital-sign
 plausibility checks), embedded lab extraction/grouping/canonical
 persistence, medication extraction/context classification/duration/
-end-date derivation, and the discharge reader frontend rebuild all
-exist and are proven against every relevant V3 contract example,
-including all three required suspicious-data fixtures (Phase 5) and
-the synthetic hematology/discharge fixtures (Phases 6/8). None of
-Phases 4-8's EXTRACTION/PERSISTENCE code is wired into the real live
-discharge INGESTION pipeline yet (deliberate — section 9b's sequencing
-note, which now also governs Phase 8; see section 9g for the exact
-reasoning specific to Phase 8's own decision); the backend persistence
-SERVICES (`lab_persistence.py`, `medication_persistence.py`) and now
-the entire READER SIDE (`GET /documents/{id}/clinical-reader` + the
-rebuilt frontend) are however all fully callable/renderable and tested
-today — a real distinction, not a contradiction (see sections 9e/9f/9g).
-Table/key-value block construction from real per-section content
-(beyond `ParagraphBlock`) still does not exist for the STRUCTURED-
-DOCUMENT schema's own blocks (`TableBlock`/`MedicationListBlock`/
+end-date derivation, the discharge reader frontend rebuild, and the
+derived lab artifact's real Documents/reader presence all exist and are
+proven against every relevant V3 contract example, including all three
+required suspicious-data fixtures (Phase 5) and the synthetic
+hematology/discharge fixtures (Phases 6/8/9). None of Phases 4-9's
+EXTRACTION/PERSISTENCE code is wired into the real live discharge
+INGESTION pipeline yet (deliberate — section 9b's sequencing note,
+which now also governs Phases 8-9; see section 9g for the exact
+reasoning specific to Phase 8's own decision, unchanged by Phase 9); the
+backend persistence SERVICES (`lab_persistence.py`, `medication_
+persistence.py`), the READER SIDE (`GET /documents/{id}/clinical-
+reader` + the rebuilt frontend), and now the derived-artifact's own
+standalone route are however all fully callable/renderable and tested
+today — a real distinction, not a contradiction (see sections
+9e/9f/9g/9h). Table/key-value block construction from real per-section
+content (beyond `ParagraphBlock`) still does not exist for the
+STRUCTURED-DOCUMENT schema's own blocks (`TableBlock`/`MedicationListBlock`/
 `PrescriptionTableBlock` etc. — Phases 6/7 produce real structured
 candidates, and Phase 8's frontend can already RENDER these block types
 correctly when they exist, but nothing PRODUCES one yet, since nothing
@@ -1988,13 +2280,9 @@ wires Phase 6/7 into `discharge_parser.py`'s orchestration). `Clinical
 Event.structured_observations`/`medication_changes`/`procedures` are
 STILL not independently populated (captured only in each event's
 `raw_text`) — a reasonable future increment, not attempted. Everything
-from Phase 9 onward through Phase 21 of the original contract is
+from Phase 10 onward through Phase 21 of the original contract is
 **entirely unimplemented**:
 
-- Phase 9: Documents page derived-artifact relationship UI
-  (`StructuredLabReport(mode="standalone")` is built and tested — Phase
-  8's own explicit deliverable — but has no route to reach it yet;
-  that routing/relationship UI is this phase's job).
 - Phase 10: Timeline integration for derived labs/medication events.
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation
@@ -2074,41 +2362,53 @@ Then:
   new code — "do not continue from a failing baseline" is the contract's
   own Phase 1 rule and it still applies to wherever this branch is when
   you pick it up.
-- Start Phase 9 (derived lab artifact in Documents) — Phases 3 through
-  8 are ALL done: `app/services/clinical_document/schema.py`/
-  `persistence.py` (Phase 3), `segments.py`/`canonical_headings.py`
-  (Phase 4), `dates.py`/`events.py`/`discharge_parser.py` (Phase 5),
-  `lab_extraction.py`/`lab_grouping.py`/`lab_persistence.py` (Phase 6),
-  `medication_extraction.py`/`medication_duration.py`/`medication_
-  persistence.py` (Phase 7), the `GET /documents/{id}/clinical-reader`
-  API + rebuilt discharge reader page + 7 reusable components under
-  `frontend/components/clinical-reader/` (Phase 8) — use them all as-is
-  (sections 9/9b/9c/9d/9e/9f/9g), extend additively if a real gap is
-  found, do not redesign or duplicate any of them. Phase 9's own scope
-  per the contract: make Phase 6's derived "lab_report" `Document` rows
-  appear in the Documents list/page with "Derived from: [parent]" and
-  correct routing/relationship UI, using `StructuredLabReport(mode=
-  "standalone")` — already built and tested in Phase 8, genuinely ready
-  to route to, not a stub. Do NOT redesign the Documents page broadly —
-  the contract's own explicit instruction, and Phase 8 deliberately
-  stopped short of this exact scope for the same reason. A reasonable
-  starting question for whoever does this: does a derived artifact need
-  its OWN route (e.g. `/documents/{id]/lab-report`) or can the EXISTING
-  `/documents/{id}` generic page detect `derived_artifact_kind` and
-  render `StructuredLabReport(mode="standalone")` directly — a decision
-  for that session to make deliberately, not decided here.
+- Start Phase 10 (Timeline integration for derived labs/medication
+  events) — Phases 3 through 9 are ALL done: `app/services/
+  clinical_document/schema.py`/`persistence.py` (Phase 3),
+  `segments.py`/`canonical_headings.py` (Phase 4), `dates.py`/
+  `events.py`/`discharge_parser.py` (Phase 5), `lab_extraction.py`/
+  `lab_grouping.py`/`lab_persistence.py` (Phase 6), `medication_
+  extraction.py`/`medication_duration.py`/`medication_persistence.py`
+  (Phase 7), the `GET /documents/{id}/clinical-reader` API + rebuilt
+  discharge reader page + 7 reusable components under `frontend/
+  components/clinical-reader/` (Phase 8), the standalone derived-lab-
+  artifact route + Documents-list "Derived from" framing (Phase 9) —
+  use them all as-is (sections 9/9b/9c/9d/9e/9f/9g/9h), extend
+  additively if a real gap is found, do not redesign or duplicate any
+  of them. Phase 10's own scope per the contract: surface derived labs/
+  medication events on the Timeline — a reasonable starting question for
+  whoever does this: does the Timeline need a new event TYPE for a
+  derived lab artifact, or does it read the existing `LabResult`/
+  `PatientMedication` rows directly the way Phase 9's Documents cards
+  do — a decision for that session to make deliberately, not decided
+  here.
+- Do not re-attempt Phase 9 — the derived lab artifact's Documents/
+  reader presence is complete and tested (section 9h): the extended
+  `serialize_document_card`/`get_clinical_reader_payload`/`delete_
+  document` backend logic (15 new backend tests), the new standalone
+  `/documents/{id}/lab-report` route and updated Documents-list cards
+  (TypeScript/ESLint/build all clean), and real Playwright coverage (8
+  new tests). If Phase 10 (or later work) needs a genuinely NEW reader/
+  Documents capability this doesn't have, extend the existing
+  components/endpoints additively and add a regression test — do not
+  build a second lab-report route or duplicate the derived-artifact
+  resolution logic already in `app/main.py::resolve_derived_artifact_
+  contexts`. Nothing was intentionally left half-done in Phase 9 itself
+  — Timeline integration (Phase 10), Ask Bragi awareness of a derived
+  artifact as a distinct entity (Phase 11), and dedicated section-level
+  provenance beyond labs/medications (Phase 12) are the NEXT phases'
+  own jobs, not gaps in Phase 9.
 - Do not re-attempt Phase 8 — the discharge/clinical-document reader
   rebuild is complete and tested (section 9g): the new reader API
   contract (17 backend tests), the rebuilt page and 7 reusable
   components (TypeScript/ESLint/build all clean), and real Playwright
   coverage (6 new tests, verified against both dev and a production
-  build). If Phase 9 (or later work) needs a genuinely NEW reader
-  capability this doesn't have, extend the existing components/
-  endpoint additively and add a regression test — do not build a
-  second reader page or a second lab-report component. The one thing
-  intentionally left for LATER phases, not a gap in Phase 8 itself:
-  `StructuredLabReport(mode="standalone")` has no route yet (Phase 9's
-  own job, see above); `schema.MedicationListBlock.medication_ids`/
+  build; re-verified again in Phase 9 with zero regressions). If future
+  work needs a genuinely NEW reader capability this doesn't have, extend
+  the existing components/endpoint additively and add a regression
+  test — do not build a second reader page or a second lab-report
+  component. The one thing intentionally left for LATER phases, not a
+  gap in Phase 8 itself: `schema.MedicationListBlock.medication_ids`/
   `LabReportReferenceBlock.lab_result_ids`/`PrescriptionRow.
   medication_id` are still never populated by any real parser (nothing
   wires Phase 6/7's persistence results back into a
@@ -2118,7 +2418,8 @@ Then:
   yet); live discharge upload ingestion is still unchanged (same
   sequencing reasoning as every phase since 4 — see section 9b, and
   section 9g's own detailed "why the write-side switch is still
-  deferred" paragraph for the Phase-8-specific reasoning).
+  deferred" paragraph for the Phase-8-specific reasoning, unchanged by
+  Phase 9).
 - Do not re-attempt Phase 2 — it is done, tested, and proven genuine
   (section 20/21). If a *different* Ask Bragi failure surfaces later
   (e.g. once a real `OPENAI_API_KEY` is available and live testing

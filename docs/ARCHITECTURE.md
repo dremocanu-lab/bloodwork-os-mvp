@@ -221,11 +221,34 @@ labs, medications}`, each fact already carrying its own
 endpoints client-side — see `docs/handoffs/
 CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 9g for the full
 design. This is the pattern to follow for any future reader-shaped
-surface in this app (Phase 9's derived-artifact view, Phase 10's
-Timeline integration): a dedicated read endpoint assembling canonical
-facts server-side, not a frontend-side join across multiple generic
-endpoints. Also extracted `app/services/source_evidence.py`
-(`ensure_document_level_evidence`, `first_source_evidence_id`) from
-logic that used to live only inside `ask_bragi/tools.py` — both that
-module and the new reader endpoint now share it, proven equivalent by
-the existing Ask Bragi test suite staying green unchanged.
+surface in this app (Phase 10's Timeline integration): a dedicated read
+endpoint assembling canonical facts server-side, not a frontend-side
+join across multiple generic endpoints. Also extracted `app/services/
+source_evidence.py` (`ensure_document_level_evidence`,
+`first_source_evidence_id`) from logic that used to live only inside
+`ask_bragi/tools.py` — both that module and the new reader endpoint now
+share it, proven equivalent by the existing Ask Bragi test suite
+staying green unchanged.
+
+## Derived-artifact card context: one batched resolver, not N+1 (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 9 gave a derived lab artifact
+(Phase 6's `Document.derived_artifact_kind`) a real presence in every
+document-card listing — but a card's caller already has the FULL
+document list for that patient in memory before calling `serialize_
+document_card` per row, so resolving a derived artifact's parent
+metadata and its own abnormal-flag status (which needs its `note_body`
+pointer's `lab_result_ids`, never `document_has_abnormal_labs(db,
+document.id)` — that always returns `False` for a derived artifact,
+since every `LabResult` row lives on the PARENT's id per Phase 6's
+ownership rule) must never cost one query per derived artifact.
+`app/main.py::resolve_derived_artifact_contexts(db, documents)` takes
+that already-fetched list, indexes it in memory for parent lookups, and
+issues exactly ONE batched `LabResult.id.in_(...)` query across every
+derived artifact's referenced ids — used identically by both
+`patients.py::build_patient_profile_response` and `documents.py::
+get_patient_documents`, so this behavior is defined once, not
+reimplemented per route. `serialize_document_card` itself stays a pure
+per-row serializer — it accepts the pre-resolved `parent_document`/
+`has_abnormal_override` as optional keyword params rather than querying
+inside the loop.
