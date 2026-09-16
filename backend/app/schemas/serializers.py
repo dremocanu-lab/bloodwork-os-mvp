@@ -28,4 +28,11 @@ def serialize_patient_event(event) -> dict:
         "admitted_at": event.admitted_at,
         "discharged_at": event.discharged_at,
         "doctor_name": doctor.full_name if doctor else None,
+        # Clinical Document Intelligence V3 Phase 10 — both null for a
+        # manually-created event; set only for a Timeline projection
+        # (see app/services/clinical_document/timeline_projection.py).
+        # Lets the frontend navigate a projected medication event back
+        # to its source document and distinguish it from a manual one.
+        "source_document_id": event.source_document_id,
+        "source_medication_id": event.source_medication_id,
     }

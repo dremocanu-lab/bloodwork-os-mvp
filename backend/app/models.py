@@ -115,10 +115,37 @@ class PatientEvent(Base):
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     discharged_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
+    # Clinical Document Intelligence V3, Phase 10 — both null for every
+    # manually-created event (unchanged current behavior: a doctor/admin
+    # via POST /patient-events); set only by a Timeline PROJECTION
+    # (app/services/clinical_document/timeline_projection.py) for a
+    # medication state-change event derived from a real, canonical
+    # `PatientMedication` row. This is the field that distinguishes a
+    # system-projected event from a manual one — no separate boolean flag
+    # needed, since "has a source" already means "was projected".
+    #
+    # `source_document_id` uses `ondelete="SET NULL"`, mirroring
+    # PatientMedication.source_document_id's own deliberate choice
+    # (Phase 7): the underlying medication fact survives its source
+    # document's deletion because it stays independently meaningful, so
+    # the Timeline event representing that SAME fact survives too — it
+    # depends on the medication, not solely on the document.
+    #
+    # `source_medication_id` uses `ondelete="CASCADE"`: once the
+    # `PatientMedication` row itself is gone (e.g. DELETE /my/medications/
+    # {id}), the event representing its state change represents nothing
+    # and must go with it.
+    source_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_medication_id = Column(
+        Integer, ForeignKey("patient_medications.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
     patient = relationship("Patient", back_populates="events")
     doctor_user = relationship("User", foreign_keys=[doctor_user_id])
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     discharged_by_user = relationship("User", foreign_keys=[discharged_by_user_id])
+    source_document = relationship("Document", foreign_keys=[source_document_id])
+    source_medication = relationship("PatientMedication", foreign_keys=[source_medication_id])
 
 
 class Document(Base):

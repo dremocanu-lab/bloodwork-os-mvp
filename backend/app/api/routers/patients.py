@@ -437,7 +437,14 @@ def pcp_get_patient_summary(
             "is_source_linked": True,
         })
 
+    # Clinical Document Intelligence V3 Phase 10 — this loop only ever
+    # meant "hospitalization_record" as its event_type; a projected
+    # medication event (source_medication_id set — see
+    # timeline_projection.py) is not a hospitalization and would
+    # otherwise mislabel a medication name as one with no route to open.
     for ev in patient_events:
+        if ev.source_medication_id is not None:
+            continue
         parts = [p for p in [ev.hospital_name, ev.department] if p]
         pcp_timeline.append({
             "id": f"event_{ev.id}",
