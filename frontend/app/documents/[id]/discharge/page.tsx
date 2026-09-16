@@ -165,6 +165,18 @@ export default function DischargeStructuredPage() {
         setCurrentUser(meResponse.data);
 
         const readerResponse = await api.get<ClinicalReaderResponse>(`/documents/${documentId}/clinical-reader`);
+
+        // Canonical Document Intelligence V3 routing — this page had no
+        // redirect-away guard at all (asymmetric with the standalone
+        // lab-report reader's own guard); a derived lab artifact whose
+        // id lands here (e.g. a stale bookmark, or an upstream routing
+        // gap) has no structured_document of its own to render, so hand
+        // off to its real reader instead of showing an empty state.
+        if (readerResponse.data.document.derived_artifact_kind === "lab_report") {
+          router.replace(`/documents/${documentId}/lab-report`);
+          return;
+        }
+
         setPayload(readerResponse.data);
 
         const firstSection = readerResponse.data.structured_document?.sections?.[0];
@@ -293,7 +305,12 @@ export default function DischargeStructuredPage() {
             <AskBragiSideTab
               target={{
                 audience: currentUser.role === "patient" ? "patient" : "doctor",
-                patientId: currentUser.role === "patient" ? undefined : document.id,
+                // Real bug fixed post-Phase-10: this previously passed
+                // document.id (the DOCUMENT's own id) as patientId for a
+                // doctor/admin viewer — `document` had no patient id
+                // field to read at all. The backend now returns one
+                // (documents.py::get_clinical_reader_payload); use it.
+                patientId: currentUser.role === "patient" ? undefined : document.patient_id,
                 documentId: document.id,
                 initialScope: "document",
                 suggestions: [

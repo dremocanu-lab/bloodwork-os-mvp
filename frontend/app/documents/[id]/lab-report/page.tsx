@@ -26,6 +26,7 @@ import type { ClinicalReaderResponse } from "@/lib/clinical-document-schema";
 import { StructuredLabReport } from "@/components/clinical-reader/structured-lab-report";
 import { isPdfContentType, ReaderSourceAction } from "@/components/clinical-reader/reader-source-action";
 import { Status } from "@/components/ui";
+import { resolveDocumentRoute } from "@/lib/document-routing";
 
 type CurrentUser = {
   id: number;
@@ -65,7 +66,7 @@ function formatDate(value: string | null | undefined): string {
 }
 
 function parentDocumentPath(parentId: number, parentDocumentType?: string | null) {
-  return parentDocumentType === "discharge_summary" ? `/documents/${parentId}/discharge` : `/documents/${parentId}`;
+  return resolveDocumentRoute({ document_type: parentDocumentType }, parentId);
 }
 
 export default function DerivedLabReportPage() {

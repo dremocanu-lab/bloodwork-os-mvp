@@ -30,6 +30,7 @@ import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import { formatPatientAge } from "@/lib/patient-age";
+import { resolveDocumentRoute, isDischargeShapedDocument } from "@/lib/document-routing";
 import type { BloodworkTrend, TrendPoint } from "@/lib/analytes/types";
 import { enrichBloodworkTrend } from "@/lib/analytes/match";
 import { Sparkline, TrendChart } from "@/components/ui/trend";
@@ -366,19 +367,31 @@ function getUploaderText(doc: DocumentCard) {
 
 function isDischargeDocument(doc: DocumentCard | TimelineItem) {
   return (
-    doc.section === "discharge_summary" ||
     ("section" in doc && doc.section === "hospitalizations") ||
-    ("report_type" in doc &&
-      (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
+    isDischargeShapedDocument({
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    })
   );
 }
 
+// Canonical Document Intelligence V3 routing (see lib/document-
+// routing.ts) — resolveDocumentRoute already checks derived_artifact_kind
+// first; the `section === "hospitalizations"` legacy broadening above is
+// specific to this page's own document grouping, not part of the shared
+// resolver.
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
-  if ("derived_artifact_kind" in doc && doc.derived_artifact_kind === "lab_report") {
-    return `/documents/${documentId}/lab-report`;
-  }
-  if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
-  return `/documents/${documentId}`;
+  if ("section" in doc && doc.section === "hospitalizations") return `/documents/${documentId}/discharge`;
+  return resolveDocumentRoute(
+    {
+      derived_artifact_kind: "derived_artifact_kind" in doc ? doc.derived_artifact_kind : undefined,
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    },
+    documentId
+  );
 }
 
 function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {

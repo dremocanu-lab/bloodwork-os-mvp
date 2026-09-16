@@ -25,6 +25,7 @@ import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { documentTypeOrSectionLabel } from "@/lib/document-taxonomy-labels";
+import { resolveDocumentRoute, isDischargeShapedDocument } from "@/lib/document-routing";
 import { hasReferenceBand, Sparkline, TrendChart } from "@/components/ui/trend";
 import {
   CellPrimary,
@@ -379,19 +380,31 @@ function uploaderSubtitle(doc: DocumentCard) {
 
 function isDischargeDocument(doc: DocumentCard | TimelineItem) {
   return (
-    doc.section === "discharge_summary" ||
     doc.section === "hospitalizations" ||
-    ("report_type" in doc &&
-      (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
+    isDischargeShapedDocument({
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    })
   );
 }
 
+// Canonical Document Intelligence V3 routing (see lib/document-
+// routing.ts) — resolveDocumentRoute already checks derived_artifact_kind
+// first; the `section === "hospitalizations"` legacy broadening above is
+// specific to this page's own document grouping, not part of the shared
+// resolver.
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
-  if ("derived_artifact_kind" in doc && doc.derived_artifact_kind === "lab_report") {
-    return `/documents/${documentId}/lab-report`;
-  }
-  if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
-  return `/documents/${documentId}`;
+  if (doc.section === "hospitalizations") return `/documents/${documentId}/discharge`;
+  return resolveDocumentRoute(
+    {
+      derived_artifact_kind: "derived_artifact_kind" in doc ? doc.derived_artifact_kind : undefined,
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    },
+    documentId
+  );
 }
 
 function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {
@@ -1308,10 +1321,22 @@ export default function MyRecordsPage() {
 
         {activeCount > 0 ? (
           <Notice>
-            <span className="b-status b-status-processing" />
-            {activeCount === 1
-              ? "1 document is being processed. It will appear here automatically."
-              : `${activeCount} documents are being processed. They will appear here automatically.`}
+            {/* .b-status is display:inline-flex/align-items:center BY
+                DESIGN so its dot (::before) and its own text content
+                align together — it previously rendered as an EMPTY span
+                (just the dot) with the text as a separate sibling
+                outside that flex container, so the two never shared any
+                alignment rule at all (a real, reported vertical-
+                misalignment bug). Fixed by putting the text inside the
+                span, its intended usage — no translateY/offset hack
+                needed, and Notice's own flex-start alignment (tuned for
+                a leading icon next to potentially multi-line text
+                elsewhere — see patients/[id]/page.tsx) is untouched. */}
+            <span className="b-status b-status-processing">
+              {activeCount === 1
+                ? "1 document is being processed. It will appear here automatically."
+                : `${activeCount} documents are being processed. They will appear here automatically.`}
+            </span>
           </Notice>
         ) : null}
 

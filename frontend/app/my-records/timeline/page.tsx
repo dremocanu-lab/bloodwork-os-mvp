@@ -6,6 +6,7 @@ import AppShell from "@/components/app-shell";
 import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
+import { resolveDocumentRoute, isDischargeShapedDocument } from "@/lib/document-routing";
 
 type CurrentUser = {
   id: number;
@@ -276,11 +277,7 @@ function getUploaderText(doc: DocumentCard) {
 }
 
 function isDischargeDocument(doc: DocumentCard) {
-  return (
-    doc.section === "discharge_summary" ||
-    doc.report_type === "Discharge summary" ||
-    doc.report_type === "discharge_summary"
-  );
+  return isDischargeShapedDocument(doc);
 }
 
 function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {
@@ -536,11 +533,13 @@ export default function MyRecordsTimelinePage() {
 
   function openTimelineDocument(documentId: number) {
     const doc = documentById.get(documentId);
-    if (doc && isDischargeDocument(doc)) {
-      router.push(`/documents/${documentId}/discharge`);
-      return;
-    }
-    router.push(`/documents/${documentId}`);
+    // Canonical Document Intelligence V3 routing (see lib/document-
+    // routing.ts) — this previously had NO derived_artifact_kind check
+    // at all, unlike the Documents-list pages: a derived lab artifact
+    // opened from the Timeline landed on the generic reader instead of
+    // the standalone lab-report reader. Fixed by routing through the
+    // same shared resolver every other entry point uses.
+    router.push(doc ? resolveDocumentRoute(doc, documentId) : `/documents/${documentId}`);
   }
 
   function openTimelineMedication(medicationId: number) {

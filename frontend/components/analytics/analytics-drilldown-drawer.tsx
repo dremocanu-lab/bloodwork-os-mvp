@@ -6,6 +6,7 @@ import { useLanguage } from "@/lib/i18n";
 import type { BloodworkTrend } from "@/lib/analytes/types";
 import type { AnalyticsLabStatus, AnalyticsLabValue } from "@/lib/analytics/types";
 import { parseDateTime } from "@/lib/analytics/transform";
+import { resolveDocumentRoute } from "@/lib/document-routing";
 
 export type DrawerValue = {
   labValue?: AnalyticsLabValue;
@@ -85,11 +86,12 @@ export default function AnalyticsDrilldownDrawer({ value, onClose, patientId }: 
 
   function openSource() {
     if (!lab) return;
-    const route =
-      lab.document_type === "discharge_summary"
-        ? `/documents/${lab.document_id}/discharge`
-        : `/documents/${lab.document_id}`;
-    router.push(route);
+    // Canonical Document Intelligence V3 routing (see lib/document-
+    // routing.ts) — no derived_artifact_kind check needed here:
+    // LabResult.document_id always points at the AUTHORITATIVE PARENT
+    // document (Phase 6's ownership rule), never at a derived artifact's
+    // own id, so this can never resolve to a lab-report route.
+    router.push(resolveDocumentRoute({ document_type: lab.document_type }, lab.document_id));
   }
 
   void patientId; // reserved for future deep-links
