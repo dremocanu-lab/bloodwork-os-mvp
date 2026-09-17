@@ -287,3 +287,49 @@ my-records/timeline/page.tsx`/`patients/[id]/timeline/page.tsx` fuse
 client-side. Projecting a `PatientEvent` for the same document would
 duplicate it. See `timeline_projection.py`'s own module docstring for
 the full reasoning.
+
+## Exact per-field source rects instead of tuning a padding formula (2026-09-16)
+
+The reported coarse-highlight bug (opening a dense lab row's "View
+source" — e.g. NEUT# on a differential panel — highlighted neighboring
+PCT/NRBC#/NRBC% rows too) traced to `_union_row_bbox()`
+(`reducto_extraction.py`): it unions Reducto's real, independent
+per-field citation bboxes (`test_name`/`value`/`unit`/`reference_range`)
+into one region, then pads it by a FIXED RATIO of the union's own height
+(`pad_y = height * 0.35`) so the highlight frames the row. That
+padding was tuned against a sparse fixture and mechanically bleeds into
+an adjacent row once rows are packed tightly enough — a presentation-
+layer bug, not a Reducto data ceiling (Reducto's own citations were
+already precise and non-overlapping).
+
+Rather than re-tuning the ratio (still guessable-wrong for some other
+table density), `SourceEvidence` gained one additive, nullable
+`field_bboxes_json` column that persists those real per-field rects
+UNPADDED — each one already IS the provider's own precise citation, so
+there's nothing to compute or guess. `GET /source-evidence/{id}/view`
+parses and returns them as `field_bboxes: {label, x, y, width,
+height}[] | null`; `source-viewer-panel.tsx` renders one highlight `div`
+per rect when present, falling back to the pre-existing single
+`row_bbox`/`bbox` box otherwise — fully backwards-compatible with every
+row persisted before this migration. This is the pattern for any future
+"highlight exactly what was cited" need: persist the provider's raw,
+independent citations rather than a derived/padded union, and let the
+renderer draw N precise rectangles instead of one approximate one.
+
+The same `openSourceEvidence` resolution path now also powers a second
+entry point — `SelectionSourceMenu` (`source-viewer/selection-source-
+menu.tsx`), mounted once at the root layout — which shows a small
+contextual "Show in original" menu when the browser's native text
+selection falls entirely inside an element carrying `data-source-
+evidence-id`. That attribute is applied only to spans that already
+render a real, resolvable `SourceEvidence` id (lab/medication rows
+today); it is deliberately NOT extended to Clinical Course/narrative
+text, because no source geometry of any precision exists for that text
+today — Reducto's reader-section extraction runs with `citations=
+False`, and `SourceSegment` (`clinical_document/segments.py`) is a
+non-persisted Pydantic model whose own `page` field is always `None`.
+Extending exact provenance to narrative text is a real, larger, separate
+extraction-pipeline effort (enabling citations on section extraction,
+then designing a citation-to-narrative-offset model), not a UI change —
+see `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section
+9k for the full investigation.

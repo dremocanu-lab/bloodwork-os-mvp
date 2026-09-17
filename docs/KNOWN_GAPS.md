@@ -197,10 +197,23 @@ check, a real Ask Bragi bug (the discharge reader sent a document id as
 processing-indicator alignment) — see `docs/clinical_document_v3/
 ROUTER_AUDIT.md`. An exact word-level source-highlighting engine (a
 real coarse-highlight bug found by manual QA) was investigated and found
-to require genuinely new provenance engineering — not attempted, with
-the exact open question recorded for whoever picks it up (does
-`SourceEvidence`'s stored geometry carry per-word precision today, or
-only a coarser box). Ask-Bragi retrieval hardening for the new canonical
+to require genuinely new provenance engineering for narrative text — see
+below; the LAB-specific half of it (the reported NEUT#/PCT/NRBC# coarse-
+highlight bug) was root-caused and fixed in a subsequent pre-Phase-11
+exact-provenance session: `_union_row_bbox()`'s fixed-ratio padding
+formula was bleeding into a neighboring row on a dense table, not a
+Reducto data ceiling — fixed by persisting and rendering Reducto's own
+real, unpadded per-field citation rects (new additive `SourceEvidence.
+field_bboxes_json` column) instead of one padded union box. That same
+session also shipped a real select-text-to-"Show in original"
+interaction for lab/medication rows (same shared `openSourceEvidence`
+engine). Arbitrary NARRATIVE-text (Clinical Course paragraphs, bullet
+lists, key-value pairs) exact highlighting remains genuinely
+unimplemented — confirmed, not merely suspected: Reducto's reader/
+section extraction runs with `citations=False`, and `SourceSegment` is
+not persisted with a page number at all, so there is no source geometry
+of any precision for narrative text to render even coarsely beyond
+"open the document." Ask-Bragi retrieval hardening for the new canonical
 data (Phase 11), the exhaustive real-Postgres idempotency/deletion test
 suites (Phases 6-10 each laid real groundwork but the full 1x/2x/10x/
 exhaustive-cascade proofs remain open), the deterministic retrieval

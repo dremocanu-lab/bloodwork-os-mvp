@@ -69,10 +69,23 @@ engine (a genuinely new provenance feature requiring investigation this
 session didn't have room for, not a small fix) and Phase 11 (Ask Bragi
 canonical retrieval hardening) in its entirety — both left for a
 dedicated future session, per this session's own explicit "quality over
-artificial completion" boundary. This document exists specifically so a
-future Claude session with zero memory of this conversation can pick
-this up correctly — read section 23 ("HOW TO CONTINUE") first if
-that's you.
+artificial completion" boundary. **A subsequent pre-Phase-11 exact-
+provenance session (NEW this checkpoint, section 9k)** found and fixed
+the real root cause of the coarse lab-highlight bug (a fixed-ratio
+padding formula that bled into neighboring rows on a dense table, not a
+provider data ceiling), added a shared multi-rect exact-highlight
+engine, and shipped a real (if deliberately scoped) select-text-to-
+"Show in original" interaction for lab/medication rows. It also
+confirmed, by direct investigation rather than assumption, that true
+arbitrary narrative-text exact highlighting is blocked on a genuinely
+larger upstream gap (Reducto's reader/section extraction runs with
+`citations=False`, and no segment/page/offset geometry is persisted for
+narrative text at all) — invoking this session's own explicit "stop
+honestly rather than fake it" boundary for that piece, and leaving it
+open for a dedicated future session alongside Phase 11. This document
+exists specifically so a future Claude session with zero memory of this
+conversation can pick this up correctly — read section 23 ("HOW TO
+CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -142,6 +155,18 @@ can open, or a test you can execute.
   exact word-level source-highlighting engine and Phase 11 in its
   entirety were investigated/scoped but deliberately NOT attempted this
   checkpoint (see section 9j's "What remains").
+- **This checkpoint ALSO includes the pre-Phase-11 exact-provenance
+  session (section 9k)**: the coarse lab-highlight bug's real root cause
+  (`_union_row_bbox`'s fixed-ratio padding, not a provider ceiling) found
+  and fixed via a new additive `field_bboxes_json` column + shared
+  multi-rect highlight rendering; a real, scoped select-text-to-"Show in
+  original" interaction shipped for lab/medication rows (same shared
+  `openSourceEvidence` engine, never a second viewer); arbitrary
+  narrative-text exact highlighting investigated and found to be blocked
+  on a genuinely larger upstream gap (Reducto's reader-section extraction
+  runs with `citations=False`; no segment/page/offset geometry is
+  persisted for narrative text) — deliberately NOT faked, left open for a
+  dedicated future session. 13 new backend + 7 new Playwright tests.
 - **Immediate next step: Phase 11 — Ask Bragi canonical retrieval
   hardening** (structured dated-event queries, transparent end-date-
   derivation language in answers, consuming the newly canonical
@@ -149,8 +174,9 @@ can open, or a test you can execute.
   `PatientMedication` data — never treating `PatientEvent`/Timeline as
   the source of truth for Ask Bragi). Not started this session, by
   explicit instruction. A future session picking this up should ALSO
-  consider the deferred exact-source-highlighting work (section 9j) —
-  neither is more "next" than the other; both are open.
+  consider the still-open narrative-text exact-provenance gap (section
+  9k's "What remains") — neither is more "next" than the other; both are
+  open.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
 
@@ -2234,6 +2260,282 @@ place.
   this session, entirely, by the session's own explicit deliberate
   boundary. See section 22 for the full unchanged scope.
 
+## 9k. Pre-Phase-11 Exact Provenance / Source Highlighting (COMPLETE — deliberately scoped)
+
+Starting checkpoint for this session: branch
+`fix/clinical-document-intelligence-v3`, local HEAD `0ace0f1`, remote
+HEAD `0ace0f1` (confirmed equal via `git fetch`), working tree clean,
+zero unpushed commits — i.e. exactly the checkpoint section 9j itself
+ended at. Scope: ONLY the B4-B10 work section 9j explicitly deferred
+(exact lab-highlight bug + select-text-to-"Show in original"). Phase 11
+and any clinical-reader redesign were explicitly out of scope and were
+not touched.
+
+### Coarse-highlight root cause — CONFIRMED, and it was a real Bragi bug, not a provider ceiling
+
+Reducto's `/extract` API genuinely returns an independent, real
+per-field citation bbox for `test_name`/`value`/`unit`/`reference_range`
+(each with its own `{left, top, width, height, original_page}`, in
+normalized page-fraction coordinates) — confirmed by reading
+`_field_evidence()` in `backend/app/services/reducto_extraction.py`.
+The bug was entirely downstream of that real data: `_union_row_bbox()`
+unions up to 4 of those real per-field boxes into one presentation
+region, then pads it outward by a FIXED RATIO of the union's OWN height
+(`pad_y = max(height * 0.35, 0.003)`) so the highlight frames the row
+instead of hugging the text. That formula was validated against a
+sparse 6-row CBC panel, but on a dense differential/hemogram panel
+(rows packed tightly — the exact NEUT#/PCT/NRBC#/NRBC% scenario
+reported by manual QA) a fixed percentage of the row's own height
+mechanically bleeds into the neighboring row above/below. Proven,
+not asserted: `backend/tests/test_reducto_row_bbox.py`'s new
+`TestAdjacentDenseRowsFixture.test_row_bbox_union_bleeds_into_
+neighboring_row` reproduces this exactly with a 4-row PCT/NRBC#/NRBC%/
+NEUT# fixture (0.012-fraction row height, 0.002-fraction gaps) and
+asserts the historical padded union's top edge crosses into the row
+above — it does, confirming the root cause precisely rather than by
+inspection alone.
+
+PDF.js is used ONLY for canvas rasterization (`page.render()`) anywhere
+in this codebase — its own text-layer API (`getTextContent()`, which
+would give real per-word/glyph geometry) is never invoked. This was not
+needed for the lab-highlight fix (Reducto's own per-field citations were
+already precise enough), but it matters for the narrative-text gap
+below.
+
+### The fix — persist and render the real per-field rects, no more union+pad
+
+Rather than tuning the padding formula (still guessable-wrong for some
+other table density), the fix stops discarding the real, independently-
+precise per-field citations Reducto already returns:
+
+- `ReductoEvidence` (reducto_extraction.py) gained a `field_rects:
+  list[dict] | None` field alongside the existing `row_bbox`. A new
+  `_field_rects()` function (parallel to `_union_row_bbox()`, called
+  from the same `extract_lab_results()` call site) returns one
+  `{label, x, y, width, height}` entry per field Extract actually
+  returned coordinates for — filtered to the row's common page exactly
+  like `_union_row_bbox` already does — with **zero padding**, since
+  each rect already IS the provider's own precise citation.
+- New additive, nullable `SourceEvidence.field_bboxes_json` column
+  (Alembic `c7d2e91a4b6f_source_evidence_field_bboxes.py`, downstream of
+  Phase 10's `a1c9d4e7f203`) persists this as JSON. **Why a migration,
+  not a read-time fix**: these per-field rects are computed transiently
+  inside `extract_lab_results()` at extraction time and were never
+  persisted individually before this session — only their lossy union
+  (`row_bbox_*`) survived — so they cannot be reconstructed later from
+  what's already in the database for any already-ingested document.
+  Applied and confirmed via `alembic upgrade head` /
+  `python scripts/check_migration_drift.py` ("No migration drift
+  detected (8 known/tolerated legacy-index differences ignored)" — same
+  8 as every prior checkpoint).
+- Both existing `SourceEvidence(...)` construction call sites in
+  `backend/app/main.py` (the split-document path, ~line 1380, and the
+  primary upload path, ~line 1928) now also persist
+  `field_bboxes_json=json.dumps(evidence.field_rects)` when present.
+- `GET /source-evidence/{id}/view` (`source_evidence.py`) parses that
+  JSON defensively (malformed JSON, or a rect entry missing a
+  coordinate, is silently dropped rather than 500ing or fabricating a
+  value — see `test_malformed_field_bboxes_json_fails_safe` and
+  `test_ambiguous_incomplete_field_rect_is_dropped_not_fabricated`) and
+  returns a real `field_bboxes: {label, x, y, width, height}[] | null`
+  array.
+- Frontend `SourceEvidenceView` gained the matching `field_bboxes`
+  field. `source-viewer-panel.tsx`'s rendering logic now prefers
+  rendering ONE `.b-source-highlight` `<div>` PER exact field rect when
+  `field_bboxes` is present, falling back to the existing single
+  `row_bbox`/`bbox` box exactly as before for older rows and any
+  non-Reducto evidence — fully backwards-compatible, proven by
+  `test_old_coarse_source_evidence_remains_backwards_compatible`.
+
+This is the `SourceHighlight { rects: [...] }` model the session asked
+for, built directly from real data rather than invented: no forced union
+bbox, multiple rectangles per evidence row, no second PDF viewer.
+
+### Shared multi-rect engine — used by BOTH entry points, never duplicated
+
+`source-viewer-panel.tsx` is the single rendering mechanism for every
+"View source"/"Show in original" trigger in the app — LabResult's
+existing button (`ReaderSourceAction`) and the new selection-based
+interaction below both call the same `openSourceEvidence(sourceEvidence
+Id, anchor)` (`source-viewer-context.tsx`), which resolves through the
+same `/source-evidence/{id}/view` endpoint and renders through the same
+multi-rect logic. No `LabHighlightViewer`/`SelectionHighlightViewer`
+split was created.
+
+### Select text -> "Show in original" — shipped, deliberately scoped to what has real backing data
+
+New `frontend/components/source-viewer/selection-source-menu.tsx`
+(`SelectionSourceMenu`), mounted once at the root layout alongside
+`SourceViewerProvider` (`app-shell-with-source-viewer.tsx`) so it works
+on any page without per-page wiring. Mechanism: listens to the browser's
+own `selectionchange` event; a non-collapsed selection whose start AND
+end both fall inside the SAME element carrying `data-source-evidence-id`
+resolves to that id and shows a small, compact, `.b-menu`-styled
+popover ("Show in original") positioned just below the selection;
+clicking it calls the exact same `openSourceEvidence` the existing
+button uses. Escape closes it, clicking/selecting elsewhere collapses
+the selection (which itself closes the menu via the same
+`selectionchange` listener — no separate outside-click handler needed),
+and it never overrides the browser's native context menu. Architected so
+a future action (e.g. "Ask Bragi about selection") could be added to the
+same popover later — not implemented this session, per the contract's
+own instruction.
+
+`data-source-evidence-id` is applied ONLY to spans that render a real,
+resolvable `SourceEvidence` id: the lab-row test-name/value/reference-
+range cells (`structured-lab-report.tsx`) and the medication name/dose/
+route/frequency block (`medication-list.tsx`), each gated by the same
+`isPdfContentType`/non-null-evidence check `ReaderSourceAction` already
+applies. Deliberately NOT applied to the "Requires review" conflict
+badge, the "Calculated from a documented course" derived-date note, or
+any other Bragi-generated caption/label/status text sitting in the same
+row/card — proven by `exact-provenance.spec.ts`'s two dedicated tests
+selecting exactly that text and asserting no menu appears. A selection
+spanning two different tagged elements (or leaving the tagged region
+entirely) resolves to nothing — never guesses which evidence id was
+meant.
+
+**Why this doesn't extend to narrative reader text (Clinical Course
+paragraphs, bullet lists, key-value pairs) — a real, larger-than-
+expected gap, investigated directly rather than assumed:**
+
+1. `backend/app/services/reducto_extraction.py`'s
+   `extract_reader_sections()` calls `client.extract(file_id, schema,
+   citations=False)` — narrative/section extraction requests NO
+   citations from Reducto at all, unlike the lab-extraction path. There
+   is no page/bbox geometry for narrative text anywhere upstream to
+   persist, exact or coarse.
+2. `SourceSegment` (`backend/app/services/clinical_document/
+   segments.py`) — the natural anchor for narrative text — is a
+   Pydantic model, never persisted as its own DB row, and its own `page`
+   field is always `None` today (confirmed in its docstring and by
+   direct reading): "the CURRENT discharge pipeline's final, cross-page-
+   merged sections don't carry a single page number today."
+3. `ClinicalSection.source_evidence_ids`/`ClinicalEvent.source_
+   evidence_ids` (schema.py) exist as typed fields but are schema stubs
+   only — `grep`-confirmed never populated with a real id anywhere in
+   the extraction/persistence pipeline (only ever defaulted to `[]` or
+   explicitly passed `None` in `events.py`). Nothing in the frontend
+   reads them either.
+
+Building true word-level exact highlighting for arbitrary narrative
+selections would require enabling citations on reader-section
+extraction, then designing how a citation maps onto free-flowing
+narrative text (not the lab schema's fixed per-field shape), then
+persisting per-segment page/offset geometry — genuinely new Phase-3-5-
+adjacent extraction engineering, not an additive read-time trick, and
+explicitly out of this session's "do not touch the extraction phases /
+do not redesign the reader" boundary. Per this session's own explicit
+"deliberate session boundary" clause: rather than fake this with a
+fuzzy `document.contains(selectedText)` search (ambiguous for repeated
+phrases, and exactly the kind of misleading precision the contract
+forbids), this was left honestly unimplemented, and the interaction was
+scoped to the lab/medication rows that DO have real, resolvable
+evidence — a real, working feature, not a placeholder.
+
+### PDF / non-PDF (DOCX etc.) behavior — unchanged, confirmed honest
+
+The shared viewer remains PDF.js-only; `isPdfContentType()`
+(`reader-source-action.tsx`) gates both the existing button and the new
+`data-source-evidence-id` tagging identically, so a non-PDF document
+degrades to the existing honest "Source text" label with no interactive
+affordance at all in either the button or the selection path — never a
+fabricated highlight. This session did not change non-PDF capability;
+`document-header.tsx`'s whole-document "open original file" fallback
+(raw bytes, browser-native handling) is unchanged.
+
+### Authorization, cross-patient isolation, and privacy
+
+`/source-evidence/{id}/view`'s existing authorization (`can_access_
+patient`, explicit `care_partner` exclusion) is unchanged and re-
+exercised by new tests (`test_source_evidence_field_bboxes.py`):
+patient-authorized resolution succeeds, a second patient's token gets a
+403, and one row's `field_bboxes` never leaks into another row's
+response (`test_field_bboxes_belong_only_to_the_requested_evidence`).
+`SelectionSourceMenu` never introduces a new resolution path — it only
+ever calls the same authorized `openSourceEvidence`/`/view` endpoint
+with a `source_evidence_id` read from a `data-*` attribute the server
+itself already decided was resolvable for this document/patient; a
+client-tampered attribute value would simply fail the SAME server-side
+authorization check `ReaderSourceAction`'s button already relies on —
+no new trust boundary. User selections are transient: nothing about a
+selection is persisted, logged, or sent to analytics; the menu's own
+state lives in a plain React `useState` that's discarded the moment the
+selection changes or collapses.
+
+### Tests
+
+- Backend: 13 new tests, `617 passed` on a full clean
+  `python -m pytest -q` run (`604` prior baseline + 13; exact match, no
+  reconciliation gap — `grep -c "^def test_"` confirms 6 new in
+  `test_reducto_row_bbox.py` + 7 new in the new
+  `test_source_evidence_field_bboxes.py`). `python -m bandit -r app -ll
+  -q`: clean. `python scripts/check_migration_drift.py`: clean.
+  `test_reducto_row_bbox.py`'s new `TestAdjacentDenseRowsFixture` proves
+  the PCT/NRBC#/NRBC%/NEUT# adjacent-row requirement precisely (root-
+  cause reproduction + `_field_rects` never crossing into a neighboring
+  row's geometry, for both the NEUT#-covers-NRBC% case and the
+  NRBC#-vs-NRBC%-boundary case).
+- Frontend: `npx tsc --noEmit` zero errors; `npm run lint` zero new
+  errors/warnings (the pre-existing, unrelated 29 errors/26 warnings
+  elsewhere in the repo are untouched, none in any file this session
+  touched); `npm run build` succeeds, same route set as the prior
+  checkpoint (no new page route — `selection-source-menu.tsx` is a new
+  shared component, not a route).
+- Playwright: new `exact-provenance.spec.ts`, 7 tests — selecting a lab
+  row's own text shows the menu and "Show in original" opens the shared
+  RightWorkspace; Escape dismisses it without opening anything;
+  selecting a new region after collapsing the old selection produces
+  exactly one menu, never two stacked; the "Requires review" badge and
+  the "Calculated from a documented course" note both correctly offer NO
+  menu when selected; a medication's own name does; the mobile viewport
+  (390×844) stays usable with no stray menu. **A real, pre-existing
+  environmental flake — NOT a regression from this session — affects 1-2
+  of these 7 tests per run**: re-running the completely unmodified,
+  pre-existing `clinical-reader.spec.ts` back-to-back several times
+  during this same session reproduced the identical class of failure
+  (an outline-button click occasionally not switching the visible
+  section under Next.js dev/Turbopack, needing a retry) on a test this
+  session never touched — empirically confirming this is the same known
+  dev-server characteristic already disclosed in section 19/21 (bug
+  #11), not something introduced here. `exact-provenance.spec.ts`'s own
+  `goToSection` helper retries the click up to 4 times to reduce (not
+  fully eliminate) this.
+- Responsive: verified via Playwright at 1440×900 (the reader's primary
+  desktop layout, selection/menu/highlight interactions) and 390×844
+  (mobile `<select>` section navigation, confirming no stray menu
+  persists/obstructs).
+
+### Bugs found this session
+
+17. **A real, root-caused provenance bug, not a provider data ceiling**
+    — see above. `_union_row_bbox()`'s fixed-ratio vertical padding
+    (`height * 0.35`) bled into a neighboring lab row on a dense table.
+    Fixed by persisting and rendering the real, unpadded per-field
+    citations instead of tuning the padding formula. Proven with a
+    dedicated adjacent-row fixture reproducing the exact reported
+    NEUT#/PCT/NRBC# scenario.
+
+No other new bugs were found this session. (The Playwright dev-server
+flake described above under "Tests" is the same already-disclosed
+environmental characteristic from bug #11, re-confirmed here, not a new
+entry.)
+
+### What remains (honest, not attempted)
+
+- **Arbitrary narrative-text exact source highlighting** (the rest of
+  B5-B10, beyond lab/medication rows): genuinely blocked upstream, not a
+  UI shortcut — see "Why this doesn't extend to narrative reader text"
+  above for the exact three-part reason. A future session must first
+  decide (a product/engineering decision, not something to default into
+  quietly): is enabling `citations=True` on `extract_reader_sections()`
+  and designing a narrative-citation-to-DOM-offset model worth a
+  dedicated Phase-3-5-adjacent engineering effort, given Phase 8's
+  reader already has no other outstanding gaps for structured (lab/
+  medication) content.
+- **Phase 11 (Ask Bragi canonical retrieval hardening)**: still NOT
+  STARTED, entirely, unchanged from section 9j. See section 22.
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)
@@ -2597,6 +2899,13 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   prerequisite field; section 9j). **Full suite reran clean: `604
   passed, 5 warnings in 1309.89s (0:21:49)` — zero failures, zero
   errors, no Neon flake this run.**
+  → **617 CONFIRMED after the pre-Phase-11 exact-provenance session**
+  (net +13 over the 604 baseline — an EXACT match, no reconciliation
+  gap: `grep -c "^def test_"` confirms 6 new tests added to the existing
+  `test_reducto_row_bbox.py` (5→11) plus 7 new tests in the new
+  `test_source_evidence_field_bboxes.py`; section 9k). **Full suite
+  reran clean: `617 passed, 5 warnings in 1246.07s (0:20:46)` — zero
+  failures, zero errors, no Neon flake this run.**
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -2636,44 +2945,55 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   `right-workspace-geometry.spec.ts`) → 11 after Phase 8 (+6,
   `clinical-reader.spec.ts`) → 19 after Phase 9 (+8,
   `derived-lab-artifact.spec.ts`) → 26 after Phase 10 (+7,
-  `timeline-projection.spec.ts`) → **31 after the post-Phase-10
-  integration-correction pass** (+5, `routing-and-integration-
-  fixes.spec.ts`) — unchanged by Phases 3-7 (no frontend application
-  behavior changed in those phases). All 31 specs across `ask-bragi-
-  workspace.spec.ts` + `clinical-reader.spec.ts` + `derived-lab-
-  artifact.spec.ts` + `right-workspace-geometry.spec.ts` +
-  `routing-and-integration-fixes.spec.ts` + `timeline-projection.spec.ts`
-  confirmed run together in the same session (section 20); 30/31 passed
-  in that combined run, the 1 failure being the SAME pre-existing
+  `timeline-projection.spec.ts`) → 31 after the post-Phase-10
+  integration-correction pass (+5, `routing-and-integration-
+  fixes.spec.ts`) → **38 after the pre-Phase-11 exact-provenance
+  session** (+7, `exact-provenance.spec.ts`) — unchanged by Phases 3-7
+  (no frontend application behavior changed in those phases). All 38
+  specs across `ask-bragi-workspace.spec.ts` + `clinical-reader.spec.ts`
+  + `derived-lab-artifact.spec.ts` + `right-workspace-geometry.spec.ts`
+  + `routing-and-integration-fixes.spec.ts` +
+  `timeline-projection.spec.ts` + `exact-provenance.spec.ts` were
+  individually re-confirmed passing during this session (not
+  necessarily all in one single combined run); the SAME pre-existing
   `clinical-reader.spec.ts` click/section-switch timing flake already
-  disclosed in the Phase 9/10 handoffs (a DIFFERENT assertion failed
-  this time than either prior occurrence — consistent with a genuine
-  timing race, not a specific broken assertion; section 21).
+  disclosed in the Phase 9/10 handoffs and bug #11 was reproduced again
+  this session (a DIFFERENT assertion failed than either prior
+  occurrence, and `exact-provenance.spec.ts` — which drives the exact
+  same outline-button interaction — showed the identical class of
+  failure 1-2 tests per run) — consistent with a genuine Next.js dev/
+  Turbopack timing race, not a specific broken assertion or a regression
+  from this session's own changes; section 21 / section 9k.
 - OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
   backend-modularization baseline) → 118 unchanged after Phase 9 → 118
-  unchanged after Phase 10 → **118 unchanged after the integration-
-  correction pass** (no new route — one existing response, `GET
+  unchanged after Phase 10 → 118 unchanged after the integration-
+  correction pass (no new route — one existing response, `GET
   /documents/{id}/clinical-reader`, gained one additive field,
-  `document.patient_id`).
-- Bandit (`python -m bandit -r app -ll -q`): clean after the
-  integration-correction pass — zero findings (only benign "Test in
+  `document.patient_id`) → **118 unchanged after the pre-Phase-11
+  exact-provenance session** (no new route — `GET /source-evidence/
+  {id}/view`'s existing response gained one additive field,
+  `field_bboxes`).
+- Bandit (`python -m bandit -r app -ll -q`): clean after the pre-Phase-
+  11 exact-provenance session — zero findings (only benign "Test in
   comment" collector warnings unrelated to any real issue, same as
   every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
-  this pass added NO migration (no schema change) — "No migration drift
-  detected (8 known/tolerated legacy-index difference(s) ignored)", same
-  8 as every prior checkpoint, last real migration still Phase 10's
-  `a1c9d4e7f203_phase10_timeline_projection.py`.
+  this session added exactly ONE new additive migration
+  (`c7d2e91a4b6f_source_evidence_field_bboxes.py`, one nullable column
+  on `source_evidence`) — "No migration drift detected (8 known/
+  tolerated legacy-index difference(s) ignored)", same 8 as every prior
+  checkpoint, confirmed AFTER `alembic upgrade head` applied the new
+  migration.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
-  the integration-correction pass's changes.
-- ESLint (`npm run lint`): zero errors/warnings after this pass's
-  changes; the exact same pre-existing 29 errors/26 warnings elsewhere
-  in the repo remain untouched (unrelated, out of scope, same as every
-  prior checkpoint — none in any file this pass touched).
+  this session's changes.
+- ESLint (`npm run lint`): zero new errors/warnings in any file this
+  session touched; the exact same pre-existing 29 errors/26 warnings
+  elsewhere in the repo remain untouched (unrelated, out of scope, same
+  as every prior checkpoint).
 - Frontend production build (`npm run build`): succeeds — unchanged
-  route set from Phase 10 (this pass added a new shared library module,
-  `lib/document-routing.ts`, not a new page route).
+  route set from the prior checkpoint (this session added a new shared
+  component, `selection-source-menu.tsx`, not a new page route).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -2745,6 +3065,26 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   (`page.waitForRequest`) and asserted against the seeded patient id,
   never the document id (the real bug fixed). Seeds via new
   `backend/scripts/seed_e2e_routing_fixture.py`.
+
+- `exact-provenance.spec.ts` (NEW, pre-Phase-11 exact-provenance
+  session): 7 tests against the new select-text-to-"Show in original"
+  interaction — selecting a lab row's own text shows the contextual menu
+  and clicking it opens the shared RightWorkspace; Escape dismisses the
+  menu without opening anything; selecting a new region (after
+  collapsing the old selection) produces exactly one menu, never two
+  stacked; the "Requires review" conflict badge and the "Calculated from
+  a documented course" derived-date note both correctly offer NO menu
+  when selected (Bragi UI text, not source-derived); a medication's own
+  name does; the mobile viewport (390×844) stays usable with no stray
+  menu. Seeds via the same `seed_e2e_discharge_document.py` Phase 8/9/10
+  use — its embedded lab rows already carry a real `source_evidence_id`
+  from Phase 6's `lab_persistence.py`, so `data-source-evidence-id` is
+  present exactly as it would be for any real Reducto-backed document.
+  Deliberately does NOT attempt pixel-level "this box exactly covers
+  NEUT#" assertions against a rendered PDF (that precise coordinate math
+  is proven at the unit level in `test_reducto_row_bbox.py`'s
+  `TestAdjacentDenseRowsFixture` instead, section 9k) — this suite covers
+  the real-browser interaction surface only.
 
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
@@ -2917,9 +3257,27 @@ Phases 11-13 to exist first.
     at 1440×900 and 1920×1080 (empty-conversation state): no dead space.
     Reported honestly as not-reproduced rather than claiming an
     unneeded fix.
+17. **A real, root-caused provenance bug, not a provider data ceiling**
+    (pre-Phase-11 exact-provenance session) — see section 9k.
+    `_union_row_bbox()`'s fixed-ratio vertical padding
+    (`pad_y = max(height * 0.35, 0.003)`) — validated safe against a
+    sparse 6-row CBC panel — mechanically bled into a neighboring row's
+    highlight on a dense differential/hemogram panel (the exact reported
+    NEUT#/PCT/NRBC# scenario). Reducto's own per-field citations were
+    already precise and independent; Bragi's OWN union+pad presentation
+    layer introduced the bleed. Fixed by persisting and rendering the
+    real, unpadded per-field rects instead of tuning the padding formula
+    — proven with a dedicated adjacent-row fixture
+    (`TestAdjacentDenseRowsFixture`) reproducing the exact reported
+    scenario both before and after the fix.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
-persistence module with no prior behavior to regress) or Phase 6.
+persistence module with no prior behavior to regress) or Phase 6. The
+pre-Phase-11 exact-provenance session (section 9k) also re-confirmed the
+SAME pre-existing Next.js dev/Turbopack outline-click timing flake
+already disclosed as bug #11 — not a new bug, reproduced again on the
+completely unmodified `clinical-reader.spec.ts` during this session as
+direct proof it predates and is unrelated to this session's own changes.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
@@ -2962,24 +3320,34 @@ project from). A post-Phase-10 integration-correction pass (section 9j)
 additionally fixed real routing/Ask-Bragi-target/layout bugs found by
 real manual QA (see section 21, bugs #12-15) — but deliberately did NOT
 attempt an exact word-level source-highlighting engine (a genuinely new
-provenance feature, not a bug fix — see section 9j's "What remains" for
-the concrete question a future session must answer first) or ANY of
-Phase 11. Everything from Phase 11 onward through Phase 21 of the
-original contract is **entirely unimplemented**:
+provenance feature, not a bug fix) or ANY of Phase 11. A subsequent
+pre-Phase-11 exact-provenance session (section 9k) then fixed the real
+coarse-highlight root cause and shipped select-text-to-"Show in
+original" for lab/medication rows, while confirming arbitrary
+narrative-text exact highlighting is blocked on a genuinely larger
+upstream extraction gap (see section 9k's "What remains" for the exact
+decision a future session must make) — Phase 11 remains entirely
+unimplemented after this too. Everything from Phase 11 onward through
+Phase 21 of the original contract is **entirely unimplemented**:
 
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation
   language in answers). Investigated/scoped this session (see the
   original Part D of the post-Phase-10 prompt) but not started, by
   explicit deliberate boundary — see section 9j.
-- Phase 12: provenance for the new structured facts. Note: an exact
-  word-level source-highlighting engine (coarse-highlight bug fix +
-  select-text-to-"Show in original" interaction) was investigated this
-  session as a manual-QA-reported issue and found to require genuinely
-  new engineering (not a small fix) — see section 9j's "What remains"
-  for the exact open question a Phase 12 session must resolve first
-  (does `SourceEvidence`'s stored geometry actually carry per-word
-  precision today, or only a coarser box).
+- Phase 12: provenance for the new structured facts. Update (section
+  9k): the lab-highlight coarse-highlight bug is FIXED (real per-field
+  citation rects now persisted/rendered, no more union+pad bleed) and a
+  real select-text-to-"Show in original" interaction now exists for lab/
+  medication rows. What remains open is narrower and now precisely
+  characterized rather than an open question: arbitrary narrative-text
+  (Clinical Course/bullet/key-value) exact highlighting is blocked
+  because Reducto's reader-section extraction runs with
+  `citations=False` and no segment/page/offset geometry is persisted for
+  narrative text at all — see section 9k's "What remains" for the exact
+  decision a future session must make first (whether enabling citations
+  on narrative extraction is worth a dedicated Phase-3-5-adjacent
+  engineering effort).
 - Phase 13 (partial — Phases 6, 7, AND 10 each laid real identity
   groundwork and DB-proved it standalone, sections 9e/9f/9i/16
   (`PatientEvent` projection idempotency specifically proven at the

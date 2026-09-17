@@ -268,8 +268,23 @@ reader passed a document id as `patientId` for doctors; and two real UI
 bugs (an upload-page width cap, a misaligned processing-indicator dot).
 Deliberately NOT attempted: an exact word-level source-highlighting
 engine (found to require genuinely new provenance engineering, not a
-small fix — see the handoff for the exact open question) and Phase 11
-in its entirety. Phases 11-21 of the originating contract (Ask-Bragi
+small fix) and Phase 11 in its entirety. **A subsequent pre-Phase-11
+exact-provenance session (NEW) fixed the real coarse-highlight root
+cause**: `_union_row_bbox()`'s fixed-ratio padding was bleeding a lab
+row's highlight into a neighboring row on a dense table (e.g. NEUT#
+covering PCT/NRBC#) — Reducto's own per-field citations were already
+precise, so the fix persists and renders those real, unpadded per-field
+rects (new additive `SourceEvidence.field_bboxes_json` column) instead
+of tuning the padding formula, proven with a dedicated adjacent-row
+fixture. A real select-text-to-"Show in original" interaction now also
+exists for lab/medication rows (same shared `openSourceEvidence`
+engine, a new small contextual menu on text selection), proven with 13
+new backend tests and 7 new Playwright tests. Arbitrary narrative-text
+(Clinical Course paragraphs etc.) exact highlighting remains
+unimplemented — confirmed to require enabling citations on Reducto's
+reader-section extraction (currently `citations=False`) plus new
+segment-level page/offset persistence, a genuinely larger upstream gap,
+not attempted. Phases 11-21 of the originating contract (Ask-Bragi
 retrieval hardening and everything downstream) are entirely
 unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
