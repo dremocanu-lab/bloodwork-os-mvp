@@ -181,6 +181,17 @@ ClinicalBlock = Annotated[
 ]
 
 
+# Clinical Reader Intelligence V2. Whether a section/event belongs to the
+# CURRENT encounter being discharged, or to historical narrative embedded
+# in the same document (e.g. a decade of prior hematology follow-up
+# inside one long "clinical_course"/"medical_history" section).
+# "unspecified" is the honest default when the interpreter never ran or
+# couldn't confidently tell — never guessed as "current" by default (a
+# document with no scope information should read exactly as it did
+# before this field existed).
+EncounterScope = Literal["current", "historical", "unspecified"]
+
+
 class ClinicalSection(BaseModel):
     """One canonical section of a structured clinical document. Multiple
     raw source headings can and often do fold into one of these (e.g.
@@ -207,6 +218,18 @@ class ClinicalSection(BaseModel):
     source_evidence_ids: list[int] = Field(default_factory=list)
     confidence: float | None = None
     review_state: Literal["auto", "needs_review", "reviewed"] | None = None
+    # Clinical Reader Intelligence V2 — additive, default None (older
+    # payloads/sections the interpreter never scored render exactly as
+    # before). Only the AI interpreter (ai_interpreter.py) sets this,
+    # never a deterministic parser guess.
+    encounter_scope: EncounterScope | None = None
+    # A deterministic (non-AI) signal: this section's only real content is
+    # a form template with no patient-specific values (e.g. "PRODUS /
+    # CANTITATE" headers with nothing filled in) — see
+    # template_detection.py. The reader suppresses a section flagged this
+    # way from the intelligent-reader view, but NEVER deletes it — it
+    # remains visible in Original/Full source narrative mode.
+    is_template_only: bool = False
 
 
 EventType = Literal[
@@ -241,6 +264,16 @@ class ClinicalEvent(BaseModel):
     procedures: list[str] = Field(default_factory=list)
     source_evidence_ids: list[int] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+    # Clinical Reader Intelligence V2 — same meaning/defaults as
+    # ClinicalSection.encounter_scope, set only by the AI interpreter.
+    encounter_scope: EncounterScope | None = None
+    # True when this event's raw_text is judged (conservatively, by the
+    # interpreter) to be a near-duplicate of another event already in
+    # this document — PRESENTATION consolidation only. The event row
+    # itself, and every source reference, is NEVER deleted; the reader
+    # may choose not to render a second card for it, showing "Repeated in
+    # source" instead. Default False.
+    is_repeated_in_source: bool = False
 
 
 class DerivedArtifactRef(BaseModel):
@@ -285,6 +318,130 @@ class DocumentMetadata(BaseModel):
     referring_doctor: str | None = None
 
 
+DiagnosisRole = Literal["principal", "secondary", "historical"]
+
+
+class Diagnosis(BaseModel):
+    """A real diagnosis concept, grounded in source — never an AI
+    translation/normalization of the wording (source text is
+    authoritative; see the V3/V2 contract's "source wording remains
+    authoritative" rule — a coded terminology layer may be ADDED later,
+    never substituted for `text`). A blank/placeholder diagnosis field
+    (e.g. an empty "DIAGNOSTIC SECUNDAR" line) is never represented as a
+    Diagnosis at all — absence here means absence, not "none" text."""
+
+    id: str
+    code: str | None = None
+    text: str
+    role: DiagnosisRole
+    source_section_id: str | None = None
+    source_segment_ids: list[str] = Field(default_factory=list)
+    source_evidence_ids: list[int] = Field(default_factory=list)
+
+
+InvestigationType = Literal["imaging", "molecular", "pathology", "ecg", "procedure", "other"]
+
+
+class Investigation(BaseModel):
+    """A real investigation FINDING, whether it came from an explicit
+    form field or was recognized inside narrative prose (e.g. "JAK2
+    V617F" mentioned mid-paragraph). `findings`/`conclusion` are only
+    ever populated from what the source itself states — the interpreter
+    never invents a conclusion the source doesn't give."""
+
+    id: str
+    investigation_type: InvestigationType
+    title: str
+    findings: str | None = None
+    conclusion: str | None = None
+    source_section_id: str | None = None
+    source_segment_ids: list[str] = Field(default_factory=list)
+    source_evidence_ids: list[int] = Field(default_factory=list)
+
+
+AnomalyType = Literal[
+    "impossible_or_unusual_date",
+    "physiologically_implausible_value",
+    "conflicting_source_values",
+    "repeated_source_text",
+    "ocr_uncertain",
+    "demographic_context_mismatch",
+    "template_placeholder",
+    "chronology_uncertain",
+]
+
+
+class AnomalyFlag(BaseModel):
+    """A candidate source anomaly. `original_value` is ALWAYS the
+    verbatim source value — this model has no field for a "corrected"
+    value and never will; see the V2 contract's "AI may flag, AI may not
+    correct" rule."""
+
+    id: str
+    anomaly_type: AnomalyType
+    message: str
+    original_value: str | None = None
+    source_segment_ids: list[str] = Field(default_factory=list)
+    source_evidence_ids: list[int] = Field(default_factory=list)
+
+
+RecommendationCategory = Literal[
+    "activity", "hydration", "diet", "precautions", "follow_up", "medication_recommendation", "specialist_follow_up", "other"
+]
+
+
+class RecommendationItem(BaseModel):
+    id: str
+    category: RecommendationCategory
+    text: str
+    source_section_id: str | None = None
+    source_segment_ids: list[str] = Field(default_factory=list)
+    source_evidence_ids: list[int] = Field(default_factory=list)
+
+
+class TreatmentEra(BaseModel):
+    """A semantic grouping of the longitudinal clinical course into a
+    named era (e.g. "Hydrea + therapeutic phlebotomy period") — MUST be
+    grounded in real dated_events; never a hard-coded/invented date
+    range. `event_ids` are pointers into `dated_events`, same
+    pointer-not-copy rule as every other block type in this schema."""
+
+    id: str
+    label: str
+    start_date: str | None = None
+    end_date: str | None = None
+    description: str = ""
+    event_ids: list[str] = Field(default_factory=list)
+
+
+class CurrentEncounter(BaseModel):
+    """A dedicated pointer to what makes up THIS encounter/hospitalization
+    — never a copy of section/event data, just the ids that belong to it.
+    Distinguishing this from historical narrative is Clinical Reader
+    Intelligence V2's central product requirement."""
+
+    admission_date: str | None = None
+    discharge_date: str | None = None
+    section_ids: list[str] = Field(default_factory=list)
+    event_ids: list[str] = Field(default_factory=list)
+
+
+class InterpretationMetadata(BaseModel):
+    """Versioning/audit record for the AI Clinical Document Interpreter's
+    pass over this document — see ai_interpreter.py. The reader must
+    render deterministically from what's PERSISTED here; this metadata is
+    what lets the UI show "Organized from source · Unverified" honestly,
+    and what a later reprocessing pass compares against to decide whether
+    to re-run."""
+
+    schema_version: str = "v1"
+    prompt_version: str
+    model: str
+    generated_at: str
+    status: Literal["complete", "partial", "failed", "unavailable"]
+    warnings: list[str] = Field(default_factory=list)
+
+
 class StructuredClinicalDocument(BaseModel):
     """The root schema. Persisted through `Document.note_body` — see
     `persistence.py`. Never partially trusted: any code that reads or
@@ -301,6 +458,22 @@ class StructuredClinicalDocument(BaseModel):
     dated_events: list[ClinicalEvent] = Field(default_factory=list)
     derived_artifacts: list[DerivedArtifactRef] = Field(default_factory=list)
     warnings: list[str] = Field(default_factory=list)
+
+    # Clinical Reader Intelligence V2 — all additive, all default to an
+    # empty/None "the interpreter never ran" state, so every payload
+    # persisted before this field existed still validates unchanged.
+    # Populated ONLY by ai_interpreter.py (never by a deterministic
+    # parser) and validated server-side (see interpretation_validation.py)
+    # before being allowed into this document at all — ungrounded/
+    # hallucinated items are filtered out before construction, never
+    # merely hidden by the frontend.
+    diagnoses: list[Diagnosis] = Field(default_factory=list)
+    investigations: list[Investigation] = Field(default_factory=list)
+    anomalies: list[AnomalyFlag] = Field(default_factory=list)
+    recommendations: list[RecommendationItem] = Field(default_factory=list)
+    treatment_eras: list[TreatmentEra] = Field(default_factory=list)
+    current_encounter: CurrentEncounter | None = None
+    interpretation: InterpretationMetadata | None = None
 
     model_config = {"extra": "forbid"}  # no arbitrary unvalidated fields pass through
 

@@ -1084,6 +1084,61 @@ def get_clinical_reader_payload(
     }
 
 
+@router.post("/documents/{document_id}/reprocess-clinical-structure")
+def reprocess_document_clinical_structure(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+    _rl=Depends(RateLimiter(limit=10, window_seconds=3600, key_prefix="clinical_reprocess")),
+):
+    """Clinical Reader Intelligence V2: upgrades an EXISTING discharge
+    document to the full pipeline (real Clinical Course event
+    extraction, canonical LabResult/PatientMedication persistence,
+    Timeline projection, AI Clinical Document Interpreter) without
+    requiring the user to re-upload it — see
+    app/services/clinical_document/reprocessing.py.
+
+    Same authorization as editing a document (`PUT /documents/{id}`) —
+    a patient reprocessing their OWN record, or a doctor/admin/care-
+    partner already authorized for this patient. Rate-limited (this can
+    trigger a real, billed AI call) — never unauthenticated, never an
+    arbitrary-document admin bypass.
+    """
+    from app.services.clinical_document.reprocessing import ReprocessingError, reprocess_discharge_document
+
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if current_user.role == "care_partner":
+        if not care_partner_can_access_document(db, current_user.id, document_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    try:
+        result = reprocess_discharge_document(db, document=document, actor_user_id=current_user.id)
+    except ReprocessingError as error:
+        raise HTTPException(status_code=400, detail=str(error))
+
+    return {
+        "document_id": result.document_id,
+        "dated_events_count": result.dated_events_count,
+        "lab_results_created": result.lab_results_created,
+        "lab_results_reused": result.lab_results_reused,
+        "medications_created": result.medications_created,
+        "medications_reused": result.medications_reused,
+        "timeline_events_created": result.timeline_events_created,
+        "timeline_events_retracted": result.timeline_events_retracted,
+        "interpretation_status": result.interpretation_status,
+        "interpretation_warnings": result.interpretation_warnings,
+        "diagnoses_count": result.diagnoses_count,
+        "investigations_count": result.investigations_count,
+        "anomalies_count": result.anomalies_count,
+    }
+
+
 # ── Public-ID lookup endpoints (pretty URL resolution) ────────────────────────
 
 @router.get("/patients/by-public-id/{public_id}")
