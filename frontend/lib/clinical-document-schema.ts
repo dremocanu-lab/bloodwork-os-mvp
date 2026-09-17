@@ -132,6 +132,14 @@ export type ClinicalBlock =
   | PrescriptionTableBlock
   | WarningBlock;
 
+/** Clinical Reader Intelligence V2 — whether a section/event belongs to
+ * the CURRENT encounter being discharged, or to historical narrative
+ * embedded in the same document. Set ONLY by the AI interpreter — never
+ * guessed by a deterministic parser. `null`/absent means "the
+ * interpreter never ran or couldn't confidently tell" — never rendered
+ * as if it were "current". */
+export type EncounterScope = "current" | "historical" | "unspecified";
+
 export interface ClinicalSection {
   id: string;
   canonical_key: CanonicalSectionKey;
@@ -143,6 +151,13 @@ export interface ClinicalSection {
   source_evidence_ids: number[];
   confidence: number | null;
   review_state: ReviewState | null;
+  encounter_scope: EncounterScope | null;
+  /** Deterministic (non-AI) signal: this section's only real content is
+   * a form template with no patient-specific values (e.g. "PRODUS /
+   * CANTITATE" with nothing filled in). The intelligent-reader view
+   * suppresses a section flagged this way — it remains visible in
+   * Original/Full source narrative mode, never deleted. */
+  is_template_only: boolean;
 }
 
 export interface ClinicalEvent {
@@ -157,6 +172,12 @@ export interface ClinicalEvent {
   procedures: string[];
   source_evidence_ids: number[];
   warnings: string[];
+  encounter_scope: EncounterScope | null;
+  /** True when this event's raw_text was judged (conservatively) to be
+   * a near-duplicate of another event already in this document —
+   * PRESENTATION consolidation only; the event and its source
+   * references are never deleted. */
+  is_repeated_in_source: boolean;
 }
 
 /** A pointer to a derived artifact (Phase 6's derived lab report, today
@@ -183,6 +204,120 @@ export interface ClinicalDocumentMetadata {
   referring_doctor: string | null;
 }
 
+// ── Clinical Reader Intelligence V2 — AI-derived, grounded semantic
+// items. All additive on the backend; all optional-shaped defensively
+// here too (a document produced before this existed simply omits them,
+// which the backend already represents as empty arrays / null, never
+// undefined — but TS consumers should still treat every array here as
+// "may be empty", never assume length > 0).
+
+export type DiagnosisRole = "principal" | "secondary" | "historical";
+
+/** A real diagnosis concept, grounded in source — never an AI
+ * translation of the source wording. A blank/placeholder diagnosis
+ * field is never represented as a Diagnosis at all. */
+export interface Diagnosis {
+  id: string;
+  code: string | null;
+  text: string;
+  role: DiagnosisRole;
+  source_section_id: string | null;
+  source_segment_ids: string[];
+  source_evidence_ids: number[];
+}
+
+export type InvestigationType = "imaging" | "molecular" | "pathology" | "ecg" | "procedure" | "other";
+
+/** A real investigation FINDING, whether from an explicit form field or
+ * recognized inside narrative prose. `conclusion` is only ever populated
+ * from what the source itself states. */
+export interface Investigation {
+  id: string;
+  investigation_type: InvestigationType;
+  title: string;
+  findings: string | null;
+  conclusion: string | null;
+  source_section_id: string | null;
+  source_segment_ids: string[];
+  source_evidence_ids: number[];
+}
+
+export type AnomalyType =
+  | "impossible_or_unusual_date"
+  | "physiologically_implausible_value"
+  | "conflicting_source_values"
+  | "repeated_source_text"
+  | "ocr_uncertain"
+  | "demographic_context_mismatch"
+  | "template_placeholder"
+  | "chronology_uncertain";
+
+/** A candidate source anomaly. `original_value` is ALWAYS the verbatim
+ * source value — there is no field for a "corrected" value, ever. */
+export interface AnomalyFlag {
+  id: string;
+  anomaly_type: AnomalyType;
+  message: string;
+  original_value: string | null;
+  source_segment_ids: string[];
+  source_evidence_ids: number[];
+}
+
+export type RecommendationCategory =
+  | "activity"
+  | "hydration"
+  | "diet"
+  | "precautions"
+  | "follow_up"
+  | "medication_recommendation"
+  | "specialist_follow_up"
+  | "other";
+
+export interface RecommendationItem {
+  id: string;
+  category: RecommendationCategory;
+  text: string;
+  source_section_id: string | null;
+  source_segment_ids: string[];
+  source_evidence_ids: number[];
+}
+
+/** A semantic grouping of the longitudinal clinical course into a named
+ * era — always grounded in real `dated_events` (`event_ids`), never a
+ * hard-coded/invented date range. */
+export interface TreatmentEra {
+  id: string;
+  label: string;
+  start_date: string | null;
+  end_date: string | null;
+  description: string;
+  event_ids: string[];
+}
+
+/** A dedicated pointer to what makes up THIS encounter/hospitalization —
+ * never a copy of section/event data, just the ids that belong to it. */
+export interface CurrentEncounter {
+  admission_date: string | null;
+  discharge_date: string | null;
+  section_ids: string[];
+  event_ids: string[];
+}
+
+export type InterpretationStatus = "complete" | "partial" | "failed" | "unavailable";
+
+/** Versioning/audit record for the AI Clinical Document Interpreter's
+ * pass over this document. `null` on `StructuredClinicalDocument` means
+ * the interpreter has never run — the reader should show the
+ * deterministic-only view in that case, never imply enrichment happened. */
+export interface InterpretationMetadata {
+  schema_version: string;
+  prompt_version: string;
+  model: string;
+  generated_at: string;
+  status: InterpretationStatus;
+  warnings: string[];
+}
+
 /** The root schema — mirrors backend `StructuredClinicalDocument`
  * exactly. `document_kind` reuses the same 16-value document-type
  * taxonomy the rest of the app already uses (see
@@ -197,6 +332,13 @@ export interface StructuredClinicalDocument {
   dated_events: ClinicalEvent[];
   derived_artifacts: DerivedArtifactRef[];
   warnings: string[];
+  diagnoses: Diagnosis[];
+  investigations: Investigation[];
+  anomalies: AnomalyFlag[];
+  recommendations: RecommendationItem[];
+  treatment_eras: TreatmentEra[];
+  current_encounter: CurrentEncounter | null;
+  interpretation: InterpretationMetadata | null;
 }
 
 // ── Outline labels (Phase 8E) — canonical navigation, never the raw
