@@ -175,3 +175,161 @@ Alembic remains authoritative (`backend/alembic/`,
 `docs/database/MIGRATIONS.md`). Phase 4 made **zero** schema changes —
 confirmed by `scripts/check_migration_drift.py` passing after every
 single commit in this phase, and no new Alembic revision was created.
+
+## Ask Bragi — tool-call round budget (2026-09-14)
+
+`ASK_BRAGI_MAX_TOOL_ROUNDS` (in `app/services/ask_bragi/service.py`)
+governs how many `client.responses.create()` round trips a single turn
+may use before Ask Bragi gives up and returns a generic error. Raised
+from 4 to 8 after a real, reproduced failure: a broad multi-analyte
+question ("what changed in my latest bloodwork") can legitimately need
+several tool rounds (context calls + one comparison per analyte in a
+panel), and 4 was not enough headroom. See
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 15
+for the full diagnosis and `prompts.py`'s "TOOL EFFICIENCY" guidance,
+which reduces how many rounds this class of question actually needs in
+the first place.
+
+## `SourceEvidence` generalizing beyond lab rows (2026-09-15)
+
+`SourceEvidence.lab_result_id` was always nullable specifically so this
+model could "generalize to other clinical entities... not just lab
+rows" (its own long-standing docstring). Clinical Document Intelligence
+V3 Phase 7 is the first real use of that intent: a new, symmetric
+`SourceEvidence.medication_id` (nullable FK → `patient_medications.id`,
+`ondelete="SET NULL"`) provides the same provenance mechanism for a
+document-derived `PatientMedication` row that `lab_result_id` already
+provides for a `LabResult` row. `PatientMedication` itself gained three
+additive provenance columns (`source_document_id`, `source_segment_id`,
+`stop_date_basis`) — see `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 9f for the full
+design reasoning, including why `source_document_id` deliberately uses
+`ondelete="SET NULL"` rather than the hard-delete-with-parent pattern
+Phase 6 used for its derived lab artifact (a medication fact stays
+independently meaningful once its source document is gone; a
+pointer-only derived artifact does not).
+
+## One deliberate reader payload, not N internal endpoints (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 8 added `GET /documents/{id}/
+clinical-reader` — the first genuinely new route since the Phase 4
+backend-modularization baseline (117 → 118 routes). It exists
+specifically so the frontend discharge/clinical-document reader fetches
+ONE deliberate, purpose-built payload (`{document, structured_document,
+labs, medications}`, each fact already carrying its own
+`source_evidence_id`) instead of composing several existing internal
+endpoints client-side — see `docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section 9g for the full
+design. This is the pattern to follow for any future reader-shaped
+surface in this app (Phase 10's Timeline integration): a dedicated read
+endpoint assembling canonical facts server-side, not a frontend-side
+join across multiple generic endpoints. Also extracted `app/services/
+source_evidence.py` (`ensure_document_level_evidence`,
+`first_source_evidence_id`) from logic that used to live only inside
+`ask_bragi/tools.py` — both that module and the new reader endpoint now
+share it, proven equivalent by the existing Ask Bragi test suite
+staying green unchanged.
+
+## Derived-artifact card context: one batched resolver, not N+1 (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 9 gave a derived lab artifact
+(Phase 6's `Document.derived_artifact_kind`) a real presence in every
+document-card listing — but a card's caller already has the FULL
+document list for that patient in memory before calling `serialize_
+document_card` per row, so resolving a derived artifact's parent
+metadata and its own abnormal-flag status (which needs its `note_body`
+pointer's `lab_result_ids`, never `document_has_abnormal_labs(db,
+document.id)` — that always returns `False` for a derived artifact,
+since every `LabResult` row lives on the PARENT's id per Phase 6's
+ownership rule) must never cost one query per derived artifact.
+`app/main.py::resolve_derived_artifact_contexts(db, documents)` takes
+that already-fetched list, indexes it in memory for parent lookups, and
+issues exactly ONE batched `LabResult.id.in_(...)` query across every
+derived artifact's referenced ids — used identically by both
+`patients.py::build_patient_profile_response` and `documents.py::
+get_patient_documents`, so this behavior is defined once, not
+reimplemented per route. `serialize_document_card` itself stays a pure
+per-row serializer — it accepts the pre-resolved `parent_document`/
+`has_abnormal_override` as optional keyword params rather than querying
+inside the loop.
+
+## `PatientEvent` as a projection target, not a second source of truth (2026-09-16)
+
+Clinical Document Intelligence V3 Phase 10 needed canonical medication
+state changes (`PatientMedication`, Phase 7) to appear on the patient's
+Timeline, which is persisted exclusively via the pre-existing
+`PatientEvent` table (previously written only by the doctor-driven
+`POST /patient-events` route). Rather than adding a second Timeline
+table or copying medication data into `PatientEvent`'s free-text fields,
+`app/services/clinical_document/timeline_projection.py::project_
+clinical_document_to_timeline(db, document)` treats `PatientEvent` as a
+PROJECTION target: it reads a document's own already-canonical
+`PatientMedication` rows and idempotently creates/updates/retracts
+`PatientEvent` rows that reference them via two new additive, nullable
+FK columns — `source_document_id` (`ondelete="SET NULL"`, mirroring
+`PatientMedication.source_document_id`'s own Phase 7 choice: the fact
+survives its source document's deletion) and `source_medication_id`
+(`ondelete="CASCADE"` — the projection is deleted once the fact it
+represents is). A manually-created event has both columns `null`; that
+alone distinguishes "manual" from "projected," no separate boolean flag.
+This is the pattern to follow for any future canonical-fact-to-Timeline
+projection: add a nullable FK from `PatientEvent` to the canonical
+table, key idempotency off that FK (never `created_at`), and give the
+`ondelete` rule the SAME independent-meaningfulness semantics the
+canonical fact's own provenance FK already has — never invent a new one.
+
+A deliberate, explicitly-recorded non-decision worth knowing before
+extending this further: a `Document` (including a Phase 6 derived lab
+artifact) is NOT projected this way, because it already appears on the
+Timeline via a separate, pre-existing mechanism — `frontend/app/
+my-records/timeline/page.tsx`/`patients/[id]/timeline/page.tsx` fuse
+`GET /my/profile`'s document list directly into the rendered Timeline
+client-side. Projecting a `PatientEvent` for the same document would
+duplicate it. See `timeline_projection.py`'s own module docstring for
+the full reasoning.
+
+## Exact per-field source rects instead of tuning a padding formula (2026-09-16)
+
+The reported coarse-highlight bug (opening a dense lab row's "View
+source" — e.g. NEUT# on a differential panel — highlighted neighboring
+PCT/NRBC#/NRBC% rows too) traced to `_union_row_bbox()`
+(`reducto_extraction.py`): it unions Reducto's real, independent
+per-field citation bboxes (`test_name`/`value`/`unit`/`reference_range`)
+into one region, then pads it by a FIXED RATIO of the union's own height
+(`pad_y = height * 0.35`) so the highlight frames the row. That
+padding was tuned against a sparse fixture and mechanically bleeds into
+an adjacent row once rows are packed tightly enough — a presentation-
+layer bug, not a Reducto data ceiling (Reducto's own citations were
+already precise and non-overlapping).
+
+Rather than re-tuning the ratio (still guessable-wrong for some other
+table density), `SourceEvidence` gained one additive, nullable
+`field_bboxes_json` column that persists those real per-field rects
+UNPADDED — each one already IS the provider's own precise citation, so
+there's nothing to compute or guess. `GET /source-evidence/{id}/view`
+parses and returns them as `field_bboxes: {label, x, y, width,
+height}[] | null`; `source-viewer-panel.tsx` renders one highlight `div`
+per rect when present, falling back to the pre-existing single
+`row_bbox`/`bbox` box otherwise — fully backwards-compatible with every
+row persisted before this migration. This is the pattern for any future
+"highlight exactly what was cited" need: persist the provider's raw,
+independent citations rather than a derived/padded union, and let the
+renderer draw N precise rectangles instead of one approximate one.
+
+The same `openSourceEvidence` resolution path now also powers a second
+entry point — `SelectionSourceMenu` (`source-viewer/selection-source-
+menu.tsx`), mounted once at the root layout — which shows a small
+contextual "Show in original" menu when the browser's native text
+selection falls entirely inside an element carrying `data-source-
+evidence-id`. That attribute is applied only to spans that already
+render a real, resolvable `SourceEvidence` id (lab/medication rows
+today); it is deliberately NOT extended to Clinical Course/narrative
+text, because no source geometry of any precision exists for that text
+today — Reducto's reader-section extraction runs with `citations=
+False`, and `SourceSegment` (`clinical_document/segments.py`) is a
+non-persisted Pydantic model whose own `page` field is always `None`.
+Extending exact provenance to narrative text is a real, larger, separate
+extraction-pipeline effort (enabling citations on section extraction,
+then designing a citation-to-narrative-offset model), not a UI change —
+see `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` section
+9k for the full investigation.

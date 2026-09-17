@@ -299,6 +299,95 @@ def test_max_tool_rounds_is_enforced(monkeypatch, patient_with_data):
     assert fake_client.responses.create.call_count == 2
 
 
+def test_old_round_budget_would_exhaust_on_a_realistic_broad_comparison_question(monkeypatch, patient_with_data):
+    """Reproduces the Clinical Document Intelligence V3 Phase 2 P0 bug
+    ("Ask Bragi could not process this message") for "What changed in my
+    latest bloodwork?"-style questions: a well-behaved model exploring
+    context (get_patient_context, search_documents) before comparing
+    several analytes one compare_lab_results call at a time exhausts the
+    OLD default of 4 rounds before it ever produces a final answer —
+    surfacing as AskBragiError, exactly the route layer's catch-all.
+    Proves the failure is genuine (not hypothetical) by reproducing it
+    with the actual pre-fix budget; see the next test for the fix."""
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_MAX_TOOL_ROUNDS", 4)  # the old default
+
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_tool_call_response("get_patient_context", {}),
+        _fake_tool_call_response("search_documents", {}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        # A 5th round would be needed to actually answer — never reached.
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="patient_record",
+        )
+        with pytest.raises(ask_bragi_service.AskBragiError):
+            ask_bragi_service.run_turn(
+                ctx=ctx, audience="patient", user_message="What changed in my latest bloodwork?", prior_turns=[]
+            )
+    finally:
+        db.close()
+
+    assert fake_client.responses.create.call_count == 4
+
+
+def test_broad_comparison_question_no_longer_exhausts_the_tool_round_budget(monkeypatch, patient_with_data):
+    """Same realistic tool sequence as the reproduction above, extended by
+    two more per-analyte comparisons plus a final answering round (6 tool
+    rounds + 1 final round = 7) — fits within the fixed default (8) and
+    completes normally. Does NOT monkeypatch ASK_BRAGI_MAX_TOOL_ROUNDS, so
+    this exercises the module's actual current default."""
+    monkeypatch.setattr(ask_bragi_service, "ASK_BRAGI_ENABLED", True)
+
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = [
+        _fake_tool_call_response("get_patient_context", {}),
+        _fake_tool_call_response("search_documents", {}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        _fake_tool_call_response("compare_lab_results", {"canonical_name": "creatinine"}),
+        _fake_final_response(
+            {
+                "answer": "Your creatinine is unchanged across the analytes checked.",
+                "citations": [],
+                "chart_request": None,
+                "follow_ups": [],
+                "status": "complete",
+            }
+        ),
+    ]
+    monkeypatch.setattr(ask_bragi_service, "_client", lambda: fake_client)
+
+    db = SessionLocal()
+    try:
+        ctx = AskBragiContext(
+            db=db,
+            patient_id=patient_with_data["patient_id"],
+            requester_user_id=patient_with_data["account"]["user"]["id"],
+            requester_role="patient",
+            scope="patient_record",
+        )
+        result = ask_bragi_service.run_turn(
+            ctx=ctx, audience="patient", user_message="What changed in my latest bloodwork?", prior_turns=[]
+        )
+    finally:
+        db.close()
+
+    assert result.response.answer == "Your creatinine is unchanged across the analytes checked."
+    assert fake_client.responses.create.call_count == 7
+
+
 def test_no_tool_schema_exposes_a_patient_id_parameter():
     """The core "server owns patient scope" invariant, checked directly
     against the actual schemas sent to OpenAI — not just by code review."""

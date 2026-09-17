@@ -23,6 +23,29 @@ as described.
   SDK (Sentry, PostHog, Segment, or equivalent) is wired into the
   backend or frontend. There is no security-event monitoring in
   production today.
+- **Deployment parity — CONFIRMED stale, not yet resolved.** A P0
+  upload-reliability session (2026-09-17) found, from repo evidence
+  alone, that deployment parity could not be verified. A follow-up
+  production-deployment-closure session (same day) obtained authenticated
+  Render/Vercel CLI access and CONFIRMED directly: the live production
+  site (Render service `bloodwork-os-api` + Vercel `app.bragi.health`)
+  is running `main` at commit `917a543` — 66 commits and 5 days behind
+  the `fix/clinical-document-intelligence-v3` branch — fully explaining
+  every "doesn't match the branch" manual QA report to date. `GET
+  /health/version` (backend) and `GET /api/version` (frontend, new) now
+  let anyone confirm this directly (`curl https://app.bragi.health/
+  api/version`) without dashboard access. A PR from the feature branch
+  into `main` was opened but deliberately NOT merged: Render's
+  Pre-Deploy Command (required to apply 4 pending additive Alembic
+  migrations before new code starts serving traffic — without it, the
+  new code's ORM queries would fail immediately against the old schema)
+  is confirmed, via CLI, still unconfigured — and setting it was blocked
+  by this session's own safety tooling as a production-infrastructure
+  change needing the user's direct action. See the handoff's section 9n
+  for the exact command/dashboard action required. The leftover local
+  git worktree (`.claude/worktrees/agent-a4d8c81f635b19e9d`, ~3 months
+  stale, no env files, would silently call the real production backend
+  if ever run) still exists, deliberately not deleted.
 - **No tested backup restoration.** Neon/Render's actual backup/PITR
   configuration is an account/console-level setting this codebase
   cannot verify or exercise. No restore drill has been performed.
@@ -139,3 +162,118 @@ and the Phase 4 final report), not an accidental omission:
   background job queue, and no CNAS work was added during this refactor
   — Phase 4 was reorganization only, not feature work.
 - `demo.bragi.health` was explicitly out of scope and was not started.
+
+## Clinical Document Intelligence V3 — Phases 9-21 (2026-09-16)
+
+An implementation contract for rebuilding structured clinical-document
+ingestion (discharge sections, dated clinical events, embedded lab/
+medication extraction into canonical models, a new frontend document
+reader) was received. Phase 0 (architecture inventory), Phase 1
+(baseline), Phase 2 (a real Ask Bragi P0 fix — see ARCHITECTURE.md's
+"Ask Bragi — tool-call round budget" section), Phase 3 (the structured
+document schema), Phases 4-5 (source segmentation, canonical-section
+consolidation, Clinical Course dated-event extraction with chronology
+checks, and a full end-to-end orchestration), Phase 6 (embedded lab
+extraction/grouping/canonical persistence into real `LabResult` rows,
+feeding the existing shared analyte resolver, plus derived lab-artifact
+backend semantics with real deletion and idempotency guarantees), Phase
+7 (medication extraction/context classification/deterministic duration
+parsing/end-date derivation into real `PatientMedication` rows, feeding
+the existing status vocabulary, with an exact start-date priority that
+never uses an upload/ingestion timestamp and explicit preservation of
+same-drug conflicts), Phase 8 (the discharge/clinical-document
+reader rebuilt around the canonical `StructuredClinicalDocument`
+contract — a new reader API, a rewritten reader page, 7 new reusable
+components including one `StructuredLabReport` for both embedded and
+standalone use, honest PDF/non-PDF provenance, and derived-vs-explicit
+medication date UX, proven with real Playwright coverage), Phase 9
+(a derived "lab_report" `Document` is now a real, independently
+openable Documents entry — a new standalone `/documents/{id}/
+lab-report` route reusing `StructuredLabReport(mode="standalone")`
+verbatim, restrained "Derived from: [parent]" Documents-card framing,
+correct authorization/deletion/provenance semantics, and a completion
+of a genuine Phase-6 gap where the derived artifact's own
+`lab_result_ids` pointer was declared but never populated), and Phase 10
+(canonical medication start/stop state changes now project onto the
+patient's Timeline as real, idempotent `PatientEvent` rows via a new
+`timeline_projection.py` service — never inventing a date, never
+asserting a state change a conflicting row can't support, coexisting
+with manually-created hospitalization events on the same table; a
+clinical document/derived lab artifact deliberately is NOT separately
+projected since it already appeared on the Timeline via a pre-existing
+mechanism this phase fixed rather than duplicated) are all completed and
+verified — see `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`
+sections 9/9b/9c/9d/9e/9f/9g/9h/9i. None of Phases 3-10's EXTRACTION/
+PERSISTENCE/PROJECTION code is wired into the live discharge upload
+write path yet (deliberate sequencing, not an oversight — a brand-new
+upload today still renders correctly through Phase 8's reader, just
+without labs/medications attached until that write-side switch
+happens). A subsequent post-Phase-10 integration-correction pass fixed
+real bugs found by manual QA — 5 duplicated frontend document-routing
+decisions consolidated into one shared resolver (a real classification-
+taxonomy root cause found: `HOSPITAL_ADMISSION_NOTE`/`EMERGENCY_
+DEPARTMENT_NOTE` map to the legacy `"hospitalizations"` section, not
+`"discharge_summary"` — deliberately NOT changed, a product decision),
+a real gap where both Timeline pages had no derived-artifact routing
+check, a real Ask Bragi bug (the discharge reader sent a document id as
+`patientId` for doctors), and two real UI bugs (upload-page width,
+processing-indicator alignment) — see `docs/clinical_document_v3/
+ROUTER_AUDIT.md`. An exact word-level source-highlighting engine (a
+real coarse-highlight bug found by manual QA) was investigated and found
+to require genuinely new provenance engineering for narrative text — see
+below; the LAB-specific half of it (the reported NEUT#/PCT/NRBC# coarse-
+highlight bug) was root-caused and fixed in a subsequent pre-Phase-11
+exact-provenance session: `_union_row_bbox()`'s fixed-ratio padding
+formula was bleeding into a neighboring row on a dense table, not a
+Reducto data ceiling — fixed by persisting and rendering Reducto's own
+real, unpadded per-field citation rects (new additive `SourceEvidence.
+field_bboxes_json` column) instead of one padded union box. That same
+session also shipped a real select-text-to-"Show in original"
+interaction for lab/medication rows (same shared `openSourceEvidence`
+engine). Arbitrary NARRATIVE-text (Clinical Course paragraphs, bullet
+lists, key-value pairs) exact highlighting remains genuinely
+unimplemented — confirmed, not merely suspected: Reducto's reader/
+section extraction runs with `citations=False`, and `SourceSegment` is
+not persisted with a page number at all, so there is no source geometry
+of any precision for narrative text to render even coarsely beyond
+"open the document." A further Romanian discharge classification
+closure session found and fixed a real, reproduced classification bug
+in the SAME family as section 9j's routing bug but one layer earlier:
+the legacy classifier had no keyword coverage at all for "bilet de
+ieșire (din spital)" (a common Romanian discharge-letter title, distinct
+from the already-covered "bilet de externare"), which — combined with a
+realistic dense embedded lab table — could push an otherwise-winning
+discharge classification below the confidence margin needed to
+auto-accept, forcing an unnecessary confirmation prompt. Fixed (keyword
+added, Reducto's own classification criteria updated to name the same
+Romanian titles explicitly, though NOT independently live-verified
+against the real Reducto API — no safe synthetic-PDF fixture process
+exists in this repo yet), and closed a related, previously-deferred gap
+where a doctor/care-partner manual "Discharge Summary" upload never set
+`document_type` at all. Critically, this session also closed a testing
+gap, not just a code gap: every prior "discharge routing" test/fixture
+(including section 9j's own) started from a `Document`/`UploadJob` with
+`document_type`/`section` already hardcoded — never from real source
+text run through the actual classifier — so routing was proven correct
+while classification itself was never exercised end-to-end. A new test
+suite (backend + Playwright) now runs real Romanian text through the
+real classifier, real persistence, and the real browser reader. A
+further P0 AI document classification + upload reliability session
+replaced the keyword-only auto-classifier with a real AI semantic
+classifier (constrained to the existing canonical taxonomy, real
+OpenAI structured output, Reducto/legacy kept as pre-signals and
+fallback — an AI outage never fails an upload), found and fixed the
+real cause of a reported "upload remained processing" (a backend
+security-quarantine status with no frontend mapping at all), and
+audited deployment parity after real manual QA contradicted a prior
+automated report — see docs/CURRENT_STATE.md and the handoff's section
+9m for the full, honest accounting of what could and could not be
+confirmed from this repository alone. Ask-Bragi retrieval hardening for the new canonical
+data (Phase 11), the exhaustive real-Postgres idempotency/deletion test
+suites (Phases 6-10 each laid real groundwork but the full 1x/2x/10x/
+exhaustive-cascade proofs remain open), the deterministic retrieval
+benchmark, the full 7-viewport responsive screenshot matrix (Phase 8
+manually verified 2 of 7), and an automated accessibility scan are all
+**not implemented** — this remains a large, deliberate scope gap, not
+an oversight. Full honest accounting
+and a continuation plan: `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`.

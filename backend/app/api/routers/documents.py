@@ -56,6 +56,7 @@ moved here in full, unchanged.
 
 from __future__ import annotations
 
+import json
 import os
 from concurrent.futures import ThreadPoolExecutor
 from pathlib import Path
@@ -75,6 +76,7 @@ from app.policies.access import (
     get_patient_for_user,
 )
 from app.rate_limit import RateLimiter
+from app.services import source_evidence as source_evidence_service
 from app.services.document_taxonomy import (
     AUTO_CLASSIFY_SECTION,
     document_type_choices,
@@ -123,6 +125,23 @@ ALLOWED_SECTIONS = {
     "other",
 }
 
+# A doctor/care-partner manual upload (POST /upload/background) picks a
+# legacy `section` from a coarse 6-value picklist, never runs the real
+# classifier (see process_upload_job's `if job.section ==
+# AUTO_CLASSIFY_SECTION` gate), and so has always left `document_type`
+# NULL even when the user's own choice is completely unambiguous — a
+# real, previously-deferred gap (docs/clinical_document_v3/
+# ROUTER_AUDIT.md's "Deliberately not changed"), not a guess. Only
+# `discharge_summary`/`bloodwork` map 1:1 onto exactly one
+# `DocumentType` each (`document_taxonomy.LEGACY_SECTION_BY_DOCUMENT_
+# TYPE`'s own inverse); `medications`/`scans`/`hospitalizations`/`other`
+# each cover multiple real document types and are deliberately NOT
+# guessed here.
+UNAMBIGUOUS_SECTION_DOCUMENT_TYPE = {
+    "discharge_summary": "discharge_summary",
+    "bloodwork": "laboratory_results",
+}
+
 # Bounded concurrency for multi-file batch uploads (POST /upload/batch): a
 # batch's files are dispatched to this pool instead of FastAPI's
 # BackgroundTasks, which runs tasks strictly one-at-a-time in-process — a
@@ -136,6 +155,48 @@ ALLOWED_SECTIONS = {
 UPLOAD_JOB_POOL = ThreadPoolExecutor(
     max_workers=int(os.getenv("UPLOAD_JOB_CONCURRENCY", "3")), thread_name_prefix="upload-job"
 )
+
+
+def _log_upload_job_pool_exception(job_id: int, future) -> None:
+    """`ThreadPoolExecutor.submit()`'s own well-known footgun: an
+    exception raised by the submitted callable is captured on the
+    returned `Future` but never surfaced anywhere unless something calls
+    `.result()`/`.exception()` on it — nothing in this codebase did,
+    before this session (P0 upload-reliability). In practice
+    `process_upload_job`'s own top-level try/except already catches and
+    terminal-izes almost everything (see its own docstring/handoff
+    notes), so this is a narrow safety net for the one real gap: an
+    exception raised BEFORE that try even starts (e.g. `SessionLocal()`
+    itself failing). Without this callback, that failure would silently
+    vanish and the job would stay stuck at "queued"/"processing" forever
+    with nothing in any log explaining why. Best-effort: if marking the
+    job failed ALSO fails (e.g. the DB is genuinely unreachable), this
+    only logs — there is nothing further it can safely do from a worker
+    thread's done-callback.
+    """
+    error = future.exception()
+    if error is None:
+        return
+
+    print(f"UPLOAD JOB {job_id}: uncaught exception escaped the worker pool entirely: {error!r}")
+
+    from app.db import SessionLocal
+
+    try:
+        db = SessionLocal()
+        try:
+            job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+            if job and job.status not in ("done", "error", "needs_confirmation", "needs_identity_confirmation", "quarantined", "security_quarantined", "duplicate"):
+                job.status = "error"
+                job.progress = 100
+                job.message = "Upload failed."
+                job.error = "An unexpected error occurred before processing could start. Please try again."
+                job.finished_at = now_iso()
+                db.commit()
+        finally:
+            db.close()
+    except Exception as persist_error:
+        print(f"UPLOAD JOB {job_id}: failed to persist terminal error state from pool callback: {persist_error!r}")
 
 
 def _validate_upload_extension(original_filename: str) -> str:
@@ -205,6 +266,7 @@ def serialize_upload_job(job) -> dict:
         "document_type": job.document_type,
         "classification_status": job.classification_status,
         "classification_confidence": job.classification_confidence,
+        "classification_source": job.classification_source,
         "identity_status": job.identity_status,
         "created_at": job.created_at,
         "started_at": job.started_at,
@@ -327,7 +389,7 @@ def get_patient_documents(
     db: Session = Depends(get_db),
     current_user=Depends(require_role("doctor", "admin")),
 ):
-    from app.main import serialize_document_card
+    from app.main import resolve_derived_artifact_contexts, serialize_document_card
 
     patient = db.query(models.Patient).filter(models.Patient.id == patient_id).first()
 
@@ -344,6 +406,8 @@ def get_patient_documents(
         .all()
     )
 
+    derived_contexts = resolve_derived_artifact_contexts(db, documents)
+
     return {
         "patient": {
             "id": patient.id,
@@ -357,7 +421,16 @@ def get_patient_documents(
             "cnp": _mask_cnp(patient.cnp),
             "patient_identifier": patient.patient_identifier,
         },
-        "documents": [serialize_document_card(db, document, current_user) for document in documents],
+        "documents": [
+            serialize_document_card(
+                db,
+                document,
+                current_user,
+                parent_document=derived_contexts.get(document.id, {}).get("parent_document"),
+                has_abnormal_override=derived_contexts.get(document.id, {}).get("has_abnormal_override"),
+            )
+            for document in documents
+        ],
     }
 
 
@@ -401,6 +474,8 @@ async def create_background_upload(
         except Exception:
             pass
 
+    unambiguous_document_type = UNAMBIGUOUS_SECTION_DOCUMENT_TYPE.get(section)
+
     job = models.UploadJob(
         user_id=current_user.id,
         patient_id=patient.id,
@@ -413,6 +488,14 @@ async def create_background_upload(
         message="Queued for processing.",
         error=None,
         document_id=None,
+        # Real classification never runs on this path (see the module
+        # docstring on UNAMBIGUOUS_SECTION_DOCUMENT_TYPE above) — this is
+        # not a guess, only ever set for the two section values that
+        # already mean exactly one document_type.
+        document_type=unambiguous_document_type,
+        classification_status="classified" if unambiguous_document_type else None,
+        classification_confidence=1.0 if unambiguous_document_type else None,
+        classification_source="user_selected" if unambiguous_document_type else None,
         created_at=now_iso(),
         started_at=None,
         finished_at=None,
@@ -514,7 +597,8 @@ async def create_batch_upload(
         # definition. Each file starts processing as soon as a worker slot
         # frees up, instead of strictly after every earlier file in the
         # batch has fully finished.
-        UPLOAD_JOB_POOL.submit(process_upload_job, job.id)
+        future = UPLOAD_JOB_POOL.submit(process_upload_job, job.id)
+        future.add_done_callback(lambda f, job_id=job.id: _log_upload_job_pool_exception(job_id, f))
         created_jobs.append(serialize_upload_job(job))
 
     return created_jobs
@@ -816,6 +900,190 @@ def get_document(
     return get_document_payload(db, document, labs, audit_logs, current_user)
 
 
+@router.get("/documents/{document_id}/clinical-reader")
+def get_clinical_reader_payload(
+    document_id: int,
+    db: Session = Depends(get_db),
+    current_user=Depends(get_current_user),
+):
+    """Clinical Document Intelligence V3, Phase 8: the one deliberate
+    reader payload for the rebuilt discharge/clinical-document reader —
+    a validated `StructuredClinicalDocument` (via the sanctioned
+    `parse_structured_document` read path, which transparently
+    upconverts an existing LEGACY discharge `note_body` payload in
+    memory, so old documents render through the exact same contract as
+    a real one without any reprocessing) plus every canonical fact it
+    references: `LabResult` rows (Phase 6), `PatientMedication` rows
+    (Phase 7), and a source-evidence id per fact for the existing
+    `openSourceEvidence` viewer. Never a copy of clinical judgement —
+    every value here is read straight from the canonical tables that
+    already own it.
+
+    Authorization is IDENTICAL to `GET /documents/{document_id}` above
+    (same two-branch care_partner/can_access_patient check) — this is a
+    read-shape difference, not a new access rule.
+    """
+    from app.services.clinical_document.persistence import parse_structured_document
+
+    document = db.query(models.Document).filter(models.Document.id == document_id).first()
+
+    if not document:
+        raise HTTPException(status_code=404, detail="Document not found")
+
+    if current_user.role == "care_partner":
+        if not care_partner_can_access_document(db, current_user.id, document_id):
+            raise HTTPException(status_code=403, detail="Forbidden")
+    elif not can_access_patient(db, current_user, document.patient_id):
+        raise HTTPException(status_code=403, detail="Forbidden")
+
+    # Clinical Document Intelligence V3 Phase 9: a derived lab-report
+    # artifact's own note_body is a JSON pointer (group_key,
+    # source_section_id, lab_result_ids — see lab_persistence.py), not a
+    # StructuredClinicalDocument, so there is nothing to parse; its
+    # canonical LabResult rows live on the PARENT document (Phase 6's
+    # ownership rule), never on the artifact's own id, so they must be
+    # resolved via the pointer's lab_result_ids, not `LabResult.
+    # document_id == document.id` (which is always empty here).
+    derived_artifact_payload = None
+    if document.derived_artifact_kind:
+        try:
+            note_data = json.loads(document.note_body or "{}")
+        except (TypeError, ValueError):
+            note_data = {}
+        lab_result_ids = [lab_id for lab_id in (note_data.get("lab_result_ids") or []) if isinstance(lab_id, int)]
+
+        structured_document = None
+        labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.id.in_(lab_result_ids))
+            .order_by(models.LabResult.id.asc())
+            .all()
+            if lab_result_ids
+            else []
+        )
+        medications: list = []
+
+        parent = (
+            db.query(models.Document).filter(models.Document.id == document.parent_document_id).first()
+            if document.parent_document_id
+            else None
+        )
+        derived_artifact_payload = {
+            "kind": document.derived_artifact_kind,
+            "group_key": note_data.get("group_key"),
+            "source_section_id": note_data.get("source_section_id"),
+            "parent_document_id": document.parent_document_id,
+            "parent_report_name": parent.report_name if parent else None,
+            "parent_filename": parent.filename if parent else None,
+            "parent_document_type": parent.document_type if parent else None,
+            # The derived artifact itself has no file/content_type of its
+            # own (see lab_persistence.py) — ReaderSourceAction's PDF-vs-
+            # non-PDF honesty check must gate on the PARENT's real file
+            # type, since "View source" always opens the parent's file.
+            "parent_content_type": parent.content_type if parent else None,
+        }
+    else:
+        structured_document = parse_structured_document(document.note_body)
+
+        labs = (
+            db.query(models.LabResult)
+            .filter(models.LabResult.document_id == document.id)
+            .order_by(models.LabResult.id.asc())
+            .all()
+        )
+        medications = (
+            db.query(models.PatientMedication)
+            .filter(models.PatientMedication.source_document_id == document.id)
+            .order_by(models.PatientMedication.id.asc())
+            .all()
+        )
+
+    lab_payload = [
+        {
+            "id": lab.id,
+            "raw_test_name": lab.raw_test_name,
+            "canonical_name": lab.canonical_name,
+            "display_name": lab.display_name,
+            "category": lab.category,
+            "source_section": lab.source_section,
+            "value": lab.value,
+            "flag": lab.flag,
+            "reference_range": lab.reference_range,
+            "unit": lab.unit,
+            "observation_datetime": lab.observation_datetime,
+            "verification_state": lab.verification_state,
+            "source_evidence_id": source_evidence_service.first_source_evidence_id(db, lab_result_id=lab.id),
+        }
+        for lab in labs
+    ]
+
+    medication_payload = [
+        {
+            "id": med.id,
+            "name": med.name,
+            "dose_strength": med.dose_strength,
+            "frequency": med.frequency,
+            "route_form": med.route_form,
+            "status": med.status,
+            "is_uncertain": bool(med.is_uncertain),
+            "start_date": med.start_date,
+            "stop_date": med.stop_date,
+            "stop_date_basis": med.stop_date_basis,
+            "extra_info": med.extra_info,
+            "source_segment_id": med.source_segment_id,
+            "source_evidence_id": source_evidence_service.first_source_evidence_id(db, medication_id=med.id),
+        }
+        for med in medications
+    ]
+
+    # A document-level evidence anchor — the discharge reader's "View
+    # original"/"Open original file" header action resolves through this
+    # id, exactly like every other openSourceEvidence() call site. Never
+    # a fabricated PDF page/bbox: see ensure_document_level_evidence's
+    # own docstring for the honest page_only/document_only precision
+    # this always produces.
+    #
+    # A derived lab artifact has no `saved_to`/real file of its own
+    # (see lab_persistence.py's _get_or_create_derived_document — it is
+    # a pointer row, never an upload), so anchoring evidence to its OWN
+    # id would create a phantom row pointing at nothing. "View source"
+    # for a derived artifact always resolves against the PARENT
+    # document's real file instead.
+    evidence_target_document = parent if document.derived_artifact_kind and parent else document
+    document_level_evidence = source_evidence_service.ensure_document_level_evidence(
+        db, evidence_target_document, provider="clinical_reader"
+    )
+
+    return {
+        "document": {
+            "id": document.id,
+            "public_id": document.public_id,
+            # Post-Phase-10 integration fix: the discharge reader's own
+            # Ask Bragi target previously had no authoritative patient id
+            # to read at all and passed `document.id` in its place (a
+            # real bug — see the frontend commit). This mirrors the
+            # generic /documents/{id} payload's own `patient_id` field
+            # exactly, the one every other Ask Bragi target already uses.
+            "patient_id": document.patient_id,
+            "filename": document.filename,
+            "content_type": document.content_type,
+            "document_type": document.document_type,
+            "report_name": document.report_name,
+            "report_type": document.report_type,
+            "source_language": document.source_language,
+            "test_date": document.test_date,
+            "created_at": document.created_at,
+            "is_verified": bool(document.is_verified),
+            "document_level_source_evidence_id": document_level_evidence.id,
+            "derived_artifact_kind": document.derived_artifact_kind,
+        },
+        "structured_document": structured_document.model_dump() if structured_document else None,
+        "labs": lab_payload,
+        "medications": medication_payload,
+        "derived_artifact": derived_artifact_payload,
+    }
+
+
 # ── Public-ID lookup endpoints (pretty URL resolution) ────────────────────────
 
 @router.get("/patients/by-public-id/{public_id}")
@@ -1073,7 +1341,53 @@ def delete_document(
         if not patient or patient.id != document.patient_id:
             raise HTTPException(status_code=403, detail="Forbidden")
 
+    # Clinical Document Intelligence V3 Phase 9: a derived lab-report
+    # artifact is a pointer into the parent document's own canonical
+    # LabResult rows, not an independent upload — deleting it directly
+    # would silently desynchronize Documents from the parent's real
+    # content without actually removing any clinical data. It is only
+    # ever removed as a side effect of its parent's deletion (the cascade
+    # a few lines below, unchanged from Phase 6).
+    if document.derived_artifact_kind:
+        raise HTTPException(
+            status_code=400,
+            detail="Derived artifacts cannot be deleted directly — delete the source document instead.",
+        )
+
     saved_to = document.saved_to
+
+    # Clinical Document Intelligence V3, Phase 6: a derived lab-report
+    # artifact (models.Document.derived_artifact_kind is set) must be
+    # REMOVED, not orphaned, when its parent is deleted — unlike an
+    # ordinary Reducto Split page-range child, which intentionally keeps
+    # `parent_document_id`'s existing `ondelete="SET NULL"` behavior
+    # (survives its split parent's deletion). The derived artifact's own
+    # LabResult/SourceEvidence rows are NOT deleted here: Phase 6
+    # attaches those to the AUTHORITATIVE parent document, not to the
+    # derived artifact, so they are already covered by `document.
+    # lab_results`' existing cascade below when `document` IS that
+    # parent — deleting this pointer-only artifact row never deletes
+    # another, unrelated source's LabResult.
+    db.query(models.Document).filter(
+        models.Document.parent_document_id == document.id,
+        models.Document.derived_artifact_kind.isnot(None),
+    ).delete(synchronize_session=False)
+
+    # Clinical Document Intelligence V3, Phase 7: a document-derived
+    # PatientMedication row is NOT deleted when its source document is
+    # (SET NULL, not cascade — see models.py's source_document_id
+    # docstring: the medication fact stays independently meaningful).
+    # But its SourceEvidence.document_id column is NOT NULL, so any
+    # medication-linked evidence row for THIS document must be removed
+    # explicitly before the document itself is deleted, or the delete
+    # would violate that FK constraint. Scoped to medication-linked,
+    # non-lab-linked rows only — lab-linked evidence is already covered
+    # by the LabResult cascade below when `document` IS a lab's parent.
+    db.query(models.SourceEvidence).filter(
+        models.SourceEvidence.document_id == document.id,
+        models.SourceEvidence.lab_result_id.is_(None),
+        models.SourceEvidence.medication_id.isnot(None),
+    ).delete(synchronize_session=False)
 
     db.query(models.NoteDocumentLink).filter(
         (models.NoteDocumentLink.note_document_id == document.id)

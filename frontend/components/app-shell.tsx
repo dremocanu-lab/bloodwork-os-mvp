@@ -42,6 +42,19 @@ type AppShellProps = {
   density?: "compact" | "default" | "comfortable";
   /** Suppress the page header when a surface supplies its own context bar. */
   hideHeader?: boolean;
+  /**
+   * Opt-in only — every other page's behavior is completely unaffected.
+   * Makes the body region a bounded-height flex container (the sticky
+   * header/banner stack stays exactly as before; only the body below it
+   * stops relying on ambient page scroll and instead fills the rest of
+   * the viewport, scrolling internally) instead of the normal
+   * "page grows taller than the viewport, the window scrolls" model.
+   * For a workspace-shaped page (a real app screen, not a document to
+   * read top-to-bottom) that wants to fill available height rather than
+   * leave dead space below a short amount of content — e.g. the
+   * dedicated Ask Bragi page's conversation column.
+   */
+  bodyFillHeight?: boolean;
 };
 
 export default function AppShell({
@@ -54,6 +67,7 @@ export default function AppShell({
   banner,
   density,
   hideHeader = false,
+  bodyFillHeight = false,
 }: AppShellProps) {
   const { t } = useLanguage();
   const pathname = usePathname();
@@ -88,7 +102,7 @@ export default function AppShell({
     <div className={`app-shell-root ${densityClass}`}>
       <Sidebar user={user} mobileOpen={mobileOpen} onCloseMobile={() => setMobileOpen(false)} />
 
-      <div className="app-shell-main">
+      <div className={`app-shell-main${bodyFillHeight ? " app-shell-main-fill-height" : ""}`}>
         {/* Mobile: menu + which workspace you are in. Kept to 48px so it costs
             almost nothing of a phone screen. It shows the workspace rather
             than the page title, because the page title is already the h1
@@ -168,7 +182,10 @@ export default function AppShell({
           {banner}
         </div>
 
-        <main className="app-shell-body b-view-enter" style={{ minWidth: 0 }}>
+        <main
+          className={`app-shell-body b-view-enter${bodyFillHeight ? " app-shell-body-fill-height" : ""}`}
+          style={{ minWidth: 0 }}
+        >
           {children}
         </main>
       </div>

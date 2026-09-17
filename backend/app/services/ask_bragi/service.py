@@ -47,7 +47,21 @@ from .tools import TOOL_SCHEMA_VERSION, TOOL_SCHEMAS, run_tool
 
 ASK_BRAGI_ENABLED = os.getenv("ASK_BRAGI_ENABLED", "").strip().lower() in {"1", "true", "yes"}
 ASK_BRAGI_MODEL = os.getenv("ASK_BRAGI_MODEL", os.getenv("OPENAI_MODEL", "gpt-4.1"))
-ASK_BRAGI_MAX_TOOL_ROUNDS = int(os.getenv("ASK_BRAGI_MAX_TOOL_ROUNDS", "4"))
+# Was 4 — too tight for a real, reproduced failure mode (Clinical Document
+# Intelligence V3 Phase 2 P0): a broad multi-analyte question ("what
+# changed in my latest bloodwork?", "show my latest labs") can legitimately
+# need get_patient_context/search_documents context calls PLUS several
+# per-analyte lookups before a final answer is ready, especially when a
+# model doesn't batch independent tool calls into one round. Hitting the
+# ceiling mid-conversation surfaces as the generic "Ask Bragi could not
+# process this message" error (see the AskBragiError raised below when
+# final_output_text is never produced) — indistinguishable, from the
+# frontend, from a real provider failure. Raised to a more realistic
+# budget as defense-in-depth alongside the prompt's own "TOOL EFFICIENCY"
+# guidance (prompts.py) which reduces how many rounds a broad comparison
+# question actually needs in the first place — see
+# tests/test_ask_bragi_service.py::test_broad_comparison_question_no_longer_exhausts_the_tool_round_budget.
+ASK_BRAGI_MAX_TOOL_ROUNDS = int(os.getenv("ASK_BRAGI_MAX_TOOL_ROUNDS", "8"))
 ASK_BRAGI_MAX_OUTPUT_TOKENS = int(os.getenv("ASK_BRAGI_MAX_OUTPUT_TOKENS", "1200"))
 ASK_BRAGI_TIMEOUT_SECONDS = float(os.getenv("ASK_BRAGI_TIMEOUT_SECONDS", "45"))
 # Bounded conversation replay — Bragi does not send the whole conversation

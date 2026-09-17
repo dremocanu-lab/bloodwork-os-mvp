@@ -58,6 +58,13 @@ def serialize_medication(med: models.PatientMedication) -> dict:
         "route_form": med.route_form,
         "start_date": med.start_date,
         "stop_date": med.stop_date,
+        # Clinical Document Intelligence V3 Phase 7 additions — null for
+        # every manually-entered medication (unchanged existing rows/
+        # behavior); populated only for a document-derived row. See
+        # models.py's own field docstrings for the exact semantics.
+        "stop_date_basis": med.stop_date_basis,
+        "source_document_id": med.source_document_id,
+        "source_segment_id": med.source_segment_id,
         "prescriber": med.prescriber,
         "extra_info": med.extra_info,
         "is_uncertain": bool(med.is_uncertain),

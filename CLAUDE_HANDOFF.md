@@ -11,6 +11,16 @@ newer docs resolve. Treat any conflict in favor of the newer docs.**
 See `BRAGI_REDUCTO_PLAN.md` for architecture/rationale and §2f/§8 for the
 final verification detail. This file is status only.
 
+## Clinical Document Intelligence V3 — PARTIAL (2026-09-14)
+
+Branch `fix/clinical-document-intelligence-v3`. Only Phases 0-2 of a
+21-phase contract are done (a real Ask Bragi P0 fix — the tool-call
+round budget was too tight for broad multi-analyte questions — plus a
+RightWorkspace geometry Playwright regression). Phases 3-21 (structured
+clinical-document schema, discharge parser rebuild, lab/medication/event
+extraction, frontend rebuild) are not implemented. Full detail:
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`.
+
 ## Backend modularization — Phase 4 (2026-09-12)
 
 `app/main.py` (an 8,141-line MVP-era monolith with 113+ inline routes)

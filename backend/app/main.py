@@ -26,6 +26,7 @@ from app.policies.access import get_patient_for_user
 from app.services.document_pipeline import process_uploaded_document
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 from app.services.document_taxonomy import AUTO_CLASSIFY_SECTION, DOCUMENT_TYPE_LABELS, legacy_section_for
+from app.services.document_classification_service import resolve_final_classification
 from app.services.extraction_provider import REDUCTO, ProcessingMetadata, get_extraction_provider
 from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
@@ -820,6 +821,67 @@ def document_has_abnormal_labs(db: Session, document_id: int) -> bool:
     return any(lab_flag_is_abnormal(lab.flag) for lab in labs)
 
 
+def resolve_derived_artifact_contexts(db: Session, documents: list) -> dict[int, dict]:
+    """Batched `serialize_document_card` context for every derived lab
+    artifact in `documents` (Clinical Document Intelligence V3 Phase 9).
+
+    `documents` must already be the full set of documents this card
+    listing is about to render — a derived artifact's parent is always
+    another document in that same set (same patient), so this never
+    issues a parent-lookup query per card. Every derived artifact's
+    `lab_result_ids` (populated in its note_body by lab_persistence.py)
+    is collected first, then resolved with exactly ONE batched
+    `LabResult` query no matter how many derived artifacts exist, fixing
+    `document_has_abnormal_labs(db, document.id)`'s always-False result
+    for a derived artifact (see serialize_document_card's docstring).
+
+    Returns `{document_id: {"parent_document": dict | None,
+    "has_abnormal_override": bool}}`, one entry per derived artifact in
+    `documents` (ordinary documents/Reducto Split children are absent).
+    """
+    documents_by_id = {document.id: document for document in documents}
+
+    derived_lab_result_ids: dict[int, list[int]] = {}
+    for document in documents:
+        if not document.derived_artifact_kind:
+            continue
+        try:
+            note_data = json.loads(document.note_body or "{}")
+        except (TypeError, ValueError):
+            note_data = {}
+        derived_lab_result_ids[document.id] = [
+            lab_id for lab_id in (note_data.get("lab_result_ids") or []) if isinstance(lab_id, int)
+        ]
+
+    all_referenced_lab_ids = {lab_id for ids in derived_lab_result_ids.values() for lab_id in ids}
+    abnormal_lab_ids: set[int] = set()
+    if all_referenced_lab_ids:
+        flags = (
+            db.query(models.LabResult.id, models.LabResult.flag)
+            .filter(models.LabResult.id.in_(all_referenced_lab_ids))
+            .all()
+        )
+        abnormal_lab_ids = {lab_id for lab_id, flag in flags if lab_flag_is_abnormal(flag)}
+
+    contexts: dict[int, dict] = {}
+    for document_id, referenced_ids in derived_lab_result_ids.items():
+        parent = documents_by_id.get(documents_by_id[document_id].parent_document_id)
+        parent_document = None
+        if parent is not None:
+            parent_document = {
+                "id": parent.id,
+                "report_name": parent.report_name,
+                "filename": parent.filename,
+                "document_type": parent.document_type,
+            }
+        contexts[document_id] = {
+            "parent_document": parent_document,
+            "has_abnormal_override": any(lab_id in abnormal_lab_ids for lab_id in referenced_ids),
+        }
+
+    return contexts
+
+
 def doctor_reviewed_document(db: Session, doctor_user_id: int | None, document_id: int) -> bool:
     if not doctor_user_id:
         return False
@@ -876,9 +938,38 @@ def serialize_lab_result(lab):
     }
 
 
-def serialize_document_card(db: Session, document, current_user=None) -> dict:
+def serialize_document_card(
+    db: Session,
+    document,
+    current_user=None,
+    *,
+    parent_document: dict | None = None,
+    has_abnormal_override: bool | None = None,
+) -> dict:
+    """`parent_document`/`has_abnormal_override` exist for Clinical
+    Document Intelligence V3 Phase 9's derived-lab-artifact cards:
+
+    - `document_has_abnormal_labs(db, document.id)` queries `LabResult.
+      document_id == document.id` — for a derived artifact this is
+      ALWAYS empty (Phase 6 attaches every LabResult to the
+      AUTHORITATIVE PARENT document, never to the derived artifact
+      itself — see lab_persistence.py's own ownership rule), so calling
+      it unconditionally would silently and incorrectly report every
+      derived artifact as never abnormal. The caller (`build_patient_
+      profile_response`) computes this correctly for derived artifacts
+      via ONE batched query across every derived artifact's own
+      `lab_result_ids` (never one query per card) and passes the
+      result in; every other document keeps the existing per-call
+      behavior unchanged.
+    - `parent_document` is a small, pre-resolved `{id, report_name,
+      filename, document_type}` dict (or `None`) — the caller already
+      has every one of a patient's documents loaded in one query, so
+      resolving a derived artifact's parent from that same in-memory
+      list costs zero extra DB round trips; this function never
+      queries for it itself.
+    """
     uploaded_by = serialize_user(document.uploaded_by_user) if document.uploaded_by_user else None
-    has_abnormal = document_has_abnormal_labs(db, document.id)
+    has_abnormal = has_abnormal_override if has_abnormal_override is not None else document_has_abnormal_labs(db, document.id)
 
     reviewed_by_current_doctor = False
     if current_user and current_user.role == "doctor":
@@ -907,6 +998,12 @@ def serialize_document_card(db: Session, document, current_user=None) -> dict:
         "section": document.section,
         "document_type": document.document_type,
         "parent_document_id": document.parent_document_id,
+        # Clinical Document Intelligence V3 Phase 9 — null for every
+        # ordinary upload AND every Reducto Split child (both of which
+        # also use parent_document_id, but never set this marker); only
+        # ever "lab_report" today (Phase 6's own derived-artifact kind).
+        "derived_artifact_kind": document.derived_artifact_kind,
+        "parent_document": parent_document,
         "page_range_start": document.page_range_start,
         "page_range_end": document.page_range_end,
         "is_verified": bool(document.is_verified),
@@ -965,6 +1062,12 @@ def get_document_payload(db: Session, document, labs, audit_logs, current_user=N
         "section": document.section,
         "document_type": document.document_type,
         "parent_document_id": document.parent_document_id,
+        # Clinical Document Intelligence V3 Phase 9 — lets the generic
+        # /documents/{id} page detect a derived lab artifact and redirect
+        # to its dedicated standalone reader instead of rendering the
+        # normal document view (which has no lab data of its own; see
+        # serialize_document_card's docstring above for why).
+        "derived_artifact_kind": document.derived_artifact_kind,
         "page_range_start": document.page_range_start,
         "page_range_end": document.page_range_end,
         "classification_status": document.classification_status,
@@ -1279,6 +1382,7 @@ def _finish_mixed_reducto_upload(
                         row_bbox_y=evidence.row_bbox[1] if evidence.row_bbox else None,
                         row_bbox_width=evidence.row_bbox[2] if evidence.row_bbox else None,
                         row_bbox_height=evidence.row_bbox[3] if evidence.row_bbox else None,
+                        field_bboxes_json=(json.dumps(evidence.field_rects) if evidence.field_rects else None),
                         extraction_confidence=evidence.confidence,
                         provider="reducto",
                         parser_version=reducto_extraction.PARSER_VERSION,
@@ -1452,6 +1556,8 @@ def process_upload_job(job_id: int):
                     used_fallback = True
                     fallback_reason = f"Reducto classify failed: {reducto_error}"
 
+            classification_text = ""
+
             if reducto_file_id is None:
                 # Legacy path (Reducto disabled, or just fell back above):
                 # classification input is a plain-text OCR pass, independent
@@ -1467,22 +1573,58 @@ def process_upload_job(job_id: int):
                     classification_text = ""
 
                 classification, processing_meta = provider.classify(classification_text)
+            elif os.getenv("OPENAI_API_KEY"):
+                # Reducto succeeded, so the legacy OCR pass above never ran —
+                # but the AI semantic classifier below still needs real
+                # extracted text (Reducto's own internal document
+                # understanding isn't exposed as plain text anywhere in this
+                # codebase). Only paid for when AI classification is
+                # actually configured — zero added latency/cost in any
+                # environment without OPENAI_API_KEY set, identical to this
+                # session's starting behavior.
+                try:
+                    ai_ocr = ocr_extract_text(file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR)
+                    classification_text = ai_ocr.get("text") or ""
+                except Exception:
+                    print(f"UPLOAD JOB {job_id}: AI-classification OCR pass failed:")
+                    print(traceback.format_exc())
+                    classification_text = ""
 
-            job.document_type = classification.document_type.value
-            job.classification_status = classification.status
-            job.classification_confidence = classification.confidence
-            job.classification_source = (
-                f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
+            fallback_source = f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
+
+            # AI semantic classification is the PRIMARY final classifier
+            # when it succeeds with a valid, confident result — Reducto/
+            # legacy above remain real, useful pre-signals AND the fallback
+            # when AI is unavailable/misconfigured/errors for any reason
+            # (never a failed upload). See document_classification_service.py
+            # for the exact decision policy.
+            final_decision = resolve_final_classification(
+                classification_text=classification_text,
+                fallback_document_type=classification.document_type,
+                fallback_status=classification.status,
+                fallback_confidence=classification.confidence,
+                fallback_source=fallback_source,
             )
 
-            if classification.status == "needs_confirmation":
+            job.document_type = final_decision.document_type.value
+            job.classification_status = final_decision.status
+            job.classification_confidence = final_decision.confidence
+            job.classification_source = final_decision.classification_source
+            # Stashed on the job instance only (not a DB column — see the
+            # decision service's own docstring for why this is logged via
+            # the existing AuditLog mechanism once a Document exists,
+            # rather than a new schema column) for the audit-log write
+            # later in this function, after the Document row is created.
+            job._ai_classification_decision = final_decision  # type: ignore[attr-defined]
+
+            if final_decision.status == "needs_confirmation":
                 job.status = "needs_confirmation"
                 job.progress = 30
                 job.message = "We're not sure what type of document this is. Please confirm."
                 db.commit()
                 return
 
-            job.section = legacy_section_for(classification.document_type)
+            job.section = legacy_section_for(final_decision.document_type)
             db.commit()
 
         # Real Reducto Extract, only for the document types it's wired up
@@ -1827,6 +1969,7 @@ def process_upload_job(job_id: int):
                         row_bbox_y=(evidence.row_bbox[1] if evidence and evidence.row_bbox else None),
                         row_bbox_width=(evidence.row_bbox[2] if evidence and evidence.row_bbox else None),
                         row_bbox_height=(evidence.row_bbox[3] if evidence and evidence.row_bbox else None),
+                        field_bboxes_json=(json.dumps(evidence.field_rects) if evidence and evidence.field_rects else None),
                         extraction_confidence=lab.get("confidence"),
                         provider=job.classification_source or "legacy_pipeline",
                         parser_version=(reducto_extraction.PARSER_VERSION if evidence is not None else None),
@@ -1852,15 +1995,21 @@ def process_upload_job(job_id: int):
         )
 
         if job.document_type:
+            ai_decision = getattr(job, "_ai_classification_decision", None)
+            details = (
+                ai_decision.audit_details()
+                if ai_decision is not None
+                else (
+                    f"Classified as {job.document_type} "
+                    f"(status={job.classification_status}, confidence={job.classification_confidence})"
+                )
+            )
             add_audit_log(
                 db=db,
                 document_id=document.id,
                 action="classification_completed",
                 actor=job.classification_source or "system",
-                details=(
-                    f"Classified as {job.document_type} "
-                    f"(status={job.classification_status}, confidence={job.classification_confidence})"
-                ),
+                details=details,
             )
 
         warnings = (

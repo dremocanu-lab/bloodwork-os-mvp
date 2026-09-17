@@ -10,8 +10,12 @@ from tests.fixtures.synthetic_documents import (
     MISLEADING_FILENAME_DISCHARGE_TEXT,
     PATHOLOGY_TEXT,
     PRESCRIPTION_TEXT,
+    ROMANIAN_DISCHARGE_BILET_DE_EXTERNARE,
+    ROMANIAN_DISCHARGE_BILET_DE_IESIRE,
     ROMANIAN_DISCHARGE_SUMMARY,
+    ROMANIAN_HOSPITAL_ADMISSION_NOTE,
     ROMANIAN_LAB_REPORT,
+    ROMANIAN_OUTPATIENT_SCRISOARE_MEDICALA,
 )
 
 
@@ -84,6 +88,70 @@ def test_garbled_ocr_text_is_other_not_a_guess():
 def test_none_text_does_not_raise():
     result = classify_document_text(None)
     assert result.document_type == DocumentType.OTHER
+
+
+class TestBiletDeIesireRomanianDischargeClosure:
+    """Pre-Phase-11 Romanian discharge classification closure session.
+
+    Reproduces the real manual-QA report: a genuine inpatient Romanian
+    discharge letter titled "BILET DE IEȘIRE DIN SPITAL / SCRISOARE
+    MEDICALĂ" — a title the classifier previously had NO keyword
+    coverage for at all ("bilet de externare" existed, "bilet de iesire"
+    did not) — combined with a realistically dense embedded hematology
+    lab table (the exact class of content that should NOT be able to
+    steal a document-level classification away from an otherwise-clear
+    discharge letter). Before the fix, this exact fixture scored
+    discharge_summary=14.5 vs laboratory_results=14.0 (a margin of 0.5,
+    below CONFIDENT_MARGIN_THRESHOLD=1.5), forcing an unnecessary
+    needs_confirmation despite discharge already being the correct
+    winner — this is the precise, reproduced root cause of the reported
+    bug, not a guess.
+    """
+
+    def test_bilet_de_iesire_with_dense_embedded_labs_classifies_confidently(self):
+        result = classify_document_text(ROMANIAN_DISCHARGE_BILET_DE_IESIRE)
+        assert result.document_type == DocumentType.DISCHARGE_SUMMARY
+        assert result.status == CLASSIFIED, (
+            "a genuine inpatient discharge letter with embedded labs must not "
+            f"be forced into needs_confirmation; candidates={result.candidates}"
+        )
+        assert "bilet de iesire din spital" in result.matched_terms
+
+    def test_bilet_de_iesire_beats_laboratory_results_by_a_real_margin(self):
+        result = classify_document_text(ROMANIAN_DISCHARGE_BILET_DE_IESIRE)
+        discharge_score = result.candidates.get("discharge_summary", 0)
+        lab_score = result.candidates.get("laboratory_results", 0)
+        assert discharge_score - lab_score >= 1.5
+
+    def test_bilet_de_externare_short_form_classifies_confidently(self):
+        result = classify_document_text(ROMANIAN_DISCHARGE_BILET_DE_EXTERNARE)
+        assert result.document_type == DocumentType.DISCHARGE_SUMMARY
+        assert result.status == CLASSIFIED
+
+    def test_foaie_de_internare_classifies_as_admission_note_not_discharge(self):
+        # Admission-only structure (no discharge date, no discharge
+        # recommendations) must stay a distinct type — never conflated
+        # with discharge_summary just because both are inpatient
+        # documents.
+        result = classify_document_text(ROMANIAN_HOSPITAL_ADMISSION_NOTE)
+        assert result.document_type == DocumentType.HOSPITAL_ADMISSION_NOTE
+        assert result.status == CLASSIFIED
+
+    def test_outpatient_scrisoare_medicala_classifies_as_consultation_not_discharge(self):
+        # "Scrisoare medicala" alone, with no inpatient admission/
+        # discharge structure, is an outpatient consultation letter, not
+        # a discharge summary — the classifier must not treat the phrase
+        # as an automatic discharge signal.
+        result = classify_document_text(ROMANIAN_OUTPATIENT_SCRISOARE_MEDICALA)
+        assert result.document_type == DocumentType.SPECIALIST_CONSULTATION
+        assert result.status == CLASSIFIED
+
+    def test_standalone_lab_report_is_unaffected_by_the_new_keywords(self):
+        # Regression guard: adding "bilet de iesire" must not change
+        # standalone lab-report classification at all.
+        result = classify_document_text(ROMANIAN_LAB_REPORT)
+        assert result.document_type == DocumentType.LABORATORY_RESULTS
+        assert result.status == CLASSIFIED
 
 
 def test_ambiguous_mixed_signal_needs_confirmation():

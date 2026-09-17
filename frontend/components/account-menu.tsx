@@ -166,6 +166,18 @@ export default function AccountMenu({ user }: { user: NavUser }) {
         <IconLogout size={14} />
         {t("logout")}
       </button>
+
+      {/* Deployment-parity mechanism (P0 upload-reliability session):
+          lets anyone answer "which exact build am I actually looking
+          at?" without a Vercel dashboard visit — real manual QA has
+          previously been mistaken for a live bug when it was actually a
+          stale deployment. Silently absent when the build didn't have a
+          commit SHA available (e.g. a shallow checkout with no .git). */}
+      {process.env.NEXT_PUBLIC_GIT_SHA ? (
+        <div className="b-account-sub" style={{ padding: "6px 8px 2px", fontSize: "var(--fs-micro)" }}>
+          Build {process.env.NEXT_PUBLIC_GIT_SHA.slice(0, 7)}
+        </div>
+      ) : null}
     </>
   );
 

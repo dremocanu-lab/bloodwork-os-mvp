@@ -89,6 +89,17 @@ const en = {
   allRecords: "All Records",
   allDocuments: "All Documents",
   scan: "Scan",
+  laboratoryReport: "Laboratory report",
+  derivedFrom: "Derived from",
+  // Deliberately does NOT contain "View source" as a substring — that
+  // string is also the accessible name of the per-lab-row provenance
+  // action (reader-source-action.tsx), and Playwright's non-exact
+  // getByRole name matching is substring-based (a real gotcha already
+  // hit once in Phase 8, section 9g of the V3 handoff); reusing it here
+  // would make the two buttons ambiguous to any test/assistive tech
+  // that queries by name without exact:true.
+  viewSourceDocument: "Open source document",
+  derivedArtifactsCannotBeDeleted: "Derived reports can't be deleted directly — delete the source document instead.",
 
   // My Records
   loadingYourRecords: "Loading your records...",
@@ -1349,6 +1360,10 @@ const ro: Record<keyof typeof en, string> = {
   allRecords: "Toate documentele",
   allDocuments: "Toate documentele",
   scan: "Investigație",
+  laboratoryReport: "Raport de laborator",
+  derivedFrom: "Derivat din",
+  viewSourceDocument: "Deschide documentul sursă",
+  derivedArtifactsCannotBeDeleted: "Rapoartele derivate nu pot fi șterse direct — șterge documentul sursă.",
 
   // My Records
   loadingYourRecords: "Se încarcă documentele tale...",

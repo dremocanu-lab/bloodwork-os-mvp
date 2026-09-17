@@ -15,6 +15,7 @@ import {
   sectionLabel,
 } from "@/lib/reader-sections";
 import { AskBragiSideTab } from "@/components/ask-bragi/ask-bragi-side-tab";
+import { resolveDocumentRoute } from "@/lib/document-routing";
 
 /** Scope defaults to "document" for every reader type on this page (see
  * BRAGI_ASK_BRAGI_PLAN.md's per-surface scope defaults) — only the
@@ -108,6 +109,11 @@ type DocumentResponse = {
   saved_to?: string | null;
   section: string;
   document_type?: string | null;
+  /** Clinical Document Intelligence V3 Phase 9 — "lab_report" for a
+   * derived lab artifact; this page immediately redirects those to the
+   * dedicated standalone reader (it has no LabResult rows of its own to
+   * render via the fallback lab-table logic below). */
+  derived_artifact_kind?: string | null;
   structured_sections?: Record<string, string>;
   uploaded_by_user_id?: number | null;
   uploaded_by?: UploadedBy | null;
@@ -663,13 +669,21 @@ export default function DocumentStructuredPage() {
       throw new Error("Document loaded, but parsed_data is missing.");
     }
 
-    const isDischargeSummary =
-      documentResponse.data.section === "discharge_summary" ||
-      documentResponse.data.parsed_data?.report_type === "Discharge summary" ||
-      documentResponse.data.parsed_data?.report_type === "discharge_summary";
-
-    if (isDischargeSummary) {
-      router.replace(`/documents/${documentId}/discharge`);
+    // Canonical Document Intelligence V3 routing (see lib/document-
+    // routing.ts) — document_type is checked ALONGSIDE the legacy
+    // section/report_type signals, never replacing them (document_type
+    // isn't reliably set on every upload path yet).
+    const targetRoute = resolveDocumentRoute(
+      {
+        derived_artifact_kind: documentResponse.data.derived_artifact_kind,
+        document_type: documentResponse.data.document_type,
+        section: documentResponse.data.section,
+        report_type: documentResponse.data.parsed_data?.report_type,
+      },
+      documentId
+    );
+    if (targetRoute !== `/documents/${documentId}`) {
+      router.replace(targetRoute);
       return;
     }
 

@@ -1,4 +1,5 @@
 import { api } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/api-base";
 
 export type AskBragiCitation = {
   source_evidence_id: number;
@@ -81,7 +82,7 @@ export const askBragiApi = {
  * the raw wire shape is plain JSON per event with no shared tag field. */
 export type AskBragiStreamEvent = { event: string; data: Record<string, unknown> };
 
-const API_BASE = (process.env.NEXT_PUBLIC_API_URL || "https://bloodwork-os-api.onrender.com").replace(/\/+$/, "");
+const API_BASE = getApiBaseUrl().replace(/\/+$/, "");
 
 /** Real streaming consumption: a raw fetch (axios has no first-class SSE
  * support for POST) reading the response body incrementally and

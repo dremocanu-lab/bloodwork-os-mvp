@@ -115,10 +115,37 @@ class PatientEvent(Base):
     created_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
     discharged_by_user_id = Column(Integer, ForeignKey("users.id"), nullable=True)
 
+    # Clinical Document Intelligence V3, Phase 10 — both null for every
+    # manually-created event (unchanged current behavior: a doctor/admin
+    # via POST /patient-events); set only by a Timeline PROJECTION
+    # (app/services/clinical_document/timeline_projection.py) for a
+    # medication state-change event derived from a real, canonical
+    # `PatientMedication` row. This is the field that distinguishes a
+    # system-projected event from a manual one — no separate boolean flag
+    # needed, since "has a source" already means "was projected".
+    #
+    # `source_document_id` uses `ondelete="SET NULL"`, mirroring
+    # PatientMedication.source_document_id's own deliberate choice
+    # (Phase 7): the underlying medication fact survives its source
+    # document's deletion because it stays independently meaningful, so
+    # the Timeline event representing that SAME fact survives too — it
+    # depends on the medication, not solely on the document.
+    #
+    # `source_medication_id` uses `ondelete="CASCADE"`: once the
+    # `PatientMedication` row itself is gone (e.g. DELETE /my/medications/
+    # {id}), the event representing its state change represents nothing
+    # and must go with it.
+    source_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    source_medication_id = Column(
+        Integer, ForeignKey("patient_medications.id", ondelete="CASCADE"), nullable=True, index=True
+    )
+
     patient = relationship("Patient", back_populates="events")
     doctor_user = relationship("User", foreign_keys=[doctor_user_id])
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     discharged_by_user = relationship("User", foreign_keys=[discharged_by_user_id])
+    source_document = relationship("Document", foreign_keys=[source_document_id])
+    source_medication = relationship("PatientMedication", foreign_keys=[source_medication_id])
 
 
 class Document(Base):
@@ -221,6 +248,19 @@ class Document(Base):
     # app/services/interop/fhir_connector.py's commit path. Never set by the
     # upload pipeline.
     source_connection_id = Column(Integer, ForeignKey("interop_connections.id", ondelete="SET NULL"), nullable=True, index=True)
+
+    # Clinical Document Intelligence V3, Phase 6 — distinguishes a real
+    # DERIVED artifact Document (e.g. "lab_report": structured laboratory
+    # results extracted from a parent discharge summary, see
+    # app/services/clinical_document/lab_persistence.py) from an ordinary
+    # uploaded/Reducto-Split-child Document that also happens to use
+    # `parent_document_id`. Null for every existing row and every normal
+    # upload/split child. This distinction is what lets
+    # `DELETE /documents/{id}` hard-delete a derived artifact when its
+    # parent is deleted (see that route) while a Split child continues to
+    # use the existing `ondelete="SET NULL"` behavior on
+    # `parent_document_id`, unchanged.
+    derived_artifact_kind = Column(String, nullable=True)
 
     patient = relationship("Patient", back_populates="documents", foreign_keys=[patient_id])
     intended_patient = relationship("Patient", foreign_keys=[intended_patient_id])
@@ -373,6 +413,14 @@ class SourceEvidence(Base):
     id = Column(Integer, primary_key=True, index=True)
     document_id = Column(Integer, ForeignKey("documents.id"), nullable=False, index=True)
     lab_result_id = Column(Integer, ForeignKey("lab_results.id"), nullable=True, index=True)
+    # Clinical Document Intelligence V3, Phase 7 — the medication half of
+    # this model's own documented "generalize beyond lab rows" intent
+    # (see the docstring above). `ondelete="SET NULL"` is a DB-level
+    # safety net independent of the ORM cascade declared on
+    # `PatientMedication.source_evidence`: it also protects a BULK delete
+    # (e.g. `DELETE /my/account`'s patient-medication cleanup), which
+    # does not trigger ORM-level relationship cascades.
+    medication_id = Column(Integer, ForeignKey("patient_medications.id", ondelete="SET NULL"), nullable=True, index=True)
 
     page_number = Column(Integer, nullable=True)
     bbox_x = Column(Float, nullable=True)
@@ -394,6 +442,16 @@ class SourceEvidence(Base):
     row_bbox_width = Column(Float, nullable=True)
     row_bbox_height = Column(Float, nullable=True)
 
+    # Exact, unpadded per-field citation rects for this row: JSON-encoded
+    # list of {label, x, y, width, height}, one entry per field Reducto
+    # actually returned a citation for (test_name/value/unit/
+    # reference_range). Each rect is the provider's own real bbox verbatim
+    # — no union, no padding — added so the UI can highlight only the exact
+    # fields cited instead of one padded box that risks framing a
+    # neighboring row on a dense table. Null for older rows and non-Reducto
+    # evidence; callers fall back to row_bbox_*/bbox_* in that case.
+    field_bboxes_json = Column(Text, nullable=True)
+
     source_block_id = Column(String, nullable=True)
     source_text = Column(Text, nullable=True)
 
@@ -405,6 +463,7 @@ class SourceEvidence(Base):
 
     document = relationship("Document")
     lab_result = relationship("LabResult", back_populates="source_evidence")
+    medication = relationship("PatientMedication", back_populates="source_evidence")
 
 
 class AuditLog(Base):
@@ -521,9 +580,40 @@ class PatientMedication(Base):
     official_retrieved_at = Column(String, nullable=True)
     official_label_date = Column(String, nullable=True)
 
+    # Clinical Document Intelligence V3, Phase 7 — provenance for a
+    # document-derived medication fact. Both null for every existing row
+    # and every manually patient-entered medication (unchanged current
+    # behavior) — set only by
+    # app/services/clinical_document/medication_persistence.py.
+    # `ondelete="SET NULL"` is a deliberate difference from Phase 6's
+    # derived lab artifact (which is hard-deleted with its parent): a
+    # medication fact has independent clinical meaning even once the
+    # document that mentioned it is gone, so deleting the source document
+    # clears the (now-stale) provenance link rather than deleting the
+    # medication itself — see DELETE /documents/{id} for the paired
+    # explicit SourceEvidence cleanup this requires.
+    source_document_id = Column(Integer, ForeignKey("documents.id", ondelete="SET NULL"), nullable=True, index=True)
+    # The originating SourceSegment.segment_id (segments.py) — free-text,
+    # mirrors LabResult.source_section's existing convention for the same
+    # purpose (deterministic provenance/idempotency identity, not a FK,
+    # since segments are not persisted as their own DB rows).
+    source_segment_id = Column(String, nullable=True)
+    # How `stop_date` was determined — "explicit" (source stated it
+    # directly), "derived" (calculated from a reliable start date + an
+    # explicit finite duration), or "explicit_with_derived_conflict" (both
+    # existed and disagreed; `stop_date` keeps the EXPLICIT value, never
+    # silently overwritten by the derived one — see medication_duration.py
+    # and medication_persistence.py). Null for a manually-entered
+    # medication (no derivation ever applies) and for any document-derived
+    # row with no stop_date at all. Never lets a calculated date read as
+    # provider-authored without this field explaining otherwise.
+    stop_date_basis = Column(String, nullable=True)
+
     patient = relationship("Patient", back_populates="medications")
     created_by_user = relationship("User", foreign_keys=[created_by_user_id])
     updated_by_user = relationship("User", foreign_keys=[updated_by_user_id])
+    source_document = relationship("Document", foreign_keys=[source_document_id])
+    source_evidence = relationship("SourceEvidence", back_populates="medication", cascade="all, delete-orphan")
 
 
 class EmergencyContact(Base):

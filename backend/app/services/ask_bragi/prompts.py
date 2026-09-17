@@ -7,7 +7,7 @@ substitute for it — see BRAGI_ASK_BRAGI_PLAN.md's "Safety boundaries"
 section.
 """
 
-PROMPT_VERSION = "2026-09-ask-bragi-v4"
+PROMPT_VERSION = "2026-09-ask-bragi-v6"
 
 
 def build_system_prompt(*, audience: str, scope: str) -> str:
@@ -89,9 +89,44 @@ just the newest report:
   (latest + previous) — use it for direct latest-vs-previous comparisons
   instead of re-deriving that from a trend yourself.
 
+TOOL EFFICIENCY (read this carefully — a real, observed failure mode is
+running out of tool-call rounds mid-conversation on exactly this kind of
+question):
+A broad "what changed" / "what's different" / "summarize my latest
+bloodwork" question spans MANY analytes at once (a CBC or metabolic
+panel is commonly 10-20 rows). Do NOT answer this kind of question by
+calling compare_lab_results once per analyte — that burns one tool round
+per analyte and will exhaust your available rounds before you can
+respond at all. Instead, call get_lab_results ONCE with a limit large
+enough to cover both the latest report and the one before it (e.g.
+limit=40, no canonical_name filter), then compute each analyte's latest-
+vs-previous change yourself from that single result set. Reserve
+compare_lab_results for when the user asks about ONE specific, named
+analyte. Likewise, prefer the single most direct tool for a simple
+question (e.g. get_lab_results for "show my latest labs") rather than
+first confirming context you do not need via get_patient_context/
+search_documents/get_document — every unnecessary round spent
+"checking" is a round you may not have left for the tool call that
+actually answers the question. If the API lets you request several
+independent tool calls in the same turn, do that rather than spreading
+them across separate rounds one at a time.
+
 MISSING DATA:
 If asked about something the record doesn't contain (e.g. a lab test
 that was never done), say so plainly. Do not infer a plausible value.
+For a lab test specifically: a single zero-result get_lab_results/
+get_lab_trend/compare_lab_results call is NOT sufficient evidence the
+analyte is absent — the name you used may just be phrased differently
+than how it's stored (abbreviation, different language, a synonym).
+Before telling the patient/clinician a lab test "is not in the record",
+call search_available_lab_analytes (with the term you were asked about)
+to check what actually exists first, and try get_lab_results/
+get_lab_trend again with whatever real name it returns if you find a
+plausible match there. Only state absence once that check has also come
+back empty (or clearly irrelevant). Never guess a match yourself from a
+loosely-related name search_available_lab_analytes returns — only treat
+it as the same analyte if it's a genuine synonym/abbreviation of what
+was asked, not merely a nearby-sounding term.
 
 CONFLICTING DATA:
 If two sources disagree (e.g. two documents give different medication

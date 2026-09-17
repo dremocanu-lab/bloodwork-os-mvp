@@ -29,12 +29,20 @@ import { documentTypeOrSectionLabel } from "@/lib/document-taxonomy-labels";
 
 type TimelineItem = {
   id: string;
-  type: "document" | "event";
+  /** Clinical Document Intelligence V3 Phase 10 — "medication" is a
+   * projected medication start/stop moment (see timeline_projection.py),
+   * never a grouping parent (unlike a "event"-type hospitalization). */
+  type: "document" | "event" | "medication";
   date: string;
   title: string;
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  /** Set only for a `type: "medication"` item — routes to that
+   * medication's own detail page via `onOpenMedication`, distinct from
+   * `eventId` (which a projected event ALSO carries, but medication
+   * items are opened by medication, not by event id). */
+  medicationId?: number;
   section?: string;
   /** Bragi's finer-grained document type (Phase 1+ uploads only — see
    * BRAGI_REDUCTO_PLAN.md Phase 5). Optional so every existing caller that
@@ -49,6 +57,7 @@ type ClinicalTimelineProps = {
   maxItems?: number;
   onOpenDocument?: (documentId: number) => void;
   onOpenEvent?: (eventId: number) => void;
+  onOpenMedication?: (medicationId: number) => void;
   onSeeFullTimeline?: () => void;
   showSeeFullTimeline?: boolean;
   emptyText?: string;
@@ -104,6 +113,7 @@ function getTypeLabel(item: TimelineItem, t: (key: string) => string, language: 
     if (item.section === "medications") return t("medication");
     if (item.section === "hospitalizations") return t("hospitalEvent");
     if (item.section === "notes") return t("note");
+    if (item.type === "medication") return t("medication");
     if (item.type === "event") return t("careEvent");
     return t("record");
   })();
@@ -125,7 +135,7 @@ function nodeClass(item: TimelineItem) {
   if (item.section === "discharge_summary") return "b-tl-node-brand";
   if (item.type === "event" || item.section === "hospitalizations") return "b-tl-node-ok";
   if (item.section === "scans") return "b-tl-node-warn";
-  if (item.section === "notes") return "b-tl-node-info";
+  if (item.section === "notes" || item.type === "medication") return "b-tl-node-info";
   return "";
 }
 
@@ -199,6 +209,7 @@ export default function ClinicalTimeline({
   maxItems,
   onOpenDocument,
   onOpenEvent,
+  onOpenMedication,
   onSeeFullTimeline,
   showSeeFullTimeline,
   emptyText,
@@ -236,6 +247,10 @@ export default function ClinicalTimeline({
   }
 
   function openItem(item: TimelineItem) {
+    if (item.medicationId && onOpenMedication) {
+      onOpenMedication(item.medicationId);
+      return;
+    }
     if (item.documentId && onOpenDocument) {
       onOpenDocument(item.documentId);
       return;
@@ -244,7 +259,11 @@ export default function ClinicalTimeline({
   }
 
   function canOpen(item: TimelineItem) {
-    return Boolean((item.documentId && onOpenDocument) || (item.eventId && onOpenEvent));
+    return Boolean(
+      (item.medicationId && onOpenMedication) ||
+        (item.documentId && onOpenDocument) ||
+        (item.eventId && onOpenEvent)
+    );
   }
 
   if (!items.length) {

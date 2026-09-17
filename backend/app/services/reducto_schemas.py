@@ -53,7 +53,18 @@ CLASSIFICATION_SCHEMA: list[dict[str, Any]] = [
         "criteria": [
             "A hospital discharge letter summarizing an inpatient admission: "
             "admission/discharge dates, diagnosis, hospital course, discharge "
-            "recommendations."
+            "recommendations. In Romanian this is commonly titled 'bilet de "
+            "ieșire din spital', 'bilet de externare', 'fișă/foaie de "
+            "externare', or a 'scrisoare medicală' that itself documents an "
+            "inpatient stay (admission and discharge dates, an epicriză/"
+            "hospital-course narrative, and discharge recommendations) — a "
+            "'scrisoare medicală' without that inpatient structure is more "
+            "likely an outpatient specialist_consultation or referral "
+            "letter instead. A document remains discharge_summary even when "
+            "it also includes an embedded table of laboratory results — "
+            "classify by the document's own dominant, document-level "
+            "purpose (the discharge letter itself), not by the presence of "
+            "any one embedded section."
         ],
     },
     {

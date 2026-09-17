@@ -73,6 +73,49 @@ def test_real_pdf_accepted(patient):
     assert response.json()["status"] in ("queued", "processing", "done")
 
 
+def test_manual_discharge_section_pick_sets_canonical_document_type(patient):
+    # Pre-Phase-11 Romanian discharge classification closure: a doctor/
+    # care-partner manual upload never runs the real classifier (see
+    # process_upload_job's AUTO_CLASSIFY_SECTION gate) and previously
+    # left document_type NULL forever even when the user's own choice —
+    # "Discharge Summary" — is completely unambiguous. Real, previously-
+    # deferred gap now closed for the two section values that map to
+    # exactly one document_type each.
+    response = client.post(
+        "/upload/background",
+        headers=patient,
+        files={"file": ("real.pdf", io.BytesIO(REAL_PDF_BYTES), "application/pdf")},
+        data={"section": "discharge_summary"},
+    )
+    assert response.status_code == 200
+    assert response.json()["document_type"] == "discharge_summary"
+    assert response.json()["classification_status"] == "classified"
+
+
+def test_manual_bloodwork_section_pick_sets_canonical_document_type(patient):
+    response = client.post(
+        "/upload/background",
+        headers=patient,
+        files={"file": ("real.pdf", io.BytesIO(REAL_PDF_BYTES), "application/pdf")},
+        data={"section": "bloodwork"},
+    )
+    assert response.status_code == 200
+    assert response.json()["document_type"] == "laboratory_results"
+
+
+def test_manual_ambiguous_section_pick_leaves_document_type_null(patient):
+    # "scans"/"medications"/"hospitalizations"/"other" each cover more
+    # than one real document_type — must never be guessed.
+    response = client.post(
+        "/upload/background",
+        headers=patient,
+        files={"file": ("real.pdf", io.BytesIO(REAL_PDF_BYTES), "application/pdf")},
+        data={"section": "hospitalizations"},
+    )
+    assert response.status_code == 200
+    assert response.json()["document_type"] is None
+
+
 def test_disallowed_extension_rejected(patient):
     response = client.post(
         "/upload/background",

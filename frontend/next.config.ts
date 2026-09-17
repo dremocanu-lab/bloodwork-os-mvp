@@ -1,8 +1,32 @@
+import { execSync } from "node:child_process";
 import type { NextConfig } from "next";
 
-// Backend API origin the frontend talks to — must match lib/api.ts's
-// default/NEXT_PUBLIC_API_URL exactly, or every fetch/XHR call breaks under
-// connect-src. See docs/security/THREAT_MODEL.md for the header rationale.
+// Deployment-parity mechanism (P0 upload-reliability session): answers
+// "which exact frontend code is this browser using?" without needing a
+// Vercel dashboard visit. Vercel/Render both auto-inject their own
+// commit-SHA env var at build time — no dashboard config change needed,
+// unlike server-side envs which never reach the browser unless
+// re-exposed here. `git rev-parse` is a local-dev-only fallback (a
+// deployed build has no guarantee `.git` exists in its build context).
+function buildGitSha(): string {
+  const fromPlatform = process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT;
+  if (fromPlatform) return fromPlatform;
+  try {
+    return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
+
+// Backend API origin the frontend talks to — must match lib/api-base.ts's
+// resolved value, or every fetch/XHR call breaks under connect-src. See
+// docs/security/THREAT_MODEL.md for the header rationale. Deliberately
+// NOT using lib/api-base.ts's own throw-in-production guard here: this
+// value only widens/narrows a CSP allow-list entry (a misconfiguration
+// here fails loudly and immediately — every request blocked by the
+// browser — never silently, unlike the real API calls that module
+// guards), so a hard build failure over a missing env var isn't
+// justified for this one header value.
 const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL || "https://bloodwork-os-api.onrender.com";
 
 // Tuned for what this app actually uses (verified locally with a real
@@ -55,6 +79,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_GIT_SHA: buildGitSha(),
+  },
   async headers() {
     return [
       {

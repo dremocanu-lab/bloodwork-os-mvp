@@ -30,6 +30,7 @@ import ClinicalTimeline from "@/components/clinical-timeline";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import { formatPatientAge } from "@/lib/patient-age";
+import { resolveDocumentRoute, isDischargeShapedDocument } from "@/lib/document-routing";
 import type { BloodworkTrend, TrendPoint } from "@/lib/analytes/types";
 import { enrichBloodworkTrend } from "@/lib/analytes/match";
 import { Sparkline, TrendChart } from "@/components/ui/trend";
@@ -113,7 +114,23 @@ type DocumentCard = {
   uploaded_by?: UploadedBy | null;
   note_preview?: string | null;
   can_edit_note?: boolean;
+  /** Clinical Document Intelligence V3 Phase 9 — set only for a derived
+   * lab-report artifact ("lab_report"); null for every ordinary upload
+   * AND for a Reducto Split child (which also has parent_document_id but
+   * never sets this marker). */
+  derived_artifact_kind?: string | null;
+  parent_document_id?: number | null;
+  parent_document?: {
+    id: number;
+    report_name?: string | null;
+    filename?: string | null;
+    document_type?: string | null;
+  } | null;
 };
+
+function isDerivedLabArtifact(doc: DocumentCard) {
+  return doc.derived_artifact_kind === "lab_report";
+}
 
 type PatientEvent = {
   id: number;
@@ -128,6 +145,9 @@ type PatientEvent = {
   admitted_at: string;
   discharged_at?: string | null;
   doctor_name?: string | null;
+  /** Clinical Document Intelligence V3 Phase 10 — set only for a
+   * projected medication event (see timeline_projection.py). */
+  source_medication_id?: number | null;
 };
 
 type PatientProfileResponse = {
@@ -155,12 +175,13 @@ type PatientProfileResponse = {
 
 type TimelineItem = {
   id: string;
-  type: "document" | "event";
+  type: "document" | "event" | "medication";
   date: string;
   title: string;
   subtitle: string;
   documentId?: number;
   eventId?: number;
+  medicationId?: number;
   section?: string;
   documentType?: string | null;
   children?: TimelineItem[];
@@ -171,6 +192,13 @@ type AdmissionTimelineItem = TimelineItem & {
   admissionEnd?: string | null;
   parentRank: number;
 };
+
+/** Clinical Document Intelligence V3 Phase 10 — only a manually-created
+ * event acts as an admission grouping PARENT; a projected medication
+ * event (single point-in-time date, no window) never does. */
+function isMedicationEvent(event: PatientEvent) {
+  return event.event_type === "medication_started" || event.event_type === "medication_stopped";
+}
 
 type Medication = {
   id: number;
@@ -339,16 +367,31 @@ function getUploaderText(doc: DocumentCard) {
 
 function isDischargeDocument(doc: DocumentCard | TimelineItem) {
   return (
-    doc.section === "discharge_summary" ||
     ("section" in doc && doc.section === "hospitalizations") ||
-    ("report_type" in doc &&
-      (doc.report_type === "Discharge summary" || doc.report_type === "discharge_summary"))
+    isDischargeShapedDocument({
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    })
   );
 }
 
+// Canonical Document Intelligence V3 routing (see lib/document-
+// routing.ts) — resolveDocumentRoute already checks derived_artifact_kind
+// first; the `section === "hospitalizations"` legacy broadening above is
+// specific to this page's own document grouping, not part of the shared
+// resolver.
 function getStructuredDocumentPath(doc: DocumentCard | TimelineItem, documentId: number) {
-  if (isDischargeDocument(doc)) return `/documents/${documentId}/discharge`;
-  return `/documents/${documentId}`;
+  if ("section" in doc && doc.section === "hospitalizations") return `/documents/${documentId}/discharge`;
+  return resolveDocumentRoute(
+    {
+      derived_artifact_kind: "derived_artifact_kind" in doc ? doc.derived_artifact_kind : undefined,
+      document_type: "document_type" in doc ? doc.document_type : undefined,
+      section: doc.section,
+      report_type: "report_type" in doc ? doc.report_type : undefined,
+    },
+    documentId
+  );
 }
 
 function isInsideDateRange(date?: string | null, start?: string | null, end?: string | null) {
@@ -627,7 +670,10 @@ export default function PatientChartPage() {
         parentRank: 1,
       }));
 
-    const eventParents: AdmissionTimelineItem[] = (profile.events || []).map((event) => ({
+    const hospitalizationEvents = (profile.events || []).filter((event) => !isMedicationEvent(event));
+    const medicationEvents = (profile.events || []).filter(isMedicationEvent);
+
+    const eventParents: AdmissionTimelineItem[] = hospitalizationEvents.map((event) => ({
       id: `event-${event.id}`,
       type: "event" as const,
       date: event.discharged_at || event.admitted_at || "",
@@ -645,6 +691,24 @@ export default function PatientChartPage() {
       parentRank: 2,
     }));
 
+    // Clinical Document Intelligence V3 Phase 10 — a single point-in-time
+    // moment, never an admission-grouping parent (see isMedicationEvent).
+    const medicationTimelineItems: TimelineItem[] = medicationEvents.map((event) => ({
+      id: `medication-${event.id}`,
+      type: "medication",
+      date: event.admitted_at,
+      title: event.title,
+      subtitle: [
+        event.event_type === "medication_started" ? "Medication started" : "Medication completed",
+        event.description || null,
+      ]
+        .filter((part): part is string => Boolean(part))
+        .join(" · "),
+      eventId: event.id,
+      medicationId: event.source_medication_id ?? undefined,
+      section: "medications",
+    }));
+
     const admissionParents = [...dischargeParents, ...eventParents]
       .filter((parent) => parent.admissionStart || parent.admissionEnd)
       .sort((a, b) => {
@@ -659,7 +723,11 @@ export default function PatientChartPage() {
       title: getDocumentTitle(doc),
       // The timeline row renders the category itself, so it is not repeated
       // here - the subtitle carries only verification state and source.
-      subtitle: `${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
+      subtitle: isDerivedLabArtifact(doc)
+        ? doc.parent_document
+          ? `Derived from: ${doc.parent_document.report_name || doc.parent_document.filename}`
+          : ""
+        : `${doc.is_verified ? "Verified" : "Unverified"} · ${getUploaderText(doc)}`,
       documentId: doc.id,
       section: doc.section,
       documentType: doc.document_type,
@@ -689,7 +757,7 @@ export default function PatientChartPage() {
       .filter((doc) => !usedDocumentIds.has(doc.id) && !parentDocumentIds.has(doc.id))
       .map(documentToTimelineItem);
 
-    return [...admissionParents, ...standaloneDocuments].sort((a, b) =>
+    return [...admissionParents, ...standaloneDocuments, ...medicationTimelineItems].sort((a, b) =>
       compareDatesDescending(a.date, b.date)
     );
   }, [profile, allDocuments]);
@@ -747,7 +815,7 @@ export default function PatientChartPage() {
       hospitalizations:
         getSectionDocuments(profile, "discharge_summary").length +
         getSectionDocuments(profile, "hospitalizations").length +
-        (profile.events || []).length,
+        (profile.events || []).filter((event) => !isMedicationEvent(event)).length,
       needsReview: allDocuments.filter(needsDoctorReview).length,
       abnormal: sortedTrends.filter(isTrendAbnormal).length,
     };
@@ -774,6 +842,10 @@ export default function PatientChartPage() {
   function openTimelineDocument(documentId: number) {
     const doc = documentById.get(documentId);
     router.push(doc ? getStructuredDocumentPath(doc, documentId) : `/documents/${documentId}`);
+  }
+
+  function openTimelineMedication(medicationId: number) {
+    router.push(`/patients/${patientId}/medications/${medicationId}`);
   }
 
   async function openOriginal(documentId: number) {
@@ -803,25 +875,35 @@ export default function PatientChartPage() {
         key: "doc",
         header: "Document",
         sortable: true,
-        sortValue: (row) => getDocumentTitle(row),
-        render: (row) => (
-          <CellPrimary
-            title={getDocumentTitle(row)}
-            sub={
-              <>
-                {sectionLabel(row.section)}
-                {row.lab_name ? ` · ${row.lab_name}` : ""}
-                {row.sample_type ? ` · ${row.sample_type}` : ""}
-                {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
-                {row.section === "notes" && row.note_preview
-                  ? ` · "${row.note_preview.slice(0, 60)}${
-                      row.note_preview.length > 60 ? "…" : ""
-                    }"`
-                  : ""}
-              </>
-            }
-          />
-        ),
+        sortValue: (row) => (isDerivedLabArtifact(row) ? "Laboratory report" : getDocumentTitle(row)),
+        render: (row) =>
+          isDerivedLabArtifact(row) ? (
+            <CellPrimary
+              title="Laboratory report"
+              sub={
+                row.parent_document
+                  ? `Derived from: ${row.parent_document.report_name || row.parent_document.filename}`
+                  : undefined
+              }
+            />
+          ) : (
+            <CellPrimary
+              title={getDocumentTitle(row)}
+              sub={
+                <>
+                  {sectionLabel(row.section)}
+                  {row.lab_name ? ` · ${row.lab_name}` : ""}
+                  {row.sample_type ? ` · ${row.sample_type}` : ""}
+                  {row.referring_doctor ? ` · Dr. ${row.referring_doctor}` : ""}
+                  {row.section === "notes" && row.note_preview
+                    ? ` · "${row.note_preview.slice(0, 60)}${
+                        row.note_preview.length > 60 ? "…" : ""
+                      }"`
+                    : ""}
+                </>
+              }
+            />
+          ),
       },
       {
         key: "date",
@@ -879,23 +961,25 @@ export default function PatientChartPage() {
                 Open
               </button>
 
-              <Menu label="More document actions">
-                {!isNote ? (
-                  <MenuItem
-                    icon={<IconExternal size={13} />}
-                    onClick={() => openOriginal(row.id)}
-                  >
-                    {openingId === row.id ? "Opening…" : "View original"}
-                  </MenuItem>
-                ) : null}
-                {editableNote ? (
-                  <MenuItem
-                    onClick={() => router.push(`/patients/${patientId}/notes/${row.id}/edit`)}
-                  >
-                    Edit note
-                  </MenuItem>
-                ) : null}
-              </Menu>
+              {!isDerivedLabArtifact(row) ? (
+                <Menu label="More document actions">
+                  {!isNote ? (
+                    <MenuItem
+                      icon={<IconExternal size={13} />}
+                      onClick={() => openOriginal(row.id)}
+                    >
+                      {openingId === row.id ? "Opening…" : "View original"}
+                    </MenuItem>
+                  ) : null}
+                  {editableNote ? (
+                    <MenuItem
+                      onClick={() => router.push(`/patients/${patientId}/notes/${row.id}/edit`)}
+                    >
+                      Edit note
+                    </MenuItem>
+                  ) : null}
+                </Menu>
+              ) : null}
             </div>
           );
         },
@@ -1289,6 +1373,7 @@ export default function PatientChartPage() {
                   items={timelineItems}
                   maxItems={6}
                   onOpenDocument={openTimelineDocument}
+                  onOpenMedication={openTimelineMedication}
                   onSeeFullTimeline={() => setTab("timeline")}
                   showSeeFullTimeline={false}
                   emptyText="No timeline activity yet."
@@ -1445,6 +1530,7 @@ export default function PatientChartPage() {
                 items={timelineItems}
                 maxItems={60}
                 onOpenDocument={openTimelineDocument}
+                onOpenMedication={openTimelineMedication}
                 onSeeFullTimeline={() => router.push(`/patients/${patientId}/timeline`)}
                 showSeeFullTimeline
                 emptyText="No timeline activity yet."

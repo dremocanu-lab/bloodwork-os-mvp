@@ -135,7 +135,7 @@ REVISION_ADDITIONS: dict[str, dict] = {
         },
         "fk_tables": {"documents", "lab_results"},
     },
-    "4cf06d926267": {  # 0002_interop_phase1 -> 0003_phase3_hardening (head, on this branch)
+    "4cf06d926267": {  # 0002_interop_phase1 -> 0003_phase3_hardening
         "tables": set(),
         "columns": {
             ("interop_connections", "capability_fingerprint"),
@@ -147,16 +147,34 @@ REVISION_ADDITIONS: dict[str, dict] = {
         },
         "fk_tables": set(),
     },
-    # NOTE for the fix/clinical-document-intelligence-v3 reconciliation
-    # merge: that branch's alembic/versions/ has 4 more migrations after
-    # 0003_phase3_hardening (2398fbce8a2c) — phase6 (b52c5c35f707), phase7
-    # (ff84f15530a9), phase10 (a1c9d4e7f203), and source evidence field
-    # bboxes (c7d2e91a4b6f, head there). When merging this fixed
-    # REVISION_ADDITIONS design into that branch, re-add one entry per
-    # boundary for each of those 4 migrations (keyed by the revision each
-    # one revises FROM) — _validate_coverage() will refuse to run at all
-    # until every boundary in that branch's longer chain has an entry, so
-    # this is impossible to forget silently.
+    "2398fbce8a2c": {  # 0003_phase3_hardening -> phase6 derived artifact kind
+        "tables": set(),
+        "columns": {("documents", "derived_artifact_kind")},
+        "fk_tables": set(),
+    },
+    "b52c5c35f707": {  # phase6 derived artifact kind -> phase7 medication provenance
+        "tables": set(),
+        "columns": {
+            ("patient_medications", "source_document_id"),
+            ("patient_medications", "source_segment_id"),
+            ("patient_medications", "stop_date_basis"),
+            ("source_evidence", "medication_id"),
+        },
+        "fk_tables": {"patient_medications", "source_evidence"},
+    },
+    "ff84f15530a9": {  # phase7 medication provenance -> phase10 timeline projection
+        "tables": set(),
+        "columns": {
+            ("patient_events", "source_document_id"),
+            ("patient_events", "source_medication_id"),
+        },
+        "fk_tables": {"patient_events"},
+    },
+    "a1c9d4e7f203": {  # phase10 timeline projection -> source evidence field bboxes (head)
+        "tables": set(),
+        "columns": {("source_evidence", "field_bboxes_json")},
+        "fk_tables": set(),
+    },
 }
 
 # The one specific production legacy variant this module knows how to

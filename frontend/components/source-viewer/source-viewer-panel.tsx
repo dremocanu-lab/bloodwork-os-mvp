@@ -310,6 +310,19 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
     data?.bbox_height != null &&
     isValidUnitBox(data.bbox_x, data.bbox_y, data.bbox_width, data.bbox_height);
 
+  // Exact per-field citation rects, when the backend has them — preferred
+  // over both row_bbox and bbox because each one is the provider's own
+  // real, unpadded citation for a single cited field. Rendering each rect
+  // separately (rather than one union box) is what fixes the coarse-
+  // highlight bug: on a dense lab table, a padded union of test_name/
+  // value/unit/reference_range for one row can bleed into a neighboring
+  // row, but the individual rects never do — there's no padding to bleed
+  // with.
+  const validFieldBboxes = (data?.field_bboxes ?? []).filter((rect) =>
+    isValidUnitBox(rect.x, rect.y, rect.width, rect.height)
+  );
+  const hasFieldBboxes = validFieldBboxes.length > 0;
+
   const highlightBox = hasRowBbox
     ? {
         x: data!.row_bbox_x as number,
@@ -319,6 +332,15 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
       }
     : hasFieldBbox
     ? { x: data!.bbox_x as number, y: data!.bbox_y as number, width: data!.bbox_width as number, height: data!.bbox_height as number }
+    : null;
+
+  // The actual set of rects to render: exact per-field rects when
+  // available, otherwise the single row/field box above (kept as a
+  // one-element list so the rendering code below only has one path).
+  const highlightBoxes = hasFieldBboxes
+    ? validFieldBboxes
+    : highlightBox
+    ? [highlightBox]
     : null;
 
   // CRITICAL: a highlight must only ever render on the page its own
@@ -333,7 +355,7 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
   // Reducto responses, see BRAGI_REDUCTO_PLAN.md), so this is a plain
   // equality check, no off-by-one conversion needed.
   const evidenceMatchesCurrentPage = data?.page_number === currentPage;
-  const showBbox = data?.precision === "exact_bbox" && highlightBox != null && evidenceMatchesCurrentPage;
+  const showBbox = data?.precision === "exact_bbox" && highlightBoxes != null && evidenceMatchesCurrentPage;
 
   return (
     <div

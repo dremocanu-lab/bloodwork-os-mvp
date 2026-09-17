@@ -1,6 +1,7 @@
 ﻿import axios from "axios";
+import { getApiBaseUrl } from "./api-base";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://bloodwork-os-api.onrender.com";
+const API_URL = getApiBaseUrl();
 
 export const api = axios.create({
   baseURL: API_URL,

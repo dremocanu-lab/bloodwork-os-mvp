@@ -56,6 +56,14 @@ export type SourceEvidenceView = {
   row_bbox_y: number | null;
   row_bbox_width: number | null;
   row_bbox_height: number | null;
+  // Exact, unpadded per-field citation rects (test_name/value/unit/
+  // reference_range — whichever the provider cited), one entry per field,
+  // each the provider's own real bbox verbatim — no union, no padding.
+  // When present, this is preferred over row_bbox_* for rendering, since
+  // it highlights only the cited fields instead of one padded box that
+  // can bleed into a neighboring row on a dense table. Null for older
+  // rows/non-Reducto evidence; callers fall back to row_bbox_*/bbox_*.
+  field_bboxes: { label: string | null; x: number; y: number; width: number; height: number }[] | null;
   source_text: string | null;
   provider: string | null;
   precision: SourcePrecision;

@@ -12,6 +12,8 @@ nor response shape.
 
 from __future__ import annotations
 
+import json
+
 from fastapi import APIRouter, Depends, HTTPException
 from sqlalchemy.orm import Session
 
@@ -67,6 +69,29 @@ def get_source_evidence_view(
     else:
         precision = "document_only"
 
+    field_bboxes = None
+    if evidence.field_bboxes_json:
+        try:
+            parsed = json.loads(evidence.field_bboxes_json)
+        except (TypeError, ValueError):
+            parsed = None
+        if isinstance(parsed, list) and parsed:
+            field_bboxes = [
+                {
+                    "label": rect.get("label"),
+                    "x": rect.get("x"),
+                    "y": rect.get("y"),
+                    "width": rect.get("width"),
+                    "height": rect.get("height"),
+                }
+                for rect in parsed
+                if isinstance(rect, dict)
+                and rect.get("x") is not None
+                and rect.get("y") is not None
+                and rect.get("width") is not None
+                and rect.get("height") is not None
+            ] or None
+
     return {
         "source_evidence_id": evidence.id,
         "document_id": document.id,
@@ -83,6 +108,7 @@ def get_source_evidence_view(
         "row_bbox_y": evidence.row_bbox_y,
         "row_bbox_width": evidence.row_bbox_width,
         "row_bbox_height": evidence.row_bbox_height,
+        "field_bboxes": field_bboxes,
         "source_text": evidence.source_text,
         "provider": evidence.provider,
         "precision": precision,

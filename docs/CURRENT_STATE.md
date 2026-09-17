@@ -185,6 +185,170 @@ trusted over this file:
    Render/Vercel (Ask Bragi Phase 5) — that action item is done, the
    section was just never rewritten.
 
+## Clinical Document Intelligence V3 — PARTIAL (Phases 0-10 of 21)
+
+Branch `fix/clinical-document-intelligence-v3`. A real, verified fix for
+the Ask Bragi P0 bug ("Ask Bragi could not process this message") is
+done: `ASK_BRAGI_MAX_TOOL_ROUNDS` (4) was too tight for broad multi-
+analyte questions like "what changed in my latest bloodwork" — fixed via
+prompt guidance + raising the budget to 8, both proven with tests that
+fail under the old default and pass under the new one. A RightWorkspace
+geometry Playwright regression was also added (Phase 2). Phases 3-5
+built a real, tested structured-document pipeline: a typed, versioned
+`StructuredClinicalDocument` schema; deterministic source segmentation
+and canonical-section consolidation; deterministic Clinical Course
+dated-event extraction with chronology/plausibility checks; and a full
+end-to-end orchestration (`discharge_parser.py`), all proven against the
+contract's own required suspicious-data fixtures. Phase 6 added embedded
+lab extraction from a discharge's laboratory_results section into REAL,
+canonical `LabResult` rows — feeding the existing
+`lab_resolver.resolve_analyte()`, never a private alias dictionary or a
+second lab datastore — plus one derived "lab_report" `Document` artifact
+per coherent source report, with real deletion-cascade and idempotency
+guarantees, DB-proven with 44 new tests. Phase 7 added medication
+extraction/context classification from a discharge's medication-bearing
+sections into REAL, canonical `PatientMedication` rows — feeding the
+existing status vocabulary, never a second medication table — with
+deterministic Romanian/English duration parsing, real calendar-month
+end-date derivation, an exact 4-tier start-date priority that never uses
+an upload/ingestion timestamp, and explicit preservation of same-drug
+conflicts and explicit-vs-derived date disagreements, DB-proven with 81
+new tests. **Phase 8 (NEW) rebuilt the discharge/clinical-document
+reader** around the canonical `StructuredClinicalDocument` contract: a
+new `GET /documents/{id}/clinical-reader` API, a rewritten reader page,
+and 7 new reusable frontend components (a canonical section outline,
+ONE `StructuredLabReport` component for both embedded and standalone
+use, a Clinical Course chronological event timeline that never
+"corrects" a suspicious source date, honest PDF/non-PDF provenance
+reusing the existing source-viewer system, and derived-vs-explicit
+medication end-date UX with honest conflict presentation) — proven with
+17 new backend tests and 6 new real-browser Playwright tests against a
+synthetic discharge fixture, and confirmed to render BOTH an old legacy
+discharge document and a real forward-parsed one through the exact same
+contract. **None of Phases 3-8's EXTRACTION/PERSISTENCE code is wired
+into the live discharge upload write path yet — deliberate, not an
+oversight (a brand-new upload today still renders correctly through
+Phase 8's reader, just without labs/medications attached yet, since
+nothing has extracted them for it; see the handoff's sequencing note
+and Phase 8's own detailed reasoning for keeping this deferred).
+**Phase 9 (NEW) made a derived "lab_report" `Document` a real,
+independently openable Documents entry**: a new standalone
+`/documents/{id}/lab-report` route renders `StructuredLabReport(mode=
+"standalone")` — reused verbatim from Phase 8, never duplicated —
+against the SAME canonical `LabResult` rows Phase 6 created, never a
+copy; Documents/patient-profile cards show a restrained "Derived from:
+[parent]" line (no badge, no alarming styling); direct deletion of a
+derived artifact is now rejected (still removable only via its
+parent's cascade); a genuine Phase-6 gap (the derived artifact's own
+`lab_result_ids` pointer was declared but never populated) was
+completed to make all of this possible — proven with 15 new backend
+tests and 8 new real-browser Playwright tests. **Phase 10 (NEW) made
+canonical medication state changes appear on the patient's Timeline** as
+real, idempotent `PatientEvent` projections: a new `timeline_
+projection.py` service reads already-canonical `PatientMedication` rows
+and projects "medication started"/"medication completed" events (never
+inventing a date, never asserting a state change a conflicting row can't
+support, never duplicating on reprocessing), coexisting with manually-
+created hospitalization events on the SAME table — no second Timeline
+system. A deliberate architecture decision: a clinical document/derived
+lab artifact is NOT separately projected, since it already appeared on
+the Timeline via the pre-existing client-side document/event fusion —
+Phase 10 fixed that mechanism's derived-artifact title instead of
+building a redundant path, and along the way found and fixed a real bug
+that would have made a projected medication event corrupt the existing
+admission-grouping logic across four frontend files — proven with 15 new
+backend tests and 7 new real-browser Playwright tests. **A post-Phase-10
+integration-correction pass (NEW)** fixed real bugs real manual QA
+found: 5 duplicated frontend document-routing decisions consolidated
+into one shared resolver (`lib/document-routing.ts`) — checking
+`document_type` alongside the legacy `section`/`report_type` signals,
+never replacing them — plus a real gap where both Timeline pages had no
+derived-artifact check at all; a real Ask Bragi bug where the discharge
+reader passed a document id as `patientId` for doctors; and two real UI
+bugs (an upload-page width cap, a misaligned processing-indicator dot).
+Deliberately NOT attempted: an exact word-level source-highlighting
+engine (found to require genuinely new provenance engineering, not a
+small fix) and Phase 11 in its entirety. **A subsequent pre-Phase-11
+exact-provenance session (NEW) fixed the real coarse-highlight root
+cause**: `_union_row_bbox()`'s fixed-ratio padding was bleeding a lab
+row's highlight into a neighboring row on a dense table (e.g. NEUT#
+covering PCT/NRBC#) — Reducto's own per-field citations were already
+precise, so the fix persists and renders those real, unpadded per-field
+rects (new additive `SourceEvidence.field_bboxes_json` column) instead
+of tuning the padding formula, proven with a dedicated adjacent-row
+fixture. A real select-text-to-"Show in original" interaction now also
+exists for lab/medication rows (same shared `openSourceEvidence`
+engine, a new small contextual menu on text selection), proven with 13
+new backend tests and 7 new Playwright tests. Arbitrary narrative-text
+(Clinical Course paragraphs etc.) exact highlighting remains
+unimplemented — confirmed to require enabling citations on Reducto's
+reader-section extraction (currently `citations=False`) plus new
+segment-level page/offset persistence, a genuinely larger upstream gap,
+not attempted. **A subsequent Romanian discharge classification closure
+session (NEW) fixed a real, reproduced classification bug**: a genuine
+inpatient discharge letter titled "BILET DE IEȘIRE DIN SPITAL /
+SCRISOARE MEDICALĂ" — a title the legacy classifier had zero keyword
+coverage for (only "bilet de externare" existed) — combined with a
+realistic dense embedded lab table, scored a near-tie between
+discharge_summary and laboratory_results, forcing an unnecessary
+confirmation prompt on an otherwise-clear discharge letter. Fixed by
+adding the missing keywords (verified: discharge margin went from 0.5
+to 5.5) and by naming the same Romanian titles explicitly in Reducto's
+own classification criteria (not independently live-verified against
+the real API this session — no safe synthetic-PDF fixture process
+exists yet). Also closed a real, previously-deferred gap where a
+doctor/care-partner manual "Discharge Summary" section pick never set
+`document_type` at all. A new, genuinely end-to-end test suite (real
+Romanian text → real classifier → real persisted Document → real Phase
+8 reader in the browser) closes the exact "routing was tested,
+classification never was" boundary the prior routing-consolidation pass
+left open. **A subsequent P0 AI document classification + upload
+reliability session (NEW) first audited deployment parity**: found real
+manual QA cannot be proven to have exercised this branch at all — `main`
+is 61 commits/5 days stale, is the only branch this repo documents as
+auto-deploying, and a leftover local worktree with no env config would
+silently hit the real production backend with 3-month-stale frontend
+code. Added a permanent fix: `GET /health/version` (git_sha +
+environment) plus a frontend build-SHA display, so this is never again
+unanswerable. Then replaced brittle keyword-only auto-classification
+with a real AI semantic classifier (`ai_document_classifier.py` +
+`document_classification_service.py`) constrained to the existing
+`DocumentType` taxonomy, using the same OpenAI structured-output pattern
+already proven in Ask Bragi — AI is the primary auto-classifier when it
+succeeds confidently; Reducto/legacy remain real pre-signals and the
+fallback on any AI failure, never a failed upload. Also found and fixed
+the real, confirmed cause of "upload remained processing": the
+backend's security-scan quarantine status (`security_quarantined`) had
+no frontend mapping at all and fell through to "queued" (active)
+forever — proven both ways (fails without the fix, passes with it). The
+processing-dot geometry was investigated with real pixel measurement
+(not inspection alone): the current code already centers the dot within
+a fraction of a pixel of the text's visual center — the reported "still
+too high" symptom most likely reflects the same stale-deployment risk
+found above, not a remaining rendering bug; a real, defensible CSS
+improvement (a testable DOM dot, corrected line-height) was made anyway.
+**A subsequent production-deployment-closure session (NEW) CONFIRMED via
+authenticated Render/Vercel CLI access** (not just repo inference) that
+the real production site (app.bragi.health + the Render backend) was
+running `main` — 66 commits, 5 days stale — the entire time, fully
+explaining every "doesn't match the branch" manual QA report. Added a
+frontend `GET /api/version` (mirroring the backend's own) and removed a
+real, confirmed danger: 4 files silently fell back to the REAL
+production API URL when unconfigured, which a leftover local worktree
+with no env files would have silently exploited. A PR was opened from
+this branch into `main`, but **deliberately NOT merged**: the one
+remaining blocker is that Render's Pre-Deploy Command (the mechanism
+that runs this branch's 4 new — all additive/nullable — Alembic
+migrations before new code starts serving traffic) is confirmed, via
+CLI, to still be unconfigured, and configuring it was blocked by this
+session's own safety tooling as a production-infrastructure change
+requiring the user's direct action. Phases 11-21 of the originating
+contract (Ask-Bragi
+retrieval hardening and everything downstream) are entirely
+unimplemented** — see
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
+full, section-by-section honest accounting and how to continue.
+
 ## Phase 4 (backend modularization) — this document's own origin
 
 `app/main.py` went from an 8,141-line MVP-era monolith to a 2,017-line
