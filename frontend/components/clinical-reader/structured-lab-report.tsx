@@ -21,7 +21,7 @@ import { useMemo } from "react";
 import { LabValue, Status } from "@/components/ui";
 import { useLanguage } from "@/lib/i18n";
 import type { ReaderLabResult } from "@/lib/clinical-document-schema";
-import { ReaderSourceAction } from "./reader-source-action";
+import { isPdfContentType, ReaderSourceAction } from "./reader-source-action";
 
 type Props = {
   labs: ReaderLabResult[];
@@ -198,10 +198,29 @@ export function StructuredLabReport({ labs, documentContentType, mode }: Props) 
             <tbody>
               {rows.map((lab) => {
                 const isConflict = conflictIds.has(lab.id);
+                // Selection-based provenance (in addition to the explicit
+                // "View source" button below): tagging the cells that
+                // hold the document's own extracted text lets a reader
+                // select the test name/value/reference themselves and get
+                // the same "Show in original" action via
+                // SelectionSourceMenu — same shared openSourceEvidence
+                // mechanism, never a second lookup path. Only tagged when
+                // there's a real evidence id AND the document is PDF (the
+                // shared viewer's only rendering path) — the same honesty
+                // gate ReaderSourceAction itself applies. Deliberately
+                // scoped to individual spans rather than the whole row:
+                // the observation-date meta line and the "Requires
+                // review" badge just below are Bragi UI semantics, not
+                // the document's own text, and must never offer this
+                // action.
+                const canResolveSource = lab.source_evidence_id != null && isPdfContentType(documentContentType);
+                const sourceAttr = canResolveSource ? lab.source_evidence_id : undefined;
                 return (
                   <tr key={lab.id} className={isConflict ? "conflict-row" : undefined}>
                     <td data-label={copy.test}>
-                      <div style={{ fontWeight: 600 }}>{labDisplayName(lab)}</div>
+                      <div style={{ fontWeight: 600 }} data-source-evidence-id={sourceAttr}>
+                        {labDisplayName(lab)}
+                      </div>
                       {lab.observation_datetime ? (
                         <div className="b-meta" style={{ fontSize: "var(--fs-caption)" }}>
                           {formatDate(lab.observation_datetime)}
@@ -213,10 +232,10 @@ export function StructuredLabReport({ labs, documentContentType, mode }: Props) 
                         </div>
                       ) : null}
                     </td>
-                    <td className="num" data-label={copy.result}>
+                    <td className="num" data-label={copy.result} data-source-evidence-id={sourceAttr}>
                       <LabValue value={lab.value ?? "—"} unit={lab.unit} flag={lab.flag} />
                     </td>
-                    <td data-label={copy.reference}>{lab.reference_range || "—"}</td>
+                    <td data-label={copy.reference} data-source-evidence-id={sourceAttr}>{lab.reference_range || "—"}</td>
                     <td data-label={copy.flag}>{lab.flag || "—"}</td>
                     <td data-label={copy.source}>
                       <ReaderSourceAction sourceEvidenceId={lab.source_evidence_id} documentContentType={documentContentType} />

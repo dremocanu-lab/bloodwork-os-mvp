@@ -10,7 +10,7 @@ import { useMemo } from "react";
 import { Status, type StatusTone } from "@/components/ui";
 import { useLanguage } from "@/lib/i18n";
 import type { ReaderMedication } from "@/lib/clinical-document-schema";
-import { ReaderSourceAction } from "./reader-source-action";
+import { isPdfContentType, ReaderSourceAction } from "./reader-source-action";
 
 type Props = {
   medications: ReaderMedication[];
@@ -104,6 +104,13 @@ export function MedicationList({ medications, documentContentType }: Props) {
         const conflictLabel = conflictGroups.get(med.id);
         const statusLabel = STATUS_LABEL[med.status]?.[language === "ro" ? "ro" : "en"] || med.status;
         const endDateConflict = med.stop_date_basis === "explicit_with_derived_conflict";
+        // Selection-based provenance, tagged ONLY on the name/dose/route/
+        // frequency block below — real, source-derived extraction output.
+        // Deliberately NOT applied to the "Calculated from a documented
+        // course" note, conflict notes, or status labels just below: those
+        // are Bragi UI semantics about the data, not the document's own
+        // text, and must never offer a "Show in original" action.
+        const canResolveSource = med.source_evidence_id != null && isPdfContentType(documentContentType);
 
         return (
           <div
@@ -119,7 +126,7 @@ export function MedicationList({ medications, documentContentType }: Props) {
             }}
           >
             <div style={{ display: "flex", justifyContent: "space-between", gap: 12, flexWrap: "wrap", alignItems: "flex-start" }}>
-              <div style={{ minWidth: 0 }}>
+              <div style={{ minWidth: 0 }} data-source-evidence-id={canResolveSource ? med.source_evidence_id : undefined}>
                 <div style={{ fontWeight: 700, fontSize: "var(--fs-body-lg, 15px)" }}>{med.name}</div>
                 <div className="b-meta" style={{ fontSize: "var(--fs-caption)", marginTop: 2 }}>
                   {[med.dose_strength, med.route_form, med.frequency].filter(Boolean).join(" · ") || "—"}
