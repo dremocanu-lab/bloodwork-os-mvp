@@ -116,8 +116,14 @@ test.describe("Romanian discharge classification -> reader closure", () => {
       await page.goto(`/documents/${seed.document_id}/discharge`);
 
       // Real structured content from the seeded legacy discharge payload.
+      // Clinical Reader Intelligence V2 made "Overview" the default
+      // landing entry (never a raw diagnosis dump on first paint) — the
+      // real diagnosis content is one click away on its own section,
+      // same as any other canonical section.
       await expect(page.getByRole("button", { name: "Clinical course" })).toBeVisible();
-      await expect(page.getByRole("button", { name: "Diagnoses" })).toBeVisible();
+      const diagnosesButton = page.getByRole("button", { name: "Diagnoses" });
+      await expect(diagnosesButton).toBeVisible();
+      await diagnosesButton.click();
       await expect(page.getByText("D45")).toBeVisible();
 
       // Old generic-reader-only UI must not be present on this page.
