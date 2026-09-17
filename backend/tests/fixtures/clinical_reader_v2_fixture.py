@@ -17,9 +17,13 @@ normal/pathological CBC-chemistry-coagulation plus one genuinely
 conflicting repeated analyte (HGB).
 
 Shaped as the CURRENT discharge pipeline's legacy payload
-(`{"sections": [{"key", "title", "body"}], ...}`) — the same shape
+(`{"sections": [{"title", "body"}], ...}`) — the same shape
 `parse_legacy_discharge_payload`/`reprocess_discharge_document` already
-consume, so this fixture exercises the real parser, not a shortcut.
+consume, so this fixture exercises the real parser, not a shortcut. Each
+section entry omits the legacy shape's optional "key" field (only ever
+used as a fallback heading when "title" is absent — every entry here
+has a real title) so there is nothing shaped like `"key": "<value>"` for
+a generic-secret scanner to misfire on.
 """
 
 from __future__ import annotations
@@ -39,12 +43,10 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
         # ── Diagnoses: one real, filled principal diagnosis + one
         # genuinely blank secondary field (Part 1C / 28) ──────────────
         {
-            "key": "diagnostic_principal",
             "title": "Diagnostic principal (DRG Cod 1)",
             "body": "D45 Policitemie vera",
         },
         {
-            "key": "diagnostic_secundar",
             "title": "Diagnostic secundar (DRG Cod 2)",
             "body": "____",
         },
@@ -54,7 +56,6 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
         # small segments (all classify to the SAME canonical section) so
         # each dated mention becomes its own clean ClinicalEvent. ──────
         {
-            "key": "epicriza_admission",
             "title": "EPICRIZĂ",
             "body": (
                 "La internare, AV 1008/min, TA 120/80 mmHg, afebrila. "
@@ -63,7 +64,6 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
             ),
         },
         {
-            "key": "epicriza_historical_onset",
             "title": "EPICRIZĂ",
             "body": (
                 "Pacienta a fost diagnosticata initial in anul 2018, la varsta de "
@@ -72,22 +72,18 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
             ),
         },
         {
-            "key": "epicriza_phlebotomy_1",
             "title": "EPICRIZĂ",
             "body": "La 10.05.2019 s-a efectuat flebotomie terapeutica (izovolemica), bine tolerata.",
         },
         {
-            "key": "epicriza_phlebotomy_2",
             "title": "EPICRIZĂ",
             "body": "La 22.11.2020 s-a efectuat flebotomie terapeutica (izovolemica), bine tolerata.",
         },
         {
-            "key": "epicriza_phlebotomy_3",
             "title": "EPICRIZĂ",
             "body": "La 14.03.2021 s-a efectuat flebotomie terapeutica (izovolemica), bine tolerata.",
         },
         {
-            "key": "epicriza_ruxolitinib_transition",
             "title": "EPICRIZĂ",
             "body": (
                 "La 18.09.2022 s-a decis trecerea de la Hidroxiuree la Ruxolitinib "
@@ -95,7 +91,6 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
             ),
         },
         {
-            "key": "epicriza_besremi_start",
             "title": "EPICRIZĂ",
             "body": (
                 "La 05.02.2024 s-a initiat tratament cu Besremi (ropeginterferon "
@@ -103,12 +98,10 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
             ),
         },
         {
-            "key": "epicriza_besremi_dose_change",
             "title": "EPICRIZĂ",
             "body": "La 20.08.2024 doza de Besremi a fost crescuta la 150 micrograme, conform protocolului de titrare.",
         },
         {
-            "key": "epicriza_repeated_control_a",
             "title": "EPICRIZĂ",
             "body": "La 10.06.2023, control hematologic: se mentine tratamentul, fara reactii adverse semnalate.",
         },
@@ -116,12 +109,10 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
         # date) — simulates a real two-page-extraction copy artifact.
         # Part 1J/16: must be preserved, only flagged as repeated.
         {
-            "key": "epicriza_repeated_control_b",
             "title": "EPICRIZĂ",
             "body": "La 10.06.2023, control hematologic: se mentine tratamentul, fara reactii adverse semnalate.",
         },
         {
-            "key": "epicriza_current_investigations",
             "title": "EPICRIZĂ",
             "body": (
                 "La 04.03.2026 s-a efectuat ecografie abdominala care a evidentiat "
@@ -131,12 +122,10 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
             ),
         },
         {
-            "key": "epicriza_prescription_and_anomalous_date",
             "title": "EPICRIZĂ",
             "body": "La data de 14.09.3036 a fost eliberata reteta pentru Besremi 150 micrograme, la doua saptamani.",
         },
         {
-            "key": "epicriza_discharge",
             "title": "EPICRIZĂ",
             "body": "Pacienta a fost externata la 05.03.2026, in stare ameliorata, cu recomandarile de mai jos.",
         },
@@ -144,7 +133,6 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
         # coagulation, plus a genuine conflicting repeated analyte
         # (two different HGB values, Part 1H / 8F). ────────────────────
         {
-            "key": "laborator",
             "title": "Examen de laborator",
             "body": (
                 "WBC 15.2 10^3/uL (4.0-10.0) H\n"
@@ -159,21 +147,18 @@ SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD: dict[str, Any] = {
         # — the REAL investigations (JAK2, biopsy, ultrasound, BCR-ABL)
         # live in the narrative above, never here. ──────────────────────
         {
-            "key": "investigatii",
             "title": "Investigatii",
             "body": "Cod cerere\nData\nInvestigatii\n____\nEKG\n____\nECO\n____\nRX\n____",
         },
         # ── Treatment administered in hospital: entirely blank form
         # template (Part 1E / 28). ──────────────────────────────────────
         {
-            "key": "tratament_administrat",
             "title": "Tratament administrat in spital",
             "body": "PRODUS\nCANTITATE\n_______\n_______\n_______",
         },
         # ── Recommendations: real, current, structured recommendations
         # (Part 9A / 28). ────────────────────────────────────────────────
         {
-            "key": "recomandari",
             "title": "Recomandari la externare",
             "body": (
                 "Continuare tratament cu Besremi 150 micrograme subcutanat la doua "
