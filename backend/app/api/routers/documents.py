@@ -125,6 +125,23 @@ ALLOWED_SECTIONS = {
     "other",
 }
 
+# A doctor/care-partner manual upload (POST /upload/background) picks a
+# legacy `section` from a coarse 6-value picklist, never runs the real
+# classifier (see process_upload_job's `if job.section ==
+# AUTO_CLASSIFY_SECTION` gate), and so has always left `document_type`
+# NULL even when the user's own choice is completely unambiguous — a
+# real, previously-deferred gap (docs/clinical_document_v3/
+# ROUTER_AUDIT.md's "Deliberately not changed"), not a guess. Only
+# `discharge_summary`/`bloodwork` map 1:1 onto exactly one
+# `DocumentType` each (`document_taxonomy.LEGACY_SECTION_BY_DOCUMENT_
+# TYPE`'s own inverse); `medications`/`scans`/`hospitalizations`/`other`
+# each cover multiple real document types and are deliberately NOT
+# guessed here.
+UNAMBIGUOUS_SECTION_DOCUMENT_TYPE = {
+    "discharge_summary": "discharge_summary",
+    "bloodwork": "laboratory_results",
+}
+
 # Bounded concurrency for multi-file batch uploads (POST /upload/batch): a
 # batch's files are dispatched to this pool instead of FastAPI's
 # BackgroundTasks, which runs tasks strictly one-at-a-time in-process — a
@@ -414,6 +431,8 @@ async def create_background_upload(
         except Exception:
             pass
 
+    unambiguous_document_type = UNAMBIGUOUS_SECTION_DOCUMENT_TYPE.get(section)
+
     job = models.UploadJob(
         user_id=current_user.id,
         patient_id=patient.id,
@@ -426,6 +445,14 @@ async def create_background_upload(
         message="Queued for processing.",
         error=None,
         document_id=None,
+        # Real classification never runs on this path (see the module
+        # docstring on UNAMBIGUOUS_SECTION_DOCUMENT_TYPE above) — this is
+        # not a guess, only ever set for the two section values that
+        # already mean exactly one document_type.
+        document_type=unambiguous_document_type,
+        classification_status="classified" if unambiguous_document_type else None,
+        classification_confidence=1.0 if unambiguous_document_type else None,
+        classification_source="user_selected" if unambiguous_document_type else None,
         created_at=now_iso(),
         started_at=None,
         finished_at=None,
