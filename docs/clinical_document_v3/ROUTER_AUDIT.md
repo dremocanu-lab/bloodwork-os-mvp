@@ -144,4 +144,66 @@ and were confirmed already correct.
   everywhere is a real, separate improvement a future session could make
   to `process_upload_job`, out of scope for this routing-consolidation
   pass (which deliberately treats `document_type` as an ADDITIVE signal
-  specifically because it isn't reliable everywhere yet).
+  specifically because it isn't reliable everywhere yet). **Partially
+  closed in a later session** — see "Routing vs. classification" below.
+
+## Routing vs. classification — two independent things, both now verified (pre-Phase-11 closure session)
+
+This audit's original claim — "fresh Romanian discharge upload now opens
+the Phase 8 reader" — was true but **incomplete**: every test built for
+it (this audit's own `routing-and-integration-fixes.spec.ts`, and every
+`seed_e2e_discharge_document.py`-based fixture) constructs a `Document`/
+`UploadJob` with `document_type`/`section` **already hardcoded** to
+`"discharge_summary"`. That proves ROUTING (does correct metadata reach
+the right reader) but says nothing about CLASSIFICATION (does the real
+classifier, given a real document's actual text, produce that correct
+metadata in the first place). A later manual-QA report — a real/
+synthetic Romanian document titled "BILET DE IEȘIRE DIN SPITAL /
+SCRISOARE MEDICALĂ" not visibly reaching the reader — exposed exactly
+this gap, and a dedicated session closed it. Full accounting:
+`docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`'s "Romanian
+Discharge Classification / Reader Closure" section. Summary:
+
+- **Real, reproduced classification bug found and fixed**: the legacy
+  rule-based classifier (`document_classifier.py`) had a keyword entry
+  for "bilet de externare" but NONE for "bilet de iesire (din spital)" —
+  a different, equally common Romanian discharge-letter title with no
+  shared substring. A realistic reproduction (the real title + a dense
+  embedded hematology lab table, closely matching the reported document)
+  scored discharge_summary=14.5 vs laboratory_results=14.0 — correctly
+  the winner, but a margin of 0.5 (below `CONFIDENT_MARGIN_THRESHOLD=
+  1.5`) forced an unnecessary `needs_confirmation` on an otherwise-clear
+  discharge letter. Adding the missing keywords widened the margin to
+  19.5 vs 14.0 (confidence 1.0, `classified`). Reducto's `CLASSIFICATION_
+  SCHEMA` criteria for `discharge_summary` was also English-only (unlike
+  sibling categories, which DO embed their own Romanian term in the
+  criteria text — `hospital_admission_note` names "foaie de internare"
+  directly) — updated to name the same Romanian titles explicitly and to
+  instruct the model that embedded lab tables don't change a document's
+  own dominant, document-level purpose. **Not independently live-tested
+  against the real Reducto API this session** (no established, safe
+  synthetic-PDF-generation fixture exists in this repo to do so without
+  adding a new PDF-authoring dependency) — a real gap, honestly flagged,
+  not silently assumed fixed.
+- **Real, closed persistence gap**: `POST /upload/background` (the
+  doctor/care-partner manual-section-picklist path) now sets
+  `UploadJob.document_type` directly for the two `section` values that
+  map onto exactly one `DocumentType` each — `discharge_summary` and
+  `bloodwork` — via a new `UNAMBIGUOUS_SECTION_DOCUMENT_TYPE` map in
+  `documents.py`. The other four section values (`medications`/`scans`/
+  `hospitalizations`/`other`) are still deliberately left `NULL`: each
+  covers more than one real `DocumentType`, and guessing one would be
+  worse than leaving it unset.
+- **New end-to-end test closing the real "never tested" boundary**:
+  `backend/tests/test_romanian_discharge_classification_e2e.py` runs
+  real Romanian source text through the REAL upload pipeline (`POST
+  /upload/batch`, `REDUCTO_ENABLED` forced off for determinism, OCR
+  stubbed to return the fixture text verbatim — nothing else mocked) —
+  proving persisted `Document.document_type`/`section` and `GET
+  /documents/{id}/clinical-reader` all the way through, not just
+  `classify_document_text()` in isolation. A new Playwright suite,
+  `frontend/e2e/romanian-discharge-classification.spec.ts`, seeds via a
+  new script that calls the real classifier (never hardcodes
+  `document_type`, and fails loudly if the classifier doesn't return
+  `discharge_summary`) and proves the actual Phase 8 reader renders —
+  Documents-list click-through, direct URL, hard refresh, and mobile.
