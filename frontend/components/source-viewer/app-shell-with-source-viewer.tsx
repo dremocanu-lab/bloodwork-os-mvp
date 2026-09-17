@@ -21,6 +21,7 @@
 
 import { useLayoutEffect, useEffect, useRef, useState } from "react";
 import { SourceViewerProvider, useSourceViewer } from "./source-viewer-context";
+import { SelectionSourceMenu } from "./selection-source-menu";
 import { AskBragiPanelProvider, useAskBragiPanelOptional } from "@/components/ask-bragi/ask-bragi-panel-context";
 import { RightWorkspace } from "@/components/ask-bragi/right-workspace";
 
@@ -195,6 +196,7 @@ export function AppShellWithSourceViewer({ children }: { children: React.ReactNo
     <AskBragiPanelProvider>
       <SourceViewerProvider>
         <Shell>{children}</Shell>
+        <SelectionSourceMenu />
       </SourceViewerProvider>
     </AskBragiPanelProvider>
   );

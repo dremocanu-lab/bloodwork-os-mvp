@@ -2022,6 +2022,17 @@ tr:focus-within .b-row-actions {
   transform-origin: bottom;
 }
 
+/* Selection-triggered "Show in original" popover — same surface language
+   as .b-menu, deliberately more restrained (smaller shadow, tighter
+   radius) since it floats next to arbitrary selected text rather than
+   hanging off a fixed trigger button. */
+.b-selection-source-menu {
+  min-width: 0;
+  border-radius: var(--r-sm);
+  box-shadow: var(--shadow-md);
+  z-index: 200;
+}
+
 .b-menu-item {
   display: flex;
   align-items: center;
