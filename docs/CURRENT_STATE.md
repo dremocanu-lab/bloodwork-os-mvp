@@ -302,7 +302,32 @@ doctor/care-partner manual "Discharge Summary" section pick never set
 Romanian text → real classifier → real persisted Document → real Phase
 8 reader in the browser) closes the exact "routing was tested,
 classification never was" boundary the prior routing-consolidation pass
-left open. Phases 11-21 of the originating contract (Ask-Bragi
+left open. **A subsequent P0 AI document classification + upload
+reliability session (NEW) first audited deployment parity**: found real
+manual QA cannot be proven to have exercised this branch at all — `main`
+is 61 commits/5 days stale, is the only branch this repo documents as
+auto-deploying, and a leftover local worktree with no env config would
+silently hit the real production backend with 3-month-stale frontend
+code. Added a permanent fix: `GET /health/version` (git_sha +
+environment) plus a frontend build-SHA display, so this is never again
+unanswerable. Then replaced brittle keyword-only auto-classification
+with a real AI semantic classifier (`ai_document_classifier.py` +
+`document_classification_service.py`) constrained to the existing
+`DocumentType` taxonomy, using the same OpenAI structured-output pattern
+already proven in Ask Bragi — AI is the primary auto-classifier when it
+succeeds confidently; Reducto/legacy remain real pre-signals and the
+fallback on any AI failure, never a failed upload. Also found and fixed
+the real, confirmed cause of "upload remained processing": the
+backend's security-scan quarantine status (`security_quarantined`) had
+no frontend mapping at all and fell through to "queued" (active)
+forever — proven both ways (fails without the fix, passes with it). The
+processing-dot geometry was investigated with real pixel measurement
+(not inspection alone): the current code already centers the dot within
+a fraction of a pixel of the text's visual center — the reported "still
+too high" symptom most likely reflects the same stale-deployment risk
+found above, not a remaining rendering bug; a real, defensible CSS
+improvement (a testable DOM dot, corrected line-height) was made anyway.
+Phases 11-21 of the originating contract (Ask-Bragi
 retrieval hardening and everything downstream) are entirely
 unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the

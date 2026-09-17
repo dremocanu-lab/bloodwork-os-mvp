@@ -23,6 +23,20 @@ as described.
   SDK (Sentry, PostHog, Segment, or equivalent) is wired into the
   backend or frontend. There is no security-event monitoring in
   production today.
+- **Deployment parity cannot be fully confirmed from this repository.**
+  A P0 upload-reliability session (2026-09-17) found, with certainty:
+  no `vercel.json`/`render.yaml`/CI config anywhere in this repo states
+  which branches deploy to which environment (that lives exclusively in
+  Vercel/Render dashboards); the only documented auto-deploy trigger
+  (`README.md`) is `main`; and a leftover local git worktree
+  (`.claude/worktrees/agent-a4d8c81f635b19e9d`, ~3 months stale, no
+  `.env`/`.env.local` at all) would silently call the real production
+  backend if ever run. `GET /health/version` (git_sha + environment) and
+  a frontend build-SHA display now exist so a RUNNING app can answer
+  "which commit is this," but confirming what's actually live today
+  still requires visiting the Render/Vercel dashboards directly, or
+  querying the deployed URLs — neither is possible from this coding
+  environment.
 - **No tested backup restoration.** Neon/Render's actual backup/PITR
   configuration is an account/console-level setting this codebase
   cannot verify or exercise. No restore drill has been performed.
@@ -234,7 +248,18 @@ gap, not just a code gap: every prior "discharge routing" test/fixture
 text run through the actual classifier — so routing was proven correct
 while classification itself was never exercised end-to-end. A new test
 suite (backend + Playwright) now runs real Romanian text through the
-real classifier, real persistence, and the real browser reader. Ask-Bragi retrieval hardening for the new canonical
+real classifier, real persistence, and the real browser reader. A
+further P0 AI document classification + upload reliability session
+replaced the keyword-only auto-classifier with a real AI semantic
+classifier (constrained to the existing canonical taxonomy, real
+OpenAI structured output, Reducto/legacy kept as pre-signals and
+fallback — an AI outage never fails an upload), found and fixed the
+real cause of a reported "upload remained processing" (a backend
+security-quarantine status with no frontend mapping at all), and
+audited deployment parity after real manual QA contradicted a prior
+automated report — see docs/CURRENT_STATE.md and the handoff's section
+9m for the full, honest accounting of what could and could not be
+confirmed from this repository alone. Ask-Bragi retrieval hardening for the new canonical
 data (Phase 11), the exhaustive real-Postgres idempotency/deletion test
 suites (Phases 6-10 each laid real groundwork but the full 1x/2x/10x/
 exhaustive-cascade proofs remain open), the deterministic retrieval

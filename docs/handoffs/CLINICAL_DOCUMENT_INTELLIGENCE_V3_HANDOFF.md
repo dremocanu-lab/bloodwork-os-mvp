@@ -94,9 +94,25 @@ closed a related persistence gap (a manual "Discharge Summary" upload
 pick never set `document_type`) and a real testing gap (every prior
 "discharge routing" test/fixture started from hardcoded metadata, never
 real classifier output) with a new end-to-end backend + Playwright
-suite. This document exists specifically so a future Claude session
-with zero memory of this conversation can pick this up correctly — read
-section 23 ("HOW TO CONTINUE") first if that's you.
+suite. **A further P0 AI document classification + upload reliability
+session (NEW this checkpoint, section 9m)** first audited deployment
+parity after real manual QA contradicted an automated report (found:
+`main` is 61 commits/5 days stale and the only documented auto-deploy
+target; a leftover local worktree with no env config would silently hit
+production with 3-month-stale code; added `GET /health/version` +
+frontend build-SHA display so this is never unanswerable again), then
+replaced the keyword-only auto-classifier with a real AI semantic
+classifier constrained to the existing canonical taxonomy (Reducto/
+legacy kept as real pre-signals and the fallback — an AI outage never
+fails an upload), found and fixed the real confirmed cause of "upload
+remained processing" (a backend `security_quarantined` status with no
+frontend mapping at all), and investigated the processing-dot geometry
+with real pixel measurement (the current code already centers it within
+a fraction of a pixel — the reported symptom most likely reflects the
+same stale-deployment risk, not a remaining bug). This document exists
+specifically so a future Claude session with zero memory of this
+conversation can pick this up correctly — read section 23 ("HOW TO
+CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -193,14 +209,35 @@ can open, or a test you can execute.
   new end-to-end backend + Playwright suite now proves real text →
   classifier → persisted metadata → routing → the actual Phase 8 reader.
   18 new backend + 6 new Playwright tests.
+- **This checkpoint ALSO includes the P0 AI document classification +
+  upload reliability session (section 9m)**: deployment-parity audit
+  (found real, concrete stale-deployment risks — `main` 61 commits/5
+  days behind and the only documented auto-deploy target; a 3-months-
+  stale local worktree with no env config; added `GET /health/version` +
+  a frontend build-SHA display, permanently closing the "which code is
+  this" gap); a real AI semantic document classifier
+  (`ai_document_classifier.py` + `document_classification_service.py`)
+  constrained to the existing `DocumentType` taxonomy, reusing the
+  OpenAI structured-output pattern already proven in Ask Bragi — AI is
+  the primary auto-classifier when confident, Reducto/legacy stay real
+  pre-signals and the fallback (an AI outage never fails an upload); the
+  real confirmed cause of "upload remained processing" found and fixed
+  (`security_quarantined` had no frontend status mapping at all); a
+  `ThreadPoolExecutor` exception-swallowing footgun closed defensively;
+  the processing-dot geometry investigated with real pixel measurement
+  (current code already sub-pixel-accurate — the reported symptom most
+  likely reflects the same stale-deployment risk, not a remaining bug,
+  though a real, defensible CSS improvement was made anyway). 47 new
+  backend + 5 new Playwright tests.
 - **Immediate next step: Phase 11 — Ask Bragi canonical retrieval
   hardening** (structured dated-event queries, transparent end-date-
   derivation language in answers, consuming the newly canonical
   `StructuredClinicalDocument`/`ClinicalEvent`/`LabResult`/
   `PatientMedication` data — never treating `PatientEvent`/Timeline as
   the source of truth for Ask Bragi). Not started this session, by
-  explicit instruction — the user is expected to manually inspect the
-  actual deployed Phase 8 reader first, per this session's own stop
+  explicit instruction — the user is expected to test the real deployed
+  feature first (now actually checkable via `GET /health/version`), per
+  this session's own stop
   condition. A future session picking this up should ALSO consider the
   still-open narrative-text exact-provenance gap (section 9k's "What
   remains") — neither is more "next" than the other; both are
@@ -2796,6 +2833,310 @@ internare", `emergency_department_note` → "camera de garda",
   Phase 8 reader next, per this session's own explicit stop condition,
   before Phase 11 begins.
 
+## 9m. P0 AI Document Classification + Upload Reliability (COMPLETE)
+
+Starting checkpoint: branch `fix/clinical-document-intelligence-v3`,
+local HEAD `902e1c3`, remote HEAD `902e1c3` (confirmed equal), working
+tree clean, zero unpushed commits — the exact end of section 9l.
+
+### Why this session exists
+
+Real manual QA (screenshots) contradicted the prior session's own
+automated report: an uploaded Romanian discharge appeared filed under
+"Other," a second upload attempt appeared to remain "processing"
+indefinitely, and the processing-indicator dot still looked visibly
+misaligned despite section 9j's own B2 fix. This session's first job was
+determining whether that manual QA was even exercising this branch's
+code at all, before touching any classification logic.
+
+### Deployment parity — a real, material risk, not fully resolvable from the repo alone
+
+Investigated first, per this session's own explicit instruction. Found,
+with certainty, from the repo alone:
+
+- `main` has not moved since this branch was created (`git merge-base
+  main HEAD` = `main`'s own HEAD, `917a543`, 2026-09-12) — this branch
+  is **61 commits ahead of main**, spanning 5 days, including every
+  classification/routing/upload fix from sections 9j-9l.
+- The repo's only documented auto-deploy trigger (`README.md`'s
+  Deployment section) is `main` → both Render (backend) and Vercel
+  (frontend). No `vercel.json`/`render.yaml`/CI config states a
+  per-branch preview-deploy policy — that lives exclusively in
+  dashboards this environment cannot read.
+- **A second, concrete local risk was found**: a leftover git worktree
+  at `.claude/worktrees/agent-a4d8c81f635b19e9d`, pinned to commit
+  `93c9adb` (2026-06-29 — ~3 months stale), with **no `.env`/`.env.local`
+  files at all** in either `frontend/` or `backend/`. If anyone ever ran
+  that worktree, its frontend would fall back to calling the REAL
+  production Render backend (`https://bloodwork-os-api.onrender.com`,
+  the hardcoded fallback in `lib/api.ts`/`next.config.ts` when
+  `NEXT_PUBLIC_API_URL` is unset) while serving 3-month-stale frontend
+  code — silently, with no visual indicator.
+- **No version/health/build-ID mechanism existed anywhere in this
+  codebase before this session** — there was no way, from a running app
+  in a browser, to answer "which commit is this?"
+
+**Honest conclusion**: it is not possible to prove from the repository
+alone which exact code the user's screenshots came from. Both concrete
+risks found (a 5-day-stale `main` auto-deploy, and a 3-months-stale
+local worktree with no env config defaulting to production) are
+independently sufficient to fully explain the "Other" and "stuck
+processing" observations, especially since — per this session's own
+findings below — a document matching the reported title now classifies
+correctly, and the actual "stuck processing" root cause found (the
+`security_quarantined` frontend bug, below) is a real, independently
+fixed bug rather than confirmation the user was on this branch.
+
+**Fix — a permanent deployment-parity mechanism, so this can never
+recur as an unanswerable question**:
+- `GET /health/version` (`app/api/routers/root.py`, new) — unauthenticated,
+  returns `{git_sha, environment}` only (no PHI, no secrets, no
+  filesystem paths beyond a commit hash). Prefers `RENDER_GIT_COMMIT`/
+  `VERCEL_GIT_COMMIT_SHA`/`GIT_SHA` (platform-injected, zero dashboard
+  config needed) over a local `git rev-parse` fallback (dev-only — a
+  deployed container may not ship `.git`).
+- `frontend/next.config.ts` — `NEXT_PUBLIC_GIT_SHA` build-time env,
+  sourced the same way (`VERCEL_GIT_COMMIT_SHA`/`RENDER_GIT_COMMIT`,
+  falling back to `git rev-parse` at build time).
+- A small, unobtrusive "Build {sha}" line added to the existing account
+  menu popover (`components/account-menu.tsx`) — discoverable, never a
+  reader/layout change.
+
+### Upload-hang investigation — mostly already robust; one real, confirmed frontend bug found
+
+`process_upload_job`'s entire body was already wrapped in a single
+top-level `try/except Exception`, with `db.rollback()` called first and
+every internal early-return already setting a terminal status +
+`finished_at` before returning — this part was already solid, not a
+guess (verified by reading the whole ~700-line function). Two narrow,
+real gaps closed anyway:
+- `UPLOAD_JOB_POOL.submit(...)` (`POST /upload/batch`)'s returned
+  `Future` was never inspected — the classic `ThreadPoolExecutor`
+  footgun: an exception raised before `process_upload_job`'s own try
+  even starts (e.g. `SessionLocal()` itself failing) would silently
+  vanish with no log and no terminal status ever written. Fixed with
+  `future.add_done_callback(...)` (`documents.py`,
+  `_log_upload_job_pool_exception`) — logs the exception and, best
+  effort, marks the job `error` with an honest message if it's still in
+  a non-terminal state.
+- **The real, confirmed bug behind "remained processing"**: the
+  backend's security-scan quarantine path sets `UploadJob.status =
+  "security_quarantined"` (`main.py`, distinct from the OTHER
+  quarantine path's plain `"quarantined"`) — but
+  `statusFromBackend()` (`components/upload-provider.tsx`) had **no
+  case for it at all**, so it fell through to `"queued"`, which IS
+  "active." A job the backend had already fully finished (a real
+  user-facing message written, `finished_at` set) displayed on the
+  frontend as stuck processing. Fixed by mapping it to the existing
+  `"quarantined"` `UploadStatus` (reusing its already-correct "Set
+  aside" UI, not inventing a new status value) — proven both ways: the
+  new Playwright test fails without the fix, passes with it.
+
+### AI semantic document classifier
+
+New `app/services/ai_document_classifier.py` + `app/services/
+document_classification_service.py`. Design:
+
+- **Taxonomy source of truth**: the model's allowed output values are
+  derived directly from `document_taxonomy.DocumentType` (`[dt.value for
+  dt in DocumentType]`) — never a second, driftable list.
+- **Structured output**: reuses the OpenAI Responses API `text.format=
+  json_schema` pattern already proven in `ask_bragi/service.py` — this
+  session's own investigation found it's the ONLY one of six existing
+  OpenAI call sites in this codebase that validates structured output
+  against a real schema; the other five each hand-roll their own
+  markdown-fence-stripped `json.loads`. This module deliberately does
+  not add a seventh.
+- **Bounded input, not naive truncation**: `_build_bounded_representation`
+  splits the budget 45% head / 20% middle / 35% tail (a discharge
+  letter's title sits at the start, its diagnosis/recommendations/
+  signatures at the end — a first-N-characters truncation would
+  systematically lose exactly the distinguishing evidence). Measured
+  against the real `ROMANIAN_DISCHARGE_BILET_DE_IESIRE` fixture and
+  synthetic oversized fixtures in tests.
+- **Data minimization**: `redact_direct_identifiers` (`ai_minimization.py`)
+  is called on the classification text before it ever reaches the
+  model — this session's own investigation found this module already
+  existed (CNP/email/phone stripping) but had **zero real callers
+  anywhere in the codebase** before this session; this is its first
+  actual use. Patient NAME is honestly NOT stripped — no reliable
+  regex/NER exists in this codebase for free-text name redaction, and a
+  failed silent attempt would be worse than an honest, documented gap.
+- **Prompt**: explicit "classify the PRIMARY CLINICAL PURPOSE of the
+  ENTIRE document, not any one embedded section" instruction, with the
+  exact discharge/lab/admission/consultation distinctions and the
+  Romanian vocabulary list this session's own classifier-keyword fix
+  (section 9l) required — see `ai_document_classifier.py`'s
+  `_SYSTEM_INSTRUCTIONS` for the verbatim text.
+- **Failure handling**: ANY failure (missing key, timeout, provider
+  error, malformed/invalid response) raises `AIClassificationError` —
+  the classifier module itself never touches `UploadJob`/`Document`, it
+  only classifies text or raises.
+
+### Decision policy (`document_classification_service.resolve_final_classification`)
+
+- AI succeeds, confidence ≥ `AI_CLASSIFIER_MIN_CONFIDENCE` (default
+  0.7), `ambiguous=False` → AI's type is final,
+  `classification_status="classified"`, `classification_source="ai"`.
+- AI succeeds but low confidence or `ambiguous=True` →
+  `status="needs_confirmation"` (never silently `other` — `other` stays
+  a genuine semantic outcome only the classifier itself can assert),
+  `document_type` = AI's own best guess (pre-fills the confirmation UI),
+  `classification_source="ai_needs_confirmation"`.
+- AI unavailable/misconfigured/errors for ANY reason → falls back
+  ENTIRELY to the existing Reducto/legacy classification result,
+  completely unchanged from before this session — an AI outage never
+  fails an upload, never adds latency/cost when `OPENAI_API_KEY` isn't
+  configured at all.
+- Non-PHI disagreement metadata (ai_type/ai_confidence/fallback_type/
+  fallback_confidence/final_type/reason_codes) is written to the
+  EXISTING `AuditLog` mechanism (`action="classification_completed"`,
+  extending an audit entry that already existed) once the `Document` row
+  exists — never a new schema column, never raw document text.
+
+### Integration (`process_upload_job`, `main.py`)
+
+The existing Reducto/legacy classification block is UNCHANGED and still
+always runs first, producing the "fallback" result AI is reconciled
+against. New: when Reducto succeeds (so the legacy OCR pass never ran)
+AND `OPENAI_API_KEY` is configured, one additional OCR pass is run
+specifically to give the AI classifier real extracted text (Reducto's
+own internal document understanding isn't exposed as plain text
+anywhere in this codebase) — **a real, deliberately accepted latency/
+cost tradeoff, gated so it only ever applies when AI classification is
+actually configured**: zero added cost in any environment without
+`OPENAI_API_KEY` set, identical to this session's starting behavior.
+
+### Manual-upload `document_type` persistence gap (a related, previously-deferred fix)
+
+Section 9l already fixed this for `discharge_summary`/`bloodwork` (the
+two `section` values that map 1:1 onto exactly one `DocumentType`) —
+unchanged this session. The AI classifier is deliberately NOT run on
+manual-picklist uploads at all — a doctor/care-partner's explicit
+category choice remains authoritative and is never silently
+second-guessed by AI, matching this session's own "preserve explicit
+user intent" instruction.
+
+### Tests
+
+- `tests/test_ai_document_classifier.py` (new, 19 tests): bounded-
+  representation head/middle/tail preservation; response parsing
+  (valid, invalid JSON, non-enum type, missing/out-of-range confidence
+  clamping, null/invalid alternative type, missing reason codes); empty
+  text and missing-API-key raise without calling the client; a
+  successful call uses `json_schema` structured output; provider
+  exceptions and timeout-shaped exceptions both wrap as
+  `AIClassificationError`; direct identifiers (CNP, email) are
+  confirmed redacted from what's actually sent, real document title
+  text confirmed NOT redacted.
+- `tests/test_document_classification_service.py` (new, 25 tests):
+  core policy (confident/unambiguous → final; low-confidence →
+  needs_confirmation not other; ambiguous even at high confidence →
+  needs_confirmation; custom threshold respected); fallback behavior
+  (AI unavailable/timeout/invalid-JSON all fall back without raising;
+  empty classification text skips AI entirely without an error);
+  audit-detail string never contains raw document text; 5 dominant-
+  purpose adversarial scenarios (discharge+labs, discharge+medication
+  list, operative+postop labs, consultation+attached labs, admission
+  note mentioning a future discharge plan) plus all 10 required
+  classification categories (bilet de ieșire+labs, fișă de externare,
+  foaie de internare, outpatient scrisoare medicală, standalone CBC,
+  pathology, operative, prescription, imaging, genuinely unclassified);
+  an explicit invariant test that AI unavailability never manifests as
+  `other`.
+- `tests/test_romanian_discharge_classification_e2e.py` (+3 tests,
+  section 9l's file extended): real upload pipeline
+  (`POST /upload/batch`) with AI actually in the loop — a mocked
+  confident AI response becomes the persisted final result AND is
+  reflected in the audit log; a mocked AI timeout falls back to the
+  legacy classifier and the upload still completes; `OPENAI_API_KEY`
+  entirely unset still completes via legacy — exactly the "an AI outage
+  must never fail an upload" invariant, proven through the real
+  pipeline, not just the decision-service unit tests.
+- `tests/test_upload_validation.py`: no changes needed —
+  `serialize_upload_job` gained a `classification_source` field
+  (previously silently missing from the API response despite being a
+  real, populated DB column) so `classification_source` assertions in
+  the new e2e tests above could actually read it.
+- Frontend: `frontend/e2e/processing-indicator.spec.ts` (new, 4 tests) —
+  see "Processing-dot investigation" below.
+  `frontend/e2e/upload-reliability.spec.ts` (new, 1 test) — the
+  `security_quarantined` regression, proven genuine (fails without the
+  fix, passes with it, verified both ways). Re-ran
+  `romanian-discharge-classification.spec.ts` (6/6, one isolated rerun
+  needed for the same pre-existing dev-server flake already disclosed as
+  bug #11) and `routing-and-integration-fixes.spec.ts` (5/5) to confirm
+  zero regression from this session's `documents.py`/`main.py` changes.
+- Full backend suite, Bandit, migration drift: see section 19 for the
+  exact confirmed count — this session added NO migration (pure Python
+  logic + one additive API-response field, zero schema changes).
+- Frontend: `npx tsc --noEmit` zero errors; `npm run lint` — identical
+  55 pre-existing problems (29 errors/26 warnings) as the prior
+  checkpoint, zero new; `npm run build` succeeds, same route set.
+
+### Processing-dot investigation — an honest correction, not a dramatic fix
+
+Investigated with real pixel measurement in an actual Chromium render
+(`page.evaluate` + `getBoundingClientRect`/`Range.getBoundingClientRect`),
+not by inspection alone. The initial CSS-only hypothesis (`.b-status`
+inherits an unitless `line-height: 1.5` from `.b-notice`/`body`,
+inflating its flex cross-size well past the text glyphs' own footprint,
+so `align-items:center` centers the dot against that inflated box) is a
+REAL, confirmed CSS inconsistency — but **direct measurement showed the
+CURRENT code (before this session's own change) already centers the dot
+within a fraction of a pixel of the text's actual rendered content
+area** (measured delta ~0.375px before this session's fix, ~0.25px
+after) — far below anything a human eye could perceive, and a real
+before/after screenshot comparison at the same zoom looked visually
+identical. **Honest conclusion**: the dominant reported "still too
+high" symptom did NOT reproduce as a measurable rendering bug in this
+session's own Chromium testing — the far more likely explanation is the
+SAME deployment-parity risk documented above (the user was very
+plausibly looking at pre-B2-fix or otherwise stale code, where the dot
+and text genuinely weren't even in the same flex container).
+
+Implemented anyway, since it's a real, defensible improvement
+independent of whether it was the actual cause: `.b-processing-status`
+(`globals.css`, scoped to ONLY this one banner — never touching the
+shared `.b-status` class every other tone badge in the app relies on) —
+a real DOM dot element instead of a `::before` pseudo-element (so it has
+its own testable, queryable geometry) plus `line-height: 1` (removing
+the inherited-line-height inconsistency outright, rather than leaving it
+as latent debt). `data-testid="processing-status-dot"`/
+`"processing-status-text"` added for the new Playwright suite.
+`frontend/e2e/processing-indicator.spec.ts` (4 tests) asserts real
+rendered vertical-center delta ≤2px at 1920×1080/1440×900/390×844 — a
+genuine geometry assertion, not a class-name check.
+
+### What remains (honest, not attempted)
+
+- **Deployment parity cannot be fully resolved from this repo alone** —
+  the `/health/version` mechanism now EXISTS, but confirming what's
+  actually live on Render/Vercel today still requires either visiting
+  those dashboards or querying the deployed URLs directly, neither of
+  which this environment can do. The stale local worktree found
+  (`.claude/worktrees/agent-a4d8c81f635b19e9d`) was NOT deleted — it may
+  represent another agent's in-progress work; flagged here for the
+  user's own judgment, not removed.
+- **The updated AI classifier prompt/schema was NOT independently
+  live-tested against the real OpenAI API this session** — every test
+  above mocks the OpenAI client. A real `OPENAI_API_KEY` is not
+  configured in this dev environment's `.env`in a way exercised here;
+  live verification (and tuning `AI_CLASSIFIER_MIN_CONFIDENCE` against
+  real model behavior) is a reasonable next step for whoever has API
+  access to verify with.
+- **AI classification does not run on manual-picklist uploads at all**
+  — deliberate (explicit user intent stays authoritative), not
+  attempted otherwise.
+- **Patient name is not stripped from AI classification input** — no
+  reliable free-text redaction exists in this codebase for names; a
+  real, honestly-documented limitation of `ai_minimization.py`, not
+  fixed here.
+- **Phase 11 (Ask Bragi canonical retrieval hardening)**: still NOT
+  STARTED. The user is expected to test the real deployed feature next,
+  per this session's own explicit stop condition, before Phase 11
+  begins.
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)
@@ -3174,6 +3515,16 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   `test_romanian_discharge_classification_e2e.py`; section 9l). **Full
   suite reran clean: `635 passed, 5 warnings in 1437.44s (0:23:57)` —
   zero failures, zero errors, no Neon flake this run.**
+  → **682 CONFIRMED after the P0 AI document classification + upload
+  reliability session** (net +47 over the 635 baseline — an EXACT
+  match, no reconciliation gap: 19 new tests in the new
+  `test_ai_document_classifier.py`, 25 new tests in the new
+  `test_document_classification_service.py`, 3 new tests added to
+  `test_romanian_discharge_classification_e2e.py`; `serialize_upload_
+  job` gaining a `classification_source` field needed no new test file,
+  only existing e2e assertions reading it; section 9m). **Full suite
+  reran clean: `682 passed, 5 warnings in 1411.33s (0:23:31)` — zero
+  failures, zero errors, no Neon flake this run.**
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -3240,6 +3591,18 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   flake, both passing cleanly in isolated reruns) were re-run to confirm
   zero regression from this session's `documents.py`/classifier changes
   — see section 9l.
+  → **49 after the P0 AI document classification + upload reliability
+  session** (+4 `processing-indicator.spec.ts`, +1
+  `upload-reliability.spec.ts`; `romanian-discharge-classification.spec.ts`
+  itself unchanged, still 6 tests, re-run only for regression
+  verification). `romanian-discharge-classification.spec.ts` (6/6, one
+  isolated rerun needed for the SAME pre-existing outline-click/
+  navigation flake already disclosed as bug #11) and `routing-and-
+  integration-fixes.spec.ts` (5/5) were re-run to confirm zero
+  regression from this session's `documents.py`/`main.py` changes — see
+  section 9m. The `security_quarantined` regression in
+  `upload-reliability.spec.ts` was proven genuine both ways (fails with
+  the fix reverted, passes restored).
 - OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
   backend-modularization baseline) → 118 unchanged after Phase 9 → 118
@@ -3249,30 +3612,40 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   `document.patient_id`) → 118 unchanged after the pre-Phase-11
   exact-provenance session (no new route — `GET /source-evidence/
   {id}/view`'s existing response gained one additive field,
-  `field_bboxes`) → **118 unchanged after the Romanian discharge
-  classification closure session** (no new route — `POST /upload/
+  `field_bboxes`) → 118 unchanged after the Romanian discharge
+  classification closure session (no new route — `POST /upload/
   background`'s existing response can now additionally return a
   populated `document_type`/`classification_status`/
-  `classification_confidence` for the two unambiguous section values).
-- Bandit (`python -m bandit -r app -ll -q`): clean after the Romanian
-  discharge classification closure session — zero findings (only benign
-  "Test in comment" collector warnings unrelated to any real issue, same
-  as every prior checkpoint).
+  `classification_confidence` for the two unambiguous section values)
+  → **119 after the P0 AI document classification + upload reliability
+  session** (+1, `GET /health/version` — the first new route since Phase
+  8; `POST /upload/background`'s response also gained one additive
+  field, `classification_source`, previously silently missing from the
+  API response despite being a real, populated DB column).
+- Bandit (`python -m bandit -r app -ll -q`): clean after the P0 AI
+  document classification + upload reliability session — zero findings
+  (only benign "Test in comment" collector warnings unrelated to any
+  real issue, same as every prior checkpoint; the new `subprocess.run`
+  call in `root.py`'s `_deployed_git_sha()` fallback did not surface at
+  the `-ll` severity/confidence threshold).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
   this session added NO migration (pure classification/persistence
-  logic, no schema change) — "No migration drift detected (8 known/
-  tolerated legacy-index difference(s) ignored)", same 8 as every prior
-  checkpoint, last real migration still the pre-Phase-11 exact-
-  provenance session's `c7d2e91a4b6f_source_evidence_field_bboxes.py`.
+  logic, one new route, one additive API-response field, zero schema
+  changes) — "No migration drift detected (8 known/tolerated legacy-
+  index difference(s) ignored)", same 8 as every prior checkpoint, last
+  real migration still the pre-Phase-11 exact-provenance session's
+  `c7d2e91a4b6f_source_evidence_field_bboxes.py`.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
   this session's changes.
 - ESLint (`npm run lint`): zero new errors/warnings in any file this
-  session touched; the exact same pre-existing 29 errors/26 warnings
-  elsewhere in the repo remain untouched (unrelated, out of scope, same
-  as every prior checkpoint).
+  session touched — identical `55 problems (29 errors, 26 warnings)` as
+  the prior checkpoint, confirmed by exact count, not just spot-checked;
+  the exact same pre-existing issues remain untouched (unrelated, out of
+  scope, same as every prior checkpoint).
 - Frontend production build (`npm run build`): succeeds — unchanged
   route set from the prior checkpoint (this session added no new page
-  route, only a new Playwright spec + backend seed script).
+  route — `next.config.ts`'s new `NEXT_PUBLIC_GIT_SHA` build-time env
+  and the account-menu build-SHA line are not routes).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -3377,6 +3750,22 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   renders real content with the old generic-reader-only UI confirmed
   absent; `GET /documents/{id}/clinical-reader` returns `document_type=
   discharge_summary`; mobile viewport stays usable. See section 9l.
+
+- `processing-indicator.spec.ts` (NEW, P0 AI document classification +
+  upload reliability session): 4 tests — real rendered geometry (not a
+  class-name check) asserting the processing banner's dot sits within
+  2px of the text's vertical center at 1920×1080/1440×900/390×844, plus
+  a copy-correctness check for the singular/plural message. See section
+  9m's "Processing-dot investigation" for why this is an honest
+  correction rather than proof of a dramatic remaining bug.
+
+- `upload-reliability.spec.ts` (NEW, P0 AI document classification +
+  upload reliability session): 1 test — a `security_quarantined`
+  UploadJob (the backend's security-scan terminal state) shows "Set
+  aside," never "Processing," and does not count toward the My Records
+  Overview's active-upload banner. Proven genuine both ways (fails with
+  the fix reverted, passes restored) — the real, confirmed root cause of
+  the reported "upload remained processing" symptom. See section 9m.
 
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
@@ -3588,6 +3977,33 @@ Phases 11-13 to exist first.
     Closed for the two `section` values that map 1:1 onto exactly one
     `DocumentType` (`discharge_summary`, `bloodwork`) — the other four
     remain deliberately unguessed.
+20. **A real, confirmed frontend bug — very likely the actual cause of
+    the reported "upload remained processing"** (P0 AI document
+    classification + upload reliability session) — see section 9m.
+    The backend's security-scan quarantine path sets `UploadJob.status
+    = "security_quarantined"` — a real, distinct terminal state from
+    the identity-review `"quarantined"` path — but `statusFromBackend()`
+    (`components/upload-provider.tsx`) had NO case for it at all, so it
+    fell through to `"queued"`, which IS "active." A job the backend had
+    already fully finished (a real user-facing message written) stayed
+    displayed as stuck processing on the frontend. Fixed by mapping it
+    to the existing `"quarantined"` status (reusing its already-correct
+    "Set aside" UI). Proven genuine both ways: the new Playwright test
+    fails with the fix reverted, passes restored.
+21. **A real `ThreadPoolExecutor` footgun, closed defensively** (P0 AI
+    document classification + upload reliability session) — see section
+    9m. `POST /upload/batch`'s `UPLOAD_JOB_POOL.submit(process_upload_
+    job, job.id)` never inspected the returned `Future` — an exception
+    raised before `process_upload_job`'s own top-level try/except even
+    starts (e.g. `SessionLocal()` itself failing) would silently vanish
+    with no log and no terminal status ever written. This session's own
+    investigation found `process_upload_job`'s try/except already
+    correctly terminal-izes essentially everything else (verified by
+    reading the whole function) — this was a narrow, real gap, not a
+    dramatic hang risk. Fixed with `future.add_done_callback(...)`
+    (`_log_upload_job_pool_exception`, `documents.py`) — logs the
+    exception and, best effort, marks the job `error` if it's still
+    non-terminal.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6. The
@@ -3596,6 +4012,11 @@ SAME pre-existing Next.js dev/Turbopack outline-click timing flake
 already disclosed as bug #11 — not a new bug, reproduced again on the
 completely unmodified `clinical-reader.spec.ts` during this session as
 direct proof it predates and is unrelated to this session's own changes.
+The Romanian discharge classification closure session (section 9l, this
+session's own predecessor) reproduced the SAME flake again on `clinical-
+reader.spec.ts`; this P0 AI document classification + upload reliability
+session reproduced it a further time — consistently on the same test
+file, never on anything this session actually changed.
 
 ## 22. Known gaps / deferred items (READ THIS BEFORE CLAIMING THIS CONTRACT IS DONE)
 
