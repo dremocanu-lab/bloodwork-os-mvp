@@ -18,9 +18,15 @@ function buildGitSha(): string {
   }
 }
 
-// Backend API origin the frontend talks to — must match lib/api.ts's
-// default/NEXT_PUBLIC_API_URL exactly, or every fetch/XHR call breaks under
-// connect-src. See docs/security/THREAT_MODEL.md for the header rationale.
+// Backend API origin the frontend talks to — must match lib/api-base.ts's
+// resolved value, or every fetch/XHR call breaks under connect-src. See
+// docs/security/THREAT_MODEL.md for the header rationale. Deliberately
+// NOT using lib/api-base.ts's own throw-in-production guard here: this
+// value only widens/narrows a CSP allow-list entry (a misconfiguration
+// here fails loudly and immediately — every request blocked by the
+// browser — never silently, unlike the real API calls that module
+// guards), so a hard build failure over a missing env var isn't
+// justified for this one header value.
 const API_ORIGIN = process.env.NEXT_PUBLIC_API_URL || "https://bloodwork-os-api.onrender.com";
 
 // Tuned for what this app actually uses (verified locally with a real

@@ -1,7 +1,8 @@
 import axios from "axios";
 import { getErrorMessage } from "@/lib/api";
+import { getApiBaseUrl } from "@/lib/api-base";
 
-const API_URL = process.env.NEXT_PUBLIC_API_URL || "https://bloodwork-os-api.onrender.com";
+const API_URL = getApiBaseUrl();
 
 export const emergencyApi = axios.create({ baseURL: API_URL });
 
