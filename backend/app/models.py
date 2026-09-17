@@ -442,6 +442,16 @@ class SourceEvidence(Base):
     row_bbox_width = Column(Float, nullable=True)
     row_bbox_height = Column(Float, nullable=True)
 
+    # Exact, unpadded per-field citation rects for this row: JSON-encoded
+    # list of {label, x, y, width, height}, one entry per field Reducto
+    # actually returned a citation for (test_name/value/unit/
+    # reference_range). Each rect is the provider's own real bbox verbatim
+    # — no union, no padding — added so the UI can highlight only the exact
+    # fields cited instead of one padded box that risks framing a
+    # neighboring row on a dense table. Null for older rows and non-Reducto
+    # evidence; callers fall back to row_bbox_*/bbox_* in that case.
+    field_bboxes_json = Column(Text, nullable=True)
+
     source_block_id = Column(String, nullable=True)
     source_text = Column(Text, nullable=True)
 

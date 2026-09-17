@@ -116,6 +116,11 @@ class ReductoEvidence:
     # `_union_row_bbox` below. None unless there was real multi-field
     # geometry to union; never guessed/hardcoded.
     row_bbox: tuple[float, float, float, float] | None = None
+    # Exact, unpadded per-field citation rects for this row (test_name,
+    # value, unit, reference_range — whichever Extract actually returned
+    # coordinates for), see `_field_rects` below. Each rect is Reducto's own
+    # citation verbatim — no union, no padding, nothing invented.
+    field_rects: list[dict[str, Any]] | None = None
 
 
 @dataclass
@@ -392,6 +397,51 @@ def _union_row_bbox(
     return (left, top, right - left, bottom - top)
 
 
+def _field_rects(
+    parts: list[ReductoEvidence | None],
+) -> list[dict[str, Any]] | None:
+    """Exact, unpadded per-field citation rects for one lab row.
+
+    Unlike `_union_row_bbox`, this applies no union and no padding — each
+    entry is exactly one field's own real Reducto citation bbox. Rendering
+    each of these as its own small rectangle (instead of one padded union
+    box) is what keeps a highlight for a densely-packed row (e.g. NEUT# on
+    a differential panel) from visually bleeding into a neighboring row's
+    text, since there is no padding left to bleed with.
+
+    Field order is fixed (test_name, value, unit, reference_range) so the
+    persisted list is deterministic across runs of the same input.
+    """
+    labels = ("test_name", "value", "unit", "reference_range")
+    rects: list[dict[str, Any]] = []
+    pages = [
+        e.page
+        for e in parts
+        if e and e.page is not None and e.bbox_x is not None and e.bbox_y is not None
+        and e.bbox_width is not None and e.bbox_height is not None
+    ]
+    common_page = max(set(pages), key=pages.count) if pages else None
+
+    for label, e in zip(labels, parts):
+        if e is None:
+            continue
+        if e.bbox_x is None or e.bbox_y is None or e.bbox_width is None or e.bbox_height is None:
+            continue
+        if common_page is not None and e.page is not None and e.page != common_page:
+            continue
+        rects.append(
+            {
+                "label": label,
+                "x": e.bbox_x,
+                "y": e.bbox_y,
+                "width": e.bbox_width,
+                "height": e.bbox_height,
+            }
+        )
+
+    return rects or None
+
+
 def _in_page_range(evidence: ReductoEvidence | None, page_range: tuple[int, int] | None) -> bool:
     if page_range is None:
         return True
@@ -463,6 +513,7 @@ def extract_lab_results(
         evidence = _field_evidence(item.get("value")) or name_evidence
         if evidence is not None:
             evidence.row_bbox = _union_row_bbox(confidence_parts)
+            evidence.field_rects = _field_rects(confidence_parts)
 
         labs.append(
             {
