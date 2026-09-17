@@ -3137,6 +3137,232 @@ genuine geometry assertion, not a class-name check.
   per this session's own explicit stop condition, before Phase 11
   begins.
 
+## 9n. Production Deployment Closure
+
+Starting checkpoint: branch `fix/clinical-document-intelligence-v3`,
+local HEAD `64c4037`, remote HEAD `64c4037`, working tree clean — the
+exact end of section 9m.
+
+### Deployment parity — CONFIRMED, not just inferred
+
+Section 9m's audit could only infer staleness from repo evidence
+(`main`'s own commit timestamps). This session had authenticated CLI
+access to both platforms and confirmed it directly:
+
+- **Render** (`render deploys list srv-d7j22lm7r5hc73b8o5fg`): the live
+  deploy (`status: "live"`) is commit `917a543` — `main`'s own HEAD,
+  deployed 2026-09-12. The service (`bloodwork-os-api`, Frankfurt,
+  Docker runtime, `rootDir: backend`) has `autoDeploy: yes`, `branch:
+  main` — confirms `main` is genuinely the sole auto-deploy source, not
+  just documented as intended to be.
+- **Vercel** (`vercel inspect` on the latest production deployment): the
+  deployment aliased to `app.bragi.health` was created 2026-09-12
+  11:57:31 — three seconds after Render's own deploy timestamp,
+  confirming both platforms auto-deployed from the SAME `main` merge
+  commit at the same time. 5 days stale, matching Render exactly.
+
+This is now **definitively established**, not merely suspected: the
+real production site is running code 66 commits and 5 days behind this
+branch. This fully explains every symptom reported in sections 9j-9m's
+manual QA (stale classification behavior, the "Other" filing, the
+processing-dot report) — the user was testing old production code the
+entire time, not this branch.
+
+### Branch reconciliation — trivial, no divergence
+
+`git rev-list --count origin/main..HEAD` = 66, `git rev-list --count
+HEAD..origin/main` = 0 — `main` has not moved at all since this branch
+was created. No merge/reconciliation was needed; a clean fast-forward
+merge is possible.
+
+### Migrations pending before deploy
+
+4 new Alembic migrations exist on this branch, none on `main`, one
+linear chain (confirmed: `alembic heads` → single head,
+`c7d2e91a4b6f`):
+
+```
+b52c5c35f707  Phase 6 — documents.derived_artifact_kind (nullable)
+ff84f15530a9  Phase 7 — patient_medications.{source_document_id,
+              source_segment_id, stop_date_basis} + source_evidence.
+              medication_id (all nullable)
+a1c9d4e7f203  Phase 10 — patient_events.{source_document_id,
+              source_medication_id} (nullable)
+c7d2e91a4b6f  Exact-provenance session — source_evidence.
+              field_bboxes_json (nullable)
+```
+
+Every one is a pure `add_column(..., nullable=True)` — confirmed by
+reading each migration's `upgrade()` directly, not assumed. No
+`alter_column`, no `drop_table`, no destructive operation anywhere in
+the forward path. Low production risk (Postgres `ADD COLUMN` with no
+default is a fast, metadata-only operation regardless of table size).
+
+**However — new code on this branch genuinely REQUIRES these columns to
+exist before it can serve basic requests.** SQLAlchemy's ORM generates
+explicit column lists from the mapped model, not `SELECT *`; deploying
+this branch's code against `main`'s current (un-migrated) schema would
+make ordinary document/lab/medication queries fail immediately with a
+real `column does not exist` error — not a graceful degradation. Schema
+must be ready BEFORE the new code starts serving traffic.
+
+### Production migration mechanism — the real, confirmed blocker
+
+`docs/database/MIGRATIONS.md`'s own "Production deployment" section
+already documented this honestly as an unresolved **[EXTERNAL ACTION]**:
+migrations are intended to run via `python scripts/run_migrations.py`
+(a crash-safe, advisory-lock-protected `alembic upgrade head` wrapper)
+configured as Render's **Pre-Deploy Command**, but confirms "this
+document does not claim it has been done."
+
+This session confirmed, directly against the live service
+(`render services -o json`), that it has NOT been done — no pre-deploy
+command is configured; the Dockerfile's own `CMD` starts `uvicorn`
+directly with no migration step at all.
+
+**A real path to close this WAS found**: the Render CLI's `render
+services update --pre-deploy-command <cmd>` flag can set this without
+dashboard access. Attempting it (`render services update
+srv-d7j22lm7r5hc73b8o5fg --pre-deploy-command "python scripts/
+run_migrations.py"`) was **blocked by this session's own auto-mode
+permission classifier** ("Modify Shared Resources") — a deliberate
+safety boundary on a production-infrastructure-changing action, which
+this session respected rather than working around.
+
+**This is the sole remaining blocker to a safe merge.** Per this
+session's own explicit gate: STOP BEFORE MERGE when the migration
+mechanism is unclear or unconfigured. It is unconfigured. The PR below
+was opened (an explicitly separately-authorized action) but was
+**NOT merged**.
+
+**Exact action required** — either:
+
+1. **The user runs, in this session or a future one with permission to
+   modify Render infrastructure**:
+   ```
+   render services update srv-d7j22lm7r5hc73b8o5fg --pre-deploy-command "python scripts/run_migrations.py" --confirm
+   ```
+   (rootDir is already `backend`, so no `cd backend &&` prefix is
+   needed — commands already run from that directory.)
+2. **Or, via the Render dashboard** (the originally-documented path):
+   dashboard → `bloodwork-os-api` service → Settings → Build & Deploy →
+   Pre-Deploy Command → `python scripts/run_migrations.py`.
+3. **Or, a one-time manual run** against production by an operator with
+   `DATABASE_URL` access, timed immediately before/alongside the deploy
+   (the documented interim fallback) — `cd backend && python scripts/
+   run_migrations.py`, using this session's confirmation that the
+   script itself is safe (advisory-lock-protected, crash-safe, already
+   exercised via `alembic upgrade head` in every prior session's own
+   verification).
+
+Once ONE of these is done, merging this PR (see below) is safe.
+
+### Environment configuration status (verified, secrets never printed)
+
+- Production `NEXT_PUBLIC_API_URL`: **not independently re-verified this
+  session** (Vercel env-variable values require dashboard access or
+  `vercel env pull`, neither exercised here to avoid touching production
+  env config beyond what was explicitly authorized) — but the existing,
+  already-live production deployment already correctly serves traffic
+  against the real Render backend today, so it is presumptively already
+  set correctly; the new `lib/api-base.ts` guard (below) only changes
+  behavior for a MISSING value, which today's production build does not
+  have.
+- Production `OPENAI_API_KEY`: **not verified this session** (would
+  require reading a secret value, explicitly disallowed). The AI
+  classifier's own design (section 9m) already handles either case
+  safely — present: AI-first classification; absent: unchanged
+  Reducto/legacy behavior, upload still completes.
+- `AI_CLASSIFIER_ENABLED`-equivalent: **no separate feature flag
+  exists** — the AI classifier activates automatically whenever
+  `OPENAI_API_KEY` is present (see `ai_document_classifier.py::_client`)
+  and safely no-ops otherwise. Nothing further needs configuring beyond
+  the key itself already being present (or not).
+
+### Version identification — implemented and verified this session
+
+- `GET /health/version` (backend, section 9m): unchanged, re-verified
+  working (`{"git_sha": "...", "environment": "local"}` against the dev
+  server).
+- `GET /api/version` (frontend, NEW this session): a real Next.js Route
+  Handler, verified working against the local dev server
+  (`curl http://localhost:3000/api/version`). Once deployed, `curl
+  https://app.bragi.health/api/version` will answer definitively.
+
+### Silent production-API-fallback removed
+
+Real, confirmed risk closed (not hypothetical): `lib/api.ts`,
+`lib/ask-bragi-api.ts`, `lib/emergency-api.ts`, and `next.config.ts`
+each independently hand-rolled `process.env.NEXT_PUBLIC_API_URL ||
+"https://bloodwork-os-api.onrender.com"`. A leftover local git worktree
+with zero `.env`/`.env.local` files (found in section 9m's own
+investigation, still present, deliberately not deleted per this
+session's own instruction) would have silently read AND WRITTEN real
+production patient data if ever run. New `lib/api-base.ts::
+getApiBaseUrl()` makes a missing `NEXT_PUBLIC_API_URL` a hard, loud
+build/runtime failure in any real build (`NODE_ENV=production`) — never
+a silent fallback to production — and only a genuine local `next dev`
+session falls back, to `http://localhost:8000`, never the real backend.
+Verified directly: throws with a clear message when simulated with
+`NODE_ENV=production` and the var unset; a real `npm run build` with
+the var correctly set (today's actual local `.env.local` state) builds
+clean, confirming no regression to the working case.
+
+### Pre-merge verification (this session)
+
+- Backend: `682/682` passing (re-run fresh this session, unchanged from
+  section 9m's own count — no backend code changed this session).
+  Bandit clean. Migration drift clean.
+- Frontend: `npx tsc --noEmit` zero errors; `npm run lint` — identical
+  `55 problems (29 errors, 26 warnings)`, zero new; `npm run build`
+  succeeds (confirms `getApiBaseUrl()` does not break the real build);
+  new `/api/version` route appears in the build's route list.
+- Full Playwright suite (`e2e/`, all specs): 44/49 passed on the first
+  combined run, then re-verified individually. Of the 5 failures: 2
+  (`ask-bragi-workspace.spec.ts`) are a genuine LOCAL ENVIRONMENT
+  limitation, not a code defect — this dev environment has no
+  `ASK_BRAGI_ENABLED`/OpenAI configuration, and the app correctly,
+  honestly shows "Ask Bragi is not enabled in this environment" (visually
+  confirmed via screenshot) rather than a broken/blank state; these
+  tests need a real AI-configured environment to run meaningfully and
+  were not chased further. The other 3 (`clinical-reader.spec.ts` ×2,
+  `exact-provenance.spec.ts` ×1) all passed cleanly on isolated re-runs
+  — the same pre-existing Next.js dev/Turbopack timing flake class
+  documented repeatedly across every prior session in this engagement
+  (bug #11), reconfirmed here on test files this session's own changes
+  never touch.
+- Production-safety diff review (`git diff origin/main...HEAD`, all 67
+  commits): scanned for secrets/credential-shaped strings, accidental
+  local filesystem paths, and disabled-authorization/debug-bypass
+  patterns in backend source — none found. `INTEROP_FHIR_ENABLED`
+  confirmed still defaults to `false` (unset/empty → off) — unaffected
+  by this branch, not accidentally enabled.
+
+### PR
+
+Opened: see the PR number/URL/CI status recorded in this session's
+final report (and, once available, this section's own follow-up entry
+— update this line once CI settles). **NOT merged** — the migration
+pre-deploy gate above is the sole blocker.
+
+### What remains (honest, not attempted)
+
+- **The Render Pre-Deploy Command is still not configured** — the exact
+  action, in three equivalent forms, is documented above. This is a
+  real, load-bearing prerequisite: merging without it would break
+  production document/lab/medication access immediately.
+- **Production `NEXT_PUBLIC_API_URL`/`OPENAI_API_KEY` presence was not
+  independently re-verified this session** (would require either
+  dashboard access or printing values this session correctly refused to
+  print) — inferred safe/already-correct from the site's own current
+  working behavior, not confirmed via a fresh read.
+- **Merge, deploy monitoring, and the real-site smoke test are NOT yet
+  done** — all conditional on the migration gate above being closed
+  first, per this session's own explicit "do not merge past a genuinely
+  unclear deployment mechanism" instruction.
+- **Phase 11 (Ask Bragi canonical retrieval hardening)**: still NOT
+  STARTED, unchanged.
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)

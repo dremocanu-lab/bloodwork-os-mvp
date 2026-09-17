@@ -327,7 +327,23 @@ a fraction of a pixel of the text's visual center — the reported "still
 too high" symptom most likely reflects the same stale-deployment risk
 found above, not a remaining rendering bug; a real, defensible CSS
 improvement (a testable DOM dot, corrected line-height) was made anyway.
-Phases 11-21 of the originating contract (Ask-Bragi
+**A subsequent production-deployment-closure session (NEW) CONFIRMED via
+authenticated Render/Vercel CLI access** (not just repo inference) that
+the real production site (app.bragi.health + the Render backend) was
+running `main` — 66 commits, 5 days stale — the entire time, fully
+explaining every "doesn't match the branch" manual QA report. Added a
+frontend `GET /api/version` (mirroring the backend's own) and removed a
+real, confirmed danger: 4 files silently fell back to the REAL
+production API URL when unconfigured, which a leftover local worktree
+with no env files would have silently exploited. A PR was opened from
+this branch into `main`, but **deliberately NOT merged**: the one
+remaining blocker is that Render's Pre-Deploy Command (the mechanism
+that runs this branch's 4 new — all additive/nullable — Alembic
+migrations before new code starts serving traffic) is confirmed, via
+CLI, to still be unconfigured, and configuring it was blocked by this
+session's own safety tooling as a production-infrastructure change
+requiring the user's direct action. Phases 11-21 of the originating
+contract (Ask-Bragi
 retrieval hardening and everything downstream) are entirely
 unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the

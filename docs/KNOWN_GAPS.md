@@ -23,20 +23,29 @@ as described.
   SDK (Sentry, PostHog, Segment, or equivalent) is wired into the
   backend or frontend. There is no security-event monitoring in
   production today.
-- **Deployment parity cannot be fully confirmed from this repository.**
-  A P0 upload-reliability session (2026-09-17) found, with certainty:
-  no `vercel.json`/`render.yaml`/CI config anywhere in this repo states
-  which branches deploy to which environment (that lives exclusively in
-  Vercel/Render dashboards); the only documented auto-deploy trigger
-  (`README.md`) is `main`; and a leftover local git worktree
-  (`.claude/worktrees/agent-a4d8c81f635b19e9d`, ~3 months stale, no
-  `.env`/`.env.local` at all) would silently call the real production
-  backend if ever run. `GET /health/version` (git_sha + environment) and
-  a frontend build-SHA display now exist so a RUNNING app can answer
-  "which commit is this," but confirming what's actually live today
-  still requires visiting the Render/Vercel dashboards directly, or
-  querying the deployed URLs — neither is possible from this coding
-  environment.
+- **Deployment parity — CONFIRMED stale, not yet resolved.** A P0
+  upload-reliability session (2026-09-17) found, from repo evidence
+  alone, that deployment parity could not be verified. A follow-up
+  production-deployment-closure session (same day) obtained authenticated
+  Render/Vercel CLI access and CONFIRMED directly: the live production
+  site (Render service `bloodwork-os-api` + Vercel `app.bragi.health`)
+  is running `main` at commit `917a543` — 66 commits and 5 days behind
+  the `fix/clinical-document-intelligence-v3` branch — fully explaining
+  every "doesn't match the branch" manual QA report to date. `GET
+  /health/version` (backend) and `GET /api/version` (frontend, new) now
+  let anyone confirm this directly (`curl https://app.bragi.health/
+  api/version`) without dashboard access. A PR from the feature branch
+  into `main` was opened but deliberately NOT merged: Render's
+  Pre-Deploy Command (required to apply 4 pending additive Alembic
+  migrations before new code starts serving traffic — without it, the
+  new code's ORM queries would fail immediately against the old schema)
+  is confirmed, via CLI, still unconfigured — and setting it was blocked
+  by this session's own safety tooling as a production-infrastructure
+  change needing the user's direct action. See the handoff's section 9n
+  for the exact command/dashboard action required. The leftover local
+  git worktree (`.claude/worktrees/agent-a4d8c81f635b19e9d`, ~3 months
+  stale, no env files, would silently call the real production backend
+  if ever run) still exists, deliberately not deleted.
 - **No tested backup restoration.** Neon/Render's actual backup/PITR
   configuration is an account/console-level setting this codebase
   cannot verify or exercise. No restore drill has been performed.
