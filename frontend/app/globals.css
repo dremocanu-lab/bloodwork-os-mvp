@@ -1828,6 +1828,18 @@ tr:focus-within .b-row-actions {
 
 .app-shell-header-row {
   display: flex;
+  /* Clinical Reader Intelligence V2: previously `nowrap` (align-items:
+     center) with a `flex-shrink: 0` actions block — when the title
+     column got squeezed narrow enough to wrap onto 2 lines (e.g. the
+     split source viewer narrowing this column, not just a phone
+     viewport) but the actions still fit "in principle" on the same row,
+     centering a single-line actions block against a now-2-line-tall row
+     visually plants it across the title's second line. Wrapping here
+     unconditionally (not just under the old mobile-only media query
+     below) lets the actions block drop to its own row whenever there
+     genuinely isn't room, on any screen size — a real, reproduced
+     overlap this fixes, not a hypothetical one. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--s4);
@@ -1835,6 +1847,16 @@ tr:focus-within .b-row-actions {
   max-width: var(--content-max);
   margin: 0 auto;
   width: 100%;
+}
+
+.app-shell-title-block {
+  /* A real floor, not 0: with `flex-wrap: wrap` on the row above, this
+     is what actually makes the actions block wrap to its own line once
+     there truly isn't room, instead of the title alone getting squeezed
+     down to a sliver while a same-line actions block visually overlaps
+     its clamped second line — see .app-shell-header-row's own comment. */
+  min-width: 200px;
+  flex: 1 1 auto;
 }
 
 .b-crumbs {

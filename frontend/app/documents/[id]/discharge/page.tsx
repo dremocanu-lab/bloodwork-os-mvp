@@ -165,7 +165,15 @@ export default function DischargeStructuredPage() {
   const [payload, setPayload] = useState<ClinicalReaderResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeEntryId, setActiveEntryId] = useState<string | null>(null);
+  // "overview" from the start, never set asynchronously after load — a
+  // separate `setActiveEntryId("overview")` call once the fetch resolved
+  // was a real, reproduced race: if it landed just after the user had
+  // already clicked a different section (nothing exotic needed to
+  // trigger it — just an ordinary slow initial load), it silently
+  // reverted their click back to Overview. `activeEntry` already falls
+  // back to `outline[0]` before the outline exists, so this default
+  // costs nothing and removes the race by construction.
+  const [activeEntryId, setActiveEntryId] = useState<string | null>("overview");
   const [isMobile, setIsMobile] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -191,13 +199,16 @@ export default function DischargeStructuredPage() {
   }
 
   useEffect(() => {
-    // `cancelled` guards against a StrictMode dev double-invoke (or a
-    // real unmount/route change mid-fetch) landing its state updates
-    // AFTER a newer load — without it, an initial `setActiveEntryId
-    // ("overview")` from a slow, stale invocation could silently stomp
-    // whatever section the user had already navigated to by the time it
-    // resolves. This was a real, reproduced bug (a section click getting
-    // reverted back to Overview a moment later), not a hypothetical one.
+    // `cancelled` guards every state update below against a StrictMode
+    // dev double-invoke, or a real unmount/route change, landing AFTER
+    // a newer load — see loadReaderPayload's own history: an earlier
+    // version of this effect also unconditionally reset the active
+    // section back to "overview" once loading finished, and a slow or
+    // duplicate invocation resolving late could stomp a section the user
+    // had already clicked into. That reset is gone now (see the
+    // `activeEntryId` initializer above), but the same staleness hazard
+    // still applies to currentUser/payload/carePartners below, so the
+    // guard stays.
     let cancelled = false;
 
     async function load() {
@@ -220,8 +231,6 @@ export default function DischargeStructuredPage() {
           router.replace(`/documents/${documentId}/lab-report`);
           return;
         }
-
-        setActiveEntryId("overview");
 
         if (meResponse.data.role === "patient") {
           const [cpResponse, sharesResponse] = await Promise.all([
@@ -383,7 +392,7 @@ export default function DischargeStructuredPage() {
       title={document.report_name || document.filename}
       subtitle={`${document.document_type || "discharge_summary"} · ${document.is_verified ? copy.verified : copy.unverified}`}
       rightContent={
-        <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative", flexWrap: "wrap" }}>
           {currentUser.role !== "care_partner" ? (
             <AskBragiSideTab
               target={{

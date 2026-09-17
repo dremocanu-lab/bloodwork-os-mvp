@@ -146,7 +146,7 @@ export default function AppShell({
           {!hideHeader ? (
             <header className="app-shell-header">
               <div className="app-shell-header-row">
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="app-shell-title-block">
                   {breadcrumbs?.length ? (
                     <nav className="b-crumbs" aria-label="Breadcrumb">
                       <span className="b-side-brand-role" style={{ flexShrink: 0 }}>
