@@ -27,6 +27,18 @@ type Props = {
   labs: ReaderLabResult[];
   documentContentType?: string | null;
   mode: "embedded" | "standalone";
+  /** Clinical Reader Intelligence V2 Part 8E — whether the document's own
+   * laboratory_results section has real (non-template) source content.
+   * Distinguishes "detected in source but could not be structured" from
+   * a genuine "no laboratory results in this document" — the two must
+   * never be conflated into one generic empty message, and a populated
+   * table and an empty-state message must never both be shown at once. */
+  rawSectionHasContent?: boolean;
+  /** Jumps the reader to Original/Full source narrative mode — the "raw
+   * source access" Part 8E requires alongside the detected-but-
+   * unstructured warning. Omitted in standalone mode, which has no such
+   * navigation concept. */
+  onViewOriginal?: () => void;
 };
 
 function labDisplayName(lab: ReaderLabResult): string {
@@ -44,7 +56,7 @@ function formatDate(value: string | null): string {
   return parsed.toLocaleDateString(undefined, { year: "numeric", month: "short", day: "numeric" });
 }
 
-export function StructuredLabReport({ labs, documentContentType, mode }: Props) {
+export function StructuredLabReport({ labs, documentContentType, mode, rawSectionHasContent, onViewOriginal }: Props) {
   const { language } = useLanguage();
 
   const copy =
@@ -59,6 +71,9 @@ export function StructuredLabReport({ labs, documentContentType, mode }: Props) 
           requiresReview: "Necesită verificare",
           conflictNote: "Valori diferite raportate din surse distincte pentru acest interval — ambele păstrate.",
           empty: "Niciun rezultat de laborator disponibil pentru acest document.",
+          detectedNotStructured:
+            "Rezultate de laborator au fost detectate în sursă, dar nu au putut fi structurate automat.",
+          viewOriginal: "Vezi în narațiunea sursă",
         }
       : {
           test: "Test",
@@ -70,6 +85,8 @@ export function StructuredLabReport({ labs, documentContentType, mode }: Props) 
           requiresReview: "Requires review",
           conflictNote: "Different sources reported different values for this observation — both preserved.",
           empty: "No laboratory results are available for this document.",
+          detectedNotStructured: "Laboratory results were detected in the source but could not be structured automatically.",
+          viewOriginal: "View in original source",
         };
 
   // Group by category (Phase 6's embedded-lab category, or an ordinary
@@ -105,6 +122,33 @@ export function StructuredLabReport({ labs, documentContentType, mode }: Props) 
   }, [labs]);
 
   if (labs.length === 0) {
+    // State 2 vs state 3 (Part 8E) — never the generic "no labs" message
+    // when the source itself visibly has lab-shaped content that just
+    // didn't parse into canonical rows.
+    if (rawSectionHasContent) {
+      return (
+        <div
+          style={{
+            padding: "var(--s3)",
+            borderRadius: "var(--r-md)",
+            background: "var(--warn-bg, rgba(176, 137, 0, 0.08))",
+            border: "1px solid var(--warn, #b08900)",
+            display: "flex",
+            flexDirection: "column",
+            gap: 8,
+          }}
+        >
+          <p className="b-meta" style={{ margin: 0 }}>
+            {copy.detectedNotStructured}
+          </p>
+          {onViewOriginal ? (
+            <button type="button" className="b-btn b-btn-ghost b-btn-sm" style={{ alignSelf: "flex-start" }} onClick={onViewOriginal}>
+              {copy.viewOriginal}
+            </button>
+          ) : null}
+        </div>
+      );
+    }
     return (
       <p className="b-meta" style={{ padding: "var(--s3) 0" }}>
         {copy.empty}

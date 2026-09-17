@@ -191,15 +191,26 @@ export default function DischargeStructuredPage() {
   }
 
   useEffect(() => {
+    // `cancelled` guards against a StrictMode dev double-invoke (or a
+    // real unmount/route change mid-fetch) landing its state updates
+    // AFTER a newer load — without it, an initial `setActiveEntryId
+    // ("overview")` from a slow, stale invocation could silently stomp
+    // whatever section the user had already navigated to by the time it
+    // resolves. This was a real, reproduced bug (a section click getting
+    // reverted back to Overview a moment later), not a hypothetical one.
+    let cancelled = false;
+
     async function load() {
       if (!documentId) return;
       try {
         setLoading(true);
         setError("");
         const meResponse = await api.get<CurrentUser>("/auth/me");
+        if (cancelled) return;
         setCurrentUser(meResponse.data);
 
         const readerData = await loadReaderPayload();
+        if (cancelled) return;
 
         // Canonical Document Intelligence V3 routing — a derived lab
         // artifact whose id lands here has no structured_document of
@@ -217,16 +228,20 @@ export default function DischargeStructuredPage() {
             api.get<CarePartnerLink[]>("/my/care-partners"),
             api.get<DocumentShare[]>(`/documents/${documentId}/shares`),
           ]);
+          if (cancelled) return;
           setCarePartners(cpResponse.data || []);
           setDocumentShares(sharesResponse.data || []);
         }
       } catch (err) {
-        setError(getErrorMessage(err, copy.loadFailed));
+        if (!cancelled) setError(getErrorMessage(err, copy.loadFailed));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
@@ -521,6 +536,7 @@ export default function DischargeStructuredPage() {
               documentContentType={document.content_type}
               copy={copy}
               allSections={allSections}
+              onViewOriginal={() => setActiveEntryId("original")}
             />
           ) : null}
         </div>
@@ -536,6 +552,7 @@ export default function DischargeStructuredPage() {
               documentContentType={document.content_type}
               copy={copy}
               allSections={allSections}
+              onViewOriginal={() => setActiveEntryId("original")}
             />
           ) : null}
         </div>
@@ -611,6 +628,7 @@ function EntryContent({
   documentContentType,
   copy,
   allSections,
+  onViewOriginal,
 }: {
   entry: OutlineEntry;
   structuredDocument: NonNullable<ClinicalReaderResponse["structured_document"]>;
@@ -619,6 +637,7 @@ function EntryContent({
   documentContentType?: string | null;
   copy: { clinicalCourse: string; currentHospitalization: string; original: string };
   allSections: ClinicalSection[];
+  onViewOriginal: () => void;
 }) {
   const events = structuredDocument.dated_events;
 
@@ -699,6 +718,23 @@ function EntryContent({
           <InvestigationCards investigations={structuredDocument.investigations} />
         ) : section.canonical_key === "recommendations" && structuredDocument.recommendations.length > 0 ? (
           <RecommendationList recommendations={structuredDocument.recommendations} />
+        ) : section.canonical_key === "laboratory_results" ? (
+          // Never fall through to the raw blocks below when canonical
+          // LabResult rows exist for this document (Part 1F/8A) — and
+          // never show BOTH a populated table and "no labs available" at
+          // once (Part 1G/8E): when this section has real content but no
+          // canonical rows parsed from it, that is its own distinct
+          // "detected but could not be structured" state, not silence.
+          <StructuredLabReport
+            labs={labs}
+            documentContentType={documentContentType}
+            mode="embedded"
+            rawSectionHasContent={section.blocks.length > 0}
+            onViewOriginal={onViewOriginal}
+          />
+        ) : (section.canonical_key === "discharge_medications" || section.canonical_key === "medications") &&
+          medications.length > 0 ? (
+          <MedicationList medications={medications} documentContentType={documentContentType} />
         ) : (
           section.blocks.map((block, i) => (
             <ClinicalBlockRenderer
@@ -719,14 +755,6 @@ function EntryContent({
             </h3>
             <ClinicalCourseTimeline events={events} />
           </div>
-        ) : null}
-
-        {section.canonical_key === "laboratory_results" ? (
-          <StructuredLabReport labs={labs} documentContentType={documentContentType} mode="embedded" />
-        ) : null}
-
-        {(section.canonical_key === "discharge_medications" || section.canonical_key === "medications") && medications.length > 0 ? (
-          <MedicationList medications={medications} documentContentType={documentContentType} />
         ) : null}
       </div>
     </div>

@@ -30,6 +30,8 @@ from typing import Any
 
 from app.services.document_taxonomy import DocumentType
 
+from app.services.lab_catalog import normalize_text
+
 from .canonical_headings import classify_canonical_heading, consolidate_segments
 from .dates import parse_date_token
 from .events import build_events_from_segment_text
@@ -95,6 +97,8 @@ def parse_legacy_discharge_payload(
         hospital_name=payload.get("hospital_name"),
     )
 
+    dated_events = _mark_repeated_events(dated_events)
+
     doc_warnings.extend(_chronology_warnings(dated_events, metadata))
     doc_warnings.extend(str(w) for w in (payload.get("warnings") or []))
 
@@ -107,6 +111,35 @@ def parse_legacy_discharge_payload(
         dated_events=dated_events,
         warnings=doc_warnings,
     )
+
+
+def _segment_id_of(event: ClinicalEvent) -> str:
+    return event.source_event_id.rsplit("-event-", 1)[0]
+
+
+def _mark_repeated_events(events: list[ClinicalEvent]) -> list[ClinicalEvent]:
+    """Presentation-only duplicate detection (Part 16 / 1J) — deterministic
+    and deliberately conservative: an event is only flagged when its ENTIRE
+    raw_text is an exact normalized match of an event already seen from a
+    DIFFERENT segment (never within the same segment, where sibling events
+    sharing one segment's raw_text is expected and not a duplication at
+    all). Nothing is removed or merged here — every event, and its own
+    source_evidence_ids, survives untouched; this only sets a flag the
+    reader can use to visually consolidate a repeated narrative block
+    without deleting the second occurrence's provenance."""
+    seen_in_segment: dict[str, str] = {}
+    marked: list[ClinicalEvent] = []
+    for event in events:
+        key = normalize_text(event.raw_text)
+        segment_id = _segment_id_of(event)
+        first_segment = seen_in_segment.get(key) if key else None
+        if key and first_segment is not None and first_segment != segment_id:
+            marked.append(event.model_copy(update={"is_repeated_in_source": True}))
+        else:
+            marked.append(event)
+            if key and first_segment is None:
+                seen_in_segment[key] = segment_id
+    return marked
 
 
 def _chronology_warnings(events: list[ClinicalEvent], metadata: DocumentMetadata) -> list[str]:
