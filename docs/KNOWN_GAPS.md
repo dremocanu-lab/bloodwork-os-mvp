@@ -213,7 +213,28 @@ unimplemented — confirmed, not merely suspected: Reducto's reader/
 section extraction runs with `citations=False`, and `SourceSegment` is
 not persisted with a page number at all, so there is no source geometry
 of any precision for narrative text to render even coarsely beyond
-"open the document." Ask-Bragi retrieval hardening for the new canonical
+"open the document." A further Romanian discharge classification
+closure session found and fixed a real, reproduced classification bug
+in the SAME family as section 9j's routing bug but one layer earlier:
+the legacy classifier had no keyword coverage at all for "bilet de
+ieșire (din spital)" (a common Romanian discharge-letter title, distinct
+from the already-covered "bilet de externare"), which — combined with a
+realistic dense embedded lab table — could push an otherwise-winning
+discharge classification below the confidence margin needed to
+auto-accept, forcing an unnecessary confirmation prompt. Fixed (keyword
+added, Reducto's own classification criteria updated to name the same
+Romanian titles explicitly, though NOT independently live-verified
+against the real Reducto API — no safe synthetic-PDF fixture process
+exists in this repo yet), and closed a related, previously-deferred gap
+where a doctor/care-partner manual "Discharge Summary" upload never set
+`document_type` at all. Critically, this session also closed a testing
+gap, not just a code gap: every prior "discharge routing" test/fixture
+(including section 9j's own) started from a `Document`/`UploadJob` with
+`document_type`/`section` already hardcoded — never from real source
+text run through the actual classifier — so routing was proven correct
+while classification itself was never exercised end-to-end. A new test
+suite (backend + Playwright) now runs real Romanian text through the
+real classifier, real persistence, and the real browser reader. Ask-Bragi retrieval hardening for the new canonical
 data (Phase 11), the exhaustive real-Postgres idempotency/deletion test
 suites (Phases 6-10 each laid real groundwork but the full 1x/2x/10x/
 exhaustive-cascade proofs remain open), the deterministic retrieval

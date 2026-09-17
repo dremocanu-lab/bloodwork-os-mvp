@@ -82,10 +82,21 @@ larger upstream gap (Reducto's reader/section extraction runs with
 `citations=False`, and no segment/page/offset geometry is persisted for
 narrative text at all) — invoking this session's own explicit "stop
 honestly rather than fake it" boundary for that piece, and leaving it
-open for a dedicated future session alongside Phase 11. This document
-exists specifically so a future Claude session with zero memory of this
-conversation can pick this up correctly — read section 23 ("HOW TO
-CONTINUE") first if that's you.
+open for a dedicated future session alongside Phase 11. **A further
+Romanian discharge classification closure session (NEW this checkpoint,
+section 9l)** found and fixed a real, reproduced classification bug —
+`document_classifier.py` had no keyword coverage for "bilet de ieșire
+(din spital)", a common Romanian discharge-letter title distinct from
+the already-covered "bilet de externare" — which, combined with a
+realistic dense embedded lab table, could push an otherwise-winning
+discharge classification into an unnecessary confirmation prompt; also
+closed a related persistence gap (a manual "Discharge Summary" upload
+pick never set `document_type`) and a real testing gap (every prior
+"discharge routing" test/fixture started from hardcoded metadata, never
+real classifier output) with a new end-to-end backend + Playwright
+suite. This document exists specifically so a future Claude session
+with zero memory of this conversation can pick this up correctly — read
+section 23 ("HOW TO CONTINUE") first if that's you.
 
 This is written for a session that does not trust its own predecessor's
 claims: every fact below is either a command you can re-run, a file you
@@ -167,15 +178,32 @@ can open, or a test you can execute.
   runs with `citations=False`; no segment/page/offset geometry is
   persisted for narrative text) — deliberately NOT faked, left open for a
   dedicated future session. 13 new backend + 7 new Playwright tests.
+- **This checkpoint ALSO includes the Romanian discharge classification
+  closure session (section 9l)**: a real, reproduced classification bug
+  fixed (`document_classifier.py` had no keyword coverage for "bilet de
+  iesire (din spital)", a common Romanian discharge title distinct from
+  the already-covered "bilet de externare" — margin against
+  laboratory_results went from 0.5, below threshold, to 5.5 after the
+  fix); Reducto's own classification criteria updated to name the same
+  Romanian titles explicitly (not independently live-verified this
+  session); a related manual-upload `document_type` persistence gap
+  closed for the two unambiguous section values; and — critically — a
+  real testing gap closed: every prior "discharge routing" test/fixture
+  started from hardcoded metadata, never real classifier output, so a
+  new end-to-end backend + Playwright suite now proves real text →
+  classifier → persisted metadata → routing → the actual Phase 8 reader.
+  18 new backend + 6 new Playwright tests.
 - **Immediate next step: Phase 11 — Ask Bragi canonical retrieval
   hardening** (structured dated-event queries, transparent end-date-
   derivation language in answers, consuming the newly canonical
   `StructuredClinicalDocument`/`ClinicalEvent`/`LabResult`/
   `PatientMedication` data — never treating `PatientEvent`/Timeline as
   the source of truth for Ask Bragi). Not started this session, by
-  explicit instruction. A future session picking this up should ALSO
-  consider the still-open narrative-text exact-provenance gap (section
-  9k's "What remains") — neither is more "next" than the other; both are
+  explicit instruction — the user is expected to manually inspect the
+  actual deployed Phase 8 reader first, per this session's own stop
+  condition. A future session picking this up should ALSO consider the
+  still-open narrative-text exact-provenance gap (section 9k's "What
+  remains") — neither is more "next" than the other; both are
   open.
 
 ## Hard constraints and architecture decisions the next session MUST preserve
@@ -2536,6 +2564,238 @@ entry.)
 - **Phase 11 (Ask Bragi canonical retrieval hardening)**: still NOT
   STARTED, entirely, unchanged from section 9j. See section 22.
 
+## 9l. Romanian Discharge Classification / Reader Closure (COMPLETE)
+
+Starting checkpoint: branch `fix/clinical-document-intelligence-v3`,
+local HEAD `ecd4a2f`, remote HEAD `ecd4a2f` (confirmed equal), working
+tree clean, zero unpushed commits — the exact end of section 9k.
+
+### Why this session exists
+
+Manual product QA reported that a real/synthetic Romanian discharge
+letter titled **"BILET DE IEȘIRE DIN SPITAL / SCRISOARE MEDICALĂ"**
+still did not visibly reach the Phase 8 discharge reader. Section 9j's
+own routing-consolidation pass had already proven ROUTING correct
+(document_type=discharge_summary → `/documents/{id}/discharge`), but —
+found by direct investigation, not assumed — every test built for that
+proof starts from a `Document`/`UploadJob` with `document_type`/
+`section` **already hardcoded** to `"discharge_summary"`
+(`test_clinical_document_reader_api.py`'s `_make_document`,
+`seed_e2e_discharge_document.py`, `seed_e2e_routing_fixture.py`). None
+of them ever ran real source text through the actual classifier. This
+session closed exactly that untested boundary: real text → classifier →
+persisted metadata → routing → reader.
+
+### Reproduction (before any edit)
+
+Built a realistic fixture combining the real document's exact title
+with a dense, realistic embedded hematology lab table (the same class
+of content the exact-provenance session's NEUT#/PCT/NRBC# work dealt
+with) and ran it through the real, unmodified legacy classifier
+(`document_classifier.classify_document_text` — the same function
+`test_document_classifier.py` already unit-tests):
+
+```
+document_type: DocumentType.DISCHARGE_SUMMARY
+status: needs_confirmation
+confidence: 0.6
+matched_terms: ['scrisoare medicala', 'epicriza', 'data internarii',
+                'data externarii', 'diagnostic la externare',
+                'recomandari la externare']
+candidates: {'discharge_summary': 14.5, 'laboratory_results': 14.0}
+```
+
+**Root cause, confirmed not guessed**: `discharge_summary` already WON
+the ranking — this is not the taxonomy-mapping issue section 9j
+documented (that applies only when the winner becomes
+`hospital_admission_note`/`emergency_department_note`, which this
+fixture never does). The real problem: `_KEYWORDS[DISCHARGE_SUMMARY]`
+had an entry for `"bilet de externare"` but **none at all** for
+`"bilet de iesire (din spital)"` — a different, equally common Romanian
+discharge-letter title with no shared substring — so the real
+document's own title contributed nothing to its score. With the
+discharge signal artificially weakened and a realistic dense lab table
+contributing real (if secondary) signal, the margin between the two
+categories (0.5) fell below `CONFIDENT_MARGIN_THRESHOLD` (1.5),
+forcing an unnecessary `needs_confirmation` on a document that should
+classify cleanly.
+
+Reducto's `CLASSIFICATION_SCHEMA` criteria for `discharge_summary`
+(`reducto_schemas.py`) was also found to be English-only — unlike
+sibling categories in the SAME schema, which do embed their own
+Romanian term directly (`hospital_admission_note` → "foaie de
+internare", `emergency_department_note` → "camera de garda",
+`referral` → "bilet de trimitere"). `discharge_summary` and
+`specialist_consultation` were the outliers.
+
+### Fix
+
+1. **`document_classifier.py`**: added `("bilet de iesire din spital",
+   3)` and `("bilet de iesire", 2)` to `DISCHARGE_SUMMARY`'s keyword
+   list. Re-running the exact reproduction fixture: `discharge_summary:
+   19.5` vs `laboratory_results: 14.0`, confidence `1.0`, status
+   `classified` — margin now 5.5, comfortably clear. Verified this does
+   NOT regress the disambiguation cases: a `foaie de internare`
+   (admission, no discharge structure) still classifies
+   `hospital_admission_note` at 0.833 confidence; an outpatient
+   `scrisoare medicala` (no inpatient structure) still classifies
+   `specialist_consultation` at 0.917 confidence; a standalone lab
+   report is unaffected.
+2. **`reducto_schemas.py`**: `discharge_summary`'s criteria text now
+   explicitly names "bilet de ieșire din spital", "bilet de externare",
+   "fișă/foaie de externare", and the inpatient-vs-outpatient
+   `scrisoare medicală` distinction (an outpatient one without
+   admission/discharge structure is more likely
+   `specialist_consultation`/`referral`), and explicitly instructs the
+   model that an embedded lab table does not change a document's own
+   dominant, document-level purpose. **Not independently live-verified
+   against the real Reducto API this session** — no established, safe
+   synthetic-PDF-generation fixture exists in this repo (no PDF-authoring
+   library is installed, and installing one was judged outside this
+   session's minimal-footprint scope); a real `REDUCTO_API_KEY` IS
+   configured in this dev environment, so a future session could verify
+   this criteria change live once a safe PDF fixture process exists.
+   Honestly flagged, not silently assumed fixed.
+3. **`documents.py` (`create_background_upload`, `POST /upload/
+   background`)**: the doctor/care-partner manual-section-picklist path
+   never runs real classification at all (confirmed:
+   `job.document_type` is only ever assigned inside `process_upload_
+   job`'s `if job.section == AUTO_CLASSIFY_SECTION:` block, which this
+   path never enters) — a real, previously-deferred gap section 9j's
+   own "Deliberately not changed" explicitly named. Closed for the two
+   `section` values that map onto exactly one `DocumentType` each
+   (`discharge_summary`→`discharge_summary`, `bloodwork`→
+   `laboratory_results`, via a new `UNAMBIGUOUS_SECTION_DOCUMENT_TYPE`
+   map) — `medications`/`scans`/`hospitalizations`/`other` each cover
+   multiple real document types and are deliberately left `NULL`, never
+   guessed. No frontend change was needed: the mapping happens
+   server-side from the `section` the existing picklist already sends.
+
+### What did NOT need to change
+
+- `LEGACY_SECTION_BY_DOCUMENT_TYPE` (the `hospitalizations` mapping) —
+  unchanged, per this session's own explicit non-goal. Not the operative
+  root cause for the reported document (see "Root cause" above).
+- `frontend/lib/document-routing.ts` / `resolveDocumentRoute` — already
+  correct from section 9j; nothing here needed a second fix.
+- `documents/[id]/discharge/page.tsx`'s guard, `GET /documents/{id}/
+  clinical-reader`'s eligibility — confirmed (again, directly) to check
+  only `derived_artifact_kind`, never `document_type`/`section`; a
+  correctly-classified discharge document was never at risk of being
+  blocked here.
+- The clinical reader itself — zero changes, per the session's explicit
+  freeze.
+
+### Tests
+
+- `backend/tests/test_document_classifier.py` (+6): the exact
+  reproduction fixture (`ROMANIAN_DISCHARGE_BILET_DE_IESIRE`, real title
+  + dense embedded labs) classifies `discharge_summary`/`classified`
+  with a real margin (≥1.5) between winner and runner-up; a short-form
+  "BILET DE EXTERNARE" fixture; a `FOAIE DE INTERNARE` (admission-only)
+  fixture proving it stays `hospital_admission_note`, not discharge — no
+  prior test covered `hospital_admission_note` at all; an outpatient
+  `scrisoare medicala` fixture proving it stays
+  `specialist_consultation`; a standalone-lab-report regression guard.
+- `backend/tests/test_reducto_classification.py` (new, 7 tests): the
+  real/mocked `_build_classification`/`_decide_status` decision logic
+  (this session found: previously exercised by ZERO tests anywhere in
+  the repo) against realistic Reducto response-body shapes — a clear
+  discharge winner; the exact documented real discharge/lab confidence
+  tie (`reducto_schemas.py`'s own docstring) → `needs_confirmation`; a
+  real-but-non-dominant runner-up → still `classified`; a low-confidence
+  winner → `status="other"` (document_type still reflects the weak
+  winner for audit, only status gates auto-acceptance — an existing,
+  now-documented design nuance); an unknown category string → falls
+  back to `other` safely; `hospital_admission_note` stays distinct;
+  category_scores survive for the confirmation UI.
+- `backend/tests/test_upload_validation.py` (+3): a manual
+  `discharge_summary` section pick now sets `document_type=
+  "discharge_summary"`/`classification_status="classified"`; a manual
+  `bloodwork` pick sets `document_type="laboratory_results"`; a manual
+  `hospitalizations` pick (ambiguous) correctly leaves `document_type`
+  `null`.
+- `backend/tests/test_romanian_discharge_classification_e2e.py` (new, 2
+  tests) — **the real, previously-missing bug boundary**: real Romanian
+  text run through the REAL `POST /upload/batch` pipeline
+  (`REDUCTO_ENABLED` forced off via `monkeypatch.setenv` for
+  determinism — never a real, costly external call regardless of the
+  ambient `.env`; OCR stubbed to return the fixture text verbatim,
+  since no safe real-PDF-generation fixture exists yet; nothing else
+  mocked) proves persisted `Document.document_type`/`section` and `GET
+  /documents/{id}/clinical-reader` both end up correct — not
+  `classify_document_text()` tested in isolation.
+- `frontend/e2e/romanian-discharge-classification.spec.ts` (new, 6
+  tests), seeded via new `backend/scripts/seed_e2e_bilet_de_iesire_
+  discharge.py` — **the one Playwright fixture in this whole feature
+  that does NOT hardcode `document_type`**: the seed script calls the
+  real classifier and asserts `CLASSIFIED`/`discharge_summary` itself,
+  failing loudly (not silently falling back) if the classifier ever
+  regresses. Proves: the real classification margin (≥1.5); Documents-
+  list click-through reaches `/documents/{id}/discharge`; direct URL and
+  hard refresh both work; the actual Phase 8 reader renders real
+  content (not the old generic reader — asserted absent); `GET
+  /documents/{id}/clinical-reader` returns `document_type=
+  discharge_summary`; mobile viewport stays usable. All 6 passed on two
+  independent full runs.
+- Full backend suite: see section 19 for the exact confirmed count.
+  Bandit clean. Migration drift clean — **this session added NO
+  migration** (pure classification/persistence logic, one new nullable-
+  column-free `UploadJob.document_type` assignment path, no schema
+  change).
+- Frontend: `npx tsc --noEmit` zero errors; `npm run lint` zero new
+  errors/warnings (same pre-existing 29/26 elsewhere, untouched);
+  `npm run build` succeeds, same route set (no new page). Re-ran
+  `routing-and-integration-fixes.spec.ts` (5/5) and `clinical-
+  reader.spec.ts` (9/11 first pass, 2 failures reproduced the SAME
+  pre-existing dev/Turbopack outline-click flake already disclosed as
+  bug #11 — both passed cleanly in isolated reruns) to confirm zero
+  regression from this session's `documents.py`/classifier changes.
+
+### Bugs found this session
+
+18. **A real, reproduced classification bug** — see "Root cause" above.
+    `document_classifier.py`'s `DISCHARGE_SUMMARY` keyword list had no
+    entry for "bilet de iesire (din spital)" — a common Romanian
+    discharge-letter title distinct from "bilet de externare" — which
+    on a realistic document with a dense embedded lab table pushed an
+    otherwise-clearly-winning discharge classification's margin below
+    the confidence threshold, forcing an unnecessary `needs_
+    confirmation`. Fixed; proven with a reproduction fixture matching
+    the real reported document's title and structure, both before and
+    after.
+19. **A real, previously-deferred persistence gap, now partially
+    closed** — see "Fix" item 3 above. Explicitly named as deferred in
+    section 9j's own "Deliberately not changed"; closed for the two
+    `section` values (`discharge_summary`, `bloodwork`) that map
+    unambiguously onto exactly one `DocumentType` each.
+
+### What remains (honest, not attempted)
+
+- **Live Reducto Classify verification** of the updated `discharge_
+  summary` criteria text: not performed this session — no safe
+  synthetic-PDF-generation process exists in this repo yet. A real
+  `REDUCTO_API_KEY` is configured in this dev environment; a future
+  session could build a minimal PDF-content fixture (no new dependency
+  strictly required — a hand-written minimal PDF content stream is
+  possible, or installing a small PDF-authoring library is a reasonable
+  one-time addition) and verify live.
+- **`document_type` is still not set for the four ambiguous manual-
+  upload section values** (`medications`/`scans`/`hospitalizations`/
+  `other`) — deliberately, since none maps 1:1 onto a single
+  `DocumentType`; making that path fully classify would need either
+  running the real classifier on manual uploads too (a bigger behavior
+  change) or a finer-grained frontend picklist — a genuine future
+  product decision, not attempted here.
+- **`HOSPITAL_ADMISSION_NOTE`/`EMERGENCY_DEPARTMENT_NOTE` →
+  `"hospitalizations"` taxonomy mapping**: still unchanged, per this
+  session's own explicit non-goal — remains open exactly as section 9j
+  left it.
+- **Phase 11 (Ask Bragi canonical retrieval hardening)**: still NOT
+  STARTED. The user is expected to manually inspect the actual deployed
+  Phase 8 reader next, per this session's own explicit stop condition,
+  before Phase 11 begins.
+
 ## 10. Lab artifact semantics
 
 **Phase 6 COMPLETE for embedded-discharge labs (extraction/persistence)
@@ -2906,6 +3166,14 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   `test_source_evidence_field_bboxes.py`; section 9k). **Full suite
   reran clean: `617 passed, 5 warnings in 1246.07s (0:20:46)` — zero
   failures, zero errors, no Neon flake this run.**
+  → **635 CONFIRMED after the Romanian discharge classification closure
+  session** (net +18 over the 617 baseline — an EXACT match, no
+  reconciliation gap: 6 new tests in `test_document_classifier.py`, 7
+  new tests in the new `test_reducto_classification.py`, 3 new tests in
+  `test_upload_validation.py`, 2 new tests in the new
+  `test_romanian_discharge_classification_e2e.py`; section 9l). **Full
+  suite reran clean: `635 passed, 5 warnings in 1437.44s (0:23:57)` —
+  zero failures, zero errors, no Neon flake this run.**
 
   **Environmental note for future sessions — Neon connectivity drops
   during long (20-25 min) full-suite runs are a real, observed, RECURRING
@@ -2964,27 +3232,38 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   failure 1-2 tests per run) — consistent with a genuine Next.js dev/
   Turbopack timing race, not a specific broken assertion or a regression
   from this session's own changes; section 21 / section 9k.
+  → **44 after the Romanian discharge classification closure session**
+  (+6, `romanian-discharge-classification.spec.ts`). All 6 passed
+  cleanly on two independent full runs of that spec; `routing-and-
+  integration-fixes.spec.ts` (5/5) and `clinical-reader.spec.ts` (9/11
+  first pass, 2 failures reproducing the SAME pre-existing outline-click
+  flake, both passing cleanly in isolated reruns) were re-run to confirm
+  zero regression from this session's `documents.py`/classifier changes
+  — see section 9l.
 - OpenAPI routes: 117 → 118 after Phase 8 (+1, `GET /documents/
   {id}/clinical-reader` — the first NEW route since Phase 4's own
   backend-modularization baseline) → 118 unchanged after Phase 9 → 118
   unchanged after Phase 10 → 118 unchanged after the integration-
   correction pass (no new route — one existing response, `GET
   /documents/{id}/clinical-reader`, gained one additive field,
-  `document.patient_id`) → **118 unchanged after the pre-Phase-11
-  exact-provenance session** (no new route — `GET /source-evidence/
+  `document.patient_id`) → 118 unchanged after the pre-Phase-11
+  exact-provenance session (no new route — `GET /source-evidence/
   {id}/view`'s existing response gained one additive field,
-  `field_bboxes`).
-- Bandit (`python -m bandit -r app -ll -q`): clean after the pre-Phase-
-  11 exact-provenance session — zero findings (only benign "Test in
-  comment" collector warnings unrelated to any real issue, same as
-  every prior checkpoint).
+  `field_bboxes`) → **118 unchanged after the Romanian discharge
+  classification closure session** (no new route — `POST /upload/
+  background`'s existing response can now additionally return a
+  populated `document_type`/`classification_status`/
+  `classification_confidence` for the two unambiguous section values).
+- Bandit (`python -m bandit -r app -ll -q`): clean after the Romanian
+  discharge classification closure session — zero findings (only benign
+  "Test in comment" collector warnings unrelated to any real issue, same
+  as every prior checkpoint).
 - Migration drift (`python scripts/check_migration_drift.py`): clean —
-  this session added exactly ONE new additive migration
-  (`c7d2e91a4b6f_source_evidence_field_bboxes.py`, one nullable column
-  on `source_evidence`) — "No migration drift detected (8 known/
+  this session added NO migration (pure classification/persistence
+  logic, no schema change) — "No migration drift detected (8 known/
   tolerated legacy-index difference(s) ignored)", same 8 as every prior
-  checkpoint, confirmed AFTER `alembic upgrade head` applied the new
-  migration.
+  checkpoint, last real migration still the pre-Phase-11 exact-
+  provenance session's `c7d2e91a4b6f_source_evidence_field_bboxes.py`.
 - TypeScript (`npx tsc --noEmit`): zero errors, whole frontend, after
   this session's changes.
 - ESLint (`npm run lint`): zero new errors/warnings in any file this
@@ -2992,8 +3271,8 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   elsewhere in the repo remain untouched (unrelated, out of scope, same
   as every prior checkpoint).
 - Frontend production build (`npm run build`): succeeds — unchanged
-  route set from the prior checkpoint (this session added a new shared
-  component, `selection-source-menu.tsx`, not a new page route).
+  route set from the prior checkpoint (this session added no new page
+  route, only a new Playwright spec + backend seed script).
 
 ## 20. Playwright coverage (what exists now)
 
@@ -3085,6 +3364,19 @@ cascade for ordinary lab rows — is unchanged, not fixed, not worsened.
   is proven at the unit level in `test_reducto_row_bbox.py`'s
   `TestAdjacentDenseRowsFixture` instead, section 9k) — this suite covers
   the real-browser interaction surface only.
+
+- `romanian-discharge-classification.spec.ts` (NEW, Romanian discharge
+  classification closure session): 6 tests — the one Playwright fixture
+  in this whole feature whose seed script does NOT hardcode
+  `document_type` (`seed_e2e_bilet_de_iesire_discharge.py` calls the
+  real classifier and asserts `CLASSIFIED`/`discharge_summary` itself,
+  failing loudly if it ever regresses). Proves: the real classification
+  margin between discharge_summary and laboratory_results is ≥1.5;
+  Documents-list click-through reaches `/documents/{id}/discharge`;
+  direct URL and hard refresh both work; the actual Phase 8 reader
+  renders real content with the old generic-reader-only UI confirmed
+  absent; `GET /documents/{id}/clinical-reader` returns `document_type=
+  discharge_summary`; mobile viewport stays usable. See section 9l.
 
 This is the FIRST Playwright coverage for the actual clinical-document
 reader product surface — Phase 16's broader document/derived-lab/
@@ -3270,6 +3562,32 @@ Phases 11-13 to exist first.
     — proven with a dedicated adjacent-row fixture
     (`TestAdjacentDenseRowsFixture`) reproducing the exact reported
     scenario both before and after the fix.
+18. **A real, reproduced Romanian discharge classification bug**
+    (Romanian discharge classification closure session) — see section
+    9l. `document_classifier.py`'s `DISCHARGE_SUMMARY` keyword list had
+    an entry for "bilet de externare" but none at all for "bilet de
+    iesire (din spital)" — a different, equally common Romanian
+    discharge-letter title with no shared substring. On a realistic
+    document combining the real title with a dense embedded hematology
+    lab table, this pushed an otherwise-clearly-winning discharge
+    classification's margin (0.5) below `CONFIDENT_MARGIN_THRESHOLD`
+    (1.5), forcing an unnecessary `needs_confirmation`. Fixed (margin
+    now 5.5, confidence 1.0); proven with a reproduction fixture
+    matching the real reported document's title and structure, both
+    before and after, and verified NOT to regress `hospital_admission_
+    note`/`specialist_consultation` disambiguation.
+19. **A real, previously-deferred persistence gap, now partially
+    closed** (Romanian discharge classification closure session) — see
+    section 9l. Explicitly named as deferred in section 9j's own
+    "Deliberately not changed": a doctor/care-partner manual upload
+    picking "Discharge Summary" from the picklist never ran real
+    classification at all (confirmed: `UploadJob.document_type` is only
+    ever assigned inside `process_upload_job`'s `AUTO_CLASSIFY_SECTION`
+    block, which this path never enters), leaving `document_type` NULL
+    forever even though the user's own choice is completely unambiguous.
+    Closed for the two `section` values that map 1:1 onto exactly one
+    `DocumentType` (`discharge_summary`, `bloodwork`) — the other four
+    remain deliberately unguessed.
 
 No other bugs were found during Phase 3 (a new, isolated schema/
 persistence module with no prior behavior to regress) or Phase 6. The
@@ -3326,9 +3644,16 @@ coarse-highlight root cause and shipped select-text-to-"Show in
 original" for lab/medication rows, while confirming arbitrary
 narrative-text exact highlighting is blocked on a genuinely larger
 upstream extraction gap (see section 9k's "What remains" for the exact
-decision a future session must make) — Phase 11 remains entirely
-unimplemented after this too. Everything from Phase 11 onward through
-Phase 21 of the original contract is **entirely unimplemented**:
+decision a future session must make). A further Romanian discharge
+classification closure session (section 9l) then fixed a real,
+reproduced classification bug (missing "bilet de iesire" keyword
+coverage) and closed a related manual-upload persistence gap, plus
+closed a real testing gap — every prior "discharge routing" test/
+fixture had started from hardcoded metadata, never real classifier
+output — with a new end-to-end backend + Playwright suite. Phase 11
+remains entirely unimplemented after all of this. Everything from Phase
+11 onward through Phase 21 of the original contract is **entirely
+unimplemented**:
 
 - Phase 11: Ask Bragi retrieval hardening for the new structured data
   (structured dated-event queries, transparent end-date-derivation

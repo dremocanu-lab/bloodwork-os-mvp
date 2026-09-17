@@ -284,7 +284,25 @@ new backend tests and 7 new Playwright tests. Arbitrary narrative-text
 unimplemented — confirmed to require enabling citations on Reducto's
 reader-section extraction (currently `citations=False`) plus new
 segment-level page/offset persistence, a genuinely larger upstream gap,
-not attempted. Phases 11-21 of the originating contract (Ask-Bragi
+not attempted. **A subsequent Romanian discharge classification closure
+session (NEW) fixed a real, reproduced classification bug**: a genuine
+inpatient discharge letter titled "BILET DE IEȘIRE DIN SPITAL /
+SCRISOARE MEDICALĂ" — a title the legacy classifier had zero keyword
+coverage for (only "bilet de externare" existed) — combined with a
+realistic dense embedded lab table, scored a near-tie between
+discharge_summary and laboratory_results, forcing an unnecessary
+confirmation prompt on an otherwise-clear discharge letter. Fixed by
+adding the missing keywords (verified: discharge margin went from 0.5
+to 5.5) and by naming the same Romanian titles explicitly in Reducto's
+own classification criteria (not independently live-verified against
+the real API this session — no safe synthetic-PDF fixture process
+exists yet). Also closed a real, previously-deferred gap where a
+doctor/care-partner manual "Discharge Summary" section pick never set
+`document_type` at all. A new, genuinely end-to-end test suite (real
+Romanian text → real classifier → real persisted Document → real Phase
+8 reader in the browser) closes the exact "routing was tested,
+classification never was" boundary the prior routing-consolidation pass
+left open. Phases 11-21 of the originating contract (Ask-Bragi
 retrieval hardening and everything downstream) are entirely
 unimplemented** — see
 `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md` for the
