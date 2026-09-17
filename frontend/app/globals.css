@@ -1004,6 +1004,39 @@ input[type="radio"] {
   50% { opacity: 0.35; }
 }
 
+/* My Records "N document(s) processing" banner — deliberately NOT the
+   shared .b-status/::before pattern above. Root cause of the dot still
+   reading as visually too high (confirmed by direct measurement, not
+   guessed): .b-status has no line-height of its own, so it inherits the
+   unitless 1.5 from .b-notice/body — at .b-status's 12.5px font-size
+   that inflates its flex cross-size to ~18.75px, and align-items:center
+   then centers the 6px dot against that inflated GEOMETRIC box rather
+   than the text glyphs' own visual center (font ascent/descent are
+   asymmetric, Inter included). A real DOM dot (not a ::before
+   pseudo-element, so it has its own testable rendered geometry) plus a
+   tight line-height on the container — scoped to this one banner only,
+   never touching .b-status itself or any of its other tone-badge
+   callers elsewhere in the app. */
+.b-processing-status {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: var(--fs-sm);
+  font-weight: 500;
+  color: var(--text-2);
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.b-processing-status-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: var(--r-full);
+  background: var(--info);
+  flex-shrink: 0;
+  animation: b-pulse 1.4s var(--ease-in-out) infinite;
+}
+
 /* Chip: a bounded label. Small, low-contrast, never a pill of colour. */
 .b-chip {
   display: inline-flex;

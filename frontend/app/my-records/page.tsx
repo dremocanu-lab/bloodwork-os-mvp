@@ -1321,21 +1321,30 @@ export default function MyRecordsPage() {
 
         {activeCount > 0 ? (
           <Notice>
-            {/* .b-status is display:inline-flex/align-items:center BY
-                DESIGN so its dot (::before) and its own text content
-                align together — it previously rendered as an EMPTY span
-                (just the dot) with the text as a separate sibling
-                outside that flex container, so the two never shared any
-                alignment rule at all (a real, reported vertical-
-                misalignment bug). Fixed by putting the text inside the
-                span, its intended usage — no translateY/offset hack
-                needed, and Notice's own flex-start alignment (tuned for
-                a leading icon next to potentially multi-line text
-                elsewhere — see patients/[id]/page.tsx) is untouched. */}
-            <span className="b-status b-status-processing">
-              {activeCount === 1
-                ? "1 document is being processed. It will appear here automatically."
-                : `${activeCount} documents are being processed. They will appear here automatically.`}
+            {/* The shared .b-status/::before pattern (used everywhere else
+                as a tone badge) has NO line-height of its own, so it
+                inherits the unitless 1.5 from .b-notice/body — at this
+                span's 12.5px font-size that inflates its flex cross-size
+                to ~18.75px, and align-items:center then centers the 6px
+                dot against that inflated GEOMETRIC box, not against the
+                glyphs' own visual center (Inter's ascent/descent are
+                asymmetric) — this is the confirmed, measured root cause
+                of the dot still reading as "too high" after the earlier
+                B2 fix (which correctly fixed a different bug: the dot and
+                text not sharing a flex container at all). Scoped to this
+                one banner only (never touches the shared .b-status class
+                other tone badges across the app rely on): a real DOM dot
+                element instead of a ::before pseudo-element (so it has
+                its own testable geometry) plus line-height:1 (so the
+                flex container's cross-size tracks the glyphs themselves
+                instead of an inherited 1.5 line-height). */}
+            <span className="b-processing-status">
+              <span className="b-processing-status-dot" data-testid="processing-status-dot" aria-hidden="true" />
+              <span data-testid="processing-status-text">
+                {activeCount === 1
+                  ? "1 document is being processed. It will appear here automatically."
+                  : `${activeCount} documents are being processed. They will appear here automatically.`}
+              </span>
             </span>
           </Notice>
         ) : null}
