@@ -87,31 +87,29 @@ from app.services.document_taxonomy import (
 router = APIRouter()
 
 # File-upload hardening — see docs/security/THREAT_MODEL.md "malicious
-# upload." Every format the product actually offers today (the frontend's
-# getFileBadge()/accept list): PDF, common raster images, and
-# doc/docx (accepted even though no current extraction path reads them,
-# to avoid narrowing an already-advertised upload capability). Nothing
-# else — in particular, no executable/script/archive extension is ever
-# accepted, regardless of what Content-Type a client claims.
-ALLOWED_UPLOAD_EXTENSIONS = {
-    ".pdf", ".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".doc", ".docx",
-}
+# upload" and docs/ingestion/FORMAT_CAPABILITY_MATRIX.md. The extension
+# allowlist is now DERIVED from app.services.ingestion.capability_registry
+# — the one source of truth for every format this product accepts —
+# rather than a second, independently-maintained list. In particular, no
+# executable/script/archive/macro-enabled-Office extension is ever
+# accepted, regardless of what Content-Type a client claims (see the
+# registry's own EXPLICITLY_REJECTED_EXTENSIONS for the named list of
+# what's deliberately excluded).
+from app.services.ingestion.capability_registry import FORMAT_CAPABILITIES, allowed_upload_extensions
+
+ALLOWED_UPLOAD_EXTENSIONS = set(allowed_upload_extensions())
 # Real byte-signature ("magic number") prefixes for the formats above that
 # have one — a client-supplied filename/Content-Type can lie, but the
-# actual first bytes of the file are real. doc/docx aren't included: doc
-# is an OLE/CFB container and docx is a zip, both crossing into "worth a
-# real parsing library, not a hand-rolled prefix check" territory — their
-# risk is already bounded by the extension allowlist above plus the
-# separate size cap, so this is intentionally scoped to formats a simple,
-# unambiguous prefix genuinely identifies.
+# actual first bytes of the file are real. Formats with no simple
+# fixed-offset prefix (legacy .doc/.xls's OLE container is shared with
+# genuinely different real formats; HEIC/HEIF's ISO-BMFF box format; a
+# spreadsheet/text/JSON/XML format with no magic number at all) are
+# intentionally excluded here — their risk is bounded by the extension
+# allowlist, the size cap, and (for the zip/OLE-based Office formats) the
+# decompression-bomb/macro/encryption checks every ingestion adapter runs
+# before real parsing — see app/services/ingestion/security.py.
 UPLOAD_MAGIC_BYTES: dict[str, tuple[bytes, ...]] = {
-    ".pdf": (b"%PDF-",),
-    ".png": (b"\x89PNG\r\n\x1a\n",),
-    ".jpg": (b"\xff\xd8\xff",),
-    ".jpeg": (b"\xff\xd8\xff",),
-    ".webp": (b"RIFF",),  # full container check (RIFF....WEBP) below
-    ".tif": (b"II*\x00", b"MM\x00*"),
-    ".tiff": (b"II*\x00", b"MM\x00*"),
+    ext: cap.magic_bytes for ext, cap in FORMAT_CAPABILITIES.items() if cap.magic_bytes
 }
 MAX_UPLOAD_SIZE_BYTES = int(os.getenv("MAX_UPLOAD_SIZE_MB", "50")) * 1024 * 1024
 
@@ -533,6 +531,18 @@ async def upload_compatibility_route(
 @router.get("/document-types")
 def get_document_types(current_user=Depends(get_current_user)):
     return document_type_choices()
+
+
+@router.get("/upload/capabilities")
+def get_upload_capabilities(current_user=Depends(get_current_user)):
+    """The single source of truth for what the upload UI should advertise
+    as supported — see app/services/ingestion/capability_registry.py.
+    The frontend derives its `accept` attribute and support copy from
+    this endpoint rather than maintaining an independent list that could
+    silently drift from what the backend actually does."""
+    from app.services.ingestion.capability_registry import capability_matrix_for_api
+
+    return {"formats": capability_matrix_for_api()}
 
 
 @router.post("/upload/batch")

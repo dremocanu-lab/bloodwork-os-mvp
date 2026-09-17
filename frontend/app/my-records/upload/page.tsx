@@ -9,6 +9,7 @@ import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
+import { useUploadCapabilities } from "@/lib/upload-capabilities";
 
 type CurrentUser = {
   id: number;
@@ -111,6 +112,7 @@ function getUploadHint(file: File) {
 export default function MyRecordsUploadPage() {
   const router = useRouter();
   const { language } = useLanguage();
+  const uploadCapabilities = useUploadCapabilities();
   const { enqueueAutoClassifyUploads, confirmDocumentType, confirmIdentity, visibleTasks, refreshUploadJobs } =
     useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
@@ -443,6 +445,7 @@ export default function MyRecordsUploadPage() {
               ref={hiddenFileInputRef}
               type="file"
               multiple
+              accept={uploadCapabilities.accept}
               style={{ display: "none" }}
               onChange={(event) => appendFiles(event.target.files || [])}
             />
@@ -459,7 +462,7 @@ export default function MyRecordsUploadPage() {
                 </span>
                 <span style={{ minWidth: 0 }}>
                   <div className="b-drop-title">{labels.dragTitle}</div>
-                  <p className="b-drop-hint">{labels.supportText}</p>
+                  <p className="b-drop-hint">{language === "ro" ? uploadCapabilities.supportTextRo : uploadCapabilities.supportTextEn}</p>
                 </span>
                 <button
                   type="button"
@@ -489,7 +492,7 @@ export default function MyRecordsUploadPage() {
                   {labels.browse}
                 </button>
                 <p className="b-drop-hint" style={{ maxWidth: "56ch" }}>
-                  {labels.supportText}
+                  {language === "ro" ? uploadCapabilities.supportTextRo : uploadCapabilities.supportTextEn}
                 </p>
               </div>
             )}

@@ -6,6 +6,7 @@ import AppShell from "@/components/app-shell";
 import { api } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
+import { useUploadCapabilities } from "@/lib/upload-capabilities";
 
 type CurrentUser = {
   id: number;
@@ -123,6 +124,7 @@ const SECTIONS = [
 export default function CarePartnerUploadPage() {
   const router = useRouter();
   const { t } = useLanguage();
+  const uploadCapabilities = useUploadCapabilities();
   const { enqueueUploads, visibleTasks, refreshUploadJobs } = useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
 
@@ -359,7 +361,7 @@ export default function CarePartnerUploadPage() {
                   ref={hiddenFileInputRef}
                   type="file"
                   multiple
-                  accept=".pdf,.png,.jpg,.jpeg,.webp,.tif,.tiff,.doc,.docx"
+                  accept={uploadCapabilities.accept}
                   style={{ display: "none" }}
                   onChange={(e) => {
                     if (e.target.files) appendFiles(e.target.files);
