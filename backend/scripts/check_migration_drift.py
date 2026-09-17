@@ -10,9 +10,14 @@ diffing (the same engine `alembic revision --autogenerate` uses), so "a
 model changed but nobody wrote a migration for it" shows up as a nonzero
 exit here instead of silently reaching production.
 
-The only tolerated diff is the known, explicitly-named set of legacy
-duplicate indexes (see _alembic_baseline_fingerprint.py) — never a
-blanket "ignore everything," and any new/different diff still fails.
+The only tolerated diffs are the known, explicitly-named sets of legacy
+extras (see _alembic_baseline_fingerprint.py): pre-interop duplicate
+indexes (KNOWN_LEGACY_DUPLICATE_INDEXES), interop-era duplicate indexes
+(KNOWN_PRODUCTION_LEGACY_EXTRA_INDEXES), and one harmless extra column
+(KNOWN_PRODUCTION_LEGACY_EXTRA_COLUMNS) — real artifacts a database that
+went through bootstrap_alembic.py's known-production-variant repair
+carries permanently. Never a blanket "ignore everything," and any new/
+different diff still fails.
 """
 
 from __future__ import annotations
@@ -28,7 +33,13 @@ from alembic.migration import MigrationContext
 from dotenv import load_dotenv
 from sqlalchemy import create_engine
 
-from scripts._alembic_baseline_fingerprint import KNOWN_LEGACY_DUPLICATE_INDEXES, entry_label, flatten_diff
+from scripts._alembic_baseline_fingerprint import (
+    KNOWN_LEGACY_DUPLICATE_INDEXES,
+    KNOWN_PRODUCTION_LEGACY_EXTRA_COLUMNS,
+    KNOWN_PRODUCTION_LEGACY_EXTRA_INDEXES,
+    entry_label,
+    flatten_diff,
+)
 
 load_dotenv()
 
@@ -42,11 +53,23 @@ def _database_url() -> str:
 
 def _is_tolerated(diff_entry: tuple) -> bool:
     kind = diff_entry[0]
-    if kind != "remove_index":
-        return False
-    index_obj = diff_entry[1]
-    name = getattr(index_obj, "name", None)
-    return name in KNOWN_LEGACY_DUPLICATE_INDEXES
+
+    if kind == "remove_index":
+        index_obj = diff_entry[1]
+        name = getattr(index_obj, "name", None)
+        return name in KNOWN_LEGACY_DUPLICATE_INDEXES or name in KNOWN_PRODUCTION_LEGACY_EXTRA_INDEXES
+
+    if kind == "remove_column":
+        # Same 4-tuple shape as add_column: (kind, schema, table_name, column).
+        # See scripts/bootstrap_alembic.py's "Production legacy variant
+        # reconciliation" section — documents.original_layout_json is a
+        # real, permanent, harmless extra on any database that went
+        # through the known-production-variant repair, same story as the
+        # remove_index tolerance above.
+        table_name, column = diff_entry[2], diff_entry[3]
+        return (table_name, column.name) in KNOWN_PRODUCTION_LEGACY_EXTRA_COLUMNS
+
+    return False
 
 
 def main() -> int:
