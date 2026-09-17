@@ -1,4 +1,22 @@
+import { execSync } from "node:child_process";
 import type { NextConfig } from "next";
+
+// Deployment-parity mechanism (P0 upload-reliability session): answers
+// "which exact frontend code is this browser using?" without needing a
+// Vercel dashboard visit. Vercel/Render both auto-inject their own
+// commit-SHA env var at build time — no dashboard config change needed,
+// unlike server-side envs which never reach the browser unless
+// re-exposed here. `git rev-parse` is a local-dev-only fallback (a
+// deployed build has no guarantee `.git` exists in its build context).
+function buildGitSha(): string {
+  const fromPlatform = process.env.VERCEL_GIT_COMMIT_SHA || process.env.RENDER_GIT_COMMIT;
+  if (fromPlatform) return fromPlatform;
+  try {
+    return execSync("git rev-parse HEAD", { encoding: "utf-8" }).trim();
+  } catch {
+    return "";
+  }
+}
 
 // Backend API origin the frontend talks to — must match lib/api.ts's
 // default/NEXT_PUBLIC_API_URL exactly, or every fetch/XHR call breaks under
@@ -55,6 +73,9 @@ const securityHeaders = [
 ];
 
 const nextConfig: NextConfig = {
+  env: {
+    NEXT_PUBLIC_GIT_SHA: buildGitSha(),
+  },
   async headers() {
     return [
       {

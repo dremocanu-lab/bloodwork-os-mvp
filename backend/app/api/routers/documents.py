@@ -157,6 +157,48 @@ UPLOAD_JOB_POOL = ThreadPoolExecutor(
 )
 
 
+def _log_upload_job_pool_exception(job_id: int, future) -> None:
+    """`ThreadPoolExecutor.submit()`'s own well-known footgun: an
+    exception raised by the submitted callable is captured on the
+    returned `Future` but never surfaced anywhere unless something calls
+    `.result()`/`.exception()` on it — nothing in this codebase did,
+    before this session (P0 upload-reliability). In practice
+    `process_upload_job`'s own top-level try/except already catches and
+    terminal-izes almost everything (see its own docstring/handoff
+    notes), so this is a narrow safety net for the one real gap: an
+    exception raised BEFORE that try even starts (e.g. `SessionLocal()`
+    itself failing). Without this callback, that failure would silently
+    vanish and the job would stay stuck at "queued"/"processing" forever
+    with nothing in any log explaining why. Best-effort: if marking the
+    job failed ALSO fails (e.g. the DB is genuinely unreachable), this
+    only logs — there is nothing further it can safely do from a worker
+    thread's done-callback.
+    """
+    error = future.exception()
+    if error is None:
+        return
+
+    print(f"UPLOAD JOB {job_id}: uncaught exception escaped the worker pool entirely: {error!r}")
+
+    from app.db import SessionLocal
+
+    try:
+        db = SessionLocal()
+        try:
+            job = db.query(models.UploadJob).filter(models.UploadJob.id == job_id).first()
+            if job and job.status not in ("done", "error", "needs_confirmation", "needs_identity_confirmation", "quarantined", "security_quarantined", "duplicate"):
+                job.status = "error"
+                job.progress = 100
+                job.message = "Upload failed."
+                job.error = "An unexpected error occurred before processing could start. Please try again."
+                job.finished_at = now_iso()
+                db.commit()
+        finally:
+            db.close()
+    except Exception as persist_error:
+        print(f"UPLOAD JOB {job_id}: failed to persist terminal error state from pool callback: {persist_error!r}")
+
+
 def _validate_upload_extension(original_filename: str) -> str:
     """Returns the lowercased, validated extension or raises 400. Extension
     is what decides ACCEPT/REJECT — Content-Type is client-supplied and
@@ -224,6 +266,7 @@ def serialize_upload_job(job) -> dict:
         "document_type": job.document_type,
         "classification_status": job.classification_status,
         "classification_confidence": job.classification_confidence,
+        "classification_source": job.classification_source,
         "identity_status": job.identity_status,
         "created_at": job.created_at,
         "started_at": job.started_at,
@@ -554,7 +597,8 @@ async def create_batch_upload(
         # definition. Each file starts processing as soon as a worker slot
         # frees up, instead of strictly after every earlier file in the
         # batch has fully finished.
-        UPLOAD_JOB_POOL.submit(process_upload_job, job.id)
+        future = UPLOAD_JOB_POOL.submit(process_upload_job, job.id)
+        future.add_done_callback(lambda f, job_id=job.id: _log_upload_job_pool_exception(job_id, f))
         created_jobs.append(serialize_upload_job(job))
 
     return created_jobs

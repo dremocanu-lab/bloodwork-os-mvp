@@ -23,6 +23,19 @@ export type UploadStatus =
   | "quarantined"
   | "duplicate";
 
+// The backend's security-scan quarantine path (process_upload_job) sets
+// UploadJob.status to this SEPARATE string, "security_quarantined" — not
+// "quarantined" (that one is the mismatch/identity-review quarantine
+// path, main.py's other two `job.status = "quarantined"` call sites).
+// A real, confirmed bug (P0 upload-reliability session): this backend
+// status had NO case in statusFromBackend() below, so it fell through
+// to "queued" — which IS active, so a job the backend had already
+// finished (finished_at set, a real user-facing message written) stayed
+// displayed as "processing" forever on the frontend. This is very
+// likely what "upload remained processing" manual QA was actually
+// seeing for a file the security scanner set aside.
+const SECURITY_QUARANTINED_BACKEND_STATUS = "security_quarantined";
+
 export type UploadTask = {
   id: string;
   jobId?: number;
@@ -69,6 +82,7 @@ type BackendUploadJob = {
   document_type?: string | null;
   classification_status?: string | null;
   classification_confidence?: number | null;
+  classification_source?: string | null;
   identity_status?: string | null;
   created_at: string;
   started_at?: string | null;
@@ -112,6 +126,7 @@ function statusFromBackend(status: string): UploadStatus {
   if (status === "needs_confirmation") return "needs_confirmation";
   if (status === "needs_identity_confirmation") return "needs_identity_confirmation";
   if (status === "quarantined") return "quarantined";
+  if (status === SECURITY_QUARANTINED_BACKEND_STATUS) return "quarantined";
   if (status === "duplicate") return "duplicate";
   if (status === "processing") return "processing";
   if (status === "uploading") return "uploading";
