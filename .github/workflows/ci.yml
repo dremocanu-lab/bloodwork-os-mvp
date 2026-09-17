@@ -87,6 +87,14 @@ jobs:
   frontend:
     name: Frontend (typecheck, lint, build)
     runs-on: ubuntu-latest
+    env:
+      # CI never makes a real network call against this — `next build`'s
+      # prerendering only needs lib/api-base.ts's production guard (see
+      # that file) satisfied with SOME value, the same way genuine local
+      # dev does. A real Vercel deployment sets its own real
+      # NEXT_PUBLIC_API_URL via project env vars; this placeholder never
+      # reaches a real build.
+      NEXT_PUBLIC_API_URL: http://localhost:8000
     steps:
       - uses: actions/checkout@fbc6f3992d24b796d5a048ff273f7fcc4a7b6c09 # v5
       - uses: actions/setup-node@a0853c24544627f65ddf259abe73b1d18a591444 # v5
