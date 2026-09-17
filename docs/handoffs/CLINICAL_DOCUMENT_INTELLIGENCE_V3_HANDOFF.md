@@ -3340,10 +3340,27 @@ clean, confirming no regression to the working case.
 
 ### PR
 
-Opened: see the PR number/URL/CI status recorded in this session's
-final report (and, once available, this section's own follow-up entry
-— update this line once CI settles). **NOT merged** — the migration
-pre-deploy gate above is the sole blocker.
+Opened: **PR #6**, `https://github.com/dremocanu-lab/bloodwork-os-mvp/pull/6`
+(`fix/clinical-document-intelligence-v3` → `main`). CI: all 5 checks
+GREEN — `Backend (tests, Bandit, migration sanity)` (which itself runs
+`alembic upgrade head` against a brand-new ephemeral Postgres,
+independently proving this branch's 4 new migrations apply cleanly from
+history alone), `Frontend (typecheck, lint, build)`, `Secret scan
+(gitleaks, full history)`, `Vercel` (preview deploy), `Vercel Preview
+Comments`. `mergeStateStatus: CLEAN`, `mergeable: MERGEABLE`.
+
+One real CI-only failure was found and fixed mid-session: the frontend
+build job had never set `NEXT_PUBLIC_API_URL` (previously masked by the
+old silent-fallback-to-production behavior this same session removed) —
+`.github/workflows/ci.yml` now sets a placeholder
+(`http://localhost:8000`, CI makes no real call against it) for that job
+only; a real Vercel deployment is unaffected, it sets its own real value.
+
+**NOT merged** — the migration pre-deploy gate above is the sole
+blocker, per this session's own explicit "do not merge past a genuinely
+unclear/unconfigured deployment mechanism" instruction. The PR itself
+being open and green is not a decision to merge; that decision is the
+user's, once the gate above is closed.
 
 ### What remains (honest, not attempted)
 
