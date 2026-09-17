@@ -63,6 +63,16 @@ _KEYWORDS: dict[DocumentType, list[tuple[str, float]]] = {
     ],
     DocumentType.DISCHARGE_SUMMARY: [
         ("fisa de externare", 3), ("foaie de externare", 3), ("bilet de externare", 3),
+        # "Bilet de iesire (din spital)" is a real, common Romanian
+        # discharge-letter title distinct from "bilet de externare" (no
+        # shared substring) — found missing entirely during the
+        # pre-Phase-11 Romanian discharge classification closure session:
+        # a real document titled "BILET DE IEȘIRE DIN SPITAL / SCRISOARE
+        # MEDICALĂ" scored a near-tie against laboratory_results purely
+        # because its own title contributed nothing, forcing an
+        # unnecessary needs_confirmation on an otherwise-clear discharge
+        # letter with a dense embedded lab table.
+        ("bilet de iesire din spital", 3), ("bilet de iesire", 2),
         ("scrisoare medicala", 2.5), ("epicriza", 3), ("discharge summary", 3),
         ("discharge diagnosis", 2), ("hospital course", 2), ("data internarii", 2),
         ("data externarii", 2), ("admission date", 1.5), ("discharge date", 1.5),
