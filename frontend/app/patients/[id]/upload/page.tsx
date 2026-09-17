@@ -8,6 +8,7 @@ import { IconClose, IconUpload } from "@/components/ui/icon";
 import { api, getErrorMessage, valueOrDash } from "@/lib/api";
 import { useLanguage } from "@/lib/i18n";
 import { UploadStatus, useUploadManager } from "@/components/upload-provider";
+import { useUploadCapabilities } from "@/lib/upload-capabilities";
 
 type CurrentUser = {
   id: number;
@@ -162,6 +163,7 @@ export default function DoctorPatientUploadPage() {
   const params = useParams();
   const router = useRouter();
   const { language } = useLanguage();
+  const uploadCapabilities = useUploadCapabilities();
   const { enqueueUploads, visibleTasks, refreshUploadJobs } = useUploadManager();
   const hiddenFileInputRef = useRef<HTMLInputElement | null>(null);
   const patientId = params?.id as string;
@@ -483,6 +485,7 @@ export default function DoctorPatientUploadPage() {
               ref={hiddenFileInputRef}
               type="file"
               multiple
+              accept={uploadCapabilities.accept}
               style={{ display: "none" }}
               onChange={(event) => appendFiles(event.target.files || [])}
             />
@@ -499,7 +502,7 @@ export default function DoctorPatientUploadPage() {
                 </span>
                 <span style={{ minWidth: 0 }}>
                   <div className="b-drop-title">{labels.dragAndDropFiles}</div>
-                  <p className="b-drop-hint">{labels.uploadSupportText}</p>
+                  <p className="b-drop-hint">{language === "ro" ? uploadCapabilities.supportTextRo : uploadCapabilities.supportTextEn}</p>
                 </span>
                 <button
                   type="button"
@@ -529,7 +532,7 @@ export default function DoctorPatientUploadPage() {
                   {labels.browse}
                 </button>
                 <p className="b-drop-hint" style={{ maxWidth: "56ch" }}>
-                  {labels.uploadSupportText}
+                  {language === "ro" ? uploadCapabilities.supportTextRo : uploadCapabilities.supportTextEn}
                 </p>
               </div>
             )}

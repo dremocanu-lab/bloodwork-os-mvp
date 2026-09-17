@@ -27,10 +27,22 @@ from app.services.document_pipeline import process_uploaded_document
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 from app.services.document_taxonomy import AUTO_CLASSIFY_SECTION, DOCUMENT_TYPE_LABELS, legacy_section_for
 from app.services.document_classification_service import resolve_final_classification
-from app.services.extraction_provider import REDUCTO, ProcessingMetadata, get_extraction_provider
+from app.services.extraction_provider import REDUCTO, LegacyExtractionProvider, ProcessingMetadata, get_extraction_provider
 from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
 from app.services.ocr_service import extract_text as ocr_extract_text
+from app.services.ingestion.contract import ExtractionStatus
+from app.services.ingestion.router import route_extraction
+
+# Every ExtractionStatus that means "stop here — never reach
+# classification" — see app/services/ingestion/router.py's module
+# docstring and Part G of the production-incident writeup this closes
+# (extraction failure must never be silently collapsed into "the
+# classifier said other"). Each becomes its own distinguishable
+# UploadJob.status value (a plain String column — no migration needed).
+_INGESTION_TERMINAL_STATUSES = frozenset(
+    {ExtractionStatus.UNSUPPORTED_FORMAT, ExtractionStatus.EXTRACTION_FAILED, ExtractionStatus.ENCRYPTED}
+)
 from app.services.file_hash import compute_sha256
 from app.services.security_scan import run_security_scan
 from app.services.patient_identity import (
@@ -1515,80 +1527,123 @@ def process_upload_job(job_id: int):
             job.message = "Identifying document type..."
             db.commit()
 
-            provider, used_fallback, fallback_reason = get_extraction_provider()
+            # File-format capability check (BRAGI — UNIVERSAL DOCUMENT
+            # INGESTION) — BEFORE Reducto/Google Document AI ever see this
+            # file. A format with a real local text extractor (DOCX/RTF/
+            # ODT/TXT/MD/CSV/TSV/XLSX/ODS/detected structured-health JSON/
+            # XML) is classified from that real text directly, never sent
+            # to a remote provider that doesn't reliably support it (this
+            # is the exact root cause of a real production incident: a
+            # .docx sent to Google Document AI, which rejected its MIME
+            # type, silently resolved to "the classifier says other"). An
+            # explicitly unsupported format (legacy .doc, HL7, DICOM) or a
+            # file that fails to parse/is encrypted gets a real,
+            # distinguishable terminal job status instead — see
+            # app/services/ingestion/router.py's module docstring.
+            ingestion_result = route_extraction(file_path, job.filename)
 
-            if provider.name == REDUCTO and provider.is_enabled():
-                # Real Reducto Classify + Split, run CONCURRENTLY against the
-                # same uploaded file (see reducto_extraction.
-                # classify_and_check_split) — they're independent calls, and
-                # benchmarking found Split costs ~7-10s even on a trivial
-                # single-page document that turns out non-mixed, on top of
-                # Classify's own ~3-4s. Running them in parallel bounds the
-                # "identifying document type" wait by the slower of the two
-                # instead of their sum. Any Reducto failure (auth/timeout/
-                # malformed response/etc.) falls back to the legacy keyword
-                # classifier rather than failing the whole upload — a
-                # Reducto outage must never block classification.
-                try:
-                    stage_started = time.monotonic()
-                    classification, split_result = reducto_extraction.classify_and_check_split(
-                        str(file_path), filename=job.filename
-                    )
-                    reducto_file_id = classification.file_id
-                    processing_meta = ProcessingMetadata(
-                        provider=REDUCTO,
-                        parser_version=reducto_extraction.PARSER_VERSION,
-                        processing_time_ms=int((time.monotonic() - stage_started) * 1000),
-                        confidence=classification.confidence,
-                        reducto_file_id=reducto_file_id,
-                    )
+            if ingestion_result.status in _INGESTION_TERMINAL_STATUSES:
+                job.status = ingestion_result.status.value
+                job.progress = 100
+                job.message = ingestion_result.reason or "This file could not be processed."
+                job.error = ingestion_result.reason
+                job.finished_at = now_iso()
+                db.commit()
+                return
 
-                    if split_result and split_result.is_mixed:
-                        job.message = "Separating records..."
-                        db.commit()
-                        _finish_mixed_reducto_upload(db, job, user, patient, file_path, split_result)
-                        return
-                except ReductoError as reducto_error:
-                    print(f"UPLOAD JOB {job_id}: Reducto classify failed, falling back to legacy_rules: {reducto_error}")
-                    from app.services.extraction_provider import LegacyExtractionProvider
+            if ingestion_result.status == ExtractionStatus.LOCAL_TEXT:
+                classification_text = ingestion_result.text
+                classification, _legacy_meta = LegacyExtractionProvider().classify(classification_text)
+                processing_meta = ProcessingMetadata(
+                    provider="local_extraction",
+                    parser_version=_legacy_meta.parser_version,
+                    processing_time_ms=_legacy_meta.processing_time_ms,
+                    confidence=_legacy_meta.confidence,
+                )
+                used_fallback = False
+                fallback_reason = None
+            else:
+                # DEFER_TO_PROVIDER — PDF or image. EXISTING Reducto/Google
+                # Document AI classification flow — unchanged from before
+                # this session, just now nested inside this branch.
+                provider, used_fallback, fallback_reason = get_extraction_provider()
 
-                    provider = LegacyExtractionProvider()
-                    used_fallback = True
-                    fallback_reason = f"Reducto classify failed: {reducto_error}"
+                if provider.name == REDUCTO and provider.is_enabled():
+                    # Real Reducto Classify + Split, run CONCURRENTLY against the
+                    # same uploaded file (see reducto_extraction.
+                    # classify_and_check_split) — they're independent calls, and
+                    # benchmarking found Split costs ~7-10s even on a trivial
+                    # single-page document that turns out non-mixed, on top of
+                    # Classify's own ~3-4s. Running them in parallel bounds the
+                    # "identifying document type" wait by the slower of the two
+                    # instead of their sum. Any Reducto failure (auth/timeout/
+                    # malformed response/etc.) falls back to the legacy keyword
+                    # classifier rather than failing the whole upload — a
+                    # Reducto outage must never block classification.
+                    try:
+                        stage_started = time.monotonic()
+                        classification, split_result = reducto_extraction.classify_and_check_split(
+                            str(file_path), filename=job.filename
+                        )
+                        reducto_file_id = classification.file_id
+                        processing_meta = ProcessingMetadata(
+                            provider=REDUCTO,
+                            parser_version=reducto_extraction.PARSER_VERSION,
+                            processing_time_ms=int((time.monotonic() - stage_started) * 1000),
+                            confidence=classification.confidence,
+                            reducto_file_id=reducto_file_id,
+                        )
 
-            classification_text = ""
+                        if split_result and split_result.is_mixed:
+                            job.message = "Separating records..."
+                            db.commit()
+                            _finish_mixed_reducto_upload(db, job, user, patient, file_path, split_result)
+                            return
+                    except ReductoError as reducto_error:
+                        print(f"UPLOAD JOB {job_id}: Reducto classify failed, falling back to legacy_rules: {reducto_error}")
+                        # LegacyExtractionProvider is imported at module level now (see
+                        # top of file) — a local re-import here used to shadow it for
+                        # this ENTIRE function's scope (Python's function-level name
+                        # scoping applies to every branch, not just the one the import
+                        # statement sits in), causing an UnboundLocalError on the
+                        # LOCAL_TEXT branch above, which runs first on some jobs.
+                        provider = LegacyExtractionProvider()
+                        used_fallback = True
+                        fallback_reason = f"Reducto classify failed: {reducto_error}"
 
-            if reducto_file_id is None:
-                # Legacy path (Reducto disabled, or just fell back above):
-                # classification input is a plain-text OCR pass, independent
-                # of any type-specific pipeline.
-                try:
-                    classification_ocr = ocr_extract_text(
-                        file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR
-                    )
-                    classification_text = classification_ocr.get("text") or ""
-                except Exception:
-                    print(f"UPLOAD JOB {job_id}: classification OCR pass failed:")
-                    print(traceback.format_exc())
-                    classification_text = ""
+                classification_text = ""
 
-                classification, processing_meta = provider.classify(classification_text)
-            elif os.getenv("OPENAI_API_KEY"):
-                # Reducto succeeded, so the legacy OCR pass above never ran —
-                # but the AI semantic classifier below still needs real
-                # extracted text (Reducto's own internal document
-                # understanding isn't exposed as plain text anywhere in this
-                # codebase). Only paid for when AI classification is
-                # actually configured — zero added latency/cost in any
-                # environment without OPENAI_API_KEY set, identical to this
-                # session's starting behavior.
-                try:
-                    ai_ocr = ocr_extract_text(file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR)
-                    classification_text = ai_ocr.get("text") or ""
-                except Exception:
-                    print(f"UPLOAD JOB {job_id}: AI-classification OCR pass failed:")
-                    print(traceback.format_exc())
-                    classification_text = ""
+                if reducto_file_id is None:
+                    # Legacy path (Reducto disabled, or just fell back above):
+                    # classification input is a plain-text OCR pass, independent
+                    # of any type-specific pipeline.
+                    try:
+                        classification_ocr = ocr_extract_text(
+                            file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR
+                        )
+                        classification_text = classification_ocr.get("text") or ""
+                    except Exception:
+                        print(f"UPLOAD JOB {job_id}: classification OCR pass failed:")
+                        print(traceback.format_exc())
+                        classification_text = ""
+
+                    classification, processing_meta = provider.classify(classification_text)
+                elif os.getenv("OPENAI_API_KEY"):
+                    # Reducto succeeded, so the legacy OCR pass above never ran —
+                    # but the AI semantic classifier below still needs real
+                    # extracted text (Reducto's own internal document
+                    # understanding isn't exposed as plain text anywhere in this
+                    # codebase). Only paid for when AI classification is
+                    # actually configured — zero added latency/cost in any
+                    # environment without OPENAI_API_KEY set, identical to this
+                    # session's starting behavior.
+                    try:
+                        ai_ocr = ocr_extract_text(file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR)
+                        classification_text = ai_ocr.get("text") or ""
+                    except Exception:
+                        print(f"UPLOAD JOB {job_id}: AI-classification OCR pass failed:")
+                        print(traceback.format_exc())
+                        classification_text = ""
 
             fallback_source = f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
 

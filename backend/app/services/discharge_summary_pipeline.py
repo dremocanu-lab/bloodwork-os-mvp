@@ -293,7 +293,49 @@ def _render_image_as_single_page(path: Path) -> list[dict[str, Any]]:
     ]
 
 
+# A 1x1 white PNG — the smallest valid image, used as a placeholder
+# `input_image` for native-text formats (DOCX/RTF/ODT/TXT/...) below.
+# OpenAI's Responses API requires an image content block; there is no
+# real page image for these formats, so a blank placeholder is sent
+# alongside the REAL text (as `native_text`, which `_call_openai_for_page`
+# already prefers over the image whenever `len(native_text) > 80` —
+# exactly the ground-truth-text path digital PDFs already use).
+_BLANK_PLACEHOLDER_PNG_DATA_URL = (
+    "data:image/png;base64,iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII="
+)
+
+_NATIVE_TEXT_EXTENSIONS = {".docx", ".rtf", ".odt", ".txt", ".md", ".csv", ".tsv", ".xlsx", ".ods", ".json", ".xml"}
+
+
+def _render_native_text_as_single_page(path: Path) -> list[dict[str, Any]]:
+    """DOCX/RTF/ODT/TXT/spreadsheet/structured-health formats have no
+    real page image to render — this pipeline is otherwise built around
+    "render pages as images, let the model read them" (see module
+    docstring's Data-minimization note and _call_openai_for_page above),
+    so rather than reshaping the whole pipeline, a single synthetic
+    "page" carries the REAL extracted text as `native_text` (which
+    already takes priority over the image whenever present) alongside a
+    blank placeholder image. See app/services/ingestion/router.py — the
+    same extraction this document's classification step already ran."""
+    from app.services.ingestion.router import route_extraction
+
+    result = route_extraction(path, path.name)
+    native_text = result.text if result.status.value == "local_text" else ""
+
+    return [
+        {
+            "page_number": 1,
+            "width": 0,
+            "height": 0,
+            "image_url": _BLANK_PLACEHOLDER_PNG_DATA_URL,
+            "native_text": native_text,
+        }
+    ]
+
+
 def _render_pages_from_file(path: Path) -> list[dict[str, Any]]:
+    if path.suffix.lower() in _NATIVE_TEXT_EXTENSIONS:
+        return _render_native_text_as_single_page(path)
     if path.suffix.lower() in _IMAGE_EXTENSIONS:
         return _render_image_as_single_page(path)
     return _render_pdf_pages_as_data_urls(path)

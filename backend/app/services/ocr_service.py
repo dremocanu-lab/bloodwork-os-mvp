@@ -23,29 +23,90 @@ def ocr_failed_response(method: str, warnings: list[str]) -> dict:
             *warnings,
             "No OCR text could be extracted. Manual review is required.",
         ],
+        "status": "empty",
     }
 
 
 def extract_text(file_path: Path, filename: str, temp_dir: Path | None = None) -> dict:
-    if not is_google_document_ai_configured():
-        return ocr_failed_response(
-            method="google_document_ai_not_configured",
-            warnings=[
-                "Google Document AI is required, but environment variables are missing.",
-                f"Current config: {get_document_ai_debug_config()}",
-            ],
-        )
+    """The single entry point every extraction call site in this codebase
+    uses (main.py's classification-text passes, document_pipeline.py's
+    final-extraction pass). Routes through
+    app.services.ingestion.router.route_extraction() FIRST — a format
+    that has a real local extractor (DOCX/RTF/ODT/TXT/MD/CSV/TSV/XLSX/
+    ODS/detected structured-health JSON/XML) is handled entirely locally
+    and never reaches Google Document AI at all; an explicitly
+    unsupported format (legacy .doc, HL7, DICOM) or one this specific
+    file failed to parse (corrupt/encrypted) comes back with a real,
+    distinguishable `status` instead of a silently-empty "OCR failed"
+    result. Only PDF/image formats fall through to the EXISTING Google
+    Document AI call below, unchanged except for image EXIF/HEIC/BMP
+    normalization first — see app/services/ingestion/router.py's module
+    docstring for the full architecture.
+    """
+    from app.services.ingestion.contract import ExtractionStatus
+    from app.services.ingestion.router import route_extraction
+
+    routed = route_extraction(file_path, filename)
+
+    if routed.status != ExtractionStatus.DEFER_TO_PROVIDER:
+        return routed.to_legacy_ocr_dict()
+
+    return _extract_via_ocr_provider(file_path=file_path, filename=filename)
+
+
+def _extract_via_ocr_provider(file_path: Path, filename: str) -> dict:
+    extension = Path(filename).suffix.lower()
+    ocr_file_path = file_path
+    effective_filename = filename
+    normalization_warnings: list[str] = []
+    temp_normalized_path: Path | None = None
+
+    if extension in {".png", ".jpg", ".jpeg", ".webp", ".tif", ".tiff", ".bmp", ".heic", ".heif"}:
+        from app.services.ingestion.adapters.image_adapter import normalize_image_for_ocr
+
+        ocr_file_path, normalization_warnings = normalize_image_for_ocr(file_path, extension)
+        if ocr_file_path != file_path:
+            temp_normalized_path = ocr_file_path
+            # guess_mime_type() (google_document_ai_service.py) decides the
+            # MIME type from the FILENAME's own extension — normalization
+            # changed the actual bytes to PNG, so the filename handed to it
+            # must agree, or it would guess the OLD (now wrong) MIME type
+            # right back.
+            effective_filename = f"{Path(filename).stem}.png"
 
     try:
-        return process_with_google_document_ai(file_path=file_path, filename=filename)
-    except Exception as error:
-        return ocr_failed_response(
-            method="google_document_ai_failed",
-            warnings=[
-                f"Google Document AI failed. Error: {str(error)}",
-                f"Current config: {get_document_ai_debug_config()}",
-            ],
-        )
+        if not is_google_document_ai_configured():
+            result = ocr_failed_response(
+                method="google_document_ai_not_configured",
+                warnings=[
+                    "Google Document AI is required, but environment variables are missing.",
+                    f"Current config: {get_document_ai_debug_config()}",
+                ],
+            )
+        else:
+            try:
+                result = process_with_google_document_ai(file_path=ocr_file_path, filename=effective_filename)
+                result.setdefault("status", "success" if (result.get("text") or "").strip() else "empty")
+            except Exception as error:
+                result = ocr_failed_response(
+                    method="google_document_ai_failed",
+                    warnings=[
+                        f"Google Document AI failed. Error: {str(error)}",
+                        f"Current config: {get_document_ai_debug_config()}",
+                    ],
+                )
+    finally:
+        if temp_normalized_path is not None:
+            try:
+                temp_normalized_path.unlink(missing_ok=True)
+            except OSError:
+                pass
+
+    if normalization_warnings:
+        result.setdefault("warnings", [])
+        result["warnings"] = [*result["warnings"], *normalization_warnings]
+
+    return result
 
 
 def score_ocr_quality(text: str) -> dict:

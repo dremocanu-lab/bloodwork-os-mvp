@@ -39,3 +39,28 @@ alembic==1.18.4
 # explicitly for real calendar-month arithmetic (relativedelta) — Clinical
 # Document Intelligence V3, Phase 7. Never hand-roll month-end correction.
 python-dateutil==2.9.0.post0
+# Universal document ingestion (BRAGI — UNIVERSAL DOCUMENT INGESTION +
+# ASK BRAGI STABLE LAYOUT) — see app/services/ingestion/. Real, local text
+# extraction for formats that were previously either silently unsupported
+# (DOCX) or never even attempted (RTF/XLSX): avoids paying for/depending on
+# a remote OCR provider for formats that already contain machine-readable
+# text, and fixes the root cause of the production DOCX-classified-as-
+# "other" bug (Google Document AI was never able to read it).
+python-docx==1.2.0
+striprtf==0.0.33
+openpyxl==3.1.5
+# Were already implicit transitive dependencies (Pillow via
+# google-cloud-documentai's own deps; defusedxml likely via another
+# package) — pinned directly now that app/services/ingestion depends on
+# them explicitly: Pillow for EXIF-rotation-aware image normalization
+# before OCR, defusedxml for XXE-safe parsing of uploaded XML (CDA/generic
+# health-export XML) and Office-XML-based formats (DOCX/XLSX/ODT/ODS
+# internally use zipped XML too, but python-docx/openpyxl parse those
+# themselves — defusedxml here covers the ingestion module's OWN direct
+# XML parsing, i.e. RTF is not XML but ODT/ODS/CDA/generic-XML are).
+Pillow==11.2.1
+defusedxml==0.7.1
+# HEIC/HEIF (iPhone photo) support for the image adapter — Pillow itself
+# has no built-in decoder for these; this registers one via
+# pillow_heif.register_heif_opener().
+pillow-heif==1.7.0

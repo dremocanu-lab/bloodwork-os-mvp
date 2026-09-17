@@ -478,6 +478,23 @@ export default function AskBragiChat({
     <div
       className="b-stack"
       style={{
+        // `width: 100%` (not just `maxWidth`) is required here — `.b-stack`
+        // has `min-width: 0`, and a flex/grid item with `width: auto` plus
+        // horizontal `margin: auto` is sized by CSS shrink-to-fit (its
+        // max-content width, clamped by maxWidth), not by its available
+        // track. That content-dependent width was the real cause of the
+        // Ask Bragi width-collapse bug (Part P): the idle EmptyState's
+        // long description text has a wide max-content width (so
+        // shrink-to-fit hit the 760px cap and LOOKED stable), but the
+        // pending state's only content is the short "Checking your
+        // record…" label, whose tiny max-content width made this whole
+        // container shrink to it — no bubble-level alignment fix (see
+        // ask-bragi-bubble-assistant below) can compensate for its own
+        // container shrinking first. An explicit `width` makes this box's
+        // size independent of its children's content entirely: exactly
+        // `min(760px, its grid track)`, centered by the auto margins,
+        // identical before/pending/streaming/completed.
+        width: compact ? undefined : "100%",
         maxWidth,
         margin: compact ? undefined : "0 auto",
         minWidth: 0,
@@ -554,7 +571,7 @@ export default function AskBragiChat({
           })
         )}
         {generating ? (
-          <div className="ask-bragi-bubble ask-bragi-bubble-assistant" style={{ alignSelf: "flex-start" }}>
+          <div className="ask-bragi-bubble ask-bragi-bubble-assistant" style={{ alignSelf: "stretch" }}>
             {streamingAnswer ? (
               <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{streamingAnswer}</p>
             ) : (
@@ -654,7 +671,19 @@ function AskBragiMessageBubble({
   return (
     <div
       className={`ask-bragi-bubble ${isUser ? "ask-bragi-bubble-user" : "ask-bragi-bubble-assistant"}`}
-      style={{ alignSelf: isUser ? "flex-end" : "flex-start", maxWidth: "88%" }}
+      style={
+        isUser
+          ? { alignSelf: "flex-end", maxWidth: "88%" }
+          : // Assistant bubble stretches to the full message-column width in
+            // every state (pending "Checking your record…" and completed
+            // answer alike) — see the pending bubble above. Before this,
+            // alignSelf:"flex-start" made both shrink-to-fit their own
+            // content, which was invisible for a long completed answer but
+            // collapsed the pending bubble (a few words) into a narrow
+            // floating card that then visibly re-expanded once real content
+            // arrived.
+            { alignSelf: "stretch" }
+      }
     >
       <p style={{ whiteSpace: "pre-wrap", margin: 0 }}>{message.content}</p>
 
