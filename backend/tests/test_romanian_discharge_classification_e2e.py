@@ -136,3 +136,89 @@ def test_persisted_romanian_discharge_document_reaches_clinical_reader_endpoint(
     reader = client.get(f"/documents/{job['document_id']}/clinical-reader", headers=patient)
     assert reader.status_code == 200, reader.text
     assert reader.json()["document"]["document_type"] == "discharge_summary"
+
+
+# --- AI-classifier-in-the-loop (P0 upload-reliability session) ----------
+#
+# The tests above exercise the LEGACY classifier only (no OPENAI_API_KEY
+# configured in this dev environment) — this section proves the AI path
+# specifically: real upload pipeline, mocked OpenAI response only.
+
+
+def _mock_ai_confident_discharge(monkeypatch):
+    import json as _json
+    from types import SimpleNamespace
+    from unittest.mock import MagicMock
+
+    from app.services import ai_document_classifier as classifier_module
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+    fake_client = MagicMock()
+    fake_client.responses.create.return_value = SimpleNamespace(
+        output_text=_json.dumps(
+            {
+                "document_type": "discharge_summary",
+                "confidence": 0.96,
+                "ambiguous": False,
+                "alternative_document_type": None,
+                "reason_codes": ["DISCHARGE_TITLE", "EPICRISIS"],
+            }
+        ),
+        output=[],
+    )
+    monkeypatch.setattr(classifier_module, "_client", lambda: fake_client)
+    return fake_client
+
+
+def test_ai_classification_becomes_the_persisted_final_result(patient, monkeypatch):
+    _mock_ai_confident_discharge(monkeypatch)
+
+    job = _upload_and_wait(patient, monkeypatch, ROMANIAN_DISCHARGE_BILET_DE_IESIRE)
+
+    assert job["status"] == "done"
+    assert job["document_type"] == "discharge_summary"
+    assert job["classification_status"] == "classified"
+
+    document = client.get(f"/documents/{job['document_id']}", headers=patient).json()
+    assert document["document_type"] == "discharge_summary"
+    assert document["section"] == "discharge_summary"
+
+    classification_entries = [
+        e for e in document["parsed_data"]["audit_logs"] if e.get("action") == "classification_completed"
+    ]
+    assert classification_entries, "expected a classification_completed audit entry"
+    assert "ai=discharge_summary" in classification_entries[0].get("details", "")
+
+
+def test_ai_timeout_falls_back_and_upload_still_completes(patient, monkeypatch):
+    from unittest.mock import MagicMock
+
+    from app.services import ai_document_classifier as classifier_module
+
+    monkeypatch.setenv("OPENAI_API_KEY", "test-key-not-real")
+
+    class FakeTimeout(Exception):
+        pass
+
+    fake_client = MagicMock()
+    fake_client.responses.create.side_effect = FakeTimeout("timed out")
+    monkeypatch.setattr(classifier_module, "_client", lambda: fake_client)
+
+    job = _upload_and_wait(patient, monkeypatch, ROMANIAN_DISCHARGE_BILET_DE_IESIRE)
+
+    # An AI outage must never fail the upload — it falls back to the
+    # legacy classifier (already fixed to handle this exact fixture
+    # confidently, see test_document_classifier.py).
+    assert job["status"] == "done"
+    assert job["document_type"] == "discharge_summary"
+    assert job["classification_source"] in ("legacy_rules", "legacy_rules_fallback")
+
+
+def test_ai_not_configured_upload_still_completes_via_legacy(patient, monkeypatch):
+    monkeypatch.delenv("OPENAI_API_KEY", raising=False)
+
+    job = _upload_and_wait(patient, monkeypatch, ROMANIAN_DISCHARGE_BILET_DE_IESIRE)
+
+    assert job["status"] == "done"
+    assert job["document_type"] == "discharge_summary"
+    assert job["classification_source"] in ("legacy_rules", "legacy_rules_fallback")

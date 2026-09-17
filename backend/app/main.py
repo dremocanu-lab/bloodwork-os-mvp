@@ -26,6 +26,7 @@ from app.policies.access import get_patient_for_user
 from app.services.document_pipeline import process_uploaded_document
 from app.services.discharge_summary_pipeline import process_uploaded_discharge_summary
 from app.services.document_taxonomy import AUTO_CLASSIFY_SECTION, DOCUMENT_TYPE_LABELS, legacy_section_for
+from app.services.document_classification_service import resolve_final_classification
 from app.services.extraction_provider import REDUCTO, ProcessingMetadata, get_extraction_provider
 from app.services.reducto_client import ReductoError
 from app.services import reducto_extraction
@@ -1555,6 +1556,8 @@ def process_upload_job(job_id: int):
                     used_fallback = True
                     fallback_reason = f"Reducto classify failed: {reducto_error}"
 
+            classification_text = ""
+
             if reducto_file_id is None:
                 # Legacy path (Reducto disabled, or just fell back above):
                 # classification input is a plain-text OCR pass, independent
@@ -1570,22 +1573,58 @@ def process_upload_job(job_id: int):
                     classification_text = ""
 
                 classification, processing_meta = provider.classify(classification_text)
+            elif os.getenv("OPENAI_API_KEY"):
+                # Reducto succeeded, so the legacy OCR pass above never ran —
+                # but the AI semantic classifier below still needs real
+                # extracted text (Reducto's own internal document
+                # understanding isn't exposed as plain text anywhere in this
+                # codebase). Only paid for when AI classification is
+                # actually configured — zero added latency/cost in any
+                # environment without OPENAI_API_KEY set, identical to this
+                # session's starting behavior.
+                try:
+                    ai_ocr = ocr_extract_text(file_path=file_path, filename=job.filename, temp_dir=UPLOAD_DIR)
+                    classification_text = ai_ocr.get("text") or ""
+                except Exception:
+                    print(f"UPLOAD JOB {job_id}: AI-classification OCR pass failed:")
+                    print(traceback.format_exc())
+                    classification_text = ""
 
-            job.document_type = classification.document_type.value
-            job.classification_status = classification.status
-            job.classification_confidence = classification.confidence
-            job.classification_source = (
-                f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
+            fallback_source = f"{processing_meta.provider}_fallback" if used_fallback else processing_meta.provider
+
+            # AI semantic classification is the PRIMARY final classifier
+            # when it succeeds with a valid, confident result — Reducto/
+            # legacy above remain real, useful pre-signals AND the fallback
+            # when AI is unavailable/misconfigured/errors for any reason
+            # (never a failed upload). See document_classification_service.py
+            # for the exact decision policy.
+            final_decision = resolve_final_classification(
+                classification_text=classification_text,
+                fallback_document_type=classification.document_type,
+                fallback_status=classification.status,
+                fallback_confidence=classification.confidence,
+                fallback_source=fallback_source,
             )
 
-            if classification.status == "needs_confirmation":
+            job.document_type = final_decision.document_type.value
+            job.classification_status = final_decision.status
+            job.classification_confidence = final_decision.confidence
+            job.classification_source = final_decision.classification_source
+            # Stashed on the job instance only (not a DB column — see the
+            # decision service's own docstring for why this is logged via
+            # the existing AuditLog mechanism once a Document exists,
+            # rather than a new schema column) for the audit-log write
+            # later in this function, after the Document row is created.
+            job._ai_classification_decision = final_decision  # type: ignore[attr-defined]
+
+            if final_decision.status == "needs_confirmation":
                 job.status = "needs_confirmation"
                 job.progress = 30
                 job.message = "We're not sure what type of document this is. Please confirm."
                 db.commit()
                 return
 
-            job.section = legacy_section_for(classification.document_type)
+            job.section = legacy_section_for(final_decision.document_type)
             db.commit()
 
         # Real Reducto Extract, only for the document types it's wired up
@@ -1956,15 +1995,21 @@ def process_upload_job(job_id: int):
         )
 
         if job.document_type:
+            ai_decision = getattr(job, "_ai_classification_decision", None)
+            details = (
+                ai_decision.audit_details()
+                if ai_decision is not None
+                else (
+                    f"Classified as {job.document_type} "
+                    f"(status={job.classification_status}, confidence={job.classification_confidence})"
+                )
+            )
             add_audit_log(
                 db=db,
                 document_id=document.id,
                 action="classification_completed",
                 actor=job.classification_source or "system",
-                details=(
-                    f"Classified as {job.document_type} "
-                    f"(status={job.classification_status}, confidence={job.classification_confidence})"
-                ),
+                details=details,
             )
 
         warnings = (
