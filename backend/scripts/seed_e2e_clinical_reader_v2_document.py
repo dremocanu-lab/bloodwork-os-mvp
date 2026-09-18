@@ -40,7 +40,6 @@ from app.auth import create_access_token, hash_password  # noqa: E402
 from app.db import SessionLocal  # noqa: E402
 from app.services.clinical_document import ai_interpreter  # noqa: E402
 from app.services.clinical_document.discharge_parser import parse_legacy_discharge_payload  # noqa: E402
-from app.services.clinical_document.persistence import serialize_structured_document  # noqa: E402
 from app.services.clinical_document.reprocessing import reprocess_discharge_document  # noqa: E402
 from tests.fixtures.clinical_reader_v2_fixture import SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD  # noqa: E402
 
@@ -51,6 +50,24 @@ def _event_id_containing(document, text: str) -> str:
 
 def _section_id(document, canonical_key: str) -> str:
     return next(s.id for s in document.sections if s.canonical_key == canonical_key)
+
+
+def _segment_id_containing(document, text: str) -> str:
+    """Source Intelligence + Provenance V2 — finds the specific segment
+    id for a fact that has no dated event to anchor to (e.g. the
+    historical JAK2/biopsy mention, which has no parseable date). Zips
+    each section's `source_segment_ids` with its own paragraph blocks
+    (1:1 for this fixture — every contributing segment has real text) so
+    the mocked response can demonstrate PRECISE segment-level citation
+    instead of the coarser section-level fallback."""
+    for section in document.sections:
+        paragraph_texts = [b.text for b in section.blocks if getattr(b, "type", None) == "paragraph"]
+        if len(paragraph_texts) != len(section.source_segment_ids):
+            continue
+        for segment_id, block_text in zip(section.source_segment_ids, paragraph_texts):
+            if text in block_text:
+                return segment_id
+    raise ValueError(f"No segment found containing {text!r}")
 
 
 def _build_mock_interpretation():
@@ -68,22 +85,35 @@ def _build_mock_interpretation():
     besremi_dose_id = _event_id_containing(probe, "doza de Besremi a fost crescuta")
     anomalous_date_event_id = _event_id_containing(probe, "14.09.3036")
     historical_phlebotomy_id = _event_id_containing(probe, "10.05.2019")
+    # No parseable date on this segment ("anul 2018" isn't DD.MM.YYYY),
+    # so there is no event to cite — segment-level citation is the ONLY
+    # way to ground this precisely rather than at the whole (13-segment)
+    # clinical_course section.
+    historical_onset_segment_id = _segment_id_containing(probe, "JAK2 V617F pozitiva")
+    d45_segment_id = _segment_id_containing(probe, "D45 Policitemie vera")
+    recommendations_segment_id = _segment_id_containing(probe, "Silivit F")
 
     def raw(_input):
         return {
             "diagnoses": [
-                {"code": "D45", "text": "Policitemie vera", "role": "principal", "source_section_id": diagnoses_id, "source_event_ids": []},
+                {
+                    "code": "D45", "text": "Policitemie vera", "role": "principal",
+                    "source_section_id": diagnoses_id, "source_event_ids": [],
+                    "source_segment_ids": [d45_segment_id],
+                },
             ],
             "investigations": [
                 {
                     "investigation_type": "molecular", "title": "JAK2 V617F",
                     "findings": "Mutatia JAK2 V617F pozitiva.", "conclusion": None,
                     "source_section_id": clinical_course_id, "source_event_ids": [],
+                    "source_segment_ids": [historical_onset_segment_id],
                 },
                 {
                     "investigation_type": "pathology", "title": "Biopsie osteomedulara",
                     "findings": None, "conclusion": None,
                     "source_section_id": clinical_course_id, "source_event_ids": [],
+                    "source_segment_ids": [historical_onset_segment_id],
                 },
                 {
                     "investigation_type": "imaging", "title": "Ecografie abdominala",
@@ -107,10 +137,17 @@ def _build_mock_interpretation():
                     "anomaly_type": "physiologically_implausible_value",
                     "message": "Heart rate of 1008/min is not physiologically possible.",
                     "original_value": "AV 1008/min",
-                    "source_section_id": clinical_course_id, "source_event_ids": [],
+                    "source_section_id": clinical_course_id, "source_event_ids": [admission_event_id],
                 },
             ],
-            "recommendations": [],
+            "recommendations": [
+                {
+                    "category": "medication_recommendation",
+                    "text": "Continuare tratament cu Besremi 150 micrograme subcutanat la doua saptamani.",
+                    "source_section_id": None, "source_event_ids": [],
+                    "source_segment_ids": [recommendations_segment_id],
+                },
+            ],
             "treatment_eras": [
                 {
                     "label": "Ruxolitinib", "start_date": "2022-09-18", "end_date": "2024-02-05",
@@ -164,7 +201,17 @@ def main() -> None:
         db.add(patient)
         db.flush()
 
-        structured = parse_legacy_discharge_payload(SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD)
+        # Source Intelligence + Provenance V2: note_body is the RAW
+        # legacy payload here, never a pre-parsed-and-serialized
+        # StructuredClinicalDocument — a real just-uploaded discharge
+        # document's note_body is always the legacy shape until its
+        # FIRST reprocess (discharge_summary_pipeline.py's write path is
+        # unchanged; see persistence.py's own docstring). Pre-upgrading
+        # it here would make reprocess_discharge_document's first call
+        # take the "already upgraded" reconstruction branch instead of
+        # the real legacy-payload parse — which drops page_start (a
+        # real bug this fix avoids re-triggering: page info would
+        # silently end up None on every segment's SourceEvidence).
         doc = models.Document(
             patient_id=patient.id,
             uploaded_by_user_id=user.id,
@@ -175,7 +222,7 @@ def main() -> None:
             report_name="Synthetic Discharge Fixture",
             created_at="2026-03-05T00:00:00Z",
             is_verified=True,
-            note_body=serialize_structured_document(structured),
+            note_body=json.dumps(SYNTHETIC_ROMANIAN_DISCHARGE_PAYLOAD, ensure_ascii=False),
             public_id=f"brg-doc-e2e-{suffix}",
         )
         db.add(doc)

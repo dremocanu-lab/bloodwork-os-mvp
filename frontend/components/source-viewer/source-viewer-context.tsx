@@ -38,6 +38,7 @@ export type SourceEvidenceView = {
   document_id: number;
   document_filename: string;
   document_type: string | null;
+  document_content_type: string | null;
   report_name: string | null;
   lab_result_id: number | null;
   page_number: number | null;

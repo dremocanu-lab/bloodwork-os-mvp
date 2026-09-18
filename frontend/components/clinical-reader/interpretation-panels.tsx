@@ -30,8 +30,10 @@ import type {
   InvestigationType,
   RecommendationCategory,
   RecommendationItem,
+  TreatmentEra,
 } from "@/lib/clinical-document-schema";
 import { LabValue } from "@/components/ui";
+import { MultiSourceAction, ReaderSourceAction } from "./reader-source-action";
 
 const DIAGNOSIS_ROLE_LABEL: Record<DiagnosisRole, { en: string; ro: string }> = {
   principal: { en: "Primary diagnosis", ro: "Diagnostic principal" },
@@ -64,7 +66,13 @@ function useLang() {
   return language === "ro" ? "ro" : "en";
 }
 
-export function DiagnosisList({ diagnoses }: { diagnoses: Diagnosis[] }) {
+export function DiagnosisList({
+  diagnoses,
+  documentContentType,
+}: {
+  diagnoses: Diagnosis[];
+  documentContentType?: string | null;
+}) {
   const lang = useLang();
   if (!diagnoses.length) return null;
 
@@ -101,6 +109,10 @@ export function DiagnosisList({ diagnoses }: { diagnoses: Diagnosis[] }) {
           border-radius: var(--r-md);
           padding: 2px 8px;
         }
+        .b-diag-text {
+          flex: 1;
+          min-width: 0;
+        }
       `}</style>
       {byRole.map(({ role, items }) => (
         <div key={role}>
@@ -109,7 +121,11 @@ export function DiagnosisList({ diagnoses }: { diagnoses: Diagnosis[] }) {
             {items.map((d) => (
               <div key={d.id} className="b-diag-card">
                 {d.code ? <span className="b-diag-code">{d.code}</span> : null}
-                <span>{d.text}</span>
+                <span className="b-diag-text">{d.text}</span>
+                <ReaderSourceAction
+                  sourceEvidenceId={d.source_evidence_ids[0] ?? null}
+                  documentContentType={documentContentType}
+                />
               </div>
             ))}
           </div>
@@ -119,7 +135,13 @@ export function DiagnosisList({ diagnoses }: { diagnoses: Diagnosis[] }) {
   );
 }
 
-export function InvestigationCards({ investigations }: { investigations: Investigation[] }) {
+export function InvestigationCards({
+  investigations,
+  documentContentType,
+}: {
+  investigations: Investigation[];
+  documentContentType?: string | null;
+}) {
   const lang = useLang();
   if (!investigations.length) return null;
 
@@ -137,12 +159,19 @@ export function InvestigationCards({ investigations }: { investigations: Investi
           border-radius: var(--r-lg);
           background: var(--surface);
         }
+        .b-invest-title-row {
+          display: flex;
+          align-items: center;
+          justify-content: space-between;
+          gap: var(--s2);
+          margin-bottom: var(--s2);
+        }
         .b-invest-title {
           display: flex;
           align-items: center;
           gap: var(--s2);
           font-weight: 600;
-          margin-bottom: var(--s2);
+          min-width: 0;
         }
         .b-invest-type-badge {
           font-size: var(--fs-caption);
@@ -158,9 +187,15 @@ export function InvestigationCards({ investigations }: { investigations: Investi
       `}</style>
       {investigations.map((investigation) => (
         <div key={investigation.id} className="b-invest-card">
-          <div className="b-invest-title">
-            <span>{investigation.title}</span>
-            <span className="b-invest-type-badge">{INVESTIGATION_TYPE_LABEL[investigation.investigation_type][lang]}</span>
+          <div className="b-invest-title-row">
+            <div className="b-invest-title">
+              <span>{investigation.title}</span>
+              <span className="b-invest-type-badge">{INVESTIGATION_TYPE_LABEL[investigation.investigation_type][lang]}</span>
+            </div>
+            <ReaderSourceAction
+              sourceEvidenceId={investigation.source_evidence_ids[0] ?? null}
+              documentContentType={documentContentType}
+            />
           </div>
           {investigation.findings ? (
             <>
@@ -180,7 +215,13 @@ export function InvestigationCards({ investigations }: { investigations: Investi
   );
 }
 
-export function RecommendationList({ recommendations }: { recommendations: RecommendationItem[] }) {
+export function RecommendationList({
+  recommendations,
+  documentContentType,
+}: {
+  recommendations: RecommendationItem[];
+  documentContentType?: string | null;
+}) {
   const lang = useLang();
   if (!recommendations.length) return null;
 
@@ -202,14 +243,29 @@ export function RecommendationList({ recommendations }: { recommendations: Recom
         .b-rec-group-label {
           margin: 0 0 var(--s1);
         }
+        .b-rec-item {
+          margin-bottom: 4px;
+        }
+        .b-rec-item-row {
+          display: flex;
+          align-items: baseline;
+          justify-content: space-between;
+          gap: var(--s2);
+        }
       `}</style>
       {Array.from(byCategory.entries()).map(([category, items]) => (
         <div key={category}>
           <h4 className="b-label b-rec-group-label">{RECOMMENDATION_CATEGORY_LABEL[category][lang]}</h4>
           <ul style={{ margin: 0, paddingLeft: 18 }}>
             {items.map((item) => (
-              <li key={item.id} style={{ marginBottom: 4 }}>
-                {item.text}
+              <li key={item.id} className="b-rec-item">
+                <div className="b-rec-item-row">
+                  <span>{item.text}</span>
+                  <ReaderSourceAction
+                    sourceEvidenceId={item.source_evidence_ids[0] ?? null}
+                    documentContentType={documentContentType}
+                  />
+                </div>
               </li>
             ))}
           </ul>
@@ -219,7 +275,13 @@ export function RecommendationList({ recommendations }: { recommendations: Recom
   );
 }
 
-export function AnomalyWarnings({ anomalies }: { anomalies: AnomalyFlag[] }) {
+export function AnomalyWarnings({
+  anomalies,
+  documentContentType,
+}: {
+  anomalies: AnomalyFlag[];
+  documentContentType?: string | null;
+}) {
   const lang = useLang();
   if (!anomalies.length) return null;
 
@@ -242,15 +304,22 @@ export function AnomalyWarnings({ anomalies }: { anomalies: AnomalyFlag[] }) {
           font-size: var(--fs-caption);
           align-items: flex-start;
         }
+        .b-anomaly-body {
+          flex: 1;
+          min-width: 0;
+        }
         .b-anomaly-original {
           font-family: var(--font-mono, monospace);
           color: var(--muted);
+        }
+        .b-anomaly-action {
+          margin-top: 4px;
         }
       `}</style>
       {anomalies.map((anomaly) => (
         <div key={anomaly.id} className="b-anomaly-item">
           <IconAlert size={14} />
-          <div>
+          <div className="b-anomaly-body">
             <div>
               {lang === "ro" ? "Posibilă inconsistență în sursă" : "Possible source inconsistency"}: {anomaly.message}
             </div>
@@ -259,6 +328,12 @@ export function AnomalyWarnings({ anomalies }: { anomalies: AnomalyFlag[] }) {
                 {lang === "ro" ? "Valoare originală" : "Original value"}: {anomaly.original_value}
               </div>
             ) : null}
+            <div className="b-anomaly-action">
+              <ReaderSourceAction
+                sourceEvidenceId={anomaly.source_evidence_ids[0] ?? null}
+                documentContentType={documentContentType}
+              />
+            </div>
           </div>
         </div>
       ))}
@@ -391,9 +466,11 @@ export function OverviewPanel({
 export function CurrentHospitalizationEvents({
   currentEncounter,
   events,
+  documentContentType,
 }: {
   currentEncounter: CurrentEncounter | null;
   events: ClinicalEvent[];
+  documentContentType?: string | null;
 }) {
   if (!currentEncounter || !currentEncounter.event_ids.length) return null;
   const currentEvents = events.filter((e) => currentEncounter.event_ids.includes(e.source_event_id));
@@ -406,10 +483,67 @@ export function CurrentHospitalizationEvents({
           key={event.source_event_id}
           style={{ padding: "var(--s3)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)" }}
         >
-          <div style={{ fontWeight: 600, marginBottom: 4 }}>{event.normalized_date || event.raw_date_text}</div>
+          <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--s2)" }}>
+            <div style={{ fontWeight: 600, marginBottom: 4 }}>{event.normalized_date || event.raw_date_text}</div>
+            <ReaderSourceAction
+              sourceEvidenceId={event.source_evidence_ids[0] ?? null}
+              documentContentType={documentContentType}
+            />
+          </div>
           <p style={{ margin: 0, whiteSpace: "pre-wrap" }}>{event.raw_text}</p>
         </div>
       ))}
+    </div>
+  );
+}
+
+const TREATMENT_ERA_TITLE = { en: "Treatment eras", ro: "Perioade de tratament" };
+
+/** Source Intelligence + Provenance V2, Part 33 — treatment eras had no
+ * reader UI at all before this (the field existed on the schema but
+ * nothing rendered it). Each era is a multi-source AI summary grounded
+ * in real dated_events, so it gets `MultiSourceAction`'s "View sources
+ * (N)" cycler, never a single fake "exact" source. */
+export function TreatmentEraList({
+  treatmentEras,
+  documentContentType,
+}: {
+  treatmentEras: TreatmentEra[];
+  documentContentType?: string | null;
+}) {
+  const lang = useLang();
+  if (!treatmentEras.length) return null;
+
+  return (
+    <div>
+      <h3 className="b-label" style={{ marginBottom: 10 }}>
+        {TREATMENT_ERA_TITLE[lang]}
+      </h3>
+      <div style={{ display: "flex", flexDirection: "column", gap: "var(--s3)" }}>
+        {treatmentEras.map((era) => (
+          <div
+            key={era.id}
+            style={{ padding: "var(--s3)", border: "1px solid var(--border)", borderRadius: "var(--r-md)", background: "var(--surface)" }}
+          >
+            <div style={{ display: "flex", justifyContent: "space-between", alignItems: "baseline", gap: "var(--s2)", flexWrap: "wrap" }}>
+              <div style={{ fontWeight: 600 }}>
+                {era.label}
+                {era.start_date || era.end_date ? (
+                  <span className="b-meta" style={{ fontWeight: 400, marginLeft: 8 }}>
+                    {era.start_date || "—"} → {era.end_date || (lang === "ro" ? "prezent" : "present")}
+                  </span>
+                ) : null}
+              </div>
+              <MultiSourceAction sourceEvidenceIds={era.source_evidence_ids} documentContentType={documentContentType} />
+            </div>
+            {era.description ? (
+              <p style={{ margin: "6px 0 0", whiteSpace: "pre-wrap", color: "var(--muted)", fontSize: "var(--fs-caption)" }}>
+                {era.description}
+              </p>
+            ) : null}
+          </div>
+        ))}
+      </div>
     </div>
   );
 }

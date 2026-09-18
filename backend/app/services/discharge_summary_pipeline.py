@@ -377,6 +377,25 @@ def _try_document_ai_ocr_per_page(path: Path) -> dict[int, str]:
         return {}
 
 
+def _call_openai_for_page_safe(client: OpenAI, page: dict[str, Any]) -> tuple[dict[str, Any] | None, int, str | None]:
+    """Isolates one page's failure from the rest of the document (Source
+    Intelligence + Provenance V2, Part 5 — "retry safe transient
+    failures... never silently omit later pages"). One retry for a
+    transient provider error; a page that still fails returns `(None,
+    page_number, reason)` rather than raising and losing every OTHER
+    already-succeeded page in the same document. The caller is
+    responsible for recording `page_number` in `failed_pages` and NEVER
+    claiming the document was fully extracted when this happens."""
+    page_number = int(page.get("page_number") or 0)
+    last_error: Exception | None = None
+    for attempt in range(2):
+        try:
+            return _call_openai_for_page(client, page), page_number, None
+        except Exception as error:  # noqa: BLE001 — any provider/network/parse error for THIS page only
+            last_error = error
+    return None, page_number, str(last_error) if last_error else "Unknown extraction failure."
+
+
 def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any]:
     page_number = page["page_number"]
     native_text = page.get("native_text") or ""
@@ -742,6 +761,7 @@ def _build_warnings(
     page_payloads: list[dict[str, Any]],
     sections: list[dict[str, Any]],
     actual_page_count: int,
+    failed_pages: dict[int, str] | None = None,
 ) -> list[str]:
     warnings: list[str] = []
 
@@ -757,6 +777,9 @@ def _build_warnings(
         warnings.append(
             f"Expected {actual_page_count} rendered pages, extracted {len(extracted_pages)} page payloads."
         )
+
+    for page_number, reason in sorted((failed_pages or {}).items()):
+        warnings.append(f"Page {page_number} could not be extracted after retrying: {reason}")
 
     if not any(section.get("key") == "administrative_information" for section in sections):
         warnings.append("No administrative_information section was extracted. Check page 1 manually.")
@@ -785,9 +808,16 @@ def _build_warnings(
     return deduped
 
 
-def _normalize_payload(page_payloads: list[dict[str, Any]], actual_page_count: int) -> dict[str, Any]:
+def _normalize_payload(
+    page_payloads: list[dict[str, Any]],
+    actual_page_count: int,
+    failed_pages: dict[int, str] | None = None,
+) -> dict[str, Any]:
     sections = _merge_sections(page_payloads)
-    warnings = _build_warnings(page_payloads, sections, actual_page_count)
+    warnings = _build_warnings(page_payloads, sections, actual_page_count, failed_pages)
+    failed_pages = failed_pages or {}
+    successful_pages = len(page_payloads)
+    attempted_pages = successful_pages + len(failed_pages)
 
     return {
         "document_type": "discharge_summary",
@@ -803,6 +833,19 @@ def _normalize_payload(page_payloads: list[dict[str, Any]], actual_page_count: i
         "page_payloads": page_payloads,
         "sections": sections,
         "warnings": warnings,
+        # Source Intelligence + Provenance V2, Part 5 — honest, explicit
+        # page-coverage bookkeeping (not just a loose warning string a
+        # reader has to parse). `extraction_complete` is computed, never
+        # asserted: every attempted page must have both succeeded AND the
+        # attempted count must match the real rendered-page count.
+        "extraction_coverage": {
+            "total_pages": actual_page_count,
+            "attempted_pages": attempted_pages,
+            "successful_pages": successful_pages,
+            "failed_pages": sorted(failed_pages.keys()),
+            "warning_pages": [],
+            "extraction_complete": (not failed_pages) and attempted_pages == actual_page_count,
+        },
     }
 
 
@@ -848,15 +891,20 @@ def process_uploaded_discharge_summary(
                     page["native_text"] = ocr_text
 
     page_payloads: list[dict[str, Any]] = []
+    failed_pages: dict[int, str] = {}
 
     with ThreadPoolExecutor(max_workers=MAX_PARALLEL_PAGES) as executor:
-        futures = {executor.submit(_call_openai_for_page, client, page): page for page in rendered_pages}
+        futures = {executor.submit(_call_openai_for_page_safe, client, page): page for page in rendered_pages}
         for future in as_completed(futures):
-            page_payloads.append(future.result())
+            result, page_number, error = future.result()
+            if result is not None:
+                page_payloads.append(result)
+            else:
+                failed_pages[page_number] = error or "Unknown extraction failure."
 
     page_payloads.sort(key=lambda p: int(p.get("page_number") or 0))
 
-    payload = _normalize_payload(page_payloads, actual_page_count=len(rendered_pages))
+    payload = _normalize_payload(page_payloads, actual_page_count=len(rendered_pages), failed_pages=failed_pages)
     extracted_text = _payload_to_text(payload)
 
     return {

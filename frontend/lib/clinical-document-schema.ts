@@ -292,6 +292,11 @@ export interface TreatmentEra {
   end_date: string | null;
   description: string;
   event_ids: string[];
+  /** Source Intelligence + Provenance V2 — the union of real
+   * SourceEvidence ids already resolved for every event in `event_ids`.
+   * A treatment era is a multi-source summary by definition, so this is
+   * never one fake "exact" source — see the "View sources (N)" reader UI. */
+  source_evidence_ids: number[];
 }
 
 /** A dedicated pointer to what makes up THIS encounter/hospitalization —
@@ -318,6 +323,18 @@ export interface InterpretationMetadata {
   warnings: string[];
 }
 
+/** Source Intelligence + Provenance V2, Part 5 — honest page-coverage
+ * bookkeeping. `null` on the document means "unknown", never "assumed
+ * complete". */
+export interface ExtractionCoverage {
+  total_pages: number | null;
+  attempted_pages: number;
+  successful_pages: number;
+  failed_pages: number[];
+  warning_pages: number[];
+  extraction_complete: boolean;
+}
+
 /** The root schema — mirrors backend `StructuredClinicalDocument`
  * exactly. `document_kind` reuses the same 16-value document-type
  * taxonomy the rest of the app already uses (see
@@ -339,6 +356,7 @@ export interface StructuredClinicalDocument {
   treatment_eras: TreatmentEra[];
   current_encounter: CurrentEncounter | null;
   interpretation: InterpretationMetadata | null;
+  extraction_coverage: ExtractionCoverage | null;
 }
 
 // ── Outline labels (Phase 8E) — canonical navigation, never the raw

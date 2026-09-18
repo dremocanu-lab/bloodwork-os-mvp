@@ -16,6 +16,7 @@ import { IconAlert } from "@/components/ui/icon";
 import { Status } from "@/components/ui";
 import { useLanguage } from "@/lib/i18n";
 import type { ClinicalEvent } from "@/lib/clinical-document-schema";
+import { ReaderSourceAction } from "./reader-source-action";
 
 const EVENT_TYPE_LABEL: Record<string, { en: string; ro: string }> = {
   admission: { en: "Admission", ro: "Internare" },
@@ -28,7 +29,13 @@ const EVENT_TYPE_LABEL: Record<string, { en: string; ro: string }> = {
   other: { en: "Event", ro: "Eveniment" },
 };
 
-export function ClinicalCourseTimeline({ events }: { events: ClinicalEvent[] }) {
+export function ClinicalCourseTimeline({
+  events,
+  documentContentType,
+}: {
+  events: ClinicalEvent[];
+  documentContentType?: string | null;
+}) {
   const { language } = useLanguage();
   const lang = language === "ro" ? "ro" : "en";
 
@@ -60,14 +67,20 @@ export function ClinicalCourseTimeline({ events }: { events: ClinicalEvent[] }) 
               borderLeft: hasWarning ? "3px solid var(--warn, #b08900)" : "3px solid transparent",
             }}
           >
-            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
-              <span style={{ fontWeight: 700 }}>{event.normalized_date || event.raw_date_text}</span>
-              {event.normalized_date && event.normalized_date !== event.raw_date_text ? (
-                <span className="b-meta" style={{ fontSize: "var(--fs-caption)" }}>
-                  ({event.raw_date_text})
-                </span>
-              ) : null}
-              <Status tone="info">{label}</Status>
+            <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap", justifyContent: "space-between" }}>
+              <div style={{ display: "flex", gap: 8, alignItems: "baseline", flexWrap: "wrap" }}>
+                <span style={{ fontWeight: 700 }}>{event.normalized_date || event.raw_date_text}</span>
+                {event.normalized_date && event.normalized_date !== event.raw_date_text ? (
+                  <span className="b-meta" style={{ fontSize: "var(--fs-caption)" }}>
+                    ({event.raw_date_text})
+                  </span>
+                ) : null}
+                <Status tone="info">{label}</Status>
+              </div>
+              <ReaderSourceAction
+                sourceEvidenceId={event.source_evidence_ids[0] ?? null}
+                documentContentType={documentContentType}
+              />
             </div>
             <p style={{ marginTop: 8, whiteSpace: "pre-wrap", lineHeight: 1.6 }}>{event.raw_text}</p>
             {event.procedures.length > 0 || event.structured_observations.length > 0 ? (

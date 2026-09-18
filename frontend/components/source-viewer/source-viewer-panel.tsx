@@ -479,18 +479,32 @@ export function SourceViewerPanel({ variant }: { variant: "split" | "sheet" }) {
           <div className="b-source-viewer-canvas-scroll">
             <div className="b-source-viewer-canvas-wrap" ref={canvasWrapRef}>
               <canvas ref={canvasRef} />
-              {showBbox && highlightBox ? (
-                <div
-                  ref={highlightRef}
-                  className="b-source-highlight"
-                  style={{
-                    left: `${highlightBox.x * 100}%`,
-                    top: `${highlightBox.y * 100}%`,
-                    width: `${highlightBox.width * 100}%`,
-                    height: `${highlightBox.height * 100}%`,
-                  }}
-                />
-              ) : null}
+              {showBbox && highlightBoxes
+                ? // Source Intelligence + Provenance V2: render EVERY rect
+                  // in highlightBoxes, not just the first — the exact
+                  // per-field citation case (validFieldBboxes) can be
+                  // several separate rects (test name, value, unit,
+                  // reference range), and this previously rendered only
+                  // one of them despite the data model already carrying
+                  // all of them (field_bboxes_json). Only the FIRST rect
+                  // gets the scroll-into-view ref; scrollHighlightIntoView
+                  // centers on it, which is representative of the whole
+                  // set since real per-field rects for one row/fact sit
+                  // close together.
+                  highlightBoxes.map((box, i) => (
+                    <div
+                      key={i}
+                      ref={i === 0 ? highlightRef : undefined}
+                      className="b-source-highlight"
+                      style={{
+                        left: `${box.x * 100}%`,
+                        top: `${box.y * 100}%`,
+                        width: `${box.width * 100}%`,
+                        height: `${box.height * 100}%`,
+                      }}
+                    />
+                  ))
+                : null}
               {pageRendering ? (
                 <div className="b-source-viewer-page-loading">
                   <span className="b-spinner" />

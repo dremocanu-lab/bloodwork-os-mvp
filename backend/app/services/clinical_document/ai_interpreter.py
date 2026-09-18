@@ -137,23 +137,63 @@ def _block_texts(section) -> list[str]:
     return texts
 
 
+def _paragraph_segments(section) -> list[tuple[str, str]] | None:
+    """Source Intelligence + Provenance V2 — pairs each contributing
+    SEGMENT id with its own paragraph text, when (and only when) that
+    pairing is unambiguous: `ClinicalSection.source_segment_ids` and its
+    paragraph `blocks` are only guaranteed 1:1 when every contributing
+    segment produced exactly one paragraph block (the common case for a
+    real discharge document's Clinical Course, but not guaranteed in
+    general — a segment with empty text contributes an id but no block,
+    which would desync the pairing for everything after it). Returns
+    `None` rather than a wrong/shifted pairing when that guarantee
+    doesn't hold — callers fall back to the section's merged text only,
+    exactly as before this existed, never a silently-misattributed
+    citation target. Same defensive shape check already used by
+    reprocessing.py's own segment reconstruction, reused here rather
+    than inventing a second version of it."""
+    paragraph_texts = [b.text for b in section.blocks if getattr(b, "type", None) == "paragraph"]
+    if not paragraph_texts or len(paragraph_texts) != len(section.source_segment_ids):
+        return None
+    return list(zip(section.source_segment_ids, paragraph_texts))
+
+
 def build_interpreter_input(document: StructuredClinicalDocument) -> dict[str, Any]:
     """A bounded, ID-tagged representation of the ALREADY-SEGMENTED
     document — never raw OCR text. Every id exposed here is a real id
     from `document` itself; these are exactly the allowed-id sets
     `validate_and_filter_interpretation()` checks the model's response
-    against."""
+    against.
+
+    Source Intelligence + Provenance V2 — each section ALSO exposes its
+    own contributing `segments` (segment_id + that segment's own
+    paragraph text) whenever that pairing is unambiguous (see
+    `_paragraph_segments`). This is what lets the model cite the ONE
+    specific paragraph a fact came from instead of only the parent
+    section — critical for a section like Clinical Course, which can
+    merge a dozen+ narrative segments into one canonical section; citing
+    only `section_id` for a fact from ONE of those segments would
+    resolve to evidence for ALL of them, which is correct-but-useless
+    breadth, not precision."""
     sections_payload = []
     for section in document.sections:
         if section.is_template_only:
             continue  # deterministic template noise — nothing for the model to interpret
         text = "\n\n".join(t for t in _block_texts(section) if t.strip())
+        paragraph_segments = _paragraph_segments(section)
         sections_payload.append(
             {
                 "section_id": section.id,
                 "canonical_key": section.canonical_key,
                 "display_title": section.display_title,
                 "text": _truncate(redact_direct_identifiers(text), AI_INTERPRETER_MAX_BLOCK_TEXT_CHARS),
+                "segments": [
+                    {"segment_id": sid, "text": _truncate(redact_direct_identifiers(t), AI_INTERPRETER_MAX_EVENT_TEXT_CHARS)}
+                    for sid, t in paragraph_segments
+                    if t.strip()
+                ]
+                if paragraph_segments
+                else [],
             }
         )
 
@@ -208,6 +248,14 @@ GROUNDING — THE MOST IMPORTANT RULE: every item you return MUST cite real sect
 values EXACTLY as given to you in the input. Do not invent an id. Do not slightly modify an id. \
 If you cannot find a supporting section_id/event_id for something, DO NOT include it at all — \
 omission is always safer than a fabricated citation, and omitted items are not an error.
+
+PRECISION: a section can contain a `segments` array — the individual paragraphs that make up its \
+`text`, each with its own segment_id. Whenever the fact you are citing comes from ONE specific \
+paragraph in that array, put that paragraph's segment_id in `source_segment_ids` — this lets Bragi \
+point the user at that exact paragraph instead of the whole (possibly much longer) section. Only \
+fall back to citing the section_id alone, with no source_segment_ids, when the fact genuinely \
+isn't traceable to one specific paragraph (e.g. it synthesizes something spread across the whole \
+section). Never invent a segment_id that isn't in that section's own `segments` array.
 
 WHAT YOU MUST NEVER DO:
 - Never invent a diagnosis, investigation finding, or recommendation not actually stated in the \
@@ -269,8 +317,9 @@ def _build_json_schema() -> dict[str, Any]:
             "role": {"type": "string", "enum": _DIAGNOSIS_ROLES},
             "source_section_id": {"type": ["string", "null"]},
             "source_event_ids": {"type": "array", "items": {"type": "string"}},
+            "source_segment_ids": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["code", "text", "role", "source_section_id", "source_event_ids"],
+        "required": ["code", "text", "role", "source_section_id", "source_event_ids", "source_segment_ids"],
         "additionalProperties": False,
     }
     investigation_item = {
@@ -282,8 +331,12 @@ def _build_json_schema() -> dict[str, Any]:
             "conclusion": {"type": ["string", "null"]},
             "source_section_id": {"type": ["string", "null"]},
             "source_event_ids": {"type": "array", "items": {"type": "string"}},
+            "source_segment_ids": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["investigation_type", "title", "findings", "conclusion", "source_section_id", "source_event_ids"],
+        "required": [
+            "investigation_type", "title", "findings", "conclusion",
+            "source_section_id", "source_event_ids", "source_segment_ids",
+        ],
         "additionalProperties": False,
     }
     anomaly_item = {
@@ -294,8 +347,12 @@ def _build_json_schema() -> dict[str, Any]:
             "original_value": {"type": ["string", "null"]},
             "source_section_id": {"type": ["string", "null"]},
             "source_event_ids": {"type": "array", "items": {"type": "string"}},
+            "source_segment_ids": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["anomaly_type", "message", "original_value", "source_section_id", "source_event_ids"],
+        "required": [
+            "anomaly_type", "message", "original_value",
+            "source_section_id", "source_event_ids", "source_segment_ids",
+        ],
         "additionalProperties": False,
     }
     recommendation_item = {
@@ -305,8 +362,9 @@ def _build_json_schema() -> dict[str, Any]:
             "text": {"type": "string"},
             "source_section_id": {"type": ["string", "null"]},
             "source_event_ids": {"type": "array", "items": {"type": "string"}},
+            "source_segment_ids": {"type": "array", "items": {"type": "string"}},
         },
-        "required": ["category", "text", "source_section_id", "source_event_ids"],
+        "required": ["category", "text", "source_section_id", "source_event_ids", "source_segment_ids"],
         "additionalProperties": False,
     }
     treatment_era_item = {
@@ -412,6 +470,7 @@ def validate_and_filter_interpretation(
     document still has everything it had before)."""
     valid_section_ids = {s.id for s in document.sections}
     valid_event_ids = {e.source_event_id for e in document.dated_events}
+    valid_segment_ids = {sid for s in document.sections for sid in s.source_segment_ids}
     rejections: list[str] = []
 
     def section_ok(section_id: Any) -> bool:
@@ -425,6 +484,7 @@ def validate_and_filter_interpretation(
     def keep(kind: str, label: str, item: dict) -> bool:
         section_id = item.get("source_section_id")
         event_ids = item.get("source_event_ids") or []
+        segment_ids = item.get("source_segment_ids") or []
         bad_section = not section_ok(section_id)
         bad_events = [e for e in event_ids if not (isinstance(e, str) and e in valid_event_ids)]
         if bad_section or bad_events:
@@ -433,6 +493,16 @@ def validate_and_filter_interpretation(
                 f"(section_id={section_id!r}, unsupported_event_ids={bad_events})"
             )
             return False
+        # source_segment_ids is a PRECISION enhancement on top of the
+        # already-validated section/event grounding above, not a second
+        # required citation — an invalid/fabricated segment id is just
+        # filtered out (never the reason to drop an otherwise-grounded
+        # item), but IS recorded, since a model citing a fabricated
+        # segment id is still worth knowing about.
+        bad_segments = [s for s in segment_ids if not (isinstance(s, str) and s in valid_segment_ids)]
+        if bad_segments:
+            rejections.append(f"Dropped unsupported source_segment_ids for {kind} {label!r}: {bad_segments}")
+        item["source_segment_ids"] = [s for s in segment_ids if isinstance(s, str) and s in valid_segment_ids]
         return True
 
     diagnoses = [item for item in raw.get("diagnoses", []) if isinstance(item, dict) and keep("diagnosis", item.get("text", ""), item)]
@@ -498,12 +568,85 @@ def _build_id(prefix: str, index: int) -> str:
     return f"{prefix}-{index}"
 
 
-def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str, list], status: str, warnings: list[str]) -> StructuredClinicalDocument:
+def _resolve_evidence_ids(
+    document: StructuredClinicalDocument,
+    *,
+    section_id: str | None,
+    event_ids: list[str] | None = None,
+    segment_ids: list[str] | None = None,
+    segment_evidence_by_id: dict[str, int] | None = None,
+) -> list[int]:
+    """Source Intelligence + Provenance V2 — the interpreter never
+    invents or is asked for a `source_evidence_id` directly; it only
+    ever cites `source_section_id`/`source_event_ids`/`source_segment_ids`
+    (already validated against this document's real ids by
+    `validate_and_filter_interpretation` above). This resolves those into
+    the REAL SourceEvidence ids already attached — never fabricated here.
+
+    PRECISION ORDER — a strict precedence chain, NEVER a union across
+    tiers (unioning would dilute a precise citation with a coarse one):
+
+    1. `segment_ids` (specific paragraphs), when given and a
+       `segment_evidence_by_id` map is available (reprocessing.py passes
+       the one `_attach_segment_evidence` just built) — the precise case,
+       e.g. citing the one paragraph that mentions "JAK2 V617F" rather
+       than the whole Clinical Course section it lives in.
+    2. `event_ids`, when given and they resolve to real evidence — a
+       specific dated event is itself precise (one event maps to exactly
+       one source segment), even without an explicit segment citation.
+    3. `section_id` alone — the coarsest tier, and the ONLY one that can
+       legitimately resolve to several evidence ids at once (every
+       segment that contributed to that section). Used only when
+       neither of the above gave anything, which is correct for a
+       section with few contributing segments but is exactly why the
+       model is instructed to prefer segment-level citation whenever it
+       can for a section that merges many (see _SYSTEM_INSTRUCTIONS).
+
+    A document interpreted before segment-evidence existed, or whose
+    section/events/segments have no evidence yet, simply resolves to an
+    empty list, exactly as before this feature existed."""
+    if segment_ids and segment_evidence_by_id:
+        ids = {segment_evidence_by_id[sid] for sid in segment_ids if sid in segment_evidence_by_id}
+        if ids:
+            return sorted(ids)
+
+    event_evidence_ids: set[int] = set()
+    for event_id in event_ids or []:
+        event = next((e for e in document.dated_events if e.source_event_id == event_id), None)
+        if event:
+            event_evidence_ids.update(event.source_evidence_ids)
+    if event_evidence_ids:
+        return sorted(event_evidence_ids)
+
+    if section_id:
+        section = next((s for s in document.sections if s.id == section_id), None)
+        if section:
+            return sorted(section.source_evidence_ids)
+    return []
+
+
+def apply_interpretation(
+    document: StructuredClinicalDocument,
+    cleaned: dict[str, list],
+    status: str,
+    warnings: list[str],
+    segment_evidence_by_id: dict[str, int] | None = None,
+) -> StructuredClinicalDocument:
     """Constructs a NEW `StructuredClinicalDocument` (Pydantic models are
     immutable-by-convention here — see schema.py) with the validated
     interpretation merged in. Every constructed model still runs its own
     Pydantic validation (enum membership etc.) — a doubly-enforced gate,
     not just the dict-level check above."""
+
+    def resolve(item: dict, *, event_ids: list[str] | None = None) -> list[int]:
+        return _resolve_evidence_ids(
+            document,
+            section_id=item.get("source_section_id"),
+            event_ids=event_ids if event_ids is not None else item.get("source_event_ids"),
+            segment_ids=item.get("source_segment_ids"),
+            segment_evidence_by_id=segment_evidence_by_id,
+        )
+
     diagnoses = [
         Diagnosis(
             id=_build_id("diagnosis", i),
@@ -511,7 +654,8 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             text=item["text"],
             role=item["role"],
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_segment_ids=item.get("source_segment_ids") or [],
+            source_evidence_ids=resolve(item),
         )
         for i, item in enumerate(cleaned["diagnoses"])
     ]
@@ -523,7 +667,8 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             findings=item.get("findings"),
             conclusion=item.get("conclusion"),
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_segment_ids=item.get("source_segment_ids") or [],
+            source_evidence_ids=resolve(item),
         )
         for i, item in enumerate(cleaned["investigations"])
     ]
@@ -533,8 +678,8 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             anomaly_type=item["anomaly_type"],
             message=item["message"],
             original_value=item.get("original_value"),
-            source_segment_ids=[],
-            source_evidence_ids=[],
+            source_segment_ids=item.get("source_segment_ids") or [],
+            source_evidence_ids=resolve(item),
         )
         for i, item in enumerate(cleaned["anomalies"])
     ]
@@ -544,7 +689,8 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             category=item["category"],
             text=item["text"],
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_segment_ids=item.get("source_segment_ids") or [],
+            source_evidence_ids=resolve(item),
         )
         for i, item in enumerate(cleaned["recommendations"])
     ]
@@ -556,6 +702,10 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             end_date=item.get("end_date"),
             description=item.get("description") or "",
             event_ids=item["event_ids"],
+            # Multi-source by definition — the union of real evidence
+            # already resolved for every event in this era, never one
+            # fake "exact" source (Part 33's "View sources (N)").
+            source_evidence_ids=_resolve_evidence_ids(document, section_id=None, event_ids=item["event_ids"]),
         )
         for i, item in enumerate(cleaned["treatment_eras"])
     ]
@@ -602,7 +752,9 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
     )
 
 
-def interpret_structured_document(document: StructuredClinicalDocument) -> StructuredClinicalDocument:
+def interpret_structured_document(
+    document: StructuredClinicalDocument, segment_evidence_by_id: dict[str, int] | None = None
+) -> StructuredClinicalDocument:
     """The main entry point. NEVER raises for a "normal" AI failure
     (missing key, timeout, malformed response) — those are caught here
     and turned into a document with `interpretation.status="unavailable"`
@@ -611,14 +763,24 @@ def interpret_structured_document(document: StructuredClinicalDocument) -> Struc
     honest audit record of the attempt. Callers that want a hard
     exception for their own retry logic should call `_call_model`/
     `validate_and_filter_interpretation` directly instead — see
-    reprocessing.py for the retry-aware caller."""
+    reprocessing.py for the retry-aware caller.
+
+    `segment_evidence_by_id` (Source Intelligence + Provenance V2) is the
+    real segment_id -> SourceEvidence.id map reprocessing.py's own
+    `_attach_segment_evidence` step already built — passed through so
+    `apply_interpretation` can resolve a grounded item's
+    `source_segment_ids` to precise evidence instead of only the
+    coarser section/event aggregate. `None` (the default) is a fully
+    valid, safe call shape — every test and every caller that predates
+    this feature keeps working exactly as before, just without the
+    precision upgrade."""
     try:
         interpreter_input = build_interpreter_input(document)
         raw = _call_model(interpreter_input)
         cleaned, rejections = validate_and_filter_interpretation(raw, document)
         model_warnings = [w for w in raw.get("warnings", []) if isinstance(w, str)]
         status = "complete" if not rejections else "partial"
-        return apply_interpretation(document, cleaned, status, model_warnings + rejections)
+        return apply_interpretation(document, cleaned, status, model_warnings + rejections, segment_evidence_by_id)
     except AIInterpretationError as error:
         interpretation = InterpretationMetadata(
             schema_version=INTERPRETATION_SCHEMA_VERSION,

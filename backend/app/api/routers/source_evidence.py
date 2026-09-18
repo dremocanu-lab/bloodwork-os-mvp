@@ -97,6 +97,7 @@ def get_source_evidence_view(
         "document_id": document.id,
         "document_filename": document.filename,
         "document_type": document.document_type,
+        "document_content_type": document.content_type,
         "report_name": document.report_name,
         "lab_result_id": evidence.lab_result_id,
         "page_number": evidence.page_number,

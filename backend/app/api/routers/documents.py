@@ -1146,6 +1146,11 @@ def reprocess_document_clinical_structure(
         "diagnoses_count": result.diagnoses_count,
         "investigations_count": result.investigations_count,
         "anomalies_count": result.anomalies_count,
+        "segment_evidence_created": result.segment_evidence_created,
+        "segment_evidence_reused": result.segment_evidence_reused,
+        "segments_with_page": result.segments_with_page,
+        "segments_without_page": result.segments_without_page,
+        "extraction_complete": result.extraction_complete,
     }
 
 
