@@ -191,10 +191,46 @@ def test_resolve_evidence_ids_unions_multiple_events_deduped_and_sorted():
     assert ids == [202, 203]  # deduped, sorted — not insertion order
 
 
-def test_resolve_evidence_ids_combines_section_and_events():
+def test_resolve_evidence_ids_prefers_events_over_section_never_unions_tiers():
+    """A precedence CHAIN, not a union — an event citation (tier 2) is
+    more precise than a section citation (tier 3), so when both are
+    given, the event's own evidence wins outright rather than being
+    diluted by unioning in the section's broader evidence too."""
     document = _document_with_evidence()
     ids = _resolve_evidence_ids(document, section_id="section-diagnoses", event_ids=["seg-001-event-0"])
-    assert ids == [101, 202]
+    assert ids == [202]
+
+
+def test_resolve_evidence_ids_prefers_segments_over_events_and_section():
+    """Tier 1 (segments) wins over BOTH tier 2 (events) and tier 3
+    (section) when a segment_evidence_by_id map resolves something —
+    the most precise citation available always wins, never diluted."""
+    document = _document_with_evidence()
+    ids = _resolve_evidence_ids(
+        document,
+        section_id="section-diagnoses",
+        event_ids=["seg-001-event-0"],
+        segment_ids=["seg-999"],
+        segment_evidence_by_id={"seg-999": 999},
+    )
+    assert ids == [999]
+
+
+def test_resolve_evidence_ids_falls_back_to_events_when_segment_ids_dont_resolve():
+    """A cited segment_id that isn't in segment_evidence_by_id (e.g. no
+    reprocessing has run yet to create the mapping) must not silently
+    swallow the item's evidence — falls through to the next tier rather
+    than returning nothing when something more precise was attempted but
+    unavailable."""
+    document = _document_with_evidence()
+    ids = _resolve_evidence_ids(
+        document,
+        section_id="section-diagnoses",
+        event_ids=["seg-001-event-0"],
+        segment_ids=["seg-999"],
+        segment_evidence_by_id=None,
+    )
+    assert ids == [202]
 
 
 def test_resolve_evidence_ids_empty_when_nothing_grounded():
@@ -288,18 +324,42 @@ def _realistic_mock_interpretation():
     def _event_id_containing(text: str) -> str:
         return next(e.source_event_id for e in probe.dated_events if text in e.raw_text)
 
+    def _segment_id_containing(text: str) -> str:
+        for section in probe.sections:
+            paragraph_texts = [b.text for b in section.blocks if getattr(b, "type", None) == "paragraph"]
+            if len(paragraph_texts) != len(section.source_segment_ids):
+                continue
+            for segment_id, block_text in zip(section.source_segment_ids, paragraph_texts):
+                if text in block_text:
+                    return segment_id
+        raise ValueError(f"No segment found containing {text!r}")
+
     clinical_course_id = _section_id("clinical_course")
     diagnoses_id = _section_id("diagnoses")
     ruxolitinib_event_id = _event_id_containing("trecerea de la Hidroxiuree la Ruxolitinib")
     besremi_start_id = _event_id_containing("s-a initiat tratament cu Besremi")
     besremi_dose_id = _event_id_containing("doza de Besremi a fost crescuta")
+    historical_onset_segment_id = _segment_id_containing("JAK2 V617F pozitiva")
+    d45_segment_id = _segment_id_containing("D45 Policitemie vera")
 
     def raw(_input):
         return {
             "diagnoses": [
-                {"code": "D45", "text": "Policitemie vera", "role": "principal", "source_section_id": diagnoses_id, "source_event_ids": []},
+                {
+                    "code": "D45", "text": "Policitemie vera", "role": "principal",
+                    "source_section_id": diagnoses_id, "source_event_ids": [],
+                    "source_segment_ids": [d45_segment_id],
+                },
             ],
-            "investigations": [], "anomalies": [], "recommendations": [],
+            "investigations": [
+                {
+                    "investigation_type": "molecular", "title": "JAK2 V617F",
+                    "findings": "Mutatia JAK2 V617F pozitiva.", "conclusion": None,
+                    "source_section_id": clinical_course_id, "source_event_ids": [],
+                    "source_segment_ids": [historical_onset_segment_id],
+                },
+            ],
+            "anomalies": [], "recommendations": [],
             "treatment_eras": [
                 {
                     "label": "Ruxolitinib", "start_date": "2022-09-18", "end_date": "2024-02-05",
@@ -344,6 +404,43 @@ def test_reprocessing_attaches_real_page_evidence_to_diagnoses(fixture_document,
         assert evidence is not None
         assert evidence.page_number == 1  # the D45 section's own page_start
         assert evidence.bbox_x is None  # never a fabricated bbox
+        # Exactly ONE evidence id (the D45 segment itself), never the
+        # whole 2-segment diagnoses section (D45 + the blank secondary
+        # field) — segment-level citation is precise, not just correct.
+        assert len(diagnosis.source_evidence_ids) == 1
+    finally:
+        db.close()
+
+
+def test_reprocessing_resolves_investigation_to_the_one_specific_segment_not_the_whole_section(fixture_document, monkeypatch):
+    """The real bug this locks down: an investigation with no dated
+    event (the historical JAK2 mention has no parseable date) used to
+    resolve to its SECTION's entire aggregate evidence — for
+    clinical_course, that meant EVERY one of its 13+ contributing
+    segments' evidence, not just the one paragraph that actually
+    mentions JAK2. Segment-level citation fixes this precisely."""
+    mock_fn, _ids = _realistic_mock_interpretation()
+    monkeypatch.setattr(ai_interpreter, "_call_model", mock_fn)
+
+    db = SessionLocal()
+    try:
+        document = db.query(models.Document).filter(models.Document.id == fixture_document["document_id"]).first()
+        reprocess_discharge_document(db, document=document, actor_user_id=fixture_document["account"]["user"]["id"])
+
+        structured = parse_structured_document(document.note_body)
+        assert structured is not None
+        jak2 = next(inv for inv in structured.investigations if inv.title == "JAK2 V617F")
+        assert len(jak2.source_evidence_ids) == 1
+
+        evidence = db.query(models.SourceEvidence).filter(models.SourceEvidence.id == jak2.source_evidence_ids[0]).first()
+        assert "JAK2 V617F" in (evidence.source_text or "")
+        assert evidence.page_number == 2  # the historical-onset segment's own page_start
+
+        # The clinical_course SECTION's own aggregate is still much
+        # larger (every contributing segment) — proving the investigation
+        # deliberately did NOT resolve to that broader set.
+        clinical_course = next(s for s in structured.sections if s.canonical_key == "clinical_course")
+        assert len(clinical_course.source_evidence_ids) > 5
     finally:
         db.close()
 

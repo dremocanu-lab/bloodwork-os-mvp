@@ -117,7 +117,7 @@ def _attach_segment_evidence(
     structured_document: StructuredClinicalDocument,
     segments: list[SourceSegment],
     result: ReprocessingResult,
-) -> StructuredClinicalDocument:
+) -> tuple[StructuredClinicalDocument, dict[str, int]]:
     """Creates (or reuses) one SourceEvidence row per source segment and
     resolves it onto every ClinicalSection/ClinicalEvent that references
     that segment — this is what upgrades diagnoses/investigations/
@@ -176,7 +176,8 @@ def _attach_segment_evidence(
     if structured_document.extraction_coverage is not None:
         result.extraction_complete = structured_document.extraction_coverage.extraction_complete
 
-    return structured_document.model_copy(update={"sections": new_sections, "dated_events": new_events})
+    updated = structured_document.model_copy(update={"sections": new_sections, "dated_events": new_events})
+    return updated, evidence_id_by_segment_id
 
 
 def _load_note_body_json(document: models.Document) -> dict:
@@ -246,7 +247,7 @@ def reprocess_discharge_document(db: Session, *, document: models.Document, acto
     # ── Source-evidence provenance (must run BEFORE the AI interpreter,
     # so it has real section/event source_evidence_ids to resolve — see
     # ai_interpreter.py::apply_interpretation) ──────────────────────
-    structured_document = _attach_segment_evidence(
+    structured_document, evidence_id_by_segment_id = _attach_segment_evidence(
         db, document=document, structured_document=structured_document, segments=segments, result=result
     )
 
@@ -302,7 +303,7 @@ def reprocess_discharge_document(db: Session, *, document: models.Document, acto
     # ── AI Clinical Document Interpreter (never raises — see its own
     # docstring; a failure here still leaves the deterministic document
     # above fully intact) ───────────────────────────────────────────
-    interpreted_document = interpret_structured_document(structured_document)
+    interpreted_document = interpret_structured_document(structured_document, evidence_id_by_segment_id)
     result.interpretation_status = interpreted_document.interpretation.status if interpreted_document.interpretation else "unavailable"
     result.interpretation_warnings = interpreted_document.interpretation.warnings if interpreted_document.interpretation else []
     result.diagnoses_count = len(interpreted_document.diagnoses)
