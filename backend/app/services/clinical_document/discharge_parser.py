@@ -7,12 +7,21 @@ The real (not backward-compat-only) pipeline from the CURRENT
     raw payload -> segments -> canonical sections -> Clinical Course
     dated events -> chronology sanity warnings -> assembled document
 
-**NOT wired into `discharge_summary_pipeline.py`'s real write path
-yet** — see `docs/handoffs/CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md`
-section 9b's sequencing note (switching the live write path before
-Phase 8 rebuilds the frontend discharge reader would break it). This
-module is what a future dual-write increment would call; it is fully
-usable and tested standalone in the meantime.
+**Not wired into `discharge_summary_pipeline.py`'s real WRITE path** —
+that pipeline still writes the old 13-key legacy JSON shape into
+`Document.note_body` (see docs/handoffs/
+CLINICAL_DOCUMENT_INTELLIGENCE_V3_HANDOFF.md section 9b's original
+sequencing note). **This module IS reached on every READ**, though, as
+of Clinical Reader Intelligence V2:
+`persistence.py::parse_structured_document()` calls this exact function
+(with `review_state="needs_review"`) to upconvert that legacy JSON in
+memory, so `dated_events`/chronology warnings/anomaly flags are real for
+every existing AND future discharge document without needing
+reprocessing — see persistence.py's own docstring. The dedicated
+`POST /documents/{id}/reprocess-clinical-structure` endpoint additionally
+calls this with `review_state="auto"` when it ALSO wants to persist real
+canonical `LabResult`/`PatientMedication` rows and a full AI
+interpretation pass (see reprocessing.py).
 """
 
 from __future__ import annotations
@@ -20,6 +29,8 @@ from __future__ import annotations
 from typing import Any
 
 from app.services.document_taxonomy import DocumentType
+
+from app.services.lab_catalog import normalize_text
 
 from .canonical_headings import classify_canonical_heading, consolidate_segments
 from .dates import parse_date_token
@@ -38,15 +49,26 @@ PARSER_VERSION = "discharge-parser-phase4-5-v1"
 _EVENT_BEARING_CANONICAL_KEYS = frozenset({"clinical_course", "treatment", "procedures", "investigations"})
 
 
-def parse_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinicalDocument:
+def parse_legacy_discharge_payload(
+    payload: dict[str, Any],
+    *,
+    parser_version: str = PARSER_VERSION,
+    review_state: str = "auto",
+) -> StructuredClinicalDocument:
     """Builds a real, validated `StructuredClinicalDocument` from the
-    CURRENT discharge pipeline's raw payload shape — the same shape
-    `persistence.py`'s backward-compat upconversion reads, but here used
-    as a genuine forward parse (`parser_version` reflects a real Phase
-    4/5 parser, not the backward-compat label) with full Clinical
-    Course event extraction on top of section consolidation."""
+    CURRENT discharge pipeline's raw payload shape — full Clinical
+    Course event extraction (dates, anomaly warnings) on top of section
+    consolidation, always.
+
+    `parser_version`/`review_state` are overridable so `persistence.py`'s
+    read-time backward-compat upconversion can reuse this SAME real
+    parser (rather than maintaining a second, weaker implementation that
+    silently drops event/anomaly extraction — a real gap this closes,
+    see persistence.py's own comment) while still honestly labeling the
+    result as a retroactive upconversion, never mistaken for a live
+    Phase 4/5 parse."""
     segments = build_segments_from_legacy_discharge_payload(payload)
-    sections = consolidate_segments(segments, review_state="auto")
+    sections = consolidate_segments(segments, review_state=review_state)
 
     dated_events: list[ClinicalEvent] = []
     doc_warnings: list[str] = []
@@ -75,11 +97,13 @@ def parse_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinica
         hospital_name=payload.get("hospital_name"),
     )
 
+    dated_events = _mark_repeated_events(dated_events)
+
     doc_warnings.extend(_chronology_warnings(dated_events, metadata))
     doc_warnings.extend(str(w) for w in (payload.get("warnings") or []))
 
     return StructuredClinicalDocument(
-        parser_version=PARSER_VERSION,
+        parser_version=parser_version,
         document_kind=DocumentType.DISCHARGE_SUMMARY,
         source_language=payload.get("source_language") or payload.get("language"),
         metadata=metadata,
@@ -87,6 +111,35 @@ def parse_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinica
         dated_events=dated_events,
         warnings=doc_warnings,
     )
+
+
+def _segment_id_of(event: ClinicalEvent) -> str:
+    return event.source_event_id.rsplit("-event-", 1)[0]
+
+
+def _mark_repeated_events(events: list[ClinicalEvent]) -> list[ClinicalEvent]:
+    """Presentation-only duplicate detection (Part 16 / 1J) — deterministic
+    and deliberately conservative: an event is only flagged when its ENTIRE
+    raw_text is an exact normalized match of an event already seen from a
+    DIFFERENT segment (never within the same segment, where sibling events
+    sharing one segment's raw_text is expected and not a duplication at
+    all). Nothing is removed or merged here — every event, and its own
+    source_evidence_ids, survives untouched; this only sets a flag the
+    reader can use to visually consolidate a repeated narrative block
+    without deleting the second occurrence's provenance."""
+    seen_in_segment: dict[str, str] = {}
+    marked: list[ClinicalEvent] = []
+    for event in events:
+        key = normalize_text(event.raw_text)
+        segment_id = _segment_id_of(event)
+        first_segment = seen_in_segment.get(key) if key else None
+        if key and first_segment is not None and first_segment != segment_id:
+            marked.append(event.model_copy(update={"is_repeated_in_source": True}))
+        else:
+            marked.append(event)
+            if key and first_segment is None:
+                seen_in_segment[key] = segment_id
+    return marked
 
 
 def _chronology_warnings(events: list[ClinicalEvent], metadata: DocumentMetadata) -> list[str]:

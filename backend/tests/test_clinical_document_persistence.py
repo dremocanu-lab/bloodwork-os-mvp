@@ -158,6 +158,49 @@ def test_legacy_discharge_payload_upconverts_and_merges_repeated_lab_headings():
     assert reloaded == result
 
 
+def test_legacy_upconversion_produces_real_dated_events_not_empty(monkeypatch):
+    """Clinical Reader Intelligence V2 regression: the upconversion path
+    used to run its OWN reduced segmentation-only logic (no Clinical
+    Course event/anomaly extraction at all), so `dated_events` was always
+    empty for every real (legacy-shaped) document — the exact reason the
+    "Clinical course" section rendered as one giant undifferentiated text
+    block in production regardless of how good discharge_parser.py's real
+    event extraction was, since nothing ever routed a real document
+    through it. persistence.py now calls the SAME real parser
+    (discharge_parser.parse_legacy_discharge_payload) the live forward
+    path would use — this proves it, including that an implausible
+    vital-sign value survives verbatim with a warning rather than being
+    silently corrected."""
+    legacy_payload = {
+        "document_type": "discharge_summary",
+        "patient_name": "Test Patient",
+        "admission_date": "2026-03-04",
+        "discharge_date": "2026-03-05",
+        "sections": [
+            {
+                "key": "epicriza",
+                "title": "EPICRIZĂ",
+                "body": "Pacient internat la 04.03.2026. AV: 1008 bpm la internare. Externat la 05.03.2026, ameliorat.",
+                "formatted_body": "",
+            },
+        ],
+    }
+
+    result = parse_structured_document(json.dumps(legacy_payload))
+
+    assert result is not None
+    assert result.parser_version == LEGACY_UPCONVERSION_PARSER_VERSION
+    # The real bug this closes: this used to always be [].
+    assert len(result.dated_events) >= 2
+    event_types = {event.event_type for event in result.dated_events}
+    assert "admission" in event_types
+    assert "discharge" in event_types
+    # The implausible AV value is preserved verbatim in the source text
+    # and flagged, never rewritten to a "plausible" number.
+    assert any("1008" in w and "not corrected" in w.lower() for w in result.warnings)
+    assert any("AV: 1008 bpm" in event.raw_text for event in result.dated_events)
+
+
 def test_unmapped_legacy_key_falls_back_to_other_not_a_crash():
     legacy_payload = {
         "document_type": "discharge_summary",

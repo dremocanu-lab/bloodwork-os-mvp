@@ -32,6 +32,7 @@ from app.services.lab_catalog import normalize_text
 
 from .schema import CanonicalSectionKey, ClinicalSection, ParagraphBlock
 from .segments import SourceSegment
+from .template_detection import section_blocks_are_all_template_noise
 
 # Ordered most-specific-first: a heading is classified into the FIRST
 # canonical key whose pattern list contains a normalized substring match.
@@ -282,4 +283,8 @@ def consolidate_segments(
             if body_text:
                 existing.blocks.append(ParagraphBlock(text=body_text))
 
-    return [section for section in merged.values() if section.blocks]
+    kept = [section for section in merged.values() if section.blocks]
+    for section in kept:
+        block_texts = [block.text for block in section.blocks if isinstance(block, ParagraphBlock)]
+        section.is_template_only = section_blocks_are_all_template_noise(block_texts)
+    return kept

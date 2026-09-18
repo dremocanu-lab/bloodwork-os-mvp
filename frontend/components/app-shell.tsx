@@ -146,7 +146,7 @@ export default function AppShell({
           {!hideHeader ? (
             <header className="app-shell-header">
               <div className="app-shell-header-row">
-                <div style={{ minWidth: 0, flex: 1 }}>
+                <div className="app-shell-title-block">
                   {breadcrumbs?.length ? (
                     <nav className="b-crumbs" aria-label="Breadcrumb">
                       <span className="b-side-brand-role" style={{ flexShrink: 0 }}>
@@ -168,7 +168,14 @@ export default function AppShell({
                     </nav>
                   ) : null}
 
-                  <h1 className="app-shell-title">{title}</h1>
+                  {/* `.app-shell-title` clamps to 2 lines (see globals.css) so a
+                      long title never pushes header controls down into an
+                      absurd multi-line wrap when the split source viewer
+                      narrows this column — `title=` keeps the full text
+                      reachable via a native tooltip when it's truncated. */}
+                  <h1 className="app-shell-title" title={title}>
+                    {title}
+                  </h1>
                   {subtitle ? <p className="app-shell-subtitle">{subtitle}</p> : null}
                 </div>
 

@@ -2,32 +2,30 @@
 
 /**
  * Discharge / clinical-document reader — Clinical Document Intelligence
- * V3, Phase 8. Rebuilt around the canonical `StructuredClinicalDocument`
- * contract (`GET /documents/{id}/clinical-reader`) instead of the old
- * ad-hoc `{document_type, sections}` payload this page used to parse
- * directly out of `note_body`. ONE reader for both an OLD document
- * (upconverted server-side, transparently, by `parse_structured_
- * document`) and a real forward-parsed one — never two parallel
- * implementations.
+ * V3 Phase 8, rebuilt again for Clinical Reader Intelligence V2.
  *
- * Deliberately removed in this rebuild (see the V3 handoff, section
- * 9g, for the full reasoning): the flat `DischargeSection`/
- * `parseDischargePayload` legacy parsing, the font-size control (tied
- * to the old `<pre>`-based prose panel this structured UI no longer
- * has), and `OriginalLayoutViewer`/`original_layout` rendering — that
- * field is confirmed always empty in production (`original_layout_json`
- * is not a real `Document` column; see CURRENT_PIPELINE_MAP.md §17) so
- * the old "Original layout" reader mode never rendered anything real.
- * "View original"/"Open original file" now goes through the shared
- * `openSourceEvidence` system (or an honest direct-file-open fallback
- * for a non-PDF source) instead of always opening a new browser tab.
+ * V2 adds, on top of the existing canonical `StructuredClinicalDocument`
+ * contract (`GET /documents/{id}/clinical-reader`): an Overview panel,
+ * real Diagnosis/Investigation/Recommendation cards (grounded, AI-
+ * derived, never invented — see the backend's ai_interpreter.py), a
+ * Current Hospitalization view separating this encounter from
+ * historical narrative embedded in the same document, deterministic
+ * empty-template section suppression, and an "Original narrative" mode
+ * that always shows every section's raw content unfiltered — never a
+ * regression in fidelity, only a smarter default presentation. None of
+ * this requires a document to have been reprocessed: every new field is
+ * additive and defaults to empty/None, so an un-reprocessed (or AI-
+ * unavailable) document still renders exactly as much as it always did
+ * via the existing canonical-section outline + ClinicalCourseTimeline/
+ * StructuredLabReport/MedicationList components — this page degrades to
+ * that, never to an error.
  */
 
 import { useEffect, useMemo, useState } from "react";
 import { useParams, useRouter } from "next/navigation";
 import AppShell from "@/components/app-shell";
 import { AskBragiSideTab } from "@/components/ask-bragi/ask-bragi-side-tab";
-import { api, getErrorMessage, valueOrDash } from "@/lib/api";
+import { api, getErrorMessage } from "@/lib/api";
 import { getHomeByRole } from "@/lib/routing";
 import { useLanguage } from "@/lib/i18n";
 import type { ClinicalReaderResponse, ClinicalSection } from "@/lib/clinical-document-schema";
@@ -35,9 +33,16 @@ import { CANONICAL_SECTION_LABELS } from "@/lib/clinical-document-schema";
 import { ClinicalBlockRenderer } from "@/components/clinical-reader/clinical-block-renderer";
 import { ClinicalCourseTimeline } from "@/components/clinical-reader/clinical-course-timeline";
 import { DocumentHeader } from "@/components/clinical-reader/document-header";
-import { DocumentOutline } from "@/components/clinical-reader/document-outline";
 import { StructuredLabReport } from "@/components/clinical-reader/structured-lab-report";
 import { MedicationList } from "@/components/clinical-reader/medication-list";
+import {
+  AnomalyWarnings,
+  CurrentHospitalizationEvents,
+  DiagnosisList,
+  InvestigationCards,
+  OverviewPanel,
+  RecommendationList,
+} from "@/components/clinical-reader/interpretation-panels";
 
 type CurrentUser = {
   id: number;
@@ -56,6 +61,17 @@ type DocumentShare = {
   care_partner_user_id: number;
   care_partner_name: string;
 };
+
+/** A navigable reader entry — either a real canonical section or one of
+ * the new synthetic V2 views (Overview/Current Hospitalization/Original
+ * narrative) that aren't themselves one of `structured_document.
+ * sections[]`. Kept in ONE outline/dispatch list so there is exactly one
+ * "what's in the nav, what renders when selected" mechanism, not two. */
+type OutlineEntry =
+  | { kind: "overview"; id: "overview" }
+  | { kind: "current_encounter"; id: "current_encounter" }
+  | { kind: "section"; id: string; section: ClinicalSection }
+  | { kind: "original"; id: "original" };
 
 const MOBILE_BREAKPOINT = 900;
 
@@ -110,6 +126,12 @@ export default function DischargeStructuredPage() {
           notShared: "Nedistribuit",
           noStructuredContent: "Acest document nu are conținut clinic structurat disponibil.",
           clinicalCourse: "Cronologie clinică",
+          overview: "Rezumat",
+          currentHospitalization: "Internarea curentă",
+          original: "Narațiune sursă completă",
+          reprocess: "Reorganizează cu AI",
+          reprocessing: "Se reorganizează...",
+          reprocessFailed: "Reorganizarea nu a putut fi finalizată.",
         }
       : {
           loading: "Loading document...",
@@ -131,13 +153,27 @@ export default function DischargeStructuredPage() {
           notShared: "Not shared",
           noStructuredContent: "This document has no structured clinical content available.",
           clinicalCourse: "Clinical course timeline",
+          overview: "Overview",
+          currentHospitalization: "Current hospitalization",
+          original: "Full source narrative",
+          reprocess: "Reorganize with AI",
+          reprocessing: "Reorganizing...",
+          reprocessFailed: "Reorganizing could not be completed.",
         };
 
   const [currentUser, setCurrentUser] = useState<CurrentUser | null>(null);
   const [payload, setPayload] = useState<ClinicalReaderResponse | null>(null);
   const [loading, setLoading] = useState(true);
   const [error, setError] = useState("");
-  const [activeSectionId, setActiveSectionId] = useState<string | null>(null);
+  // "overview" from the start, never set asynchronously after load — a
+  // separate `setActiveEntryId("overview")` call once the fetch resolved
+  // was a real, reproduced race: if it landed just after the user had
+  // already clicked a different section (nothing exotic needed to
+  // trigger it — just an ordinary slow initial load), it silently
+  // reverted their click back to Overview. `activeEntry` already falls
+  // back to `outline[0]` before the outline exists, so this default
+  // costs nothing and removes the race by construction.
+  const [activeEntryId, setActiveEntryId] = useState<string | null>("overview");
   const [isMobile, setIsMobile] = useState(false);
   const [deleting, setDeleting] = useState(false);
   const [confirmDeleteOpen, setConfirmDeleteOpen] = useState(false);
@@ -145,6 +181,7 @@ export default function DischargeStructuredPage() {
   const [carePartners, setCarePartners] = useState<CarePartnerLink[]>([]);
   const [documentShares, setDocumentShares] = useState<DocumentShare[]>([]);
   const [sharingId, setSharingId] = useState<number | null>(null);
+  const [reprocessing, setReprocessing] = useState(false);
 
   useEffect(() => {
     function onResize() {
@@ -155,55 +192,96 @@ export default function DischargeStructuredPage() {
     return () => window.removeEventListener("resize", onResize);
   }, []);
 
+  async function loadReaderPayload() {
+    const readerResponse = await api.get<ClinicalReaderResponse>(`/documents/${documentId}/clinical-reader`);
+    setPayload(readerResponse.data);
+    return readerResponse.data;
+  }
+
   useEffect(() => {
+    // `cancelled` guards every state update below against a StrictMode
+    // dev double-invoke, or a real unmount/route change, landing AFTER
+    // a newer load — see loadReaderPayload's own history: an earlier
+    // version of this effect also unconditionally reset the active
+    // section back to "overview" once loading finished, and a slow or
+    // duplicate invocation resolving late could stomp a section the user
+    // had already clicked into. That reset is gone now (see the
+    // `activeEntryId` initializer above), but the same staleness hazard
+    // still applies to currentUser/payload/carePartners below, so the
+    // guard stays.
+    let cancelled = false;
+
     async function load() {
       if (!documentId) return;
       try {
         setLoading(true);
         setError("");
         const meResponse = await api.get<CurrentUser>("/auth/me");
+        if (cancelled) return;
         setCurrentUser(meResponse.data);
 
-        const readerResponse = await api.get<ClinicalReaderResponse>(`/documents/${documentId}/clinical-reader`);
+        const readerData = await loadReaderPayload();
+        if (cancelled) return;
 
-        // Canonical Document Intelligence V3 routing — this page had no
-        // redirect-away guard at all (asymmetric with the standalone
-        // lab-report reader's own guard); a derived lab artifact whose
-        // id lands here (e.g. a stale bookmark, or an upstream routing
-        // gap) has no structured_document of its own to render, so hand
-        // off to its real reader instead of showing an empty state.
-        if (readerResponse.data.document.derived_artifact_kind === "lab_report") {
+        // Canonical Document Intelligence V3 routing — a derived lab
+        // artifact whose id lands here has no structured_document of
+        // its own to render, so hand off to its real reader instead of
+        // showing an empty state.
+        if (readerData.document.derived_artifact_kind === "lab_report") {
           router.replace(`/documents/${documentId}/lab-report`);
           return;
         }
-
-        setPayload(readerResponse.data);
-
-        const firstSection = readerResponse.data.structured_document?.sections?.[0];
-        if (firstSection) setActiveSectionId(firstSection.id);
 
         if (meResponse.data.role === "patient") {
           const [cpResponse, sharesResponse] = await Promise.all([
             api.get<CarePartnerLink[]>("/my/care-partners"),
             api.get<DocumentShare[]>(`/documents/${documentId}/shares`),
           ]);
+          if (cancelled) return;
           setCarePartners(cpResponse.data || []);
           setDocumentShares(sharesResponse.data || []);
         }
       } catch (err) {
-        setError(getErrorMessage(err, copy.loadFailed));
+        if (!cancelled) setError(getErrorMessage(err, copy.loadFailed));
       } finally {
-        setLoading(false);
+        if (!cancelled) setLoading(false);
       }
     }
     load();
+    return () => {
+      cancelled = true;
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [documentId]);
 
-  const sections: ClinicalSection[] = payload?.structured_document?.sections || [];
-  const activeSection = sections.find((s) => s.id === activeSectionId) || sections[0] || null;
+  const structuredDocument = payload?.structured_document || null;
+  const allSections: ClinicalSection[] = structuredDocument?.sections || [];
+  // Empty-template sections (Part 12) are never shown in the intelligent
+  // reader view — still fully available via "Original narrative" below,
+  // which reads from `allSections` unfiltered.
+  const visibleSections = allSections.filter((s) => !s.is_template_only);
+
+  const currentEncounter = structuredDocument?.current_encounter || null;
+  const hasCurrentEncounterContent = Boolean(
+    currentEncounter && (currentEncounter.event_ids.length > 0 || currentEncounter.section_ids.length > 0)
+  );
+
+  const outline: OutlineEntry[] = useMemo(() => {
+    if (!structuredDocument) return [];
+    const entries: OutlineEntry[] = [{ kind: "overview", id: "overview" }];
+    if (hasCurrentEncounterContent) entries.push({ kind: "current_encounter", id: "current_encounter" });
+    for (const section of visibleSections) {
+      entries.push({ kind: "section", id: section.id, section });
+    }
+    entries.push({ kind: "original", id: "original" });
+    return entries;
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [structuredDocument, visibleSections.length, hasCurrentEncounterContent]);
+
+  const activeEntry = outline.find((e) => e.id === activeEntryId) || outline[0] || null;
 
   const canDelete = Boolean(currentUser && payload && currentUser.id) && currentUser?.role !== "care_partner";
+  const canReprocess = Boolean(currentUser) && currentUser?.role !== "care_partner";
 
   async function toggleShare(cpUserId: number) {
     if (!payload) return;
@@ -240,6 +318,20 @@ export default function DischargeStructuredPage() {
       setConfirmDeleteOpen(false);
     } finally {
       setDeleting(false);
+    }
+  }
+
+  async function reprocessDocument() {
+    if (!payload) return;
+    try {
+      setReprocessing(true);
+      setError("");
+      await api.post(`/documents/${payload.document.id}/reprocess-clinical-structure`);
+      await loadReaderPayload();
+    } catch (err) {
+      setError(getErrorMessage(err, copy.reprocessFailed));
+    } finally {
+      setReprocessing(false);
     }
   }
 
@@ -292,7 +384,7 @@ export default function DischargeStructuredPage() {
     );
   }
 
-  const { document, structured_document: structuredDocument, labs, medications } = payload;
+  const { document, labs, medications } = payload;
 
   return (
     <AppShell
@@ -300,16 +392,11 @@ export default function DischargeStructuredPage() {
       title={document.report_name || document.filename}
       subtitle={`${document.document_type || "discharge_summary"} · ${document.is_verified ? copy.verified : copy.unverified}`}
       rightContent={
-        <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative" }}>
+        <div style={{ display: "flex", gap: 8, alignItems: "center", position: "relative", flexWrap: "wrap" }}>
           {currentUser.role !== "care_partner" ? (
             <AskBragiSideTab
               target={{
                 audience: currentUser.role === "patient" ? "patient" : "doctor",
-                // Real bug fixed post-Phase-10: this previously passed
-                // document.id (the DOCUMENT's own id) as patientId for a
-                // doctor/admin viewer — `document` had no patient id
-                // field to read at all. The backend now returns one
-                // (documents.py::get_clinical_reader_payload); use it.
                 patientId: currentUser.role === "patient" ? undefined : document.patient_id,
                 documentId: document.id,
                 initialScope: "document",
@@ -320,6 +407,11 @@ export default function DischargeStructuredPage() {
                 ],
               }}
             />
+          ) : null}
+          {canReprocess ? (
+            <button type="button" className="b-btn b-btn-ghost b-btn-sm" onClick={reprocessDocument} disabled={reprocessing}>
+              {reprocessing ? copy.reprocessing : copy.reprocess}
+            </button>
           ) : null}
           {currentUser.role === "patient" ? (
             <div style={{ position: "relative" }}>
@@ -428,44 +520,48 @@ export default function DischargeStructuredPage() {
         </div>
       ) : null}
 
-      {!structuredDocument || sections.length === 0 ? (
+      {!structuredDocument || outline.length === 0 ? (
         <p className="muted-text">{copy.noStructuredContent}</p>
       ) : isMobile ? (
         <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
           <select
             aria-label="Document section"
-            value={activeSection?.id || ""}
-            onChange={(e) => setActiveSectionId(e.target.value)}
+            value={activeEntry?.id || ""}
+            onChange={(e) => setActiveEntryId(e.target.value)}
             className="text-input"
           >
-            {sections.map((section) => (
-              <option key={section.id} value={section.id}>
-                {CANONICAL_SECTION_LABELS[section.canonical_key] || section.display_title}
+            {outline.map((entry) => (
+              <option key={entry.id} value={entry.id}>
+                {outlineEntryLabel(entry, copy)}
               </option>
             ))}
           </select>
-          {activeSection ? (
-            <SectionContent
-              section={activeSection}
+          {activeEntry ? (
+            <EntryContent
+              entry={activeEntry}
               structuredDocument={structuredDocument}
               labs={labs}
               medications={medications}
               documentContentType={document.content_type}
-              clinicalCourseLabel={copy.clinicalCourse}
+              copy={copy}
+              allSections={allSections}
+              onViewOriginal={() => setActiveEntryId("original")}
             />
           ) : null}
         </div>
       ) : (
         <div style={{ display: "grid", gridTemplateColumns: "minmax(200px, 0.22fr) minmax(0, 1fr)", gap: "var(--s5)", alignItems: "start" }}>
-          <DocumentOutline sections={sections} activeSectionId={activeSection?.id || null} onSelect={setActiveSectionId} />
-          {activeSection ? (
-            <SectionContent
-              section={activeSection}
+          <SyntheticOutline entries={outline} activeId={activeEntry?.id || null} onSelect={setActiveEntryId} copy={copy} />
+          {activeEntry ? (
+            <EntryContent
+              entry={activeEntry}
               structuredDocument={structuredDocument}
               labs={labs}
               medications={medications}
               documentContentType={document.content_type}
-              clinicalCourseLabel={copy.clinicalCourse}
+              copy={copy}
+              allSections={allSections}
+              onViewOriginal={() => setActiveEntryId("original")}
             />
           ) : null}
         </div>
@@ -474,22 +570,148 @@ export default function DischargeStructuredPage() {
   );
 }
 
-function SectionContent({
-  section,
+function outlineEntryLabel(entry: OutlineEntry, copy: { overview: string; currentHospitalization: string; original: string }): string {
+  if (entry.kind === "overview") return copy.overview;
+  if (entry.kind === "current_encounter") return copy.currentHospitalization;
+  if (entry.kind === "original") return copy.original;
+  return CANONICAL_SECTION_LABELS[entry.section.canonical_key] || entry.section.display_title;
+}
+
+/** Renders the outline nav: real canonical sections plus the new
+ * synthetic V2 entries (Overview/Current Hospitalization/Original) in
+ * one list — one nav, one selection model, never two. */
+function SyntheticOutline({
+  entries,
+  activeId,
+  onSelect,
+  copy,
+}: {
+  entries: OutlineEntry[];
+  activeId: string | null;
+  onSelect: (id: string) => void;
+  copy: { overview: string; currentHospitalization: string; original: string };
+}) {
+  return (
+    <nav aria-label="Document outline" className="b-doc-outline">
+      <style jsx>{`
+        .b-doc-outline {
+          display: flex;
+          flex-direction: column;
+          gap: 2px;
+        }
+        .b-doc-outline-btn {
+          text-align: left;
+          padding: var(--s2) var(--s3);
+          border-radius: var(--r-md);
+          border: none;
+          background: transparent;
+          color: var(--text);
+          font-size: var(--fs-caption);
+          cursor: pointer;
+        }
+        .b-doc-outline-btn.active {
+          background: var(--primary-soft);
+          color: var(--primary);
+          font-weight: 600;
+        }
+      `}</style>
+      {entries.map((entry) => (
+        <button
+          key={entry.id}
+          type="button"
+          className={`b-doc-outline-btn ${entry.id === activeId ? "active" : ""}`}
+          onClick={() => onSelect(entry.id)}
+        >
+          {outlineEntryLabel(entry, copy)}
+        </button>
+      ))}
+    </nav>
+  );
+}
+
+function EntryContent({
+  entry,
   structuredDocument,
   labs,
   medications,
   documentContentType,
-  clinicalCourseLabel,
+  copy,
+  allSections,
+  onViewOriginal,
 }: {
-  section: ClinicalSection;
+  entry: OutlineEntry;
   structuredDocument: NonNullable<ClinicalReaderResponse["structured_document"]>;
   labs: ClinicalReaderResponse["labs"];
   medications: ClinicalReaderResponse["medications"];
   documentContentType?: string | null;
-  clinicalCourseLabel: string;
+  copy: { clinicalCourse: string; currentHospitalization: string; original: string };
+  allSections: ClinicalSection[];
+  onViewOriginal: () => void;
 }) {
   const events = structuredDocument.dated_events;
+
+  if (entry.kind === "overview") {
+    return (
+      <div className="soft-card-tight" style={{ padding: 20, background: "var(--panel-2)", borderRadius: "var(--r-lg)" }}>
+        <OverviewPanel
+          currentEncounter={structuredDocument.current_encounter}
+          metadata={structuredDocument.metadata}
+          diagnoses={structuredDocument.diagnoses}
+          labs={labs}
+          investigations={structuredDocument.investigations}
+          recommendations={structuredDocument.recommendations}
+          interpretationStatus={structuredDocument.interpretation?.status || null}
+        />
+        <div style={{ marginTop: "var(--s4)" }}>
+          <AnomalyWarnings anomalies={structuredDocument.anomalies} />
+        </div>
+      </div>
+    );
+  }
+
+  if (entry.kind === "current_encounter") {
+    return (
+      <div className="soft-card-tight" style={{ padding: 20, background: "var(--panel-2)", borderRadius: "var(--r-lg)" }}>
+        <h2 className="b-section-title" style={{ marginTop: 0, marginBottom: 16 }}>
+          {copy.currentHospitalization}
+        </h2>
+        <CurrentHospitalizationEvents currentEncounter={structuredDocument.current_encounter} events={events} />
+      </div>
+    );
+  }
+
+  if (entry.kind === "original") {
+    return (
+      <div className="soft-card-tight" style={{ padding: 20, background: "var(--panel-2)", borderRadius: "var(--r-lg)" }}>
+        <h2 className="b-section-title" style={{ marginTop: 0, marginBottom: 16 }}>
+          {copy.original}
+        </h2>
+        <div style={{ display: "flex", flexDirection: "column", gap: "var(--s5)" }}>
+          {allSections.map((section) => (
+            <div key={section.id}>
+              <h3 className="b-label" style={{ marginBottom: 8 }}>
+                {section.source_headings[0] || CANONICAL_SECTION_LABELS[section.canonical_key] || section.display_title}
+              </h3>
+              <div style={{ display: "flex", flexDirection: "column", gap: "var(--s3)" }}>
+                {section.blocks.map((block, i) => (
+                  <ClinicalBlockRenderer
+                    key={i}
+                    block={block}
+                    labs={labs}
+                    medications={medications}
+                    events={events}
+                    documentContentType={documentContentType}
+                  />
+                ))}
+              </div>
+            </div>
+          ))}
+        </div>
+      </div>
+    );
+  }
+
+  const section = entry.section;
 
   return (
     <div className="soft-card-tight" style={{ padding: 20, background: "var(--panel-2)", borderRadius: "var(--r-lg)" }}>
@@ -498,32 +720,50 @@ function SectionContent({
       </h2>
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
-        {section.blocks.map((block, i) => (
-          <ClinicalBlockRenderer
-            key={i}
-            block={block}
+        {section.canonical_key === "diagnoses" && structuredDocument.diagnoses.length > 0 ? (
+          <DiagnosisList diagnoses={structuredDocument.diagnoses} />
+        ) : (section.canonical_key === "investigations" || section.canonical_key === "imaging") &&
+          structuredDocument.investigations.length > 0 ? (
+          <InvestigationCards investigations={structuredDocument.investigations} />
+        ) : section.canonical_key === "recommendations" && structuredDocument.recommendations.length > 0 ? (
+          <RecommendationList recommendations={structuredDocument.recommendations} />
+        ) : section.canonical_key === "laboratory_results" ? (
+          // Never fall through to the raw blocks below when canonical
+          // LabResult rows exist for this document (Part 1F/8A) — and
+          // never show BOTH a populated table and "no labs available" at
+          // once (Part 1G/8E): when this section has real content but no
+          // canonical rows parsed from it, that is its own distinct
+          // "detected but could not be structured" state, not silence.
+          <StructuredLabReport
             labs={labs}
-            medications={medications}
-            events={events}
             documentContentType={documentContentType}
+            mode="embedded"
+            rawSectionHasContent={section.blocks.length > 0}
+            onViewOriginal={onViewOriginal}
           />
-        ))}
+        ) : (section.canonical_key === "discharge_medications" || section.canonical_key === "medications") &&
+          medications.length > 0 ? (
+          <MedicationList medications={medications} documentContentType={documentContentType} />
+        ) : (
+          section.blocks.map((block, i) => (
+            <ClinicalBlockRenderer
+              key={i}
+              block={block}
+              labs={labs}
+              medications={medications}
+              events={events}
+              documentContentType={documentContentType}
+            />
+          ))
+        )}
 
         {section.canonical_key === "clinical_course" && events.length > 0 ? (
           <div>
             <h3 className="b-label" style={{ marginBottom: 10 }}>
-              {clinicalCourseLabel}
+              {copy.clinicalCourse}
             </h3>
             <ClinicalCourseTimeline events={events} />
           </div>
-        ) : null}
-
-        {section.canonical_key === "laboratory_results" ? (
-          <StructuredLabReport labs={labs} documentContentType={documentContentType} mode="embedded" />
-        ) : null}
-
-        {(section.canonical_key === "discharge_medications" || section.canonical_key === "medications") && medications.length > 0 ? (
-          <MedicationList medications={medications} documentContentType={documentContentType} />
         ) : null}
       </div>
     </div>

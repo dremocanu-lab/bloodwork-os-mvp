@@ -1828,6 +1828,18 @@ tr:focus-within .b-row-actions {
 
 .app-shell-header-row {
   display: flex;
+  /* Clinical Reader Intelligence V2: previously `nowrap` (align-items:
+     center) with a `flex-shrink: 0` actions block — when the title
+     column got squeezed narrow enough to wrap onto 2 lines (e.g. the
+     split source viewer narrowing this column, not just a phone
+     viewport) but the actions still fit "in principle" on the same row,
+     centering a single-line actions block against a now-2-line-tall row
+     visually plants it across the title's second line. Wrapping here
+     unconditionally (not just under the old mobile-only media query
+     below) lets the actions block drop to its own row whenever there
+     genuinely isn't room, on any screen size — a real, reproduced
+     overlap this fixes, not a hypothetical one. */
+  flex-wrap: wrap;
   align-items: center;
   justify-content: space-between;
   gap: var(--s4);
@@ -1835,6 +1847,16 @@ tr:focus-within .b-row-actions {
   max-width: var(--content-max);
   margin: 0 auto;
   width: 100%;
+}
+
+.app-shell-title-block {
+  /* A real floor, not 0: with `flex-wrap: wrap` on the row above, this
+     is what actually makes the actions block wrap to its own line once
+     there truly isn't room, instead of the title alone getting squeezed
+     down to a sliver while a same-line actions block visually overlaps
+     its clamped second line — see .app-shell-header-row's own comment. */
+  min-width: 200px;
+  flex: 1 1 auto;
 }
 
 .b-crumbs {
@@ -1871,6 +1893,18 @@ tr:focus-within .b-row-actions {
   line-height: var(--lh-tight);
   color: var(--text);
   overflow-wrap: anywhere;
+  /* Clinical Reader Intelligence V2: with the split source viewer open,
+     the header row's available width can drop well below what a real
+     report_name needs — previously this wrapped onto as many lines as
+     needed (observed: 3-5 lines for a real discharge report_name),
+     pushing the header controls down awkwardly. Capped at 2 lines with
+     a native tooltip (see the discharge/document header components,
+     which already set `title=`) so the full text is still reachable,
+     never silently truncated with no way to read it. */
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
 }
 
 .app-shell-subtitle {
@@ -2765,7 +2799,15 @@ tr:focus-within .b-row-actions {
 
 .b-app-split-main {
   flex: 1;
-  min-width: 0;
+  /* A useful minimum reader width alongside the source viewer's own
+     360-720px floor (below) — previously 0, meaning the reader column
+     could be squeezed arbitrarily narrow by the viewer's fixed 45%
+     basis. 480px keeps clinical content (tables, the header's title +
+     action buttons) usable; the viewer itself already switches to a
+     full-screen sheet under 1024px (see .b-app-split-viewer's own media
+     query below), so this floor never causes horizontal overflow at any
+     width where the two-column split is actually shown. */
+  min-width: 480px;
   overflow-y: auto;
   height: 100dvh;
 }

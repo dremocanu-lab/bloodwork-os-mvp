@@ -22,21 +22,26 @@ per-section `title` — the actual heading text as it appeared on the
 page). This module does NOT rewrite those rows in place.
 `parse_structured_document()` upconverts that legacy shape into a valid
 `StructuredClinicalDocument` IN MEMORY, on read, by running it through
-the SAME segmentation + consolidation pipeline Phase 4's real parsing
-uses (`segments.build_segments_from_legacy_discharge_payload` +
-`canonical_headings.consolidate_segments`) — there is deliberately no
-second, separately-maintained classification/merge implementation for
-this backward-compat path; an earlier version of this session kept one
-(a coarse 13-key remap), proved it always agreed with the real
-classifier on every real legacy title, then deleted it (commit
-`f4f47ce`) once that agreement was established, which is what makes
-sharing one implementation safe. The only thing that distinguishes this
-path from a real Phase 4 parse is `parser_version`
+the SAME REAL pipeline a live Phase 4/5 parse uses —
+`discharge_parser.parse_legacy_discharge_payload()` — there is
+deliberately no second, separately-maintained
+classification/merge/event-extraction implementation for this
+backward-compat path; an earlier version of this session kept one (a
+coarse 13-key remap that only did segmentation+consolidation, silently
+skipping Clinical Course dated-event/anomaly extraction — a real gap:
+every document read through it had an empty `dated_events`, so the
+"Clinical course" section rendered as one giant text block regardless
+of how good the real parser was), proved the segmentation/consolidation
+half always agreed with the real classifier on every real legacy title,
+then deleted the separate implementation (commit `f4f47ce`) and, in
+Clinical Reader Intelligence V2, closed the remaining event-extraction
+gap by calling the real parser directly instead. The only thing that
+distinguishes this path from a real Phase 4/5 parse is `parser_version`
 (`LEGACY_UPCONVERSION_PARSER_VERSION` below, never mistaken for real
 parser output) and `review_state="needs_review"` on every section it
 produces (a human never reviewed sections built retroactively from an
-old row, even though the classification itself is exactly as accurate
-as it would be for a brand new document).
+old row, even though the classification/event-extraction itself is
+exactly as accurate as it would be for a brand new document).
 
 `note_body` is ALSO used, for other document types, as a plain free-text
 note (not JSON at all) — `parse_structured_document` returns `None` for
@@ -50,11 +55,8 @@ from __future__ import annotations
 import json
 from typing import Any
 
-from app.services.document_taxonomy import DocumentType
-
-from .canonical_headings import consolidate_segments
-from .schema import DocumentMetadata, StructuredClinicalDocument
-from .segments import build_segments_from_legacy_discharge_payload
+from .discharge_parser import parse_legacy_discharge_payload
+from .schema import StructuredClinicalDocument
 
 # Distinct from CURRENT_SCHEMA_VERSION (schema.py) — this labels the
 # *parser* that produced a given payload, not the shape it validates
@@ -74,25 +76,10 @@ def _looks_like_legacy_discharge_payload(payload: dict[str, Any]) -> bool:
 
 
 def _upconvert_legacy_discharge_payload(payload: dict[str, Any]) -> StructuredClinicalDocument:
-    segments = build_segments_from_legacy_discharge_payload(payload)
-    sections = consolidate_segments(segments, review_state="needs_review")
-
-    metadata = DocumentMetadata(
-        patient_name=payload.get("patient_name"),
-        date_of_birth=payload.get("date_of_birth"),
-        sex=payload.get("sex"),
-        admission_date=payload.get("admission_date"),
-        discharge_date=payload.get("discharge_date"),
-        hospital_name=payload.get("hospital_name"),
-    )
-
-    return StructuredClinicalDocument(
+    return parse_legacy_discharge_payload(
+        payload,
         parser_version=LEGACY_UPCONVERSION_PARSER_VERSION,
-        document_kind=DocumentType.DISCHARGE_SUMMARY,
-        source_language=payload.get("source_language") or payload.get("language"),
-        metadata=metadata,
-        sections=sections,
-        warnings=[str(w) for w in (payload.get("warnings") or [])],
+        review_state="needs_review",
     )
 
 
