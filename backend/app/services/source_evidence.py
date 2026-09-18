@@ -64,6 +64,63 @@ def ensure_document_level_evidence(
     return evidence
 
 
+def ensure_segment_evidence(
+    db: Session,
+    document: "models.Document",
+    *,
+    source_block_id: str,
+    page_number: int | None,
+    source_text: str | None,
+    provider: str = "discharge_segment",
+) -> tuple["models.SourceEvidence", bool]:
+    """Source Intelligence + Provenance V2 — one SourceEvidence row per
+    SOURCE SEGMENT (paragraph/section-contributor), the generalization
+    `SourceEvidence`'s own docstring has long called for ("meant to
+    generalize to other clinical entities... not just lab rows"). This is
+    deliberately block/page precision, never a fabricated bbox — the
+    current discharge pipeline (page-vision transcription) has no
+    per-field geometry to offer, so `bbox_*` stays null here and the
+    `/source-evidence/{id}/view` endpoint's existing precision hierarchy
+    correctly reports `page_only` (page known) or `text_only` (only text
+    known, e.g. an older document with no page tracking).
+
+    Idempotent per `(document_id, source_block_id)` — reprocessing the
+    same document reuses the existing row (and whatever real page_number
+    it already has) rather than creating a duplicate or overwriting it
+    with a possibly-worse second-pass reconstruction (see
+    reprocessing.py's own segment-reconstruction docstring for why a
+    second pass might not recompute page/text as precisely as the
+    first). Returns `(evidence, was_new)` so a caller that reports
+    reprocessing stats (created vs. reused) doesn't need a second query
+    to find out which happened."""
+    existing = (
+        db.query(models.SourceEvidence)
+        .filter(
+            models.SourceEvidence.document_id == document.id,
+            models.SourceEvidence.source_block_id == source_block_id,
+        )
+        .order_by(models.SourceEvidence.id.asc())
+        .first()
+    )
+    if existing:
+        return existing, False
+
+    evidence = models.SourceEvidence(
+        document_id=document.id,
+        lab_result_id=None,
+        medication_id=None,
+        page_number=page_number,
+        source_block_id=source_block_id,
+        source_text=(source_text or "")[:4000] or None,  # bounded — provenance display text, not a full-text store
+        provider=provider,
+        created_at=now_iso(),
+    )
+    db.add(evidence)
+    db.commit()
+    db.refresh(evidence)
+    return evidence, True
+
+
 def first_source_evidence_id(
     db: Session, *, lab_result_id: int | None = None, medication_id: int | None = None
 ) -> int | None:

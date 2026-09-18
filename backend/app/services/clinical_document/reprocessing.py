@@ -32,6 +32,8 @@ from sqlalchemy.orm import Session
 from app import models
 from app.core.utils import now_iso
 
+from app.services.source_evidence import ensure_segment_evidence
+
 from .ai_interpreter import interpret_structured_document
 from .canonical_headings import classify_canonical_heading
 from .discharge_parser import parse_legacy_discharge_payload
@@ -97,6 +99,84 @@ class ReprocessingResult:
     diagnoses_count: int = 0
     investigations_count: int = 0
     anomalies_count: int = 0
+    # Source Intelligence + Provenance V2 — a lightweight, non-PHI-heavy
+    # provenance health summary (Part 41, scoped down to what this
+    # reprocessing pass itself produces rather than a separate public
+    # diagnostics endpoint). Counts, never raw evidence content.
+    segment_evidence_created: int = 0
+    segment_evidence_reused: int = 0
+    segments_with_page: int = 0
+    segments_without_page: int = 0
+    extraction_complete: bool | None = None
+
+
+def _attach_segment_evidence(
+    db: Session,
+    *,
+    document: models.Document,
+    structured_document: StructuredClinicalDocument,
+    segments: list[SourceSegment],
+    result: ReprocessingResult,
+) -> StructuredClinicalDocument:
+    """Creates (or reuses) one SourceEvidence row per source segment and
+    resolves it onto every ClinicalSection/ClinicalEvent that references
+    that segment — this is what upgrades diagnoses/investigations/
+    anomalies/recommendations/treatment eras (via the AI interpreter,
+    which runs AFTER this and only ever resolves already-real evidence
+    ids, never invents its own — see ai_interpreter.py) from having NO
+    provenance UI at all to a real "View in original" action. Block/page
+    precision only — never a fabricated bbox (see
+    source_evidence.py::ensure_segment_evidence)."""
+    evidence_id_by_segment_id: dict[str, int] = {}
+    for segment in segments:
+        evidence, was_new = ensure_segment_evidence(
+            db,
+            document,
+            source_block_id=segment.segment_id,
+            page_number=segment.page,
+            source_text=segment.raw_text,
+        )
+        evidence_id_by_segment_id[segment.segment_id] = evidence.id
+        if was_new:
+            result.segment_evidence_created += 1
+        else:
+            result.segment_evidence_reused += 1
+        if segment.page is not None:
+            result.segments_with_page += 1
+        else:
+            result.segments_without_page += 1
+
+    new_sections = [
+        section.model_copy(
+            update={
+                "source_evidence_ids": sorted(
+                    {evidence_id_by_segment_id[sid] for sid in section.source_segment_ids if sid in evidence_id_by_segment_id}
+                )
+            }
+        )
+        for section in structured_document.sections
+    ]
+
+    def _event_segment_id(source_event_id: str) -> str:
+        return source_event_id.rsplit("-event-", 1)[0]
+
+    new_events = [
+        event.model_copy(
+            update={
+                "source_evidence_ids": (
+                    [evidence_id_by_segment_id[_event_segment_id(event.source_event_id)]]
+                    if _event_segment_id(event.source_event_id) in evidence_id_by_segment_id
+                    else []
+                )
+            }
+        )
+        for event in structured_document.dated_events
+    ]
+
+    if structured_document.extraction_coverage is not None:
+        result.extraction_complete = structured_document.extraction_coverage.extraction_complete
+
+    return structured_document.model_copy(update={"sections": new_sections, "dated_events": new_events})
 
 
 def _load_note_body_json(document: models.Document) -> dict:
@@ -162,6 +242,13 @@ def reprocess_discharge_document(db: Session, *, document: models.Document, acto
     structured_document, segments = _resolve_base_document_and_segments(payload)
 
     result = ReprocessingResult(document_id=document.id, dated_events_count=len(structured_document.dated_events))
+
+    # ── Source-evidence provenance (must run BEFORE the AI interpreter,
+    # so it has real section/event source_evidence_ids to resolve — see
+    # ai_interpreter.py::apply_interpretation) ──────────────────────
+    structured_document = _attach_segment_evidence(
+        db, document=document, structured_document=structured_document, segments=segments, result=result
+    )
 
     # ── Canonical labs ──────────────────────────────────────────────
     lab_section_by_id = {s.id: s for s in structured_document.sections if s.canonical_key == "laboratory_results"}
@@ -236,6 +323,9 @@ def reprocess_discharge_document(db: Session, *, document: models.Document, acto
             f"labs: +{result.lab_results_created}/{result.lab_results_reused} reused; "
             f"medications: +{result.medications_created}/{result.medications_reused} reused; "
             f"timeline: +{result.timeline_events_created}/-{result.timeline_events_retracted}; "
+            f"evidence: +{result.segment_evidence_created}/{result.segment_evidence_reused} reused "
+            f"({result.segments_with_page} with page, {result.segments_without_page} without); "
+            f"extraction_complete={result.extraction_complete}; "
             f"interpretation: {result.interpretation_status} "
             f"(diagnoses={result.diagnoses_count}, investigations={result.investigations_count}, anomalies={result.anomalies_count})"
         ),

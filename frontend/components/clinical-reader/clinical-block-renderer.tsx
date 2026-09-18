@@ -92,7 +92,7 @@ export function ClinicalBlockRenderer({ block, labs, medications, events, docume
 
     case "dated_event_group": {
       const scoped = events.filter((event) => block.event_ids.includes(event.source_event_id));
-      return <ClinicalCourseTimeline events={scoped} />;
+      return <ClinicalCourseTimeline events={scoped} documentContentType={documentContentType} />;
     }
 
     case "lab_report_reference": {

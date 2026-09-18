@@ -412,6 +412,14 @@ class TreatmentEra(BaseModel):
     end_date: str | None = None
     description: str = ""
     event_ids: list[str] = Field(default_factory=list)
+    # Source Intelligence + Provenance V2 — additive. A treatment era is
+    # a MULTI-SOURCE summary by definition (it groups several
+    # dated_events), so it never gets one fake "exact" source the way a
+    # single-fact item can; this is the union of the real SourceEvidence
+    # ids already resolved for each of `event_ids`' own events (see
+    # ai_interpreter.py::apply_interpretation), for a "View sources (N)"
+    # navigator rather than a single "View source" button.
+    source_evidence_ids: list[int] = Field(default_factory=list)
 
 
 class CurrentEncounter(BaseModel):
@@ -440,6 +448,25 @@ class InterpretationMetadata(BaseModel):
     generated_at: str
     status: Literal["complete", "partial", "failed", "unavailable"]
     warnings: list[str] = Field(default_factory=list)
+
+
+class ExtractionCoverage(BaseModel):
+    """Source Intelligence + Provenance V2, Part 5 — honest bookkeeping
+    for how much of the ORIGINAL document was actually extracted, never
+    just assumed complete. `None` on `StructuredClinicalDocument` means
+    "unknown" (a document ingested before this field existed, or a
+    format this doesn't apply to) — never rendered as if it meant
+    "complete". `extraction_complete` is only ever computed, never
+    asserted directly by a caller: True iff every attempted page
+    succeeded with no failures and the attempted count matches the real
+    page count."""
+
+    total_pages: int | None = None
+    attempted_pages: int = 0
+    successful_pages: int = 0
+    failed_pages: list[int] = Field(default_factory=list)
+    warning_pages: list[int] = Field(default_factory=list)
+    extraction_complete: bool = False
 
 
 class StructuredClinicalDocument(BaseModel):
@@ -474,6 +501,10 @@ class StructuredClinicalDocument(BaseModel):
     treatment_eras: list[TreatmentEra] = Field(default_factory=list)
     current_encounter: CurrentEncounter | None = None
     interpretation: InterpretationMetadata | None = None
+
+    # Source Intelligence + Provenance V2 — additive, default None ("no
+    # coverage information available", never "assumed complete").
+    extraction_coverage: ExtractionCoverage | None = None
 
     model_config = {"extra": "forbid"}  # no arbitrary unvalidated fields pass through
 

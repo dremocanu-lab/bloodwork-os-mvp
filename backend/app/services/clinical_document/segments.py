@@ -84,6 +84,17 @@ def build_segments_from_legacy_discharge_payload(payload: dict[str, Any]) -> lis
             continue
         heading = raw.get("title") or raw.get("key") or None
         text = raw.get("body") or ""
+        # Source Intelligence + Provenance V2 — `page_start` has been
+        # computed by discharge_summary_pipeline.py's per-page vision
+        # extraction (and carried through _merge_sections/_clean_section)
+        # since before this field existed on SourceSegment; it was simply
+        # never read here. Threading it through is what upgrades every
+        # narrative fact's provenance from "document_only" (no location
+        # at all) to "page_only" (opens the correct page, honestly says
+        # exact position is unavailable) — never a fabricated bbox. A
+        # non-integer/missing value stays None rather than guessed.
+        raw_page = raw.get("page_start")
+        page = int(raw_page) if isinstance(raw_page, int) and raw_page > 0 else None
         segments.append(
             SourceSegment(
                 segment_id=f"seg-{index:03d}-{_slugify_heading(heading)}",
@@ -92,7 +103,7 @@ def build_segments_from_legacy_discharge_payload(payload: dict[str, Any]) -> lis
                 raw_heading=heading,
                 raw_text=text,
                 table_data=None,  # the current pipeline extracts table content inline as text, not as separate structure
-                page=None,
+                page=page,
                 source_block_id=None,
             )
         )

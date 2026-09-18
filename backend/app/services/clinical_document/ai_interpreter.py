@@ -498,6 +498,35 @@ def _build_id(prefix: str, index: int) -> str:
     return f"{prefix}-{index}"
 
 
+def _resolve_evidence_ids(
+    document: StructuredClinicalDocument,
+    *,
+    section_id: str | None,
+    event_ids: list[str] | None = None,
+) -> list[int]:
+    """Source Intelligence + Provenance V2 — the interpreter never
+    invents or is asked for a `source_evidence_id` directly; it only
+    ever cites `source_section_id`/`source_event_ids` (already validated
+    against this document's real ids by `validate_and_filter_
+    interpretation` above). This resolves those into the REAL
+    SourceEvidence ids already attached to that section/those events —
+    which only exist once reprocessing has run `_attach_segment_evidence`
+    (see reprocessing.py) — never fabricated here. A document that was
+    interpreted before segment-evidence existed, or whose section/events
+    have no evidence yet, simply resolves to an empty list, exactly as
+    before this feature existed."""
+    ids: set[int] = set()
+    if section_id:
+        section = next((s for s in document.sections if s.id == section_id), None)
+        if section:
+            ids.update(section.source_evidence_ids)
+    for event_id in event_ids or []:
+        event = next((e for e in document.dated_events if e.source_event_id == event_id), None)
+        if event:
+            ids.update(event.source_evidence_ids)
+    return sorted(ids)
+
+
 def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str, list], status: str, warnings: list[str]) -> StructuredClinicalDocument:
     """Constructs a NEW `StructuredClinicalDocument` (Pydantic models are
     immutable-by-convention here — see schema.py) with the validated
@@ -511,7 +540,9 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             text=item["text"],
             role=item["role"],
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_evidence_ids=_resolve_evidence_ids(
+                document, section_id=item.get("source_section_id"), event_ids=item.get("source_event_ids")
+            ),
         )
         for i, item in enumerate(cleaned["diagnoses"])
     ]
@@ -523,7 +554,9 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             findings=item.get("findings"),
             conclusion=item.get("conclusion"),
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_evidence_ids=_resolve_evidence_ids(
+                document, section_id=item.get("source_section_id"), event_ids=item.get("source_event_ids")
+            ),
         )
         for i, item in enumerate(cleaned["investigations"])
     ]
@@ -534,7 +567,9 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             message=item["message"],
             original_value=item.get("original_value"),
             source_segment_ids=[],
-            source_evidence_ids=[],
+            source_evidence_ids=_resolve_evidence_ids(
+                document, section_id=item.get("source_section_id"), event_ids=item.get("source_event_ids")
+            ),
         )
         for i, item in enumerate(cleaned["anomalies"])
     ]
@@ -544,7 +579,9 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             category=item["category"],
             text=item["text"],
             source_section_id=item.get("source_section_id"),
-            source_evidence_ids=[],
+            source_evidence_ids=_resolve_evidence_ids(
+                document, section_id=item.get("source_section_id"), event_ids=item.get("source_event_ids")
+            ),
         )
         for i, item in enumerate(cleaned["recommendations"])
     ]
@@ -556,6 +593,10 @@ def apply_interpretation(document: StructuredClinicalDocument, cleaned: dict[str
             end_date=item.get("end_date"),
             description=item.get("description") or "",
             event_ids=item["event_ids"],
+            # Multi-source by definition — the union of real evidence
+            # already resolved for every event in this era, never one
+            # fake "exact" source (Part 33's "View sources (N)").
+            source_evidence_ids=_resolve_evidence_ids(document, section_id=None, event_ids=item["event_ids"]),
         )
         for i, item in enumerate(cleaned["treatment_eras"])
     ]

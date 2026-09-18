@@ -42,6 +42,7 @@ import {
   InvestigationCards,
   OverviewPanel,
   RecommendationList,
+  TreatmentEraList,
 } from "@/components/clinical-reader/interpretation-panels";
 
 type CurrentUser = {
@@ -663,7 +664,7 @@ function EntryContent({
           interpretationStatus={structuredDocument.interpretation?.status || null}
         />
         <div style={{ marginTop: "var(--s4)" }}>
-          <AnomalyWarnings anomalies={structuredDocument.anomalies} />
+          <AnomalyWarnings anomalies={structuredDocument.anomalies} documentContentType={documentContentType} />
         </div>
       </div>
     );
@@ -675,7 +676,11 @@ function EntryContent({
         <h2 className="b-section-title" style={{ marginTop: 0, marginBottom: 16 }}>
           {copy.currentHospitalization}
         </h2>
-        <CurrentHospitalizationEvents currentEncounter={structuredDocument.current_encounter} events={events} />
+        <CurrentHospitalizationEvents
+          currentEncounter={structuredDocument.current_encounter}
+          events={events}
+          documentContentType={documentContentType}
+        />
       </div>
     );
   }
@@ -721,12 +726,12 @@ function EntryContent({
 
       <div style={{ display: "flex", flexDirection: "column", gap: "var(--s4)" }}>
         {section.canonical_key === "diagnoses" && structuredDocument.diagnoses.length > 0 ? (
-          <DiagnosisList diagnoses={structuredDocument.diagnoses} />
+          <DiagnosisList diagnoses={structuredDocument.diagnoses} documentContentType={documentContentType} />
         ) : (section.canonical_key === "investigations" || section.canonical_key === "imaging") &&
           structuredDocument.investigations.length > 0 ? (
-          <InvestigationCards investigations={structuredDocument.investigations} />
+          <InvestigationCards investigations={structuredDocument.investigations} documentContentType={documentContentType} />
         ) : section.canonical_key === "recommendations" && structuredDocument.recommendations.length > 0 ? (
-          <RecommendationList recommendations={structuredDocument.recommendations} />
+          <RecommendationList recommendations={structuredDocument.recommendations} documentContentType={documentContentType} />
         ) : section.canonical_key === "laboratory_results" ? (
           // Never fall through to the raw blocks below when canonical
           // LabResult rows exist for this document (Part 1F/8A) — and
@@ -757,12 +762,16 @@ function EntryContent({
           ))
         )}
 
+        {section.canonical_key === "clinical_course" && structuredDocument.treatment_eras.length > 0 ? (
+          <TreatmentEraList treatmentEras={structuredDocument.treatment_eras} documentContentType={documentContentType} />
+        ) : null}
+
         {section.canonical_key === "clinical_course" && events.length > 0 ? (
           <div>
             <h3 className="b-label" style={{ marginBottom: 10 }}>
               {copy.clinicalCourse}
             </h3>
-            <ClinicalCourseTimeline events={events} />
+            <ClinicalCourseTimeline events={events} documentContentType={documentContentType} />
           </div>
         ) : null}
       </div>

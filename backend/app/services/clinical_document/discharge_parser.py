@@ -35,7 +35,7 @@ from app.services.lab_catalog import normalize_text
 from .canonical_headings import classify_canonical_heading, consolidate_segments
 from .dates import parse_date_token
 from .events import build_events_from_segment_text
-from .schema import ClinicalEvent, DocumentMetadata, StructuredClinicalDocument
+from .schema import ClinicalEvent, DocumentMetadata, ExtractionCoverage, StructuredClinicalDocument
 from .segments import build_segments_from_legacy_discharge_payload
 
 PARSER_VERSION = "discharge-parser-phase4-5-v1"
@@ -110,6 +110,42 @@ def parse_legacy_discharge_payload(
         sections=sections,
         dated_events=dated_events,
         warnings=doc_warnings,
+        extraction_coverage=_extraction_coverage_from_payload(payload),
+    )
+
+
+def _extraction_coverage_from_payload(payload: dict[str, Any]) -> ExtractionCoverage | None:
+    """Source Intelligence + Provenance V2, Part 5. Prefers the coverage
+    block `discharge_summary_pipeline.py` computes directly (real
+    per-page success/failure bookkeeping); for an OLDER document
+    persisted before that field existed, falls back to a best-effort
+    reconstruction from `page_count`/`page_payloads` so coverage is still
+    honestly reported rather than silently absent — never asserts
+    `extraction_complete=True` without real evidence either way."""
+    raw_coverage = payload.get("extraction_coverage")
+    if isinstance(raw_coverage, dict):
+        try:
+            return ExtractionCoverage.model_validate(raw_coverage)
+        except Exception:  # noqa: BLE001 — malformed/legacy shape, fall through to reconstruction
+            pass
+
+    total_pages = payload.get("page_count")
+    page_payloads = payload.get("page_payloads")
+    if not isinstance(total_pages, int) or not isinstance(page_payloads, list):
+        return None  # genuinely nothing to report — never fabricated
+
+    successful_pages = sorted(
+        {int(p.get("page_number")) for p in page_payloads if isinstance(p, dict) and p.get("page_number")}
+    )
+    all_pages = set(range(1, total_pages + 1))
+    failed_pages = sorted(all_pages - set(successful_pages))
+    return ExtractionCoverage(
+        total_pages=total_pages,
+        attempted_pages=len(successful_pages) + len(failed_pages),
+        successful_pages=len(successful_pages),
+        failed_pages=failed_pages,
+        warning_pages=[],
+        extraction_complete=not failed_pages,
     )
 
 
