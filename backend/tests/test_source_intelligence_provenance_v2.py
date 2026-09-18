@@ -573,3 +573,34 @@ def test_source_evidence_view_endpoint_rejects_cross_patient_access(fixture_docu
         assert response.status_code == 403
     finally:
         client.delete("/my/account", headers=_auth(other_account["token"]))
+
+
+def test_reader_endpoint_exposes_extraction_coverage_honestly_when_incomplete(fixture_document, monkeypatch):
+    """Part 5 end to end through the real API: a document whose page
+    extraction was genuinely incomplete must say so through
+    GET /documents/{id}/clinical-reader, never silently report nothing
+    (which the reader would otherwise be unable to distinguish from "we
+    don't know")."""
+    mock_fn, _ids = _realistic_mock_interpretation()
+    monkeypatch.setattr(ai_interpreter, "_call_model", mock_fn)
+    headers = _auth(fixture_document["account"]["token"])
+
+    db = SessionLocal()
+    try:
+        document = db.query(models.Document).filter(models.Document.id == fixture_document["document_id"]).first()
+        payload = json.loads(document.note_body)
+        payload["extraction_coverage"] = {
+            "total_pages": 15, "attempted_pages": 15, "successful_pages": 12,
+            "failed_pages": [13, 14, 15], "warning_pages": [], "extraction_complete": False,
+        }
+        document.note_body = json.dumps(payload)
+        db.commit()
+    finally:
+        db.close()
+
+    response = client.get(f"/documents/{fixture_document['document_id']}/clinical-reader", headers=headers)
+    assert response.status_code == 200, response.text
+    coverage = response.json()["structured_document"]["extraction_coverage"]
+    assert coverage["extraction_complete"] is False
+    assert coverage["successful_pages"] == 12
+    assert coverage["failed_pages"] == [13, 14, 15]

@@ -503,7 +503,11 @@ export default function DischargeStructuredPage() {
         </div>
       ) : null}
 
-      <DocumentHeader document={document} metadata={structuredDocument?.metadata} />
+      <DocumentHeader
+        document={document}
+        metadata={structuredDocument?.metadata}
+        extractionCoverage={structuredDocument?.extraction_coverage}
+      />
 
       {error ? (
         <div
