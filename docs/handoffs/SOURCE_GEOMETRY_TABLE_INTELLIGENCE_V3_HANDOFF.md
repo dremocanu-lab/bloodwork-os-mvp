@@ -1,11 +1,11 @@
 # Source Geometry + Clinical Table Intelligence V3 — Handoff
 
-**Status: substantially complete for the backend/provenance scope below —
-NOT merged.** Branch `fix/source-geometry-table-intelligence-v3`, off
-`main` post Source Intelligence + Provenance V2 (PR #10, `1801dbb`).
-Frontend/Playwright/screenshot verification was **not** performed this
-session (see §9, Known limitations) — everything below is backend-verified
-via real pytest runs against a real generated PDF, not assumed.
+**Status: complete, including real-browser verification — NOT merged.**
+Branch `fix/source-geometry-table-intelligence-v3`, off `main` post Source
+Intelligence + Provenance V2 (PR #10, `1801dbb`). A follow-up session ran
+the backend work in this document through an ACTUAL browser against a
+real, attached PDF file (see §9A) — this found and fixed two real bugs
+that no backend-only test had caught, described below.
 
 ## 1. The gap this phase closes
 
@@ -232,17 +232,88 @@ frontend component was NOT modified — it already generically renders
 work now populates correctly; verified by reading `source-viewer-panel.tsx`
 directly, not assumed.
 
+## 9A. Real-browser verification (follow-up session)
+
+A dedicated follow-up drove the ACTUAL reader UI in a real browser
+against a REAL PDF file, using the real reprocessing pipeline end to end
+— not mocked frontend evidence, not JSON-payload-only tests. This is the
+first suite in the whole engagement to attach a real file to
+`Document.saved_to` so the PDF.js-backed source viewer genuinely renders
+pages and draws highlight rectangles.
+
+**What was built**: `backend/scripts/seed_e2e_source_geometry_v3_document.py`
+writes the real 8-page fixture PDF to disk, creates a `Document` row
+pointing at it, and runs `reprocess_discharge_document` for real (AI
+interpreter mocked, everything else real) — producing real canonical
+`LabResult`/`PatientMedication` rows and real `SourceEvidence` bbox/
+`field_bboxes_json`. `frontend/e2e/source-geometry-table-intelligence-v3.spec.ts`
+(16 tests, all passing) drives the reader against this seeded document:
+D45 diagnosis; historical phlebotomy; the four page-4 narrative facts
+(ultrasound/JAK2/bone marrow/BCR-ABL) each proven to land on a distinct
+rectangle; prescription and medication table row/cell highlighting;
+ALT's 4-cell multi-rect; a recommendation paragraph; an anomaly with its
+suspicious value kept verbatim; A→B→A and same-evidence-twice state
+transitions; viewer-already-open; a resize sweep (1440/1280/1024/768)
+checked for genuine geometric (not just DOM-existence) alignment; both
+mobile breakpoints; dark mode; and the page-only precision fallback
+(asserting zero rendered rectangles, not just a notice).
+
+**Screenshots were generated AND actually inspected** (not just asserted
+on) at each of these steps — this is what caught two real bugs no
+backend-only or count-only assertion had caught:
+
+1. **Table cell geometry was scrambled** (`source_geometry.py`).
+   PyMuPDF's `table.cells` list is COLUMN-major (all rows of column 0,
+   then all rows of column 1, ...); the code assumed row-major
+   (`row_index = cell_index // col_count`), silently pairing every real
+   cell bbox with the WRONG grid position whenever a table had more than
+   one row. This never showed up as a text bug — `extract_rows()`
+   re-derives text using that same wrong label for both the fetch and
+   the placement, a self-cancelling bijection that left every text-only
+   assertion (including this phase's own unit tests) passing. It only
+   showed up as a geometry bug, and only visibly: the first ALT
+   screenshot showed 4 highlighted rectangles as REQUIRED by the count
+   assertion, but they were actually the "Rezultat" header cell plus
+   the Result-column cell of ALL THREE lab rows (ALT + both HGB rows) —
+   one column, not one row. Fixed to `col_index = cell_index //
+   row_count`, `row_index = cell_index % row_count`; a new geometric
+   (not text-only) regression test in `test_source_geometry.py` checks
+   every cell in a row shares one y-band and sorts left-to-right by
+   column — confirmed to fail against the old formula and pass against
+   the fix. Re-verified visually after the fix: ALT's screenshot now
+   shows exactly ALT/56/U/L/10-49, never a neighboring row's cells.
+2. **Prescriptions had no reachable "View source" action at all**
+   (`app/documents/[id]/discharge/page.tsx`). `canonical_key ===
+   "prescriptions"` fell through to the generic block renderer, which
+   draws a plain HTML table with no evidence wiring — invisible before
+   this phase's work (no prescription table had ever produced a real
+   canonical medication to show), surfaced only once table routing
+   started actually populating them. Fixed by rendering `prescriptions`
+   through the same `MedicationList` component `medications`/
+   `discharge_medications` already use — no new rendering path.
+3. **A latent extraction-precision bug**, caught earlier in this same
+   verification pass before it reached the browser (via direct DB
+   inspection of the seeded document): a table's own placeholder pointer
+   sentence ("Vezi medicatia structurata de mai jos.") was being parsed
+   as a medication NAMED that whole sentence. Fixed in
+   `medication_extraction.py` — see the commit "Wire real per-cell
+   geometry into medication candidates too" for detail; unrelated to the
+   two bugs above but found in the same session and fixed alongside them.
+
+**Regression suites re-run after the fixes, all green**: full backend
+pytest (832 passed), the broader `clinical_document`/geometry-scoped
+sweep (364 passed), and the frontend Playwright suites named in the
+follow-up request — `source-intelligence-provenance-v2`,
+`exact-provenance`, `clinical-reader-intelligence-v2`, `clinical-reader`,
+`derived-lab-artifact`, `right-workspace-geometry`, `ask-bragi-workspace`,
+`ask-bragi-layout-stability`, `upload-reliability`, `processing-indicator`,
+`timeline-projection` (58 passed, 0 failed). Frontend `tsc --noEmit`
+clean; ESLint baseline gate clean (29 errors, all pre-existing, baseline
+allows 30 — zero new); production build succeeds; `alembic heads` still
+a single head; migration drift clean.
+
 ## 9. Known limitations / explicitly NOT done this session
 
-- **No frontend/Playwright/screenshot verification was performed.** The
-  backend now produces real geometry and real `exact_bbox`-precision
-  evidence, and the existing frontend renderer was confirmed (by reading
-  its code) to already support arbitrary `field_bboxes` — but no browser
-  was actually driven against a real uploaded PDF this session to
-  visually confirm the highlight renders correctly end to end. This is
-  the single largest gap versus the full task specification (its Parts
-  58/59 — Playwright A–O and 6-viewport+dark-mode screenshot QA) and
-  should be the first follow-up.
 - **Event-level alignment only helps when `ClinicalEvent.raw_text` is
   itself narrow.** The current pipeline already produces one `SourceSegment`
   per semantic narrative unit for the discharge documents this fixture
@@ -267,14 +338,26 @@ directly, not assumed.
   regression), but no new semantic-locator work for those formats was
   attempted.
 - `docs/CURRENT_STATE.md` and related architecture docs were not updated
-  this session — recommend a follow-up documentation pass once frontend
-  verification lands, so the docs reflect end-to-end-verified behavior
-  rather than backend-only.
+  this session.
+- **Screenshot QA at every literal viewport/theme cell the original spec
+  listed was not exhaustively captured as a permanent artifact** — the
+  suite covers 1440/1280/1024/768 (resize) and 390/430 (mobile) plus
+  dark mode, and every screenshot taken was inspected, but they were not
+  archived outside `frontend/test-results/` (Playwright's own,
+  gitignored output directory).
 
-## 10. Files touched this session (on top of the two earlier commits)
+## 10. Files touched across both sessions on this branch
 
-`backend/app/services/clinical_document/segments.py`,
+Backend wiring: `backend/app/services/clinical_document/segments.py`,
 `lab_extraction.py`, `medication_extraction.py`, `lab_persistence.py`,
-`reprocessing.py`, `canonical_headings.py`,
-`backend/app/services/source_evidence.py`,
-`backend/tests/test_clinical_document_reprocessing_geometry_v3.py` (new).
+`medication_persistence.py`, `reprocessing.py`, `canonical_headings.py`,
+`source_geometry.py`, `backend/app/services/source_evidence.py`.
+
+Tests: `backend/tests/test_clinical_document_reprocessing_geometry_v3.py`
+(new), `test_source_geometry.py`,
+`backend/tests/fixtures/clinical_reader_v3_pdf_fixture.py`.
+
+Browser verification (this follow-up session):
+`backend/scripts/seed_e2e_source_geometry_v3_document.py` (new),
+`frontend/e2e/source-geometry-table-intelligence-v3.spec.ts` (new),
+`frontend/app/documents/[id]/discharge/page.tsx`.
