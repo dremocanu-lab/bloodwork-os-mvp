@@ -256,10 +256,15 @@ def build_synthetic_discharge_v3_fixture() -> tuple[bytes, dict[str, Any]]:
         {
             "page_number": 4,
             "sections": [
-                {"key": "epicriza", "title": "EPICRIZA", "body": ULTRASOUND_TEXT},
-                {"key": "epicriza", "title": "EPICRIZA", "body": JAK2_TEXT},
-                {"key": "epicriza", "title": "EPICRIZA", "body": BONE_MARROW_TEXT},
-                {"key": "epicriza", "title": "EPICRIZA", "body": BCR_ABL_TEXT},
+                # "Investigatii (narrativ)" — the REAL heading drawn on
+                # this PDF page (see w4.heading(...) above); classifies
+                # to the "investigations" canonical key, matching real
+                # page content (was previously mislabeled "EPICRIZA",
+                # which never matched what page 4 actually says).
+                {"key": "investigatii", "title": "Investigatii (narrativ)", "body": ULTRASOUND_TEXT},
+                {"key": "investigatii", "title": "Investigatii (narrativ)", "body": JAK2_TEXT},
+                {"key": "investigatii", "title": "Investigatii (narrativ)", "body": BONE_MARROW_TEXT},
+                {"key": "investigatii", "title": "Investigatii (narrativ)", "body": BCR_ABL_TEXT},
             ],
         },
         {
