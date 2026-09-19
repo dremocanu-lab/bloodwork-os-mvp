@@ -118,6 +118,21 @@ def test_table_routing_creates_lab_and_medication_rows_with_real_cell_geometry(v
         hgb_rows = [l for l in labs if l.raw_test_name.strip().upper() == "HGB"]
         assert len(hgb_rows) == 2  # conflicting rows preserved, never silently deduped
         assert {row.value for row in hgb_rows} == {"9.8", "11.2"}
+
+        meds = db.query(models.PatientMedication).filter(models.PatientMedication.source_document_id == document.id).all()
+        med_names = {m.name for m in meds}
+        # The table's own placeholder pointer text ("Vezi medicatia
+        # structurata de mai jos.") must never itself become a fabricated
+        # medication candidate — a real bug this fixture caught.
+        assert not any(name.lower().startswith("vezi ") for name in med_names)
+
+        hidroxiuree = next(m for m in meds if m.name == "Hidroxiuree")
+        hidroxiuree_evidence = db.query(models.SourceEvidence).filter(models.SourceEvidence.medication_id == hidroxiuree.id).first()
+        assert hidroxiuree_evidence is not None
+        assert hidroxiuree_evidence.bbox_x is not None  # exact_bbox precision, not page_only
+        assert hidroxiuree_evidence.field_bboxes_json is not None
+        med_field_bboxes = json.loads(hidroxiuree_evidence.field_bboxes_json)
+        assert len(med_field_bboxes) >= 2  # name + dose cells at minimum, all real
     finally:
         db.close()
 

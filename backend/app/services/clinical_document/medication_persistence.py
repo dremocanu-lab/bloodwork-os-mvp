@@ -45,6 +45,7 @@ deduplicate`.
 
 from __future__ import annotations
 
+import json
 from dataclasses import dataclass, field
 
 from sqlalchemy.orm import Session
@@ -250,6 +251,37 @@ def _find_existing_medication(
     )
 
 
+def _upgrade_medication_evidence_bbox(db: Session, *, medication_id: int, candidate: MedicationCandidate) -> None:
+    """Source Geometry + Clinical Table Intelligence V3 evidence-upgrade
+    semantics (Part 44) — mirrors `lab_persistence.py::_upgrade_lab_
+    evidence_bbox` exactly: a reprocessing pass that now has real table
+    geometry for an ALREADY-persisted `PatientMedication` (idempotency
+    matched it above) upgrades that SAME `SourceEvidence` row's bbox
+    fields in place, never regressing an already-geometry-bearing row,
+    and doing nothing when this candidate has no real geometry."""
+    if candidate.primary_bbox is None:
+        return
+    evidence = (
+        db.query(models.SourceEvidence)
+        .filter(models.SourceEvidence.medication_id == medication_id)
+        .order_by(models.SourceEvidence.id.asc())
+        .first()
+    )
+    if evidence is None or evidence.bbox_x is not None:
+        return
+    evidence.bbox_x = candidate.primary_bbox.get("x")
+    evidence.bbox_y = candidate.primary_bbox.get("y")
+    evidence.bbox_width = candidate.primary_bbox.get("width")
+    evidence.bbox_height = candidate.primary_bbox.get("height")
+    if candidate.row_bbox:
+        evidence.row_bbox_x = candidate.row_bbox.get("x")
+        evidence.row_bbox_y = candidate.row_bbox.get("y")
+        evidence.row_bbox_width = candidate.row_bbox.get("width")
+        evidence.row_bbox_height = candidate.row_bbox.get("height")
+    if candidate.field_bboxes:
+        evidence.field_bboxes_json = json.dumps(candidate.field_bboxes)
+
+
 def _detect_conflicts(candidates: list[MedicationCandidate]) -> set[int]:
     """Returns the set of `id(candidate)` for candidates involved in a
     genuine same-drug status conflict — two mentions of the same
@@ -308,6 +340,7 @@ def persist_medication_candidates(
         if existing is not None:
             if is_conflict and not existing.is_uncertain:
                 existing.is_uncertain = 1
+            _upgrade_medication_evidence_bbox(db, medication_id=existing.id, candidate=candidate)
             result.observations.append(
                 PersistedMedicationObservation(
                     medication_id=existing.id,
@@ -363,7 +396,24 @@ def persist_medication_candidates(
                     medication_id=medication.id,
                     source_text=candidate.source_evidence_text,
                     source_block_id=candidate.source_segment_id,
+                    # Real page number when known; never fabricated
+                    # otherwise. `bbox_*`/`row_bbox_*`/`field_bboxes_json`
+                    # (Source Geometry + Clinical Table Intelligence V3)
+                    # are likewise real, verbatim `TableGeometry` cell
+                    # geometry when this candidate came from an extracted
+                    # table row (see medication_extraction.py::
+                    # _extract_from_table); all stay null for a
+                    # prose-line candidate, exactly as before.
                     page_number=candidate.source_page,
+                    bbox_x=candidate.primary_bbox.get("x") if candidate.primary_bbox else None,
+                    bbox_y=candidate.primary_bbox.get("y") if candidate.primary_bbox else None,
+                    bbox_width=candidate.primary_bbox.get("width") if candidate.primary_bbox else None,
+                    bbox_height=candidate.primary_bbox.get("height") if candidate.primary_bbox else None,
+                    row_bbox_x=candidate.row_bbox.get("x") if candidate.row_bbox else None,
+                    row_bbox_y=candidate.row_bbox.get("y") if candidate.row_bbox else None,
+                    row_bbox_width=candidate.row_bbox.get("width") if candidate.row_bbox else None,
+                    row_bbox_height=candidate.row_bbox.get("height") if candidate.row_bbox else None,
+                    field_bboxes_json=json.dumps(candidate.field_bboxes) if candidate.field_bboxes else None,
                     extraction_confidence=candidate.confidence,
                     provider="clinical_document_v3_phase7",
                     parser_version="clinical-document-v3-medication-extraction-v1",
