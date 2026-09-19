@@ -11,6 +11,8 @@ from typing import Any
 import fitz
 from openai import OpenAI
 
+from app.services.clinical_document.source_geometry import extract_page_geometry
+
 # Data-minimization audit (BRAGI_SECURITY_GDPR_PLAN.md §21): this module
 # sends OpenAI the raw page image/native PDF text only — no separate
 # patient-context object (no email/phone/address) is ever attached. The
@@ -265,6 +267,24 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
             encoded = base64.b64encode(png_bytes).decode("ascii")
             native_text = page.get_text("text").strip()
 
+            # Source Geometry + Clinical Table Intelligence V3: real
+            # paragraph/table geometry, extracted from the SAME already-
+            # open page object used for rendering above - zero extra
+            # file I/O, zero external API call. Only attempted for a
+            # page with a real native text layer (the same threshold
+            # `process_uploaded_discharge_summary` already uses to
+            # decide whether a page needs OCR) - a scanned page's
+            # `geometry` stays None rather than an empty-but-present
+            # PageGeometry, so callers can tell "no native text layer to
+            # extract from" apart from "extraction found nothing" if
+            # that distinction ever matters.
+            geometry = None
+            if len(native_text) > 80:
+                try:
+                    geometry = extract_page_geometry(page, page_number=index + 1).model_dump()
+                except Exception:  # noqa: BLE001 — geometry is enrichment, never fatal to page processing (Part 35)
+                    geometry = None
+
             pages.append(
                 {
                     "page_number": index + 1,
@@ -272,6 +292,7 @@ def _render_pdf_pages_as_data_urls(path: Path) -> list[dict[str, Any]]:
                     "height": page.rect.height,
                     "image_url": f"data:image/png;base64,{encoded}",
                     "native_text": native_text,
+                    "geometry": geometry,
                 }
             )
 
@@ -446,6 +467,10 @@ def _call_openai_for_page(client: OpenAI, page: dict[str, Any]) -> dict[str, Any
     raw_text = _extract_response_text(response)
     parsed = _safe_json_loads(raw_text)
     parsed["page_number"] = int(parsed.get("page_number") or page_number)
+    # Carried through from the render step (see _render_pdf_pages_as_data_urls)
+    # — the model's own JSON has no geometry field to clobber this with;
+    # this is real PyMuPDF extraction, never something the model produced.
+    parsed["geometry"] = page.get("geometry")
 
     return parsed
 

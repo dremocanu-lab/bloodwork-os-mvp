@@ -40,7 +40,8 @@ from . import medication_duration
 from .dates import find_dates_in_text
 from .events import ClinicalEvent
 from .schema import CanonicalSectionKey
-from .segments import SourceSegment
+from .segments import SegmentTableData, SourceSegment
+from .template_detection import is_template_placeholder_text
 
 MEDICATION_BEARING_CANONICAL_KEYS: frozenset[str] = frozenset(
     {"treatment", "medications", "discharge_medications", "recommendations", "prescriptions"}
@@ -113,6 +114,17 @@ class MedicationCandidate(BaseModel):
 
     confidence: float = 0.7
     warnings: list[str] = Field(default_factory=list)
+    # Source Geometry + Clinical Table Intelligence V3 — set ONLY when
+    # this candidate came from a REAL extracted table row (see
+    # `_extract_from_table` below), mirroring `LabCandidate`'s own
+    # fields exactly: `primary_bbox` the single most specific real cell
+    # (the DOSE cell when identified, else the row union), `row_bbox`
+    # the union of every contributing cell, `field_bboxes` every real
+    # per-cell rect labeled by field. All None for a prose-line
+    # candidate — never estimated from character width.
+    primary_bbox: dict[str, float] | None = None
+    row_bbox: dict[str, float] | None = None
+    field_bboxes: list[dict] | None = None
 
     model_config = {"arbitrary_types_allowed": True}
 
@@ -265,6 +277,7 @@ _NARRATIVE_NAME_STOPWORDS = {
     "pacientul", "pacienta", "tratamentul", "medicatia",
     "din", "dupa", "la", "in", "se", "s",
     "the", "patient", "treatment", "medication",
+    "vezi",
 }
 
 
@@ -337,13 +350,26 @@ def _parse_medication_line(line: str) -> tuple[str, str | None] | None:
             break
 
     boundary_start = min(boundary_candidates) if boundary_candidates else None
-    name = _isolate_medication_name(text, boundary_start=boundary_start)
-    if name is None and boundary_start is None:
-        # No structural boundary at all — likely free NARRATIVE prose
-        # (e.g. a treatment_change event's sentence) rather than a
-        # structured medication-list line. Try the capitalized-drug-name
-        # fallback before giving up entirely.
+    if boundary_start is None and "," not in text:
+        # No structural boundary (dose/frequency/route) AND no comma to
+        # split a "Name, ..." line on — this is free NARRATIVE prose (a
+        # plain sentence, e.g. a treatment_change event's own text, or a
+        # table-pointer/introductory line like "Vezi medicatia
+        # structurata de mai jos.") rather than a structured
+        # medication-list line. `_isolate_medication_name`'s own
+        # comma-split fallback would otherwise happily return the WHOLE
+        # short sentence as a "name" (Source Geometry + Clinical Table
+        # Intelligence V3's own fixture caught exactly this — a table's
+        # placeholder pointer sentence was persisted as a medication
+        # named "Vezi medicatia structurata de mai jos."). Go straight to
+        # the stricter capitalized-drug-name heuristic instead, which
+        # requires an actual capitalized token and excludes known
+        # sentence-initial narrative words.
         name = _find_capitalized_drug_name(text)
+    else:
+        name = _isolate_medication_name(text, boundary_start=boundary_start)
+        if name is None and boundary_start is None:
+            name = _find_capitalized_drug_name(text)
     if name is None:
         return None
 
@@ -357,6 +383,9 @@ def _build_candidate(
     segment: SourceSegment,
     canonical_key: str | None,
     source_section_id: str | None,
+    primary_bbox: dict[str, float] | None = None,
+    row_bbox: dict[str, float] | None = None,
+    field_bboxes: list[dict] | None = None,
 ) -> MedicationCandidate | None:
     if _is_excluded_context(line):
         return None
@@ -409,7 +438,126 @@ def _build_candidate(
         source_evidence_text=line,
         source_page=segment.page,
         confidence=0.75,
+        primary_bbox=primary_bbox,
+        row_bbox=row_bbox,
+        field_bboxes=field_bboxes,
     )
+
+
+def _table_row_to_line(headers: list[str], row: list[str]) -> tuple[str, dict[str, int]] | None:
+    """Best-effort reconstruction of a medication table row into the same
+    free-text shape `_parse_medication_line` already understands, using
+    header names to identify which column is which — mirrors
+    `lab_extraction.py::_table_row_to_line` exactly (same discipline:
+    never guessed positionally when headers give no signal). Also
+    returns which column index fed each field, so a caller with real
+    per-cell geometry can label each contributing cell's bbox correctly.
+    Source Geometry + Clinical Table Intelligence V3."""
+    if not row:
+        return None
+    normalized_headers = [normalize_text(h) for h in headers]
+
+    def _header_matches(header: str, keyword: str) -> bool:
+        if len(keyword) <= 3:
+            return bool(re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", header))
+        return keyword in header
+
+    def _col(*keywords: str) -> tuple[str, int] | None:
+        for idx, header in enumerate(normalized_headers):
+            if idx >= len(row):
+                continue
+            if any(_header_matches(header, keyword) for keyword in keywords):
+                return row[idx].strip(), idx
+        return None
+
+    name_match = _col("medicament", "denumire", "drug", "substanta")
+    dose_match = _col("doza", "dose", "concentratie", "cantitate")
+    route_match = _col("cale", "route", "administrare")
+    frequency_match = _col("frecventa", "frequency", "schema", "interval")
+    duration_match = _col("durata", "duration", "perioada")
+
+    columns: dict[str, int] = {}
+    name = dose = route = frequency = duration = None
+    if name_match:
+        name, columns["name"] = name_match
+    if dose_match:
+        dose, columns["dose"] = dose_match
+    if route_match:
+        route, columns["route"] = route_match
+    if frequency_match:
+        frequency, columns["frequency"] = frequency_match
+    if duration_match:
+        duration, columns["duration"] = duration_match
+
+    if name is None:
+        # No header gave a confident name match — fall back to the first
+        # column only when there are exactly 2-3 columns (the narrowest
+        # unambiguous case), matching lab_extraction.py's own restraint.
+        if len(row) <= 3 and row[0].strip():
+            name = row[0].strip()
+            columns["name"] = 0
+            if dose is None and len(row) > 1:
+                dose = row[1].strip()
+                columns["dose"] = 1
+        else:
+            return None
+
+    pieces = [name]
+    if dose:
+        pieces.append(dose)
+    if route:
+        pieces.append(route)
+    if frequency:
+        pieces.append(frequency)
+    if duration:
+        pieces.append(duration)
+    return " ".join(pieces), columns
+
+
+def _union_bbox(bboxes: list[dict[str, float]]) -> dict[str, float] | None:
+    if not bboxes:
+        return None
+    x0 = min(b["x"] for b in bboxes)
+    y0 = min(b["y"] for b in bboxes)
+    x1 = max(b["x"] + b["width"] for b in bboxes)
+    y1 = max(b["y"] + b["height"] for b in bboxes)
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+
+
+_TableRowGeometry = tuple[dict[str, float] | None, dict[str, float] | None, list[dict] | None]
+
+
+def _extract_from_table(table: SegmentTableData) -> list[tuple[str, _TableRowGeometry]]:
+    """Returns one `(line, (primary_bbox, row_bbox, field_bboxes))` tuple
+    per real table row — mirrors `lab_extraction.py::_extract_from_table`
+    exactly. All three geometry values are populated only when the table
+    carries matching `cell_bboxes` (real geometry — see segments.py);
+    otherwise they stay None, degrading gracefully to text-only
+    evidence."""
+    out: list[tuple[str, _TableRowGeometry]] = []
+    has_geometry = len(table.cell_bboxes) == len(table.rows)
+    for row_index, row in enumerate(table.rows):
+        parsed = _table_row_to_line(table.headers, row)
+        if parsed is None:
+            continue
+        line, columns = parsed
+        primary_bbox: dict[str, float] | None = None
+        row_bbox: dict[str, float] | None = None
+        field_bboxes: list[dict] | None = None
+        if has_geometry:
+            row_cells = table.cell_bboxes[row_index]
+            field_bboxes = [
+                {"label": label, **row_cells[col_idx]}
+                for label, col_idx in columns.items()
+                if col_idx < len(row_cells) and row_cells[col_idx] is not None
+            ]
+            row_bbox = _union_bbox([{k: v for k, v in fb.items() if k != "label"} for fb in field_bboxes])
+            primary_field = next((fb for fb in field_bboxes if fb["label"] == "dose"), None)
+            primary_bbox = (
+                {k: v for k, v in primary_field.items() if k != "label"} if primary_field else row_bbox
+            )
+        out.append((line, (primary_bbox, row_bbox, field_bboxes or None)))
+    return out
 
 
 def extract_medication_candidates_from_segment(
@@ -425,12 +573,30 @@ def extract_medication_candidates_from_segment(
     existing convention (the function itself does not re-check
     classification)."""
     candidates: list[MedicationCandidate] = []
-    for raw_line in (segment.raw_text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
+    # Source Geometry + Clinical Table Intelligence V3 (Part 20/61) — see
+    # lab_extraction.py's identical guard for the full rationale: a
+    # segment whose entire raw text is known template noise (blank
+    # PRODUS/CANTITATE headers, never real patient content) never
+    # contributes a text-line candidate; `table_data` is independently
+    # already excluded for an empty-template table.
+    lines_with_geometry: list[tuple[str, _TableRowGeometry]] = (
+        []
+        if is_template_placeholder_text(segment.raw_text)
+        else [
+            (line.strip(), (None, None, None)) for line in (segment.raw_text or "").splitlines() if line.strip()
+        ]
+    )
+    if segment.table_data is not None:
+        lines_with_geometry.extend(_extract_from_table(segment.table_data))
+    for line, (primary_bbox, row_bbox, field_bboxes) in lines_with_geometry:
         candidate = _build_candidate(
-            line, segment=segment, canonical_key=str(canonical_key), source_section_id=source_section_id
+            line,
+            segment=segment,
+            canonical_key=str(canonical_key),
+            source_section_id=source_section_id,
+            primary_bbox=primary_bbox,
+            row_bbox=row_bbox,
+            field_bboxes=field_bboxes,
         )
         if candidate is not None:
             candidates.append(candidate)

@@ -33,6 +33,7 @@ from app.services.lab_catalog import normalize_text
 
 from .dates import find_dates_in_text
 from .segments import SourceSegment, SegmentTableData
+from .template_detection import is_template_placeholder_text
 
 SourceSectionStatus = Literal["normal", "pathological"]
 
@@ -80,6 +81,19 @@ class LabCandidate(BaseModel):
     source_page: int | None = None
     confidence: float = 0.8
     warnings: list[str] = Field(default_factory=list)
+    # Source Geometry + Clinical Table Intelligence V3 — set ONLY when
+    # this candidate came from a REAL extracted table row (see
+    # `_extract_from_table` below). `primary_bbox` is the single most
+    # specific real cell (the VALUE cell when identified, else the row
+    # union — see `SourceEvidence.bbox_*`'s own "exact_bbox precision"
+    # contract in api/routers/source_evidence.py); `row_bbox` is the
+    # union of every contributing cell (frames the whole row);
+    # `field_bboxes` is every real per-cell rect, labeled by field
+    # (`{label, x, y, width, height}`). All three are None for a
+    # prose-line candidate — never estimated from character width.
+    primary_bbox: dict[str, float] | None = None
+    row_bbox: dict[str, float] | None = None
+    field_bboxes: list[dict] | None = None
 
 
 # ── Subsection markers (normal/pathological) ───────────────────────────
@@ -330,11 +344,14 @@ def _iter_candidate_lines_from_text(text: str) -> list[tuple[str, str | None, st
     return out
 
 
-def _table_row_to_line(headers: list[str], row: list[str]) -> str | None:
+def _table_row_to_line(headers: list[str], row: list[str]) -> tuple[str, dict[str, int]] | None:
     """Best-effort reconstruction of a table row into the same
     `NAME VALUE UNIT (RANGE) FLAG`-shaped line `_parse_lab_line` already
     understands, using header names to identify which column is which —
-    never guessed positionally when headers give no signal."""
+    never guessed positionally when headers give no signal. Also returns
+    which column index fed each field (`{"name": 0, "value": 1, ...}`) so
+    a caller with real per-cell geometry (see `_extract_from_table`) can
+    label each contributing cell's bbox correctly."""
     if not row:
         return None
     normalized_headers = [normalize_text(h) for h in headers]
@@ -347,19 +364,32 @@ def _table_row_to_line(headers: list[str], row: list[str]) -> str | None:
             return bool(re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", header))
         return keyword in header
 
-    def _col(*keywords: str) -> str | None:
+    def _col(*keywords: str) -> tuple[str, int] | None:
         for idx, header in enumerate(normalized_headers):
             if idx >= len(row):
                 continue
             if any(_header_matches(header, keyword) for keyword in keywords):
-                return row[idx].strip()
+                return row[idx].strip(), idx
         return None
 
-    name = _col("test", "analiz", "denumire", "parametru", "nume")
-    value = _col("valoare", "rezultat", "value", "result")
-    unit = _col("um", "unitate", "unit")
-    ref_range = _col("interval", "referinta", "referinţa", "range", "normal")
-    flag = _col("flag", "semnificatie", "interpretare")
+    name_match = _col("test", "analiz", "denumire", "parametru", "nume")
+    value_match = _col("valoare", "rezultat", "value", "result")
+    unit_match = _col("um", "unitate", "unit")
+    ref_range_match = _col("interval", "referinta", "referinţa", "range", "normal")
+    flag_match = _col("flag", "semnificatie", "interpretare")
+
+    columns: dict[str, int] = {}
+    name = value = unit = ref_range = flag = None
+    if name_match:
+        name, columns["name"] = name_match
+    if value_match:
+        value, columns["value"] = value_match
+    if unit_match:
+        unit, columns["unit"] = unit_match
+    if ref_range_match:
+        ref_range, columns["reference_range"] = ref_range_match
+    if flag_match:
+        flag, columns["flag"] = flag_match
 
     if name is None or value is None:
         # No header gave a confident column match — fall back to
@@ -367,6 +397,7 @@ def _table_row_to_line(headers: list[str], row: list[str]) -> str | None:
         # (name, value), the narrowest case where position is unambiguous.
         if len(row) == 2 and not name and not value:
             name, value = row[0].strip(), row[1].strip()
+            columns = {"name": 0, "value": 1}
         else:
             return None
 
@@ -377,16 +408,52 @@ def _table_row_to_line(headers: list[str], row: list[str]) -> str | None:
         pieces[-1] += f" ({ref_range})"
     if flag:
         pieces[-1] += f" {flag}"
-    return pieces[0]
+    return pieces[0], columns
 
 
-def _extract_from_table(table: SegmentTableData) -> list[str]:
-    lines: list[str] = []
-    for row in table.rows:
-        line = _table_row_to_line(table.headers, row)
-        if line:
-            lines.append(line)
-    return lines
+def _union_bbox(bboxes: list[dict[str, float]]) -> dict[str, float] | None:
+    if not bboxes:
+        return None
+    x0 = min(b["x"] for b in bboxes)
+    y0 = min(b["y"] for b in bboxes)
+    x1 = max(b["x"] + b["width"] for b in bboxes)
+    y1 = max(b["y"] + b["height"] for b in bboxes)
+    return {"x": x0, "y": y0, "width": x1 - x0, "height": y1 - y0}
+
+
+_TableRowGeometry = tuple[dict[str, float] | None, dict[str, float] | None, list[dict] | None]
+
+
+def _extract_from_table(table: SegmentTableData) -> list[tuple[str, _TableRowGeometry]]:
+    """Returns one `(line, (primary_bbox, row_bbox, field_bboxes))` tuple
+    per real table row. All three geometry values are populated only
+    when the table carries matching `cell_bboxes` (real geometry — see
+    segments.py); otherwise they stay None, degrading gracefully to
+    text-only evidence exactly as before geometry existed."""
+    out: list[tuple[str, _TableRowGeometry]] = []
+    has_geometry = len(table.cell_bboxes) == len(table.rows)
+    for row_index, row in enumerate(table.rows):
+        parsed = _table_row_to_line(table.headers, row)
+        if parsed is None:
+            continue
+        line, columns = parsed
+        primary_bbox: dict[str, float] | None = None
+        row_bbox: dict[str, float] | None = None
+        field_bboxes: list[dict] | None = None
+        if has_geometry:
+            row_cells = table.cell_bboxes[row_index]
+            field_bboxes = [
+                {"label": label, **row_cells[col_idx]}
+                for label, col_idx in columns.items()
+                if col_idx < len(row_cells) and row_cells[col_idx] is not None
+            ]
+            row_bbox = _union_bbox([{k: v for k, v in fb.items() if k != "label"} for fb in field_bboxes])
+            primary_field = next((fb for fb in field_bboxes if fb["label"] == "value"), None)
+            primary_bbox = (
+                {k: v for k, v in primary_field.items() if k != "label"} if primary_field else row_bbox
+            )
+        out.append((line, (primary_bbox, row_bbox, field_bboxes or None)))
+    return out
 
 
 def extract_lab_candidates_from_segment(segment: SourceSegment) -> list[LabCandidate]:
@@ -403,12 +470,29 @@ def extract_lab_candidates_from_segment(segment: SourceSegment) -> list[LabCandi
     segment_date = _find_segment_date(segment.raw_text or "")
     segment_request_code = _find_segment_request_code(segment.raw_text or "")
 
-    lines_with_context = _iter_candidate_lines_from_text(segment.raw_text or "")
+    # Source Geometry + Clinical Table Intelligence V3 (Part 20/61) —
+    # a segment whose ENTIRE raw text is known template noise (blank
+    # PRODUS/CANTITATE/EKG/ECO/RX/ALTELE headers and fill-in blanks,
+    # never real patient content) never yields a text-line candidate —
+    # reusing Clinical Reader V2's own deterministic template detector,
+    # never a second implementation of the same judgment. `table_data`
+    # (if any) is unaffected: an empty-template TABLE is already
+    # excluded from ever reaching `table_data` in the first place (see
+    # segments.py::_table_data_for_segment's own empty_template check).
+    text_is_template_noise = is_template_placeholder_text(segment.raw_text)
+    lines_with_context: list[tuple[str, SourceSectionStatus | None, str | None, _TableRowGeometry]] = (
+        []
+        if text_is_template_noise
+        else [
+            (line, status, panel, (None, None, None))
+            for line, status, panel in _iter_candidate_lines_from_text(segment.raw_text or "")
+        ]
+    )
     if segment.table_data is not None:
-        table_lines = _extract_from_table(segment.table_data)
-        lines_with_context.extend((line, None, None) for line in table_lines)
+        for line, geometry in _extract_from_table(segment.table_data):
+            lines_with_context.append((line, None, None, geometry))
 
-    for line, section_status, panel in lines_with_context:
+    for line, section_status, panel, (primary_bbox, row_bbox, field_bboxes) in lines_with_context:
         parsed = _parse_lab_line(line)
         if parsed is None:
             continue
@@ -437,6 +521,9 @@ def extract_lab_candidates_from_segment(segment: SourceSegment) -> list[LabCandi
                 source_page=segment.page,
                 confidence=0.8 if parsed_value is not None else 0.5,
                 warnings=warnings,
+                primary_bbox=primary_bbox,
+                row_bbox=row_bbox,
+                field_bboxes=field_bboxes,
             )
         )
 
