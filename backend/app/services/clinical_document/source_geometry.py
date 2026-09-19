@@ -168,8 +168,25 @@ def extract_page_geometry(page: fitz.Page, page_number: int) -> PageGeometry:
             for cell_index, cell_rect in enumerate(table.cells):
                 if cell_rect is None:
                     continue
-                row_index = cell_index // table.col_count if table.col_count else 0
-                col_index = cell_index % table.col_count if table.col_count else 0
+                # PyMuPDF's `table.cells` is COLUMN-MAJOR (all rows of
+                # column 0, then all rows of column 1, ...) — verified
+                # directly against real extracted rects (not assumed):
+                # cells 0..row_count-1 share the same x0 and step through
+                # increasing y0, then cell row_count starts the next
+                # column at the next x0. A row-major `col_index =
+                # cell_index % col_count` (the previous, WRONG formula)
+                # silently mislabels every cell's row/col whenever
+                # row_count != 1, pairing each cell's real geometry with
+                # the wrong grid position — the text stayed correct only
+                # because `extract_rows()` re-derives text using this
+                # SAME (consistently wrong) label to both fetch from
+                # `extracted[][]` and place into the output grid, a
+                # self-cancelling bijection that never showed up as a
+                # text bug, only as a geometry one (a browser check of
+                # the actual rendered highlight caught it; a bbox/text
+                # correctness assertion in isolation did not).
+                col_index = cell_index // table.row_count if table.row_count else 0
+                row_index = cell_index % table.row_count if table.row_count else 0
                 cell_text = ""
                 if row_index < len(extracted) and col_index < len(extracted[row_index]):
                     cell_text = (extracted[row_index][col_index] or "").strip()

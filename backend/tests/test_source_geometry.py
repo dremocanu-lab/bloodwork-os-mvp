@@ -93,6 +93,28 @@ def test_extract_page_geometry_returns_real_table_structure():
             assert 0 <= cell.bbox.y <= 1
             assert cell.bbox.width > 0
             assert cell.bbox.height > 0
+
+        # A cell's geometry must actually match its TEXT's row/column,
+        # not just be sane in isolation — a real bug (PyMuPDF's
+        # `table.cells` is COLUMN-major, not row-major; a naive
+        # `row_index = cell_index // col_count` formula silently
+        # mislabels every cell whenever row_count > 1, pairing each
+        # cell's real bbox with the WRONG grid position even though
+        # `extract_rows()`'s TEXT output stays coincidentally correct —
+        # caught only by visually inspecting a rendered highlight, not
+        # by a text-only or bbox-sanity-only assertion) must never
+        # regress silently again: every cell in the SAME row shares one
+        # y (row band), and the row's cells sort left-to-right by x in
+        # column order.
+        by_row: dict[int, list] = {}
+        for cell in table.cells:
+            by_row.setdefault(cell.row_index, []).append(cell)
+        for row_index, row_cells in by_row.items():
+            row_cells.sort(key=lambda c: c.col_index)
+            ys = [c.bbox.y for c in row_cells]
+            assert max(ys) - min(ys) < 0.01, f"row {row_index} cells are not on the same y band: {ys}"
+            xs = [c.bbox.x for c in row_cells]
+            assert xs == sorted(xs), f"row {row_index} cells are not left-to-right by column: {xs}"
     finally:
         doc.close()
 
