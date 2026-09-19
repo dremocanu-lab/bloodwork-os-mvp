@@ -750,7 +750,9 @@ function EntryContent({
             rawSectionHasContent={section.blocks.length > 0}
             onViewOriginal={onViewOriginal}
           />
-        ) : (section.canonical_key === "discharge_medications" || section.canonical_key === "medications") &&
+        ) : (section.canonical_key === "discharge_medications" ||
+            section.canonical_key === "medications" ||
+            section.canonical_key === "prescriptions") &&
           medications.length > 0 ? (
           <MedicationList medications={medications} documentContentType={documentContentType} />
         ) : (
