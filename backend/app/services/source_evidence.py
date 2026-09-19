@@ -17,6 +17,8 @@ staying green).
 
 from __future__ import annotations
 
+import json
+
 from sqlalchemy.orm import Session
 
 from app import models
@@ -72,25 +74,32 @@ def ensure_segment_evidence(
     page_number: int | None,
     source_text: str | None,
     provider: str = "discharge_segment",
+    bbox: dict[str, float] | None = None,
+    field_bboxes: list[dict] | None = None,
 ) -> tuple["models.SourceEvidence", bool]:
-    """Source Intelligence + Provenance V2 — one SourceEvidence row per
-    SOURCE SEGMENT (paragraph/section-contributor), the generalization
-    `SourceEvidence`'s own docstring has long called for ("meant to
-    generalize to other clinical entities... not just lab rows"). This is
-    deliberately block/page precision, never a fabricated bbox — the
-    current discharge pipeline (page-vision transcription) has no
-    per-field geometry to offer, so `bbox_*` stays null here and the
-    `/source-evidence/{id}/view` endpoint's existing precision hierarchy
-    correctly reports `page_only` (page known) or `text_only` (only text
-    known, e.g. an older document with no page tracking).
+    """Source Intelligence + Provenance V2 (block/page precision) —
+    extended by Source Geometry + Clinical Table Intelligence V3 to
+    optionally carry real block/table/cell geometry when a caller has it
+    (`bbox` — the primary/exact normalized rect; `field_bboxes` — every
+    supporting rect, e.g. a table row's individual cells, reusing the
+    SAME `field_bboxes_json` shape Provenance V2 already established for
+    lab field citations — see models.py::SourceEvidence). `bbox`/
+    `field_bboxes` are never fabricated by a caller — they only ever come
+    from real extracted geometry (source_geometry.py) or a confident
+    text-alignment match (geometry_alignment.py); omitted entirely, this
+    still degrades gracefully to block/page precision exactly as before.
 
     Idempotent per `(document_id, source_block_id)` — reprocessing the
-    same document reuses the existing row (and whatever real page_number
-    it already has) rather than creating a duplicate or overwriting it
-    with a possibly-worse second-pass reconstruction (see
-    reprocessing.py's own segment-reconstruction docstring for why a
-    second pass might not recompute page/text as precisely as the
-    first). Returns `(evidence, was_new)` so a caller that reports
+    same document reuses the existing row rather than creating a
+    duplicate. Upgrade semantics (Part 44): when the existing row has NO
+    bbox yet and this call supplies one, the row is updated IN PLACE
+    (page_only@pageN -> block/table/cell@pageN+bbox) — the same
+    SourceEvidence id, never a second button for the same fact. An
+    already-geometry-bearing row is left untouched (never regressed by a
+    later pass that happens to find weaker/no geometry, and never
+    silently replaced by a DIFFERENT bbox for the same block id, which
+    would risk masking a genuine extraction change rather than an
+    upgrade). Returns `(evidence, was_new)` so a caller that reports
     reprocessing stats (created vs. reused) doesn't need a second query
     to find out which happened."""
     existing = (
@@ -103,6 +112,17 @@ def ensure_segment_evidence(
         .first()
     )
     if existing:
+        if bbox is not None and existing.bbox_x is None:
+            existing.bbox_x = bbox.get("x")
+            existing.bbox_y = bbox.get("y")
+            existing.bbox_width = bbox.get("width")
+            existing.bbox_height = bbox.get("height")
+            if field_bboxes:
+                existing.field_bboxes_json = json.dumps(field_bboxes)
+            if page_number is not None and existing.page_number is None:
+                existing.page_number = page_number
+            db.commit()
+            db.refresh(existing)
         return existing, False
 
     evidence = models.SourceEvidence(
@@ -113,6 +133,11 @@ def ensure_segment_evidence(
         source_block_id=source_block_id,
         source_text=(source_text or "")[:4000] or None,  # bounded — provenance display text, not a full-text store
         provider=provider,
+        bbox_x=bbox.get("x") if bbox else None,
+        bbox_y=bbox.get("y") if bbox else None,
+        bbox_width=bbox.get("width") if bbox else None,
+        bbox_height=bbox.get("height") if bbox else None,
+        field_bboxes_json=json.dumps(field_bboxes) if field_bboxes else None,
         created_at=now_iso(),
     )
     db.add(evidence)

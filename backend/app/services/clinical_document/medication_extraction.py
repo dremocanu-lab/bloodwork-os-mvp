@@ -40,7 +40,8 @@ from . import medication_duration
 from .dates import find_dates_in_text
 from .events import ClinicalEvent
 from .schema import CanonicalSectionKey
-from .segments import SourceSegment
+from .segments import SegmentTableData, SourceSegment
+from .template_detection import is_template_placeholder_text
 
 MEDICATION_BEARING_CANONICAL_KEYS: frozenset[str] = frozenset(
     {"treatment", "medications", "discharge_medications", "recommendations", "prescriptions"}
@@ -412,6 +413,68 @@ def _build_candidate(
     )
 
 
+def _table_row_to_line(headers: list[str], row: list[str]) -> str | None:
+    """Best-effort reconstruction of a medication table row into the same
+    free-text shape `_parse_medication_line` already understands, using
+    header names to identify which column is which — mirrors
+    `lab_extraction.py::_table_row_to_line` exactly (same discipline:
+    never guessed positionally when headers give no signal). Source
+    Geometry + Clinical Table Intelligence V3."""
+    if not row:
+        return None
+    normalized_headers = [normalize_text(h) for h in headers]
+
+    def _header_matches(header: str, keyword: str) -> bool:
+        if len(keyword) <= 3:
+            return bool(re.search(rf"(?<![a-z0-9]){re.escape(keyword)}(?![a-z0-9])", header))
+        return keyword in header
+
+    def _col(*keywords: str) -> str | None:
+        for idx, header in enumerate(normalized_headers):
+            if idx >= len(row):
+                continue
+            if any(_header_matches(header, keyword) for keyword in keywords):
+                return row[idx].strip()
+        return None
+
+    name = _col("medicament", "denumire", "drug", "substanta")
+    dose = _col("doza", "dose", "concentratie", "cantitate")
+    route = _col("cale", "route", "administrare")
+    frequency = _col("frecventa", "frequency", "schema", "interval")
+    duration = _col("durata", "duration", "perioada")
+
+    if name is None:
+        # No header gave a confident name match — fall back to the first
+        # column only when there are exactly 2-3 columns (the narrowest
+        # unambiguous case), matching lab_extraction.py's own restraint.
+        if len(row) <= 3 and row[0].strip():
+            name = row[0].strip()
+            if dose is None and len(row) > 1:
+                dose = row[1].strip()
+        else:
+            return None
+
+    pieces = [name]
+    if dose:
+        pieces.append(dose)
+    if route:
+        pieces.append(route)
+    if frequency:
+        pieces.append(frequency)
+    if duration:
+        pieces.append(duration)
+    return " ".join(pieces)
+
+
+def _extract_from_table(table: SegmentTableData) -> list[str]:
+    lines: list[str] = []
+    for row in table.rows:
+        line = _table_row_to_line(table.headers, row)
+        if line:
+            lines.append(line)
+    return lines
+
+
 def extract_medication_candidates_from_segment(
     segment: SourceSegment,
     *,
@@ -425,10 +488,20 @@ def extract_medication_candidates_from_segment(
     existing convention (the function itself does not re-check
     classification)."""
     candidates: list[MedicationCandidate] = []
-    for raw_line in (segment.raw_text or "").splitlines():
-        line = raw_line.strip()
-        if not line:
-            continue
+    # Source Geometry + Clinical Table Intelligence V3 (Part 20/61) — see
+    # lab_extraction.py's identical guard for the full rationale: a
+    # segment whose entire raw text is known template noise (blank
+    # PRODUS/CANTITATE headers, never real patient content) never
+    # contributes a text-line candidate; `table_data` is independently
+    # already excluded for an empty-template table.
+    lines = (
+        []
+        if is_template_placeholder_text(segment.raw_text)
+        else [line.strip() for line in (segment.raw_text or "").splitlines() if line.strip()]
+    )
+    if segment.table_data is not None:
+        lines.extend(_extract_from_table(segment.table_data))
+    for line in lines:
         candidate = _build_candidate(
             line, segment=segment, canonical_key=str(canonical_key), source_section_id=source_section_id
         )

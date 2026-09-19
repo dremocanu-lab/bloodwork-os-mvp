@@ -30,7 +30,7 @@ from __future__ import annotations
 
 from app.services.lab_catalog import normalize_text
 
-from .schema import CanonicalSectionKey, ClinicalSection, ParagraphBlock
+from .schema import CanonicalSectionKey, ClinicalSection, ParagraphBlock, TableBlock
 from .segments import SourceSegment
 from .template_detection import section_blocks_are_all_template_noise
 
@@ -262,9 +262,31 @@ def consolidate_segments(
     for segment in segments:
         canonical_key = classify_canonical_heading(segment.raw_heading)
         body_text = (segment.raw_text or "").strip()
+        # Source Geometry + Clinical Table Intelligence V3 — a real,
+        # routable table this segment carries (see segments.py's
+        # `_table_data_for_segment`) is preserved as its own `TableBlock`
+        # alongside the segment's own paragraph text, never in place of
+        # it. This is what lets `reprocessing.py::_segments_from_
+        # structured_document` recover the table's TEXT on a second+
+        # reprocess pass (idempotency) — real cell geometry only ever
+        # exists on the FIRST pass (from `page_payloads[*]["geometry"]`,
+        # not re-derivable from the persisted document), but by then the
+        # canonical LabResult/PatientMedication + SourceEvidence rows it
+        # produced already exist and are only ever reused, never
+        # regressed (see ensure_segment_evidence's upgrade semantics).
+        table_block = (
+            TableBlock(headers=segment.table_data.headers, rows=segment.table_data.rows)
+            if segment.table_data is not None
+            else None
+        )
 
         existing = merged.get(canonical_key)
         if existing is None:
+            blocks: list = []
+            if body_text:
+                blocks.append(ParagraphBlock(text=body_text))
+            if table_block is not None:
+                blocks.append(table_block)
             merged[canonical_key] = ClinicalSection(
                 id=f"section-{canonical_key}",
                 canonical_key=canonical_key,
@@ -272,7 +294,7 @@ def consolidate_segments(
                 source_headings=[segment.raw_heading] if segment.raw_heading else [],
                 source_segment_ids=[segment.segment_id],
                 order=order_counter,
-                blocks=[ParagraphBlock(text=body_text)] if body_text else [],
+                blocks=blocks,
                 review_state=review_state,
             )
             order_counter += 1
@@ -282,6 +304,8 @@ def consolidate_segments(
             existing.source_segment_ids.append(segment.segment_id)
             if body_text:
                 existing.blocks.append(ParagraphBlock(text=body_text))
+            if table_block is not None:
+                existing.blocks.append(table_block)
 
     kept = [section for section in merged.values() if section.blocks]
     for section in kept:

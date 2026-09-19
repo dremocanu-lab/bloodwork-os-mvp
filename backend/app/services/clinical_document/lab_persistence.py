@@ -178,6 +178,38 @@ def _find_existing_lab_result(
     )
 
 
+def _upgrade_lab_evidence_bbox(db: Session, *, lab_result_id: int, candidate: LabCandidate) -> None:
+    """Source Geometry + Clinical Table Intelligence V3 evidence-upgrade
+    semantics (Part 44): a reprocessing pass that now has real table
+    geometry for an ALREADY-persisted `LabResult` (idempotency matched it
+    above) upgrades that SAME `SourceEvidence` row's bbox fields in
+    place, rather than leaving it stuck at whatever precision the first
+    pass achieved. Never regresses an already-geometry-bearing row (only
+    fills fields that are currently null), and does nothing when this
+    candidate has no real geometry of its own."""
+    if candidate.primary_bbox is None:
+        return
+    evidence = (
+        db.query(models.SourceEvidence)
+        .filter(models.SourceEvidence.lab_result_id == lab_result_id)
+        .order_by(models.SourceEvidence.id.asc())
+        .first()
+    )
+    if evidence is None or evidence.bbox_x is not None:
+        return
+    evidence.bbox_x = candidate.primary_bbox.get("x")
+    evidence.bbox_y = candidate.primary_bbox.get("y")
+    evidence.bbox_width = candidate.primary_bbox.get("width")
+    evidence.bbox_height = candidate.primary_bbox.get("height")
+    if candidate.row_bbox:
+        evidence.row_bbox_x = candidate.row_bbox.get("x")
+        evidence.row_bbox_y = candidate.row_bbox.get("y")
+        evidence.row_bbox_width = candidate.row_bbox.get("width")
+        evidence.row_bbox_height = candidate.row_bbox.get("height")
+    if candidate.field_bboxes:
+        evidence.field_bboxes_json = json.dumps(candidate.field_bboxes)
+
+
 def _find_existing_derived_document(db: Session, *, parent_document_id: int, group_key: str) -> models.Document | None:
     candidates = (
         db.query(models.Document)
@@ -309,6 +341,7 @@ def persist_lab_candidates(
                 db, document_id=document.id, candidate=candidate, observation_datetime=observation_datetime
             )
             if existing is not None:
+                _upgrade_lab_evidence_bbox(db, lab_result_id=existing.id, candidate=candidate)
                 persisted_group.lab_result_ids.append(existing.id)
                 result.observations.append(
                     PersistedLabObservation(
@@ -360,15 +393,25 @@ def persist_lab_candidates(
                     source_text=candidate.source_evidence_text,
                     source_block_id=candidate.source_segment_id,
                     # Real page number when the originating SourceSegment
-                    # genuinely carries one (see LabCandidate.source_page);
-                    # never a fabricated PDF page/bbox otherwise — see the
-                    # V3 contract's "do not invent PDF page/bbox for
-                    # DOCX/non-PDF sources" rule. Today's discharge
-                    # pipeline never populates SourceSegment.page (see
-                    # segments.py), so this is honestly None for every
-                    # real candidate today; bbox_* stays null regardless,
-                    # since no per-value geometry is threaded through yet.
+                    # genuinely carries one (see LabCandidate.source_page)
+                    # — never fabricated otherwise. `row_bbox`/
+                    # `field_bboxes` (Source Geometry + Clinical Table
+                    # Intelligence V3) are likewise real, verbatim
+                    # `TableGeometry` cell geometry when the candidate came
+                    # from an extracted table row (see
+                    # lab_extraction.py::_extract_from_table); both stay
+                    # null for a prose-line candidate, exactly as before
+                    # geometry existed.
                     page_number=candidate.source_page,
+                    bbox_x=candidate.primary_bbox.get("x") if candidate.primary_bbox else None,
+                    bbox_y=candidate.primary_bbox.get("y") if candidate.primary_bbox else None,
+                    bbox_width=candidate.primary_bbox.get("width") if candidate.primary_bbox else None,
+                    bbox_height=candidate.primary_bbox.get("height") if candidate.primary_bbox else None,
+                    row_bbox_x=candidate.row_bbox.get("x") if candidate.row_bbox else None,
+                    row_bbox_y=candidate.row_bbox.get("y") if candidate.row_bbox else None,
+                    row_bbox_width=candidate.row_bbox.get("width") if candidate.row_bbox else None,
+                    row_bbox_height=candidate.row_bbox.get("height") if candidate.row_bbox else None,
+                    field_bboxes_json=json.dumps(candidate.field_bboxes) if candidate.field_bboxes else None,
                     extraction_confidence=candidate.confidence,
                     provider="clinical_document_v3_phase6",
                     parser_version="clinical-document-v3-lab-extraction-v1",
